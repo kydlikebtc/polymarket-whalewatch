@@ -20,5 +20,12 @@ export async function getLargeTrades(
     );
     return raw as Trade[];
   }
+  if (parsed.data.length === limit) {
+    // Full page: more than `limit` large trades may exist this cycle and would be missed.
+    // Single-page fetch is the MVP choice; offset pagination is a P2+ item (design §5).
+    console.warn(
+      `[getLargeTrades] full page (${limit} rows) — some large trades this cycle may be missed`,
+    );
+  }
   return parsed.data;
 }

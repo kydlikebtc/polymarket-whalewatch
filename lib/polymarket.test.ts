@@ -57,3 +57,28 @@ it("warns and falls back to raw when a row fails validation", async () => {
   expect(trades).toEqual(bad);
   warnSpy.mockRestore();
 });
+it("warns on a full page (possible overflow)", async () => {
+  const row = {
+    proxyWallet: "0x1",
+    side: "BUY",
+    asset: "9",
+    conditionId: "0xc",
+    size: 5168.75,
+    price: 0.999,
+    timestamp: 1700000000,
+    title: "M",
+    slug: "s",
+    eventSlug: "e",
+    outcome: "Yes",
+    outcomeIndex: 0,
+    transactionHash: "0xh",
+  };
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue({ ok: true, json: async () => [row] });
+  vi.stubGlobal("fetch", fetchMock);
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  await getLargeTrades(10000, 1); // limit=1, one row => full page
+  expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("full page"));
+  warnSpy.mockRestore();
+});

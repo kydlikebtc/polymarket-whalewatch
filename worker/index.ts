@@ -34,4 +34,16 @@ async function start() {
   }
   loop();
 }
-start();
+// 7x24 resilience: never let a stray rejection or a startup-phase network blip kill the worker.
+process.on("unhandledRejection", (e) =>
+  console.error("[worker] unhandledRejection", e),
+);
+process.on("uncaughtException", (e) =>
+  console.error("[worker] uncaughtException", e),
+);
+// seedSeen is atomic w.r.t. fetch failure (nothing is seeded if the fetch rejects), so a failed
+// cold start can be cleanly retried without risking a half-seeded backlog storm.
+start().catch((e) => {
+  console.error("[worker] start failed, retrying after interval", e);
+  setTimeout(start, cfg.pollIntervalMs);
+});

@@ -8,6 +8,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS token_map (token_id TEXT PRIMARY KEY, condition_id TEXT, question TEXT, outcome TEXT, slug TEXT, event_slug TEXT, updated_at INTEGER);
     CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, dedup_key TEXT, payload TEXT, created_at INTEGER);
     CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT);
+    CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
   `);
   return db;
 }
