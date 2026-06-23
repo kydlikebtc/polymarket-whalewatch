@@ -1,7 +1,7 @@
 node_modules/
 .env
 .env.local
-*.sqlite
+*.sqlite*
 *.db
 dist/
 .next/
