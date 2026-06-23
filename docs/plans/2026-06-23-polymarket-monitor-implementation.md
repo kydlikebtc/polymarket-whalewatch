@@ -27,12 +27,11 @@
 
 **Files:** Create `package.json`, `tsconfig.json`, `vitest.config.ts`, `.env.example`
 
-**Step 1:** 初始化 Next.js + TS 工程并装依赖
+**Step 1:** 初始化**最小 TS 工程**并装依赖（P1 MVP 是纯 worker，不需要 Next.js；Next.js 推迟到 P4 看板阶段，避免 `create-next-app` 在已有 `docs/` 的非空目录冲突）。手写 `package.json`（`"type":"module"`）与 `tsconfig.json`（`"module":"NodeNext"`, `"target":"ES2022"`, `"strict":true`），然后：
 
 ```bash
-npx create-next-app@latest . --ts --app --no-tailwind --no-src-dir --eslint --use-npm --yes
 npm i better-sqlite3 zod dotenv
-npm i -D vitest tsx @types/better-sqlite3
+npm i -D vitest tsx typescript @types/better-sqlite3 @types/node
 ```
 
 **Step 2:** 加 `vitest.config.ts`

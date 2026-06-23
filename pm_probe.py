@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""核查候选地址:是否为合约 + 近期日志的 topic0 分布与取样。"""
+"""核查候选地址:是否为合约 + 近期日志的 topic0 分布与取样。
+
+策略:小块(100 区块)从最新往回扫,一旦发现日志即停。
+活跃合约第一块命中;不活跃的回扫上限 max_window 仍无 → 判定近期无事件。
+"""
 
 import json
+import sys
 from collections import Counter
 
 from pm_chain import rpc, hexint
@@ -13,67 +18,70 @@ ADDRS = {
 }
 
 
-def get_logs_recent(addr, latest, window=12000, chunk=1000):
-    """从 latest 往回扫 window 个区块,分块避免范围/结果超限。
-    返回 (logs, scanned_from, scanned_to)。"""
+def get_logs_recent(addr, latest, max_window=20000, chunk=100):
     logs = []
     end = latest
-    start_floor = latest - window
-    while end > start_floor:
-        start = max(start_floor, end - chunk + 1)
+    floor = latest - max_window
+    first_hit = None
+    while end > floor and len(logs) < 30:
+        start = max(floor, end - chunk + 1)
         try:
             part = rpc(
                 "eth_getLogs",
-                [
-                    {
-                        "fromBlock": hex(start),
-                        "toBlock": hex(end),
-                        "address": addr,
-                    }
-                ],
+                [{"fromBlock": hex(start), "toBlock": hex(end), "address": addr}],
             )
+            if part and first_hit is None:
+                first_hit = end
             logs.extend(part)
         except Exception as e:  # noqa: BLE001
-            print(f"  [getLogs {start}-{end}] ERROR {e}")
+            print(f"  [getLogs {start}-{end}] ERROR {e}", flush=True)
         end = start - 1
-        # 已经拿到足够样本就停
-        if len(logs) >= 60:
-            break
-    return logs, start, latest
+    scanned_from = end + 1
+    return logs, scanned_from, first_hit
 
 
 def main():
     latest = hexint(rpc("eth_blockNumber", []))
-    print(f"latestBlock={latest}\n")
+    print(f"latestBlock={latest}\n", flush=True)
     summary = {}
     for name, addr in ADDRS.items():
         code = rpc("eth_getCode", [addr, "latest"])
-        is_contract = code not in ("0x", "0x0", None)
+        is_contract = isinstance(code, str) and len(code) > 4
         code_len = (len(code) - 2) // 2 if isinstance(code, str) else 0
-        print(f"### {name}  {addr}")
-        print(f"  isContract={is_contract} codeBytes={code_len}")
-        logs, scanned_from, scanned_to = get_logs_recent(addr, latest)
-        print(f"  scanned blocks {scanned_from}..{scanned_to}  logsFound={len(logs)}")
-        c = Counter(l["topics"][0] if l["topics"] else "NO_TOPIC" for l in logs)
+        print(f"### {name}  {addr}", flush=True)
+        print(f"  isContract={is_contract} codeBytes={code_len}", flush=True)
+        logs, scanned_from, first_hit = get_logs_recent(addr, latest)
+        blocks_back = (latest - first_hit) if first_hit else None
+        print(
+            f"  scanned down to {scanned_from}  logsFound={len(logs)} "
+            f"firstHitBlock={first_hit} (~{blocks_back} blocks back)",
+            flush=True,
+        )
+        dict_logs = [l for l in logs if isinstance(l, dict)]
+        bad = [l for l in logs if not isinstance(l, dict)]
+        if bad:
+            print(
+                f"  WARN non-dict log elements: {len(bad)} e.g. {bad[0]!r}", flush=True
+            )
+        c = Counter((l.get("topics") or ["NO_TOPIC"])[0] for l in dict_logs)
         for t0, n in c.most_common():
-            print(f"    topic0 {t0}  x{n}")
-        # 保存每个 distinct topic0 的一个样本
+            print(f"    topic0 {t0}  x{n}", flush=True)
         samples = {}
-        for l in logs:
-            t0 = l["topics"][0] if l["topics"] else "NO_TOPIC"
-            if t0 not in samples:
-                samples[t0] = l
+        for l in dict_logs:
+            t0 = (l.get("topics") or ["NO_TOPIC"])[0]
+            samples.setdefault(t0, l)
         summary[name] = {
             "addr": addr,
             "isContract": is_contract,
             "codeBytes": code_len,
+            "firstHitBlock": first_hit,
             "topic0_counts": dict(c),
             "samples": samples,
         }
-        print()
+        print(flush=True)
     with open("probe_result.json", "w") as f:
         json.dump(summary, f, indent=2)
-    print("written probe_result.json")
+    print("written probe_result.json", flush=True)
 
 
 if __name__ == "__main__":
