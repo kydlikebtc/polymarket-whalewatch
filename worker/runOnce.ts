@@ -10,6 +10,25 @@ interface Deps {
   fetchTrades: () => Promise<Trade[]>;
   thresholds: number[];
 }
+// Cold-start seeding: mark the current backlog of trades as seen WITHOUT alerting,
+// so a fresh start doesn't replay up to a full page (~500) of historical fills.
+// Subsequent polls then only alert genuinely new trades. Returns how many were seeded.
+export async function seedSeen({
+  db,
+  fetchTrades,
+}: Pick<Deps, "db" | "fetchTrades">): Promise<number> {
+  const fetched = await fetchTrades();
+  let seeded = 0;
+  for (const t of fetched) {
+    const k = dedupKey(t);
+    if (!hasSeen(db, k)) {
+      markSeen(db, k, t.timestamp);
+      seeded++;
+    }
+  }
+  return seeded;
+}
+
 export async function runOnce({ db, send, fetchTrades, thresholds }: Deps) {
   const minTier = thresholds[0];
   const fetched = await fetchTrades();

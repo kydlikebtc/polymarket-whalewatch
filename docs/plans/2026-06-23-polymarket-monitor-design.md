@@ -84,6 +84,7 @@ Telegram 频道（实时推送）      Next.js 看板（只读，查询与配置
 - **金额分级**（配置化）: 默认 `≥$10k 大单` / `≥$50k 巨鲸`，不同档位可走不同 Telegram 路由/优先级（可分别起独立 `filterAmount` 轮询）。
 - **去重键**: `${transactionHash}:${asset}:${proxyWallet}:${side}:${size}`。
 - **持久化**: `lastSeenTimestamp` 游标 + 有界 seen-keys 集合（落 SQLite），**跨重启**不漏不重。
+- **冷启动播种**: 首次启动（seen 表为空）时，把当前整页成交**静默标记为已见、不告警**（`seedSeen`），避免开机回放最多 500 条历史成交造成"告警风暴"；之后只对启动后新出现的成交告警。暖重启（seen 表非空）跳过播种、正常恢复。
 - **为何不用 WebSocket**: CLOB WS 的 `last_trade_price` 事件**不含 tx hash 和钱包地址**，无法做聪明钱归因与深链；先轮询，必要时再加 WS（见 §13/§14）。
 
 ## 6. 功能2设计：聪明钱监控

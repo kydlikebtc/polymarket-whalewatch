@@ -1,49 +1,67 @@
-// End-to-end smoke test of the live pipeline WITHOUT Telegram.
-// Replaces the Telegram send with console output, hits the real public
-// data-api.polymarket.com feed, and exercises fetch -> validate -> select ->
-// tier -> format -> sqlite dedup. Run: `npx tsx scripts/dry-run.ts`
+// End-to-end smoke test of the live pipeline WITHOUT Telegram, mirroring the
+// worker's real cold-start behavior. Hits the public data-api.polymarket.com
+// feed and exercises fetch -> validate -> cold-start seed -> select -> tier ->
+// format -> sqlite dedup. Run: `npx tsx scripts/dry-run.ts`
 import { openDb } from "../lib/db";
 import { getLargeTrades } from "../lib/polymarket";
-import { runOnce } from "../worker/runOnce";
+import { runOnce, seedSeen } from "../worker/runOnce";
 import { notionalUsd } from "../lib/trades";
 
 const THRESHOLDS = [10_000, 50_000];
 const DB_PATH = "dry-run.sqlite";
-const PRINT_LIMIT = 5;
 
 async function main() {
   const db = openDb(DB_PATH);
-  db.exec("DELETE FROM seen_trades; DELETE FROM alerts;"); // clean slate each run
+  db.exec("DELETE FROM seen_trades; DELETE FROM alerts;"); // simulate a fresh/cold db
 
   // 1. Live fetch + schema validation (a warning here = our Trade schema drifted from the API).
   const snapshot = await getLargeTrades(THRESHOLDS[0]);
   console.log(
-    `fetched ${snapshot.length} trades >= $${THRESHOLDS[0].toLocaleString()}`,
+    `fetched ${snapshot.length} live trades >= $${THRESHOLDS[0].toLocaleString()}`,
   );
-  if (snapshot.length > 0) {
-    const newest = snapshot[0];
-    const ageSec = Math.round(Date.now() / 1000 - newest.timestamp);
-    console.log(
-      `newest trade: age ${ageSec}s · $${Math.round(notionalUsd(newest)).toLocaleString()} · ${newest.side} · ${newest.title} / ${newest.outcome}`,
-    );
+  if (snapshot.length === 0) {
+    console.log("no trades to demo right now");
+    db.close();
+    return;
   }
+  const newest = snapshot[0];
+  const ageSec = Math.round(Date.now() / 1000 - newest.timestamp);
+  console.log(
+    `newest: age ${ageSec}s · $${Math.round(notionalUsd(newest)).toLocaleString()} · ${newest.side} · ${newest.title} / ${newest.outcome}`,
+  );
 
   let alerted = 0;
   const send = async (html: string) => {
     alerted++;
-    if (alerted <= PRINT_LIMIT) console.log("\n" + html);
+    console.log("\n" + html);
   };
-  const fetchTrades = async () => snapshot; // same snapshot for both runs to isolate dedup
 
-  console.log("\n--- run 1 (fresh: should alert) ---");
-  await runOnce({ db, send, fetchTrades, thresholds: THRESHOLDS });
-  const after1 = alerted;
-  if (after1 > PRINT_LIMIT) console.log(`\n…and ${after1 - PRINT_LIMIT} more`);
-  console.log(`run 1 alerted: ${after1}`);
+  // 2. Cold start: seed the backlog silently (no alerts) — the production behavior.
+  const seeded = await seedSeen({ db, fetchTrades: async () => snapshot });
+  console.log(`\ncold start: seeded ${seeded} trades silently (no alert)`);
 
-  console.log("\n--- run 2 (same snapshot: dedup should yield 0 new) ---");
-  await runOnce({ db, send, fetchTrades, thresholds: THRESHOLDS });
-  console.log(`run 2 newly alerted: ${alerted - after1}`);
+  // 3. Poll the same backlog: all seen → zero alerts (no startup storm).
+  await runOnce({
+    db,
+    send,
+    fetchTrades: async () => snapshot,
+    thresholds: THRESHOLDS,
+  });
+  console.log(`backlog poll alerted: ${alerted} (expect 0)`);
+
+  // 4. A genuinely new large trade arrives → exactly one fully-formatted alert.
+  const fresh = {
+    ...newest,
+    transactionHash: "0xDRYRUNNEWTRADE",
+    timestamp: Math.floor(Date.now() / 1000),
+  };
+  await runOnce({
+    db,
+    send,
+    fetchTrades: async () => [fresh],
+    thresholds: THRESHOLDS,
+  });
+  console.log(`\nnew-trade poll alerted: ${alerted} (expect 1)`);
 
   const seen = db.prepare("SELECT COUNT(*) AS c FROM seen_trades").get() as {
     c: number;
@@ -52,9 +70,10 @@ async function main() {
     c: number;
   };
   console.log(`\nsqlite: seen_trades=${seen.c} alerts=${alerts.c}`);
+  const ok = alerted === 1 && alerts.c === 1 && seen.c === seeded + 1;
   console.log(
-    seen.c === after1 && alerted - after1 === 0
-      ? "\n✅ dedup + persistence verified"
+    ok
+      ? "\n✅ cold-start seed + alert-only-new + persistence verified"
       : "\n❌ unexpected counts",
   );
   db.close();
