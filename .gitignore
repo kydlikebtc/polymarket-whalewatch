@@ -13,3 +13,6 @@ __pycache__/
 probe_result.json
 abi_*.json
 sample_*.json
+
+# session artifacts
+.claude/

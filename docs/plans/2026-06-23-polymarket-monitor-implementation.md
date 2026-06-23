@@ -394,7 +394,7 @@ it("escapes HTML and includes notional + links", () => {
   const html = formatLargeTradeAlert(t, 50000);
   expect(html).toContain("Trump &amp; &lt;Biden&gt;");
   expect(html).toContain("$50,000");
-  expect(html).toContain("polygonscan.io/tx/0xhash");
+  expect(html).toContain("polygonscan.com/tx/0xhash");
   expect(html).toContain("polymarket.com/event/e");
 });
 ```
@@ -423,7 +423,7 @@ export function formatLargeTradeAlert(
     `${esc(t.outcome)} · <b>${t.side}</b> · ${usd(n)} @ ${t.price.toFixed(3)}`,
     `<a href="https://polymarket.com/event/${t.eventSlug}">市场</a> · ` +
       `<a href="https://polymarket.com/profile/${t.proxyWallet}">${short(t.proxyWallet)}</a> · ` +
-      `<a href="https://polygonscan.io/tx/${t.transactionHash}">tx</a>`,
+      `<a href="https://polygonscan.com/tx/${t.transactionHash}">tx</a>`,
   ].join("\n");
 }
 ```
