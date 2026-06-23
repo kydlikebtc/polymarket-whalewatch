@@ -5,3 +5,11 @@ node_modules/
 *.db
 dist/
 .next/
+
+# research scratch (one-off probing, findings live in docs/plans)
+__pycache__/
+*.pyc
+*.py
+probe_result.json
+abi_*.json
+sample_*.json
