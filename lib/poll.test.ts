@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { it, expect } from "vitest";
 import { selectNewTrades } from "./poll";
 const mk = (h: string, ts: number) =>
   ({

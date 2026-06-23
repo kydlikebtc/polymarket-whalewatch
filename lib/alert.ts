@@ -11,6 +11,7 @@ export function formatLargeTradeAlert(
 ): string {
   const n = notionalUsd(t);
   const tag = smart ? `🏆 聪明钱(${smart.score.toFixed(0)}) ` : "";
+  // 🐳 only for the top tier (>= $50k); 💰 otherwise
   const whale = n >= tier && tier >= 50000 ? "🐳 " : "💰 ";
   return [
     `${whale}${tag}<b>${esc(t.title)}</b>`,

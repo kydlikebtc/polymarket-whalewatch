@@ -5,3 +5,15 @@ export const markSeen = (db: DB, key: string, ts: number) =>
   db
     .prepare("INSERT OR IGNORE INTO seen_trades (dedup_key, ts) VALUES (?, ?)")
     .run(key, ts);
+export const recordAlert = (
+  db: DB,
+  type: string,
+  key: string,
+  payload: string,
+  createdAt: number,
+) =>
+  db
+    .prepare(
+      "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, ?, ?)",
+    )
+    .run(type, key, payload, createdAt);

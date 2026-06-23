@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { it, expect, vi } from "vitest";
 import { openDb } from "../lib/db";
 import { runOnce } from "./runOnce";
 it("alerts each new trade once and marks it seen", async () => {
