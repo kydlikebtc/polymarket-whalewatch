@@ -92,6 +92,16 @@ const labelStyle: React.CSSProperties = {
   display: "inline-block",
 };
 
+const priceInputStyle: React.CSSProperties = {
+  width: 70,
+  padding: "6px 10px",
+  borderRadius: 6,
+  border: "1px solid #2a3346",
+  background: "#11151f",
+  color: "#e6e6e6",
+  fontSize: 13,
+};
+
 export default function Page() {
   const [minUsd, setMinUsd] = useState<number>(10000);
   const [side, setSide] = useState<Side>("ALL");
@@ -109,6 +119,13 @@ export default function Page() {
   // wallet(lowercased) -> ageDays|null. Filled lazily after the table renders;
   // permanently cached server-side so repeat lookups are instant.
   const [ages, setAges] = useState<Record<string, number | null>>({});
+  // Client-side insider-pattern filters. Insider-information money tends to buy
+  // at FAVORABLE ODDS (a price band) using RELATIVELY NEW wallets, so these two
+  // filters let the user isolate that pattern (e.g. price 0.5–0.9 AND age ≤ 7天).
+  const [minPrice, setMinPrice] = useState<string>("");
+  const [maxPrice, setMaxPrice] = useState<string>("");
+  // null = 全部 (no age cap); otherwise keep only confirmed wallets with age ≤ N天.
+  const [maxAgeDays, setMaxAgeDays] = useState<number | null>(null);
 
   const activeReq = useRef<number>(0);
 
@@ -217,6 +234,44 @@ export default function Page() {
     });
     return arr;
   }, [data, sortKey, sortDir]);
+
+  // Apply the client-side insider-pattern filters (price band + young-wallet cap)
+  // on top of the sorted rows. Blank/NaN bounds are ignored. The age filter HIDES
+  // unknown-age and older rows, so the view converges to confirmed-young wallets
+  // as `ages` lazily fills in.
+  const displayedTrades = useMemo(() => {
+    const min = parseFloat(minPrice);
+    const max = parseFloat(maxPrice);
+    const hasMin = Number.isFinite(min);
+    const hasMax = Number.isFinite(max);
+    return sortedTrades.filter((t) => {
+      if (hasMin && t.price < min) return false;
+      if (hasMax && t.price > max) return false;
+      if (maxAgeDays != null) {
+        const a = ages[t.wallet?.toLowerCase()];
+        if (typeof a !== "number" || !Number.isFinite(a) || a > maxAgeDays) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [sortedTrades, minPrice, maxPrice, maxAgeDays, ages]);
+
+  // When the age filter is active, some rows that pass the price band may still
+  // have unresolved age (showing "…"); the result keeps converging as ages load.
+  const agesStillLoading = useMemo(() => {
+    if (maxAgeDays == null) return false;
+    const min = parseFloat(minPrice);
+    const max = parseFloat(maxPrice);
+    const hasMin = Number.isFinite(min);
+    const hasMax = Number.isFinite(max);
+    return sortedTrades.some((t) => {
+      if (hasMin && t.price < min) return false;
+      if (hasMax && t.price > max) return false;
+      const w = t.wallet?.toLowerCase();
+      return !w || !(w in ages);
+    });
+  }, [sortedTrades, minPrice, maxPrice, maxAgeDays, ages]);
 
   function toggleSort(key: "time" | "amount") {
     if (sortKey === key) {
@@ -377,6 +432,107 @@ export default function Page() {
             自动刷新 30s
           </label>
         </div>
+
+        {/* Price (odds) band — insider money tends to buy at favorable odds. */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: 8,
+          }}
+        >
+          <span style={labelStyle}>价格</span>
+          <input
+            type="number"
+            step={0.01}
+            min={0}
+            max={1}
+            placeholder="0"
+            value={minPrice}
+            onChange={(e) => setMinPrice(e.target.value)}
+            style={priceInputStyle}
+          />
+          <span style={{ fontSize: 13, color: "#6f819c" }}>–</span>
+          <input
+            type="number"
+            step={0.01}
+            min={0}
+            max={1}
+            placeholder="1"
+            value={maxPrice}
+            onChange={(e) => setMaxPrice(e.target.value)}
+            style={priceInputStyle}
+          />
+          {minPrice || maxPrice ? (
+            <button
+              onClick={() => {
+                setMinPrice("");
+                setMaxPrice("");
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#6f819c",
+                fontSize: 12,
+                cursor: "pointer",
+                padding: "4px 6px",
+              }}
+            >
+              清除
+            </button>
+          ) : null}
+          <span style={{ fontSize: 12, color: "#6f819c" }}>赔率 0–1</span>
+        </div>
+
+        {/* Address age — insider money tends to use relatively new wallets. */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: 8,
+          }}
+        >
+          <span style={labelStyle}>地址年龄</span>
+          <button
+            style={btnStyle(maxAgeDays === null)}
+            onClick={() => setMaxAgeDays(null)}
+          >
+            全部
+          </button>
+          {[1, 7, 30].map((d) => (
+            <button
+              key={d}
+              style={btnStyle(maxAgeDays === d)}
+              onClick={() => setMaxAgeDays(d)}
+            >
+              ≤{d}天
+            </button>
+          ))}
+          <span style={{ fontSize: 12, color: "#6f819c" }}>≤</span>
+          <input
+            type="number"
+            min={0}
+            placeholder="__"
+            value={
+              maxAgeDays != null && ![1, 7, 30].includes(maxAgeDays)
+                ? String(maxAgeDays)
+                : ""
+            }
+            onChange={(e) => {
+              const v = e.target.value.trim();
+              if (v === "") {
+                setMaxAgeDays(null);
+                return;
+              }
+              const n = Number(v);
+              setMaxAgeDays(Number.isFinite(n) && n >= 0 ? n : null);
+            }}
+            style={{ ...priceInputStyle, width: 56 }}
+          />
+          <span style={{ fontSize: 12, color: "#6f819c" }}>天</span>
+        </div>
       </section>
 
       {data?.error ? (
@@ -483,6 +639,27 @@ export default function Page() {
         </div>
       ) : null}
 
+      {/* Filtered count (reflects the client-side price/age filters) */}
+      {data && data.trades.length > 0 ? (
+        <div
+          style={{
+            fontSize: 13,
+            color: "#8aa0c0",
+            marginBottom: 10,
+          }}
+        >
+          符合筛选{" "}
+          <strong style={{ color: "#e6e6e6" }}>{displayedTrades.length}</strong>{" "}
+          笔
+          {agesStillLoading ? (
+            <span style={{ color: "#6f819c" }}>
+              {" "}
+              · 地址年龄加载中，结果将随加载补全
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Table */}
       {data && data.trades.length === 0 && !loading ? (
         <div
@@ -539,7 +716,7 @@ export default function Page() {
               </tr>
             </thead>
             <tbody>
-              {sortedTrades.map((t, i) => {
+              {displayedTrades.map((t, i) => {
                 const whale = t.usd >= 50000;
                 return (
                   <tr key={`${t.txHash}-${t.wallet}-${i}`}>
