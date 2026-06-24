@@ -158,21 +158,26 @@ export default function AccumulationPage() {
     if (want.length === 0) return;
     let cancelled = false;
     (async () => {
-      try {
-        const res = await fetch("/api/wallet-age", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ wallets: want }),
-        });
-        const json = (await res.json()) as {
-          ages?: Record<string, { ageDays: number | null }>;
-        };
-        if (cancelled) return;
-        const next: Record<string, number | null> = {};
-        for (const w of want) next[w] = json.ages?.[w]?.ageDays ?? null;
-        setAges((prev) => ({ ...prev, ...next }));
-      } catch {
-        // Best-effort enrichment; leave unresolved wallets showing "…".
+      // Chunk so every requested wallet stays under the route's cap and resolves.
+      const CHUNK = 100;
+      for (let i = 0; i < want.length && !cancelled; i += CHUNK) {
+        const batch = want.slice(i, i + CHUNK);
+        try {
+          const res = await fetch("/api/wallet-age", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ wallets: batch }),
+          });
+          const json = (await res.json()) as {
+            ages?: Record<string, { ageDays: number | null }>;
+          };
+          if (cancelled) return;
+          const next: Record<string, number | null> = {};
+          for (const w of batch) next[w] = json.ages?.[w]?.ageDays ?? null;
+          setAges((prev) => ({ ...prev, ...next }));
+        } catch {
+          // Best-effort enrichment; leave this batch showing "…".
+        }
       }
     })();
     return () => {
