@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type ScanTrade = {
   title: string;
@@ -102,6 +102,9 @@ export default function Page() {
   // Local text state for the custom amount input so typing intermediate values
   // (e.g. while clearing the field) doesn't immediately refetch with garbage.
   const [customText, setCustomText] = useState<string>("");
+  // Sorting is purely client-side over the already-fetched rows.
+  const [sortKey, setSortKey] = useState<"time" | "amount">("time");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const activeReq = useRef<number>(0);
 
@@ -157,6 +160,28 @@ export default function Page() {
       setCustomText("");
     }
   }
+
+  const sortedTrades = useMemo(() => {
+    const arr = data?.trades ? [...data.trades] : [];
+    arr.sort((a, b) => {
+      const av = sortKey === "time" ? a.ts : a.usd;
+      const bv = sortKey === "time" ? b.ts : b.usd;
+      return sortDir === "asc" ? av - bv : bv - av;
+    });
+    return arr;
+  }, [data, sortKey, sortDir]);
+
+  function toggleSort(key: "time" | "amount") {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  }
+
+  const sortArrow = (key: "time" | "amount") =>
+    sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "";
 
   const stats = data?.stats;
   const buyUsd = stats?.buyUsd ?? 0;
@@ -435,17 +460,38 @@ export default function Page() {
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={headStyle}>时间</th>
+                <th
+                  style={{
+                    ...headStyle,
+                    cursor: "pointer",
+                    userSelect: "none",
+                  }}
+                  onClick={() => toggleSort("time")}
+                  title="点击按时间排序"
+                >
+                  时间{sortArrow("time")}
+                </th>
                 <th style={headStyle}>市场 / 结果</th>
                 <th style={headStyle}>方向</th>
-                <th style={{ ...headStyle, textAlign: "right" }}>金额</th>
+                <th
+                  style={{
+                    ...headStyle,
+                    textAlign: "right",
+                    cursor: "pointer",
+                    userSelect: "none",
+                  }}
+                  onClick={() => toggleSort("amount")}
+                  title="点击按金额排序"
+                >
+                  金额{sortArrow("amount")}
+                </th>
                 <th style={{ ...headStyle, textAlign: "right" }}>价格</th>
                 <th style={headStyle}>钱包</th>
                 <th style={headStyle}>tx</th>
               </tr>
             </thead>
             <tbody>
-              {data.trades.map((t, i) => {
+              {sortedTrades.map((t, i) => {
                 const whale = t.usd >= 50000;
                 return (
                   <tr key={`${t.txHash}-${t.wallet}-${i}`}>
