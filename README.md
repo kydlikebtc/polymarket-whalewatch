@@ -4,6 +4,10 @@ Real-time monitoring for **large trades**, **split-buy accumulation**, and **fre
 
 A whale on Polymarket rarely announces themselves. They split a big position into many small orders, use freshly-created wallets, and buy at favorable odds. WhaleWatch surfaces exactly that — a 7×24 worker that pushes large fills to Telegram, plus a web dashboard to hunt the patterns single-trade alerts miss.
 
+![Polymarket WhaleWatch dashboard](docs/dashboard.png)
+
+_The 24h scanner with the insider-hunt combo applied — price `0.5–0.9` + address age `≤7天` — collapsing the firehose down to a handful of $100k+ buys from brand-new wallets (some only hours old) at favorable odds._
+
 > **中文简介**：监控 Polymarket 上的大额成交、拆单建仓和新钱包行为。后台 worker 实时把大单推送到 Telegram；网页看板可按金额 / 买卖 / 价格(赔率) / 地址年龄筛选，并有专门的"拆单累计买入榜"和地址生命时长标注。组合"价格 0.5–0.9 + 地址年龄 ≤7天"即可猎杀可疑的内部资金。
 
 > ⚠️ Research / monitoring tool only. Uses **public** Polymarket data, no authentication, no trading. Not financial advice.
