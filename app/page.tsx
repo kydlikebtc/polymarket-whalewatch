@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { formatAge, ageColor } from "./ageFormat";
+import { AgeBadge, Field, Segmented, SideTag, StatCard } from "./ui";
 
 type ScanTrade = {
   title: string;
@@ -35,6 +35,9 @@ type Side = "ALL" | "BUY" | "SELL";
 type Hours = 1 | 6 | 24;
 
 const AMOUNT_PRESETS = [10000, 50000, 100000];
+// Sentinel for the "全部" (no cap) option in the address-age segmented control,
+// since the control's value type can't be null.
+const AGE_ALL = -1;
 
 function fmtUsd(usd: number): string {
   return usd.toLocaleString("en-US", { maximumFractionDigits: 0 });
@@ -49,58 +52,6 @@ function fmtClock(sec: number): string {
   if (!sec) return "";
   return new Date(sec * 1000).toLocaleTimeString("zh-CN", { hour12: false });
 }
-
-const linkStyle: React.CSSProperties = {
-  color: "#5db0ff",
-  textDecoration: "none",
-};
-const cellStyle: React.CSSProperties = {
-  padding: "10px 12px",
-  borderBottom: "1px solid #1c2230",
-  fontSize: 14,
-  whiteSpace: "nowrap",
-};
-const headStyle: React.CSSProperties = {
-  ...cellStyle,
-  textAlign: "left",
-  color: "#8aa0c0",
-  fontWeight: 600,
-  borderBottom: "2px solid #2a3346",
-  position: "sticky",
-  top: 0,
-  background: "#0b0e14",
-};
-
-function btnStyle(active: boolean): React.CSSProperties {
-  return {
-    padding: "6px 14px",
-    borderRadius: 6,
-    border: active ? "1px solid #3b6fd6" : "1px solid #2a3346",
-    background: active ? "#16233f" : "#11151f",
-    color: active ? "#cfe0ff" : "#8aa0c0",
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: "pointer",
-  };
-}
-
-const labelStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: "#6f819c",
-  marginRight: 8,
-  minWidth: 44,
-  display: "inline-block",
-};
-
-const priceInputStyle: React.CSSProperties = {
-  width: 70,
-  padding: "6px 10px",
-  borderRadius: 6,
-  border: "1px solid #2a3346",
-  background: "#11151f",
-  color: "#e6e6e6",
-  fontSize: 13,
-};
 
 export default function Page() {
   const [minUsd, setMinUsd] = useState<number>(10000);
@@ -293,51 +244,41 @@ export default function Page() {
   const sellPct = sideTotal > 0 ? 100 - buyPct : 0;
 
   return (
-    <main
-      style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 20px 60px" }}
-    >
-      <header style={{ marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, margin: "0 0 6px" }}>
+    <main className="ds-main">
+      <header style={{ marginBottom: "var(--s-4)" }}>
+        <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
           🔍 24h 大额成交扫描器
         </h1>
-        <div style={{ fontSize: 13, color: "#8aa0c0" }}>
+        <div className="ds-hint">
           实时查询 Polymarket 公共 API（不落库）
           {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
-          {loading ? <span style={{ color: "#e3b341" }}> · 加载中…</span> : ""}
+          {loading ? (
+            <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>
+          ) : null}
         </div>
       </header>
 
       {/* Controls */}
       <section
+        className="ds-card"
         style={{
           display: "flex",
           flexDirection: "column",
-          gap: 12,
-          padding: 16,
-          border: "1px solid #1c2230",
-          borderRadius: 8,
-          marginBottom: 20,
-          background: "#0d1119",
+          gap: "var(--s-3)",
+          padding: "var(--s-4)",
+          marginBottom: "var(--s-5)",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
-          <span style={labelStyle}>金额</span>
-          {AMOUNT_PRESETS.map((p) => (
-            <button
-              key={p}
-              style={btnStyle(minUsd === p)}
-              onClick={() => setMinUsd(p)}
-            >
-              ${fmtUsd(p)}
-            </button>
-          ))}
+        <Field label="金额">
+          <Segmented<number>
+            ariaLabel="最低金额"
+            value={minUsd}
+            onChange={setMinUsd}
+            options={AMOUNT_PRESETS.map((p) => ({
+              label: <span className="mono">${fmtUsd(p)}</span>,
+              value: p,
+            }))}
+          />
           <input
             type="number"
             min={0}
@@ -348,79 +289,47 @@ export default function Page() {
             onKeyDown={(e) => {
               if (e.key === "Enter") applyCustom();
             }}
-            style={{
-              width: 130,
-              padding: "6px 10px",
-              borderRadius: 6,
-              border: "1px solid #2a3346",
-              background: "#11151f",
-              color: "#e6e6e6",
-              fontSize: 13,
-            }}
+            className="ds-input ds-input--mono"
+            style={{ width: 130 }}
           />
-          <span style={{ fontSize: 12, color: "#6f819c" }}>
-            当前 ≥ ${fmtUsd(minUsd)}
+          <span className="ds-hint">
+            当前 ≥ <span className="mono">${fmtUsd(minUsd)}</span>
           </span>
-        </div>
+        </Field>
 
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
-          <span style={labelStyle}>方向</span>
-          <button
-            style={btnStyle(side === "ALL")}
-            onClick={() => setSide("ALL")}
-          >
-            全部
-          </button>
-          <button
-            style={btnStyle(side === "BUY")}
-            onClick={() => setSide("BUY")}
-          >
-            买入 (BUY)
-          </button>
-          <button
-            style={btnStyle(side === "SELL")}
-            onClick={() => setSide("SELL")}
-          >
-            卖出 (SELL)
-          </button>
-        </div>
+        <Field label="方向">
+          <Segmented<Side>
+            ariaLabel="方向"
+            value={side}
+            onChange={setSide}
+            options={[
+              { label: "全部", value: "ALL" },
+              { label: "买入 BUY", value: "BUY" },
+              { label: "卖出 SELL", value: "SELL" },
+            ]}
+          />
+        </Field>
 
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
-          <span style={labelStyle}>时间</span>
-          {([1, 6, 24] as Hours[]).map((h) => (
-            <button
-              key={h}
-              style={btnStyle(hours === h)}
-              onClick={() => setHours(h)}
-            >
-              {h}h
-            </button>
-          ))}
+        <Field label="时间">
+          <Segmented<Hours>
+            ariaLabel="时间窗"
+            value={hours}
+            onChange={setHours}
+            options={([1, 6, 24] as Hours[]).map((h) => ({
+              label: `${h}h`,
+              value: h,
+            }))}
+          />
           <span style={{ flex: 1 }} />
-          <button style={btnStyle(false)} onClick={() => load()}>
+          <button className="ds-btn ds-btn--ghost" onClick={() => load()}>
             刷新
           </button>
           <label
+            className="ds-hint"
             style={{
-              fontSize: 13,
-              color: "#8aa0c0",
               display: "flex",
               alignItems: "center",
-              gap: 6,
+              gap: "var(--s-1)",
               cursor: "pointer",
             }}
           >
@@ -431,18 +340,10 @@ export default function Page() {
             />
             自动刷新 30s
           </label>
-        </div>
+        </Field>
 
         {/* Price (odds) band — insider money tends to buy at favorable odds. */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
-          <span style={labelStyle}>价格</span>
+        <Field label="价格">
           <input
             type="number"
             step={0.01}
@@ -451,9 +352,10 @@ export default function Page() {
             placeholder="0"
             value={minPrice}
             onChange={(e) => setMinPrice(e.target.value)}
-            style={priceInputStyle}
+            className="ds-input ds-input--mono"
+            style={{ width: 70 }}
           />
-          <span style={{ fontSize: 13, color: "#6f819c" }}>–</span>
+          <span className="ds-hint">–</span>
           <input
             type="number"
             step={0.01}
@@ -462,55 +364,37 @@ export default function Page() {
             placeholder="1"
             value={maxPrice}
             onChange={(e) => setMaxPrice(e.target.value)}
-            style={priceInputStyle}
+            className="ds-input ds-input--mono"
+            style={{ width: 70 }}
           />
           {minPrice || maxPrice ? (
             <button
+              className="ds-btn ds-btn--subtle ds-btn--sm"
               onClick={() => {
                 setMinPrice("");
                 setMaxPrice("");
-              }}
-              style={{
-                background: "none",
-                border: "none",
-                color: "#6f819c",
-                fontSize: 12,
-                cursor: "pointer",
-                padding: "4px 6px",
               }}
             >
               清除
             </button>
           ) : null}
-          <span style={{ fontSize: 12, color: "#6f819c" }}>赔率 0–1</span>
-        </div>
+          <span className="ds-hint">赔率 0–1</span>
+        </Field>
 
         {/* Address age — insider money tends to use relatively new wallets. */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
-          <span style={labelStyle}>地址年龄</span>
-          <button
-            style={btnStyle(maxAgeDays === null)}
-            onClick={() => setMaxAgeDays(null)}
-          >
-            全部
-          </button>
-          {[1, 7, 30].map((d) => (
-            <button
-              key={d}
-              style={btnStyle(maxAgeDays === d)}
-              onClick={() => setMaxAgeDays(d)}
-            >
-              ≤{d}天
-            </button>
-          ))}
-          <span style={{ fontSize: 12, color: "#6f819c" }}>≤</span>
+        <Field label="地址年龄">
+          <Segmented<number>
+            ariaLabel="地址年龄"
+            value={maxAgeDays ?? AGE_ALL}
+            onChange={(v) => setMaxAgeDays(v === AGE_ALL ? null : v)}
+            options={[
+              { label: "全部", value: AGE_ALL },
+              { label: "≤1天", value: 1 },
+              { label: "≤7天", value: 7 },
+              { label: "≤30天", value: 30 },
+            ]}
+          />
+          <span className="ds-hint">≤</span>
           <input
             type="number"
             min={0}
@@ -529,23 +413,17 @@ export default function Page() {
               const n = Number(v);
               setMaxAgeDays(Number.isFinite(n) && n >= 0 ? n : null);
             }}
-            style={{ ...priceInputStyle, width: 56 }}
+            className="ds-input ds-input--mono"
+            style={{ width: 56 }}
           />
-          <span style={{ fontSize: 12, color: "#6f819c" }}>天</span>
-        </div>
+          <span className="ds-hint">天</span>
+        </Field>
       </section>
 
       {data?.error ? (
         <div
-          style={{
-            padding: "12px 16px",
-            marginBottom: 16,
-            border: "1px solid #5a2a2a",
-            borderRadius: 8,
-            background: "#1c1212",
-            color: "#ff9a9a",
-            fontSize: 13,
-          }}
+          className="ds-callout ds-callout--error"
+          style={{ marginBottom: "var(--s-4)" }}
         >
           扫描失败: {data.error}
         </div>
@@ -553,30 +431,23 @@ export default function Page() {
 
       {/* Stats header */}
       {stats ? (
-        <section
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-            gap: 12,
-            marginBottom: 20,
-          }}
-        >
-          <div style={statCard}>
-            <div style={statLabel}>笔数</div>
-            <div style={statValue}>{stats.count}</div>
-          </div>
-          <div style={statCard}>
-            <div style={statLabel}>总额</div>
-            <div style={statValue}>${fmtUsd(stats.totalUsd)}</div>
-          </div>
-          <div style={statCard}>
-            <div style={statLabel}>买额 vs 卖额</div>
-            <div style={{ fontSize: 14, marginBottom: 6 }}>
-              <span style={{ color: "#56d18a", fontWeight: 600 }}>
+        <section className="kpi" style={{ marginBottom: "var(--s-5)" }}>
+          <StatCard label="笔数">
+            <div className="kpi-value">{stats.count}</div>
+          </StatCard>
+          <StatCard label="总额">
+            <div className="kpi-value">${fmtUsd(stats.totalUsd)}</div>
+          </StatCard>
+          <StatCard label="买额 vs 卖额">
+            <div
+              className="mono"
+              style={{ fontSize: "var(--t-md)", margin: "var(--s-2) 0" }}
+            >
+              <span className="up" style={{ fontWeight: 600 }}>
                 买 ${fmtUsd(buyUsd)}
               </span>
-              <span style={{ color: "#6f819c" }}> · </span>
-              <span style={{ color: "#ff8a8a", fontWeight: 600 }}>
+              <span className="muted"> · </span>
+              <span className="down" style={{ fontWeight: 600 }}>
                 卖 ${fmtUsd(sellUsd)}
               </span>
             </div>
@@ -586,25 +457,26 @@ export default function Page() {
                 borderRadius: 4,
                 overflow: "hidden",
                 display: "flex",
-                background: "#1c2230",
+                background: "var(--n-100)",
               }}
             >
-              <div style={{ width: `${buyPct}%`, background: "#56d18a" }} />
-              <div style={{ width: `${sellPct}%`, background: "#ff8a8a" }} />
+              <div
+                style={{ width: `${buyPct}%`, background: "var(--up-500)" }}
+              />
+              <div
+                style={{ width: `${sellPct}%`, background: "var(--down-500)" }}
+              />
             </div>
-          </div>
-          <div style={statCard}>
-            <div style={statLabel}>最大单</div>
+          </StatCard>
+          <StatCard label="最大单">
             {stats.maxTrade ? (
               <div>
-                <div style={{ ...statValue, fontSize: 18 }}>
+                <div className="kpi-value" style={{ fontSize: 18 }}>
                   ${fmtUsd(stats.maxTrade.usd)}
                 </div>
                 <div
+                  className="kpi-sub"
                   style={{
-                    fontSize: 12,
-                    color: "#8aa0c0",
-                    marginTop: 4,
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -615,25 +487,18 @@ export default function Page() {
                 </div>
               </div>
             ) : (
-              <div style={{ ...statValue, fontSize: 18, color: "#6f819c" }}>
+              <div className="kpi-value muted" style={{ fontSize: 18 }}>
                 —
               </div>
             )}
-          </div>
+          </StatCard>
         </section>
       ) : null}
 
       {data?.truncated ? (
         <div
-          style={{
-            padding: "8px 14px",
-            marginBottom: 16,
-            border: "1px solid #5a4a1a",
-            borderRadius: 8,
-            background: "#1a160c",
-            color: "#e3b341",
-            fontSize: 13,
-          }}
+          className="ds-callout ds-callout--warn"
+          style={{ marginBottom: "var(--s-4)" }}
         >
           ⚠️ 结果可能不全（已达扫描上限）
         </div>
@@ -641,78 +506,46 @@ export default function Page() {
 
       {/* Filtered count (reflects the client-side price/age filters) */}
       {data && data.trades.length > 0 ? (
-        <div
-          style={{
-            fontSize: 13,
-            color: "#8aa0c0",
-            marginBottom: 10,
-          }}
-        >
+        <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
           符合筛选{" "}
-          <strong style={{ color: "#e6e6e6" }}>{displayedTrades.length}</strong>{" "}
+          <strong className="mono" style={{ color: "var(--n-800)" }}>
+            {displayedTrades.length}
+          </strong>{" "}
           笔
           {agesStillLoading ? (
-            <span style={{ color: "#6f819c" }}>
-              {" "}
-              · 地址年龄加载中，结果将随加载补全
-            </span>
+            <span className="muted"> · 地址年龄加载中，结果将随加载补全</span>
           ) : null}
         </div>
       ) : null}
 
       {/* Table */}
       {data && data.trades.length === 0 && !loading ? (
-        <div
-          style={{
-            padding: "48px 20px",
-            textAlign: "center",
-            color: "#8aa0c0",
-            border: "1px dashed #2a3346",
-            borderRadius: 8,
-          }}
-        >
-          该筛选条件下 {hours}h 内暂无成交
-        </div>
+        <div className="ds-empty">该筛选条件下 {hours}h 内暂无成交</div>
       ) : data && data.trades.length > 0 ? (
-        <div
-          style={{
-            overflowX: "auto",
-            border: "1px solid #1c2230",
-            borderRadius: 8,
-          }}
-        >
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+        <div className="ds-table-wrap">
+          <table className="ds-table">
             <thead>
               <tr>
                 <th
-                  style={{
-                    ...headStyle,
-                    cursor: "pointer",
-                    userSelect: "none",
-                  }}
+                  className="is-sortable"
                   onClick={() => toggleSort("time")}
                   title="点击按时间排序"
                 >
                   时间{sortArrow("time")}
                 </th>
-                <th style={headStyle}>市场 / 结果</th>
-                <th style={headStyle}>方向</th>
+                <th>市场 / 结果</th>
+                <th>方向</th>
                 <th
-                  style={{
-                    ...headStyle,
-                    textAlign: "right",
-                    cursor: "pointer",
-                    userSelect: "none",
-                  }}
+                  className="is-sortable is-right"
                   onClick={() => toggleSort("amount")}
                   title="点击按金额排序"
                 >
                   金额{sortArrow("amount")}
                 </th>
-                <th style={{ ...headStyle, textAlign: "right" }}>价格</th>
-                <th style={headStyle}>钱包</th>
-                <th style={headStyle}>地址年龄</th>
-                <th style={headStyle}>tx</th>
+                <th className="is-right">价格</th>
+                <th>钱包</th>
+                <th>地址年龄</th>
+                <th>tx</th>
               </tr>
             </thead>
             <tbody>
@@ -720,19 +553,10 @@ export default function Page() {
                 const whale = t.usd >= 50000;
                 return (
                   <tr key={`${t.txHash}-${t.wallet}-${i}`}>
-                    <td style={{ ...cellStyle, color: "#8aa0c0" }}>
-                      {fmtClock(t.ts)}
-                    </td>
-                    <td
-                      style={{
-                        ...cellStyle,
-                        whiteSpace: "normal",
-                        maxWidth: 360,
-                      }}
-                    >
+                    <td className="mono muted">{fmtClock(t.ts)}</td>
+                    <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
                       {t.eventSlug ? (
                         <a
-                          style={linkStyle}
                           href={`https://polymarket.com/event/${t.eventSlug}`}
                           target="_blank"
                           rel="noreferrer"
@@ -742,45 +566,18 @@ export default function Page() {
                       ) : (
                         t.title
                       )}
-                      <div style={{ fontSize: 12, color: "#6f819c" }}>
-                        {t.outcome}
-                      </div>
+                      <div className="kpi-sub">{t.outcome}</div>
                     </td>
-                    <td style={cellStyle}>
-                      <span
-                        style={{
-                          padding: "2px 8px",
-                          borderRadius: 4,
-                          fontSize: 12,
-                          fontWeight: 700,
-                          color: t.side === "BUY" ? "#56d18a" : "#ff8a8a",
-                          background: t.side === "BUY" ? "#13301f" : "#311414",
-                        }}
-                      >
-                        {t.side}
-                      </span>
+                    <td>
+                      <SideTag side={t.side} />
                     </td>
-                    <td
-                      style={{
-                        ...cellStyle,
-                        textAlign: "right",
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
+                    <td className="mono is-right">
                       {whale ? "🐳" : "💰"} ${fmtUsd(t.usd)}
                     </td>
-                    <td
-                      style={{
-                        ...cellStyle,
-                        textAlign: "right",
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {t.price.toFixed(3)}
-                    </td>
-                    <td style={cellStyle}>
+                    <td className="mono is-right">{t.price.toFixed(3)}</td>
+                    <td>
                       <a
-                        style={linkStyle}
+                        className="mono"
                         href={`https://polymarket.com/profile/${t.wallet}`}
                         target="_blank"
                         rel="noreferrer"
@@ -789,24 +586,12 @@ export default function Page() {
                         {shortWallet(t.wallet)}
                       </a>
                     </td>
-                    <td style={cellStyle}>
-                      {(() => {
-                        const { text, tone } = formatAge(
-                          ages[t.wallet?.toLowerCase()],
-                        );
-                        return (
-                          <span
-                            style={{ color: ageColor[tone], fontWeight: 600 }}
-                          >
-                            {text}
-                          </span>
-                        );
-                      })()}
+                    <td>
+                      <AgeBadge ageDays={ages[t.wallet?.toLowerCase()]} />
                     </td>
-                    <td style={cellStyle}>
+                    <td>
                       {t.txHash ? (
                         <a
-                          style={linkStyle}
                           href={`https://polygonscan.com/tx/${t.txHash}`}
                           target="_blank"
                           rel="noreferrer"
@@ -827,21 +612,3 @@ export default function Page() {
     </main>
   );
 }
-
-const statCard: React.CSSProperties = {
-  padding: "14px 16px",
-  border: "1px solid #1c2230",
-  borderRadius: 8,
-  background: "#0d1119",
-};
-const statLabel: React.CSSProperties = {
-  fontSize: 12,
-  color: "#6f819c",
-  marginBottom: 6,
-};
-const statValue: React.CSSProperties = {
-  fontSize: 22,
-  fontWeight: 700,
-  color: "#e6e6e6",
-  fontVariantNumeric: "tabular-nums",
-};

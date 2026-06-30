@@ -22,10 +22,5 @@ export function formatAge(ageDays: number | null | undefined): {
   return { text: `${(d / 365).toFixed(1)}年`, tone: "old" };
 }
 
-export const ageColor: Record<AgeTone, string> = {
-  new: "#ef4444",
-  young: "#f59e0b",
-  normal: "#8aa0c0",
-  old: "#6f819c",
-  unknown: "#6f819c",
-};
+// Tone → color now lives in app/globals.css (.age-* classes), applied by the
+// shared <AgeBadge> in app/ui.tsx. Keeps node-free purity for the worker too.
