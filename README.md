@@ -8,14 +8,14 @@
 [![Next.js 16](https://img.shields.io/badge/Next.js%2016-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org/)
 [![Node 20+](https://img.shields.io/badge/Node-20%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-![Tests](https://img.shields.io/badge/tests-36%20passing-3fb950)
+![Tests](https://img.shields.io/badge/tests-53%20passing-3fb950)
 ![License](https://img.shields.io/badge/license-research%20use-blue)
 [![Last commit](https://img.shields.io/github/last-commit/kydlikebtc/polymarket-whalewatch?color=blue)](https://github.com/kydlikebtc/polymarket-whalewatch/commits/main)
 [![Stars](https://img.shields.io/github/stars/kydlikebtc/polymarket-whalewatch?style=social)](https://github.com/kydlikebtc/polymarket-whalewatch/stargazers)
 
 ![Polymarket WhaleWatch dashboard](docs/dashboard.png)
 
-<sub>The 24h scanner with the insider-hunt combo applied — price <code>0.5–0.9</code> + address age <code>≤7天</code> — collapsing the firehose down to a handful of $100k+ buys from brand-new wallets (some only hours old) at favorable odds.</sub>
+<sub>The 24h scanner filtered to <code>$100k+</code> buys — whale fills across markets with live address-age badges (<code>🆕</code> flags fresh wallets, some only days old) and per-row odds. Layer on the insider-hunt combo (price <code>0.5–0.9</code> + address age <code>≤7天</code>) to collapse the firehose down to suspicious fresh-wallet money.</sub>
 
 </div>
 
@@ -58,7 +58,24 @@ A whale on Polymarket rarely announces themselves. They split a big position int
 
 ### 🎯 The insider-hunt combo
 
-Abnormal insider-information money tends to **buy at favorable odds using relatively new wallets**. Set the scanner to **price `0.5–0.9` + address age `≤7天`** and the firehose collapses to a short list of exactly that signature (see the screenshot above — $100k+ buys from wallets only hours old).
+Abnormal insider-information money tends to **buy at favorable odds using relatively new wallets**. Set the scanner to **price `0.5–0.9` + address age `≤7天`** and the firehose collapses to a short list of exactly that signature (the hero above shows the `$100k+` buy view those filters refine — note the `🆕` fresh-wallet badges).
+
+---
+
+## 📸 More views
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/accumulation.png" alt="Split-buy accumulation board">
+<br><sub><b>Split-buy accumulation board</b> — wallets ranked by <b>NET buy-in</b>, with size-weighted average odds, address age, and per-row time. Expand any row to see the underlying sub-threshold orders that built the position.</sub>
+</td>
+<td width="50%" valign="top">
+<img src="docs/alerts.png" alt="Configurable alert engine">
+<br><sub><b>Configurable alert engine</b> — set amount / side / price band / address-age conditions right in the dashboard; the embedded worker records every match to SQLite and (optionally) pushes it to Telegram.</sub>
+</td>
+</tr>
+</table>
 
 ---
 
@@ -128,7 +145,7 @@ scripts/    dry-run.ts · watch.ts · test-telegram.ts
 docs/plans/ design + implementation docs
 ```
 
-**Stack:** TypeScript · Next.js 16 · better-sqlite3 · zod · vitest · 36 unit tests.
+**Stack:** TypeScript · Next.js 16 · better-sqlite3 · zod · vitest · 53 unit tests.
 
 ---
 
