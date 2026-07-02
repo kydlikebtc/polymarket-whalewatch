@@ -130,7 +130,7 @@ export function CopyButton({
   return (
     <button
       type="button"
-      className="ds-btn ds-btn--ghost"
+      className={copied ? "copy-btn is-copied" : "copy-btn"}
       title={copied ? "已复制" : `${label}：${text}`}
       aria-label={`${label} ${text}`}
       onClick={(e) => {
@@ -141,14 +141,6 @@ export function CopyButton({
           setCopied(true);
           setTimeout(() => setCopied(false), 1200);
         });
-      }}
-      style={{
-        padding: "0 5px",
-        marginLeft: 4,
-        fontSize: "var(--t-xs)",
-        lineHeight: 1.4,
-        verticalAlign: "middle",
-        flexShrink: 0,
       }}
     >
       {copied ? "✓" : "⧉"}

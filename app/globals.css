@@ -603,3 +603,34 @@ h3 {
   color: var(--n-400);
   font-weight: 500;
 }
+
+/* ------------------------------------------------------------ CopyButton */
+/* Deliberately quiet: no border, no fill — a faint glyph that only asserts
+   itself when the row is hovered (or right after a successful copy). */
+.copy-btn {
+  border: none;
+  background: none;
+  padding: 0 3px;
+  margin-left: 4px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--n-400);
+  cursor: pointer;
+  vertical-align: middle;
+  opacity: 0.25;
+  transition:
+    opacity 0.12s ease,
+    color 0.12s ease;
+}
+tr:hover .copy-btn,
+.copy-btn:focus-visible {
+  opacity: 0.9;
+}
+.copy-btn:hover {
+  opacity: 1;
+  color: var(--n-800);
+}
+.copy-btn.is-copied {
+  opacity: 1;
+  color: var(--up-500);
+}
