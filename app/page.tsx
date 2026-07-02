@@ -637,10 +637,8 @@ export default function Page() {
                     <td>
                       <a
                         className="mono"
-                        href={`https://polymarket.com/profile/${t.wallet}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={t.wallet}
+                        href={`/wallet/${t.wallet?.toLowerCase()}`}
+                        title={`${t.wallet} · 点击查看钱包档案`}
                       >
                         {shortWallet(t.wallet)}
                       </a>

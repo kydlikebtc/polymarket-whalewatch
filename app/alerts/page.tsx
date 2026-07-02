@@ -449,20 +449,16 @@ export default function Page() {
                     <td className="mono is-right">${fmtUsd(a.usd)}</td>
                     <td className="mono is-right">{a.price.toFixed(4)}</td>
                     <td>
-                      {a.txHash ? (
+                      {a.wallet ? (
                         <a
                           className="mono"
-                          href={`https://polygonscan.com/tx/${a.txHash}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={a.wallet}
+                          href={`/wallet/${a.wallet.toLowerCase()}`}
+                          title={`${a.wallet} · 点击查看钱包档案`}
                         >
                           {shortWallet(a.wallet)}
                         </a>
                       ) : (
-                        <span className="mono" title={a.wallet}>
-                          {shortWallet(a.wallet)}
-                        </span>
+                        <span className="mono">—</span>
                       )}
                     </td>
                     <td className="mono muted">{fmtTime(a.createdAt)}</td>

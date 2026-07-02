@@ -458,10 +458,8 @@ export default function AccumulationPage() {
                       <td>
                         <a
                           className="mono"
-                          href={`https://polymarket.com/profile/${g.wallet}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={g.wallet}
+                          href={`/wallet/${g.wallet?.toLowerCase()}`}
+                          title={`${g.wallet} · 点击查看钱包档案`}
                           onClick={(e) => e.stopPropagation()}
                         >
                           {shortWallet(g.wallet)}

@@ -356,10 +356,8 @@ export default function ConsensusPage() {
                                   <td>
                                     <a
                                       className="mono"
-                                      href={`https://polymarket.com/profile/${w.wallet}`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      title={w.wallet}
+                                      href={`/wallet/${w.wallet}`}
+                                      title={`${w.wallet} · 点击查看钱包档案`}
                                     >
                                       🏆 {shortWallet(w.wallet)}
                                     </a>
