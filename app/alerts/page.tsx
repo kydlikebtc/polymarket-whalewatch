@@ -6,6 +6,8 @@ import { playBubble } from "../sound";
 import { useSoundToggle } from "../useSound";
 
 type AlertView = {
+  id: number;
+  type: string;
   title: string;
   outcome: string;
   side: string;
@@ -20,6 +22,21 @@ type AlertView = {
 type AlertsResponse = {
   count: number;
   alerts: AlertView[];
+};
+
+// On-demand validation data per alert (computed lazily from public history).
+type AlertOutcome = {
+  price1h: number | null;
+  price24h: number | null;
+  resolved: boolean;
+  resolutionPrice: number | null;
+  won: boolean | null;
+};
+
+const TYPE_ICON: Record<string, string> = {
+  large: "💰",
+  smart: "🏆",
+  consensus: "🔥",
 };
 
 type Side = "ALL" | "BUY" | "SELL";
@@ -58,6 +75,33 @@ function shortWallet(w: string): string {
 function fmtTime(sec: number): string {
   if (!sec) return "";
   return new Date(sec * 1000).toLocaleString("zh-CN", { hour12: false });
+}
+
+// Direction-aware follow-through badge: for a BUY, price moving UP after the
+// signal is confirmation (green); for a SELL, DOWN is confirmation. `entry` is
+// the alert's fill price, `later` the market price at the mark.
+function FollowBadge({
+  label,
+  entry,
+  later,
+  side,
+}: {
+  label: string;
+  entry: number;
+  later: number | null;
+  side: string;
+}) {
+  if (later == null) return null;
+  const delta = later - entry;
+  const cents = delta * 100;
+  const good = side === "SELL" ? delta < 0 : delta > 0;
+  const cls = Math.abs(cents) < 0.05 ? "muted" : good ? "up" : "down";
+  return (
+    <span className={`mono ${cls}`} style={{ whiteSpace: "nowrap" }}>
+      {label} {cents >= 0 ? "+" : ""}
+      {cents.toFixed(1)}¢
+    </span>
+  );
 }
 
 // Parse a number input into number|null (blank/NaN → null).
@@ -321,6 +365,8 @@ export default function Page() {
   const [data, setData] = useState<AlertsResponse>({ count: 0, alerts: [] });
   const [lastRefreshed, setLastRefreshed] = useState<string>("");
   const [error, setError] = useState<string>("");
+  // alertId -> validation outcome, filled lazily after the list renders.
+  const [outcomes, setOutcomes] = useState<Record<number, AlertOutcome>>({});
 
   useEffect(() => {
     let active = true;
@@ -349,6 +395,49 @@ export default function Page() {
       clearInterval(id);
     };
   }, []);
+
+  // Lazily fetch validation outcomes for alerts we haven't resolved yet.
+  // Unresolved alerts are re-queried (their settlement state can change);
+  // resolved ones are final and skipped.
+  useEffect(() => {
+    const want = data.alerts
+      .filter((a) => a.type !== "consensus")
+      .map((a) => a.id)
+      .filter((id) => !(id in outcomes) || !outcomes[id].resolved);
+    if (want.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/alert-outcomes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: want.slice(0, 100) }),
+        });
+        const json = (await res.json()) as {
+          outcomes?: Record<number, AlertOutcome>;
+        };
+        if (cancelled || !json.outcomes) return;
+        setOutcomes((prev) => ({ ...prev, ...json.outcomes }));
+      } catch {
+        // Best-effort; retried on the next poll.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- outcomes is
+    // intentionally omitted: including it would re-trigger on our own merge.
+  }, [data]);
+
+  // Aggregate validation stats over whatever has been computed so far.
+  const tracked = data.alerts.filter((a) => a.type !== "consensus");
+  const with24h = tracked.filter((a) => outcomes[a.id]?.price24h != null);
+  const hits24h = with24h.filter((a) => {
+    const d = (outcomes[a.id].price24h as number) - a.price;
+    return a.side === "SELL" ? d < 0 : d > 0;
+  });
+  const resolvedAlerts = tracked.filter((a) => outcomes[a.id]?.resolved);
+  const wonAlerts = resolvedAlerts.filter((a) => outcomes[a.id]?.won);
 
   // --- New-alert sound notification -------------------------------------
   // Toggle state + persistence + chime-on-enable live in useSoundToggle; this
@@ -407,6 +496,41 @@ export default function Page() {
 
       <ConditionsPanel pollSeconds={4} />
 
+      {/* Validation summary — the "was this signal any good" strip. */}
+      {with24h.length > 0 || resolvedAlerts.length > 0 ? (
+        <div
+          className="ds-callout"
+          style={{
+            marginBottom: "var(--s-4)",
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "var(--s-4)",
+            alignItems: "center",
+          }}
+        >
+          <span>📐 信号验证（当前列表）</span>
+          {with24h.length > 0 ? (
+            <span>
+              24h 方向命中{" "}
+              <strong className="mono">
+                {hits24h.length}/{with24h.length}
+              </strong>{" "}
+              ({Math.round((hits24h.length / with24h.length) * 100)}%)
+            </span>
+          ) : null}
+          {resolvedAlerts.length > 0 ? (
+            <span>
+              已结算胜率{" "}
+              <strong className="mono">
+                {wonAlerts.length}/{resolvedAlerts.length}
+              </strong>{" "}
+              ({Math.round((wonAlerts.length / resolvedAlerts.length) * 100)}
+              %)
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       {data.count === 0 ? (
         <div className="ds-empty">暂无告警 — worker 抓到大单后会出现在这里</div>
       ) : (
@@ -420,16 +544,22 @@ export default function Page() {
                 <th className="is-right">金额</th>
                 <th className="is-right">价格</th>
                 <th>钱包</th>
+                <th title="信号后 1h/24h 价格变化（按方向着色）与结算结果">
+                  验证
+                </th>
                 <th>时间</th>
               </tr>
             </thead>
             <tbody>
               {data.alerts.map((a, i) => {
                 const whale = a.usd >= 50000;
+                const o = outcomes[a.id];
                 return (
-                  <tr key={`${a.txHash}-${i}`}>
+                  <tr key={`${a.id}-${a.txHash}-${i}`}>
                     <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
-                      {whale ? "🐳" : "💰"}{" "}
+                      {whale && a.type === "large"
+                        ? "🐳"
+                        : (TYPE_ICON[a.type] ?? "💰")}{" "}
                       {a.eventSlug ? (
                         <a
                           href={`https://polymarket.com/event/${a.eventSlug}`}
@@ -459,6 +589,44 @@ export default function Page() {
                         </a>
                       ) : (
                         <span className="mono">—</span>
+                      )}
+                    </td>
+                    <td>
+                      {a.type === "consensus" ? (
+                        <span className="muted">—</span>
+                      ) : (
+                        <span
+                          style={{
+                            display: "flex",
+                            gap: "var(--s-2)",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <FollowBadge
+                            label="1h"
+                            entry={a.price}
+                            later={o?.price1h ?? null}
+                            side={a.side}
+                          />
+                          <FollowBadge
+                            label="24h"
+                            entry={a.price}
+                            later={o?.price24h ?? null}
+                            side={a.side}
+                          />
+                          {o?.resolved ? (
+                            <span title={`结算价 ${o.resolutionPrice}`}>
+                              {o.won ? "✅" : "❌"}
+                            </span>
+                          ) : null}
+                          {!o ||
+                          (o.price1h == null &&
+                            o.price24h == null &&
+                            !o.resolved) ? (
+                            <span className="muted">…</span>
+                          ) : null}
+                        </span>
                       )}
                     </td>
                     <td className="mono muted">{fmtTime(a.createdAt)}</td>

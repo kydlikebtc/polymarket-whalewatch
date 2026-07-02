@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type AlertRow = {
+  id: number;
   type: string | null;
   dedup_key: string | null;
   payload: string | null;
@@ -26,6 +27,8 @@ type TradePayload = {
 };
 
 type AlertView = {
+  id: number;
+  type: string;
   title: string;
   outcome: string;
   side: string;
@@ -47,20 +50,43 @@ export async function GET() {
     try {
       const rows = db
         .prepare(
-          "SELECT type, dedup_key, payload, created_at FROM alerts ORDER BY created_at DESC LIMIT 100",
+          "SELECT id, type, dedup_key, payload, created_at FROM alerts ORDER BY created_at DESC LIMIT 100",
         )
         .all() as AlertRow[];
 
       const alerts: AlertView[] = rows.map((row) => {
-        let p: TradePayload = {};
+        let p: TradePayload & { totalNetUsd?: number } = {};
         try {
-          p = row.payload ? (JSON.parse(row.payload) as TradePayload) : {};
+          p = row.payload
+            ? (JSON.parse(row.payload) as TradePayload & {
+                totalNetUsd?: number;
+              })
+            : {};
         } catch {
           p = {};
+        }
+        const type = row.type ?? "large";
+        // Consensus payloads are group aggregates, not single fills.
+        if (type === "consensus") {
+          return {
+            id: row.id,
+            type,
+            title: p.title ?? "(未知市场)",
+            outcome: p.outcome ?? "",
+            side: "BUY",
+            usd: typeof p.totalNetUsd === "number" ? p.totalNetUsd : 0,
+            price: 0,
+            wallet: "",
+            eventSlug: p.eventSlug ?? "",
+            txHash: "",
+            createdAt: row.created_at ?? 0,
+          };
         }
         const size = typeof p.size === "number" ? p.size : 0;
         const price = typeof p.price === "number" ? p.price : 0;
         return {
+          id: row.id,
+          type,
           title: p.title ?? "(未知市场)",
           outcome: p.outcome ?? "",
           side: p.side ?? "",
