@@ -27,9 +27,14 @@ export async function fetchRecentTrades(
 ): Promise<ActivityTrade[]> {
   const out: ActivityTrade[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
+    // sortBy=TIMESTAMP is REQUIRED: sortDirection alone does not sort by time
+    // (verified live). The _cb param busts the CDN's per-URL cache, which can
+    // pin a mis-sorted origin response.
+    const cb =
+      Date.now().toString(36) + Math.floor(Math.random() * 1e9).toString(36);
     const url =
-      `${DATA_API}/activity?user=${wallet}&type=TRADE` +
-      `&sortDirection=DESC&limit=${PAGE_LIMIT}&offset=${page * PAGE_LIMIT}`;
+      `${DATA_API}/activity?user=${encodeURIComponent(wallet)}&type=TRADE` +
+      `&sortBy=TIMESTAMP&sortDirection=DESC&limit=${PAGE_LIMIT}&offset=${page * PAGE_LIMIT}&_cb=${cb}`;
     const res = await fetch(url, {
       signal: AbortSignal.timeout(10_000),
       headers: { "User-Agent": "polymarket-monitor" },

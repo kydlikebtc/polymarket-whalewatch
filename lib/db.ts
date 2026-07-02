@@ -25,6 +25,20 @@ export function openDb(path = "data.sqlite") {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_type_dedup ON alerts(type, dedup_key);
   `);
+  // wallet_age v2: earlier builds could PERMANENTLY cache a wrong first_ts —
+  // the upstream sort occasionally misbehaves and the CDN then serves the
+  // mis-sorted payload, so "first row of the ASC query" was sometimes a much
+  // later activity. The cache rebuilds lazily from verified probes, so the
+  // one-time purge below is cheap; the marker keeps it from re-running.
+  const ageVer = db
+    .prepare("SELECT value FROM config WHERE key = 'wallet_age_v'")
+    .get() as { value: string | null } | undefined;
+  if (ageVer?.value !== "2") {
+    db.prepare("DELETE FROM wallet_age").run();
+    db.prepare(
+      "INSERT OR REPLACE INTO config (key, value) VALUES ('wallet_age_v', '2')",
+    ).run();
+  }
   return db;
 }
 export type DB = ReturnType<typeof openDb>;
