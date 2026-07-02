@@ -1,12 +1,17 @@
 import { parseConfig } from "../lib/config";
 import { openDb, type DB } from "../lib/db";
-import { getLargeTrades } from "../lib/polymarket";
+import { getLargeTrades, getTradesWindow } from "../lib/polymarket";
 import { sendMessage } from "../lib/telegram";
 import { getWalletAges } from "../lib/walletAge";
 import { getAlertConditions } from "../lib/alertConditions";
 import { runAlertCycle } from "../lib/alertEngine";
-import { getSmartTags, maybeDailySeed } from "../lib/smartWallets";
+import {
+  getAllSmartTags,
+  getSmartTags,
+  maybeDailySeed,
+} from "../lib/smartWallets";
 import { getMarketMeta } from "../lib/gamma";
+import { runConsensusCycle } from "../lib/consensus";
 
 // Guarded singleton: instrumentation may call this more than once (per runtime),
 // and `npm run worker` also calls it — the flag makes every call after the first
@@ -109,4 +114,38 @@ export function startAlertEngine(): void {
   }
 
   loop();
+
+  // --- Smart-money consensus loop ---------------------------------------
+  // Every 5 minutes: pull a 6h window at a $2k floor and alert when >=2
+  // whitelist wallets have each net-bought >=$5k of the SAME outcome. Runs on
+  // its own cadence because the window fetch (up to 20 pages) is far heavier
+  // than the 4s tick; state-table dedup means only formations/escalations push.
+  const CONSENSUS_INTERVAL_MS = 5 * 60_000;
+  const CONSENSUS_WINDOW_SEC = 6 * 3600;
+  const CONSENSUS_FLOOR_USD = 2000;
+
+  async function consensusLoop() {
+    try {
+      const fired = await runConsensusCycle({
+        db,
+        fetchWindow: () =>
+          getTradesWindow({
+            minUsd: CONSENSUS_FLOOR_USD,
+            sinceSec: Math.floor(Date.now() / 1000) - CONSENSUS_WINDOW_SEC,
+          }),
+        getSmart: () => getAllSmartTags(db),
+        send,
+      });
+      if (fired > 0) {
+        console.log(`[engine] consensus cycle fired ${fired} alert(s)`);
+      }
+    } catch (e) {
+      console.error("[engine] consensus cycle error", e);
+    }
+    setTimeout(consensusLoop, CONSENSUS_INTERVAL_MS);
+  }
+
+  // First pass shortly after start (gives the daily seed a head start on a
+  // fresh install; an empty whitelist just skips the cycle).
+  setTimeout(consensusLoop, 30_000);
 }

@@ -15,6 +15,7 @@ const NAV = [
   { href: "/", label: "24h 扫描" },
   { href: "/alerts", label: "实时告警" },
   { href: "/accumulation", label: "拆单累计" },
+  { href: "/consensus", label: "聪明钱共识" },
 ] as const;
 
 export function TopNav() {
