@@ -1,6 +1,7 @@
 import { openDb } from "../../../../lib/db";
 import { getWalletAges } from "../../../../lib/walletAge";
 import { getWalletStats } from "../../../../lib/walletStats";
+import { fetchPusdBalance } from "../../../../lib/pusdBalance";
 import { getSmartTags } from "../../../../lib/smartWallets";
 import { getEventCategories } from "../../../../lib/gamma";
 import {
@@ -107,10 +108,12 @@ export async function GET(
       }
       const { profile, recent } = cached;
 
-      // Age + settled record + whitelist flag (all cached server-side).
-      const [ages, stats] = await Promise.all([
+      // Age + settled record + live PUSD cash (all fetched concurrently; the
+      // balance is a single RPC eth_call and degrades to null on failure).
+      const [ages, stats, pusdBalance] = await Promise.all([
         getWalletAges(db, [address]),
         getWalletStats(db, [address]),
+        fetchPusdBalance(address),
       ]);
       const firstTs = ages[address] ?? null;
       const smart = getSmartTags(db, [address])[address] ?? null;
@@ -164,6 +167,7 @@ export async function GET(
         ageDays: firstTs != null ? (Date.now() / 1000 - firstTs) / 86400 : null,
         stats: stats[address],
         smart,
+        pusdBalance,
         profile: { ...profile, topMarkets },
         categories,
         alertHits,

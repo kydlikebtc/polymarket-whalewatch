@@ -60,6 +60,8 @@ type WalletResponse = {
   ageDays: number | null;
   stats: WalletStatsLite | null;
   smart: SmartInfoLite | null;
+  // Live PUSD (Polymarket cash) balance in USD; null = RPC unavailable.
+  pusdBalance: number | null;
   profile: Profile;
   categories: { category: string; usd: number; share: number }[];
   alertHits: AlertHit[];
@@ -205,6 +207,19 @@ export default function WalletPage() {
                 {data.stats?.roi != null
                   ? `${(data.stats.roi * 100).toFixed(1)}%`
                   : "—"}
+              </div>
+            </StatCard>
+            <StatCard label="PUSD 现金余额">
+              <div className="kpi-value">
+                {data.pusdBalance != null
+                  ? `$${fmtUsd(data.pusdBalance)}`
+                  : "—"}
+              </div>
+              <div
+                className="kpi-sub"
+                title="Polymarket 账户内未下注的现金（链上 PUSD 余额，实时查询）"
+              >
+                {data.pusdBalance != null ? "账户内可用资金" : "RPC 暂不可用"}
               </div>
             </StatCard>
             <StatCard label="近窗买入 / 卖出">
