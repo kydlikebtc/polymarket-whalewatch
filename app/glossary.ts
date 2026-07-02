@@ -90,9 +90,9 @@ export const ICONS: IconEntry[] = [
   {
     symbol: "⧉",
     name: "复制 slug",
-    tip: "复制该市场的 slug 标识到剪贴板",
+    tip: "复制该事件的 slug 标识到剪贴板",
     detail:
-      "把该市场的 slug（如 strait-of-hormuz-traffic-returns-to-normal-by-end-of-june）复制到剪贴板，便于在 API、脚本或其他工具里精确引用这个市场。复制成功会短暂显示 ✓。",
+      "把该事件（markets 集合页）的 slug 复制到剪贴板，如 strait-of-hormuz-traffic-returns-to-normal-by-end-of-june —— 即 polymarket.com/event/ 后面的那段，也是 gamma /events?slug= 的查询键，能拉到该事件下全部盘口。单市场事件的 event slug 与 market slug 相同。复制成功会短暂显示 ✓。",
   },
   {
     symbol: "…",

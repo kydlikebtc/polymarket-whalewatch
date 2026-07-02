@@ -663,11 +663,17 @@ export default function Page() {
                         t.title
                       )}
                       {/* Copy button lives on the (short, single-line) subtitle
-                          row so it can never orphan-wrap under a long title. */}
+                          row so it can never orphan-wrap under a long title.
+                          It copies the EVENT slug (the whole markets page, e.g.
+                          fifwc-che-alg-2026-07-02) — not the per-outcome market
+                          slug (…-che); for standalone markets they're identical. */}
                       <div className="kpi-sub" style={{ whiteSpace: "nowrap" }}>
                         {t.outcome}
                         {t.category ? ` · ${catLabel(t.category)}` : ""}
-                        <CopyButton text={t.slug} label="复制市场 slug" />
+                        <CopyButton
+                          text={t.eventSlug || t.slug}
+                          label="复制 slug"
+                        />
                       </div>
                     </td>
                     <td>
