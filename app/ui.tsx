@@ -4,7 +4,7 @@
 // Single source of truth so the three pages stop duplicating inline styles.
 // Visuals live in app/globals.css; these components only wire props → classes.
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { formatAge, type AgeTone } from "./ageFormat";
@@ -81,6 +81,107 @@ export function Segmented<T extends string | number>({
       ))}
     </div>
   );
+}
+
+/* ----------------------------------------------------------- CopyButton */
+
+// execCommand fallback for contexts without the async clipboard API — e.g.
+// the dashboard opened over plain http from another device on the LAN.
+function legacyCopy(text: string): boolean {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  ta.remove();
+  return ok;
+}
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Permission denied / insecure context — fall through to execCommand.
+    }
+  }
+  return legacyCopy(text);
+}
+
+// Tiny inline copy-to-clipboard button (e.g. the market slug next to a title).
+// Shows ✓ briefly after copying. Click never bubbles (rows may be clickable).
+export function CopyButton({
+  text,
+  label = "复制",
+}: {
+  text: string;
+  label?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  if (!text) return null;
+  return (
+    <button
+      type="button"
+      className="ds-btn ds-btn--ghost"
+      title={copied ? "已复制" : `${label}：${text}`}
+      aria-label={`${label} ${text}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        void copyToClipboard(text).then((ok) => {
+          if (!ok) return;
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        });
+      }}
+      style={{
+        padding: "0 5px",
+        marginLeft: 4,
+        fontSize: "var(--t-xs)",
+        lineHeight: 1.4,
+        verticalAlign: "middle",
+        flexShrink: 0,
+      }}
+    >
+      {copied ? "✓" : "⧉"}
+    </button>
+  );
+}
+
+/* ------------------------------------------------------------- Category */
+
+// Chinese display names for the gamma tag taxonomy; unknown labels pass
+// through as-is (the taxonomy grows over time).
+const CATEGORY_ZH: Record<string, string> = {
+  Politics: "政治",
+  Elections: "选举",
+  Sports: "体育",
+  Esports: "电竞",
+  Crypto: "加密",
+  Economy: "经济",
+  Finance: "金融",
+  Business: "商业",
+  Tech: "科技",
+  Science: "科学",
+  "Pop Culture": "文娱",
+  Culture: "文娱",
+  World: "国际",
+  Weather: "天气",
+  Games: "游戏",
+};
+
+// null/"" → 其他 (unknown category bucket).
+export function catLabel(category: string | null | undefined): string {
+  if (!category) return "其他";
+  return CATEGORY_ZH[category] ?? category;
 }
 
 /* ----------------------------------------------------------------- Icon */

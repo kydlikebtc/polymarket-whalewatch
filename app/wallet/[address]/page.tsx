@@ -7,6 +7,7 @@ import {
   SideTag,
   StatCard,
   Tag,
+  catLabel,
   fmtSignedUsdCompact,
   type SmartInfoLite,
   type WalletStatsLite,
@@ -239,7 +240,7 @@ export default function WalletPage() {
               >
                 {data.categories.map((c) => (
                   <Tag key={c.category} variant="default">
-                    {c.category} {Math.round(c.share * 100)}%
+                    {catLabel(c.category)} {Math.round(c.share * 100)}%
                   </Tag>
                 ))}
               </div>
@@ -341,7 +342,9 @@ export default function WalletPage() {
                           m.title
                         )}
                       </td>
-                      <td className="muted">{m.category ?? "—"}</td>
+                      <td className="muted">
+                        {m.category ? catLabel(m.category) : "—"}
+                      </td>
                       <td className="mono is-right up">${fmtUsd(m.buyUsd)}</td>
                       <td className="mono is-right down">
                         ${fmtUsd(m.sellUsd)}

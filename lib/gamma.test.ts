@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { openDb } from "./db";
 import {
+  fetchEventCategories,
   fetchMarketMeta,
+  getEventCategories,
   getMarketMeta,
   tradeMarketContext,
   type MarketMeta,
@@ -143,6 +145,65 @@ describe("getMarketMeta", () => {
     });
     expect(out).toEqual({});
     warnSpy.mockRestore();
+  });
+});
+
+describe("event categories", () => {
+  const event = (slug: string, labels: string[]) => ({
+    slug,
+    tags: labels.map((label) => ({ id: "1", label, slug: label })),
+  });
+
+  it("picks the primary category over niche tags (Sports beats Soccer/Games)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        event("ev-a", ["Soccer", "Games", "Sports", "FIFA World Cup"]),
+        event("ev-b", ["Bitcoin", "Crypto"]),
+        event("ev-c", []), // tagless → known-none ""
+      ],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await fetchEventCategories(["ev-a", "ev-b", "ev-c"]);
+    expect(out["ev-a"]).toBe("Sports");
+    expect(out["ev-b"]).toBe("Crypto");
+    expect(out["ev-c"]).toBe(""); // resolved but unknown
+    expect(fetchMock.mock.calls[0][0]).toContain("slug=ev-a");
+  });
+
+  it("falls back to the first tag label when no primary category matches", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [event("ev-x", ["Chess", "Board Games"])],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await fetchEventCategories(["ev-x"]);
+    expect(out["ev-x"]).toBe("Chess");
+  });
+
+  it("getEventCategories caches known results (including known-none) permanently", async () => {
+    const db = openDb(":memory:");
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce({ "ev-a": "Sports", "ev-b": "" });
+    const first = await getEventCategories(db, ["ev-a", "ev-b"], { fetcher });
+    expect(first).toEqual({ "ev-a": "Sports", "ev-b": null });
+    const second = await getEventCategories(db, ["ev-a", "ev-b"], { fetcher });
+    expect(second).toEqual({ "ev-a": "Sports", "ev-b": null });
+    expect(fetcher).toHaveBeenCalledTimes(1); // both served from cache
+  });
+
+  it("getEventCategories leaves failed-chunk slugs uncached for retry", async () => {
+    const db = openDb(":memory:");
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce({}) // chunk failed — slug absent
+      .mockResolvedValueOnce({ "ev-a": "Politics" });
+    const first = await getEventCategories(db, ["ev-a"], { fetcher });
+    expect(first["ev-a"]).toBeNull();
+    const second = await getEventCategories(db, ["ev-a"], { fetcher });
+    expect(second["ev-a"]).toBe("Politics");
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });
 

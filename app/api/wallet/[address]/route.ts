@@ -2,7 +2,7 @@ import { openDb } from "../../../../lib/db";
 import { getWalletAges } from "../../../../lib/walletAge";
 import { getWalletStats } from "../../../../lib/walletStats";
 import { getSmartTags } from "../../../../lib/smartWallets";
-import { getMarketMeta } from "../../../../lib/gamma";
+import { getEventCategories } from "../../../../lib/gamma";
 import {
   analyzeTrades,
   fetchRecentTrades,
@@ -115,14 +115,15 @@ export async function GET(
       const firstTs = ages[address] ?? null;
       const smart = getSmartTags(db, [address])[address] ?? null;
 
-      // Category focus via gamma over the top markets (cheap, cached).
-      const meta = await getMarketMeta(
+      // Category focus via EVENT TAGS over the top markets (cheap, cached) —
+      // the market-level category field is null for most modern markets.
+      const eventCats = await getEventCategories(
         db,
-        profile.topMarkets.map((m) => m.conditionId),
+        profile.topMarkets.map((m) => m.eventSlug),
       );
       const catUsd = new Map<string, number>();
       const topMarkets = profile.topMarkets.map((m) => {
-        const category = meta[m.conditionId]?.category ?? null;
+        const category = eventCats[m.eventSlug] ?? null;
         if (category) {
           catUsd.set(
             category,

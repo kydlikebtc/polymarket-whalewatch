@@ -2,7 +2,7 @@ import { openDb } from "../../../lib/db";
 import { getTradesWindowDeep } from "../../../lib/polymarket";
 import { getAllSmartTags } from "../../../lib/smartWallets";
 import { detectConsensus, type ConsensusGroup } from "../../../lib/consensus";
-import { getMarketMeta } from "../../../lib/gamma";
+import { getEventCategories, getMarketMeta } from "../../../lib/gamma";
 import type { Trade } from "../../../lib/types";
 
 export const runtime = "nodejs";
@@ -79,10 +79,18 @@ export async function GET(req: Request) {
       });
 
       // Current outcome prices via gamma (cached; failures degrade to null).
-      const meta = await getMarketMeta(
-        db,
-        groups.map((g) => g.conditionId),
-      );
+      // Categories come from EVENT TAGS — the market-level category field is
+      // null for most modern markets.
+      const [meta, categories] = await Promise.all([
+        getMarketMeta(
+          db,
+          groups.map((g) => g.conditionId),
+        ),
+        getEventCategories(
+          db,
+          groups.map((g) => g.eventSlug),
+        ),
+      ]);
       const views: ConsensusView[] = groups.map((g) => {
         const m = meta[g.conditionId];
         const idx = m?.outcomes.findIndex(
@@ -94,7 +102,7 @@ export async function GET(req: Request) {
           ...g,
           currentPrice:
             typeof price === "number" && Number.isFinite(price) ? price : null,
-          category: m?.category ?? null,
+          category: categories[g.eventSlug] ?? null,
           closed: m?.closed ?? false,
         };
       });

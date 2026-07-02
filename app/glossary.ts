@@ -88,6 +88,13 @@ export const ICONS: IconEntry[] = [
     detail: "跳转 Polygonscan 查看该笔成交对应的链上交易哈希。",
   },
   {
+    symbol: "⧉",
+    name: "复制 slug",
+    tip: "复制该市场的 slug 标识到剪贴板",
+    detail:
+      "把该市场的 slug（如 strait-of-hormuz-traffic-returns-to-normal-by-end-of-june）复制到剪贴板，便于在 API、脚本或其他工具里精确引用这个市场。复制成功会短暂显示 ✓。",
+  },
+  {
     symbol: "…",
     name: "加载中",
     tip: "数据加载中：按需查询上游并缓存，稍候自动补全",
@@ -161,6 +168,11 @@ export const TERMS: TermEntry[] = [
     term: "内幕猎杀组合",
     detail:
       "价格 0.5–0.9 + 地址年龄 ≤7 天的筛选组合（可再叠加距结算 ≤N 小时）：异常内幕资金倾向于用新钱包、在有利赔率、临近结算时买入——三个条件叠加能把成交洪流收敛成一张嫌疑名单。",
+  },
+  {
+    term: "类型（市场类别）",
+    detail:
+      "来自 Polymarket 事件标签的市场大类（体育/政治/加密/经济等），扫描器可按类型筛选。标签取事件 tags 中的主类别标签；没有可识别标签的归入'其他'。",
   },
   {
     term: "颜色语义",

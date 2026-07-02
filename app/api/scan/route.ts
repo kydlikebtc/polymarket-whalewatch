@@ -1,4 +1,6 @@
 import { getTradesWindowDeep } from "../../../lib/polymarket";
+import { getEventCategories } from "../../../lib/gamma";
+import { openDb } from "../../../lib/db";
 import { notionalUsd } from "../../../lib/trades";
 import type { Trade } from "../../../lib/types";
 
@@ -13,8 +15,12 @@ type ScanTrade = {
   price: number;
   wallet: string;
   eventSlug: string;
+  // Market slug (e.g. strait-of-hormuz-…) — not rendered, powers copy-to-clipboard.
+  slug: string;
   txHash: string;
   ts: number;
+  // Market category from the event's gamma tags (null = unknown).
+  category: string | null;
 };
 
 type ScanStats = {
@@ -73,7 +79,10 @@ function parseMinUsd(raw: string | null): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 10_000;
 }
 
-function toScanTrade(t: Trade): ScanTrade {
+function toScanTrade(
+  t: Trade,
+  categories: Record<string, string | null>,
+): ScanTrade {
   return {
     title: t.title,
     outcome: t.outcome,
@@ -82,8 +91,10 @@ function toScanTrade(t: Trade): ScanTrade {
     price: t.price,
     wallet: t.proxyWallet,
     eventSlug: t.eventSlug,
+    slug: t.slug,
     txHash: t.transactionHash,
     ts: t.timestamp,
+    category: categories[t.eventSlug] ?? null,
   };
 }
 
@@ -126,8 +137,21 @@ export async function GET(req: Request) {
       cache.set(baseKey, base);
     }
 
+    // Category enrichment via event tags — permanently cached per slug, so
+    // only first-seen events cost a gamma call. Failures degrade to null.
+    let categories: Record<string, string | null> = {};
+    const db = openDb(process.env.DASH_DB ?? "data.sqlite");
+    try {
+      categories = await getEventCategories(
+        db,
+        base.trades.map((t) => t.eventSlug),
+      );
+    } finally {
+      db.close();
+    }
+
     const filtered = base.trades
-      .map(toScanTrade)
+      .map((t) => toScanTrade(t, categories))
       .filter((t) => t.usd >= minUsd && (side === "ALL" || t.side === side));
 
     const body: ScanResponse = {
