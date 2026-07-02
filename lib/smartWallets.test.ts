@@ -103,6 +103,27 @@ describe("seedSmartWallets", () => {
   });
 });
 
+describe("seedSmartWallets retention", () => {
+  it("evicts auto-seeded wallets stale for 30+ days but keeps manual whitelist rows", async () => {
+    const db = openDb(":memory:");
+    const NOW = 100 * 86_400;
+    db.prepare(
+      "INSERT INTO smart_wallets (address, is_whitelist, updated_at) VALUES ('0xstale', 0, ?), ('0xmanual', 1, ?), ('0xrecent', 0, ?)",
+    ).run(NOW - 31 * 86_400, NOW - 31 * 86_400, NOW - 86_400);
+    await seedSmartWallets(db, {
+      periods: ["ALL"],
+      fetchBoard: (async () => [lbRow("0xaaa", 100_000, 1_000_000)]) as never,
+      statsFetcher: async () => stats(),
+      nowSec: NOW,
+    });
+    const left = getSmartTags(db, ["0xstale", "0xmanual", "0xrecent", "0xaaa"]);
+    expect(left["0xstale"]).toBeUndefined();
+    expect(left["0xmanual"]).toBeDefined();
+    expect(left["0xrecent"]).toBeDefined();
+    expect(left["0xaaa"]).toBeDefined();
+  });
+});
+
 describe("maybeDailySeed", () => {
   it("runs once per UTC day and returns null on repeat calls", async () => {
     const db = openDb(":memory:");

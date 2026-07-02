@@ -9,13 +9,30 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // The window fetch dominates cost (up to 20 pages), so cache it briefly keyed
-// by hours; detection params are applied in memory per request.
+// by hours; detection params are applied in memory per request. The cache
+// holds the PROMISE so concurrent misses share one in-flight fetch instead of
+// each hammering the upstream with their own 20-page pull.
 const FLOOR_USD = 2000;
 const CACHE_TTL_MS = 30_000;
-const cache = new Map<
-  number,
-  { at: number; trades: Trade[]; truncated: boolean }
->();
+type WindowResult = { trades: Trade[]; truncated: boolean };
+const cache = new Map<number, { at: number; promise: Promise<WindowResult> }>();
+
+function getWindowShared(hours: number): Promise<WindowResult> {
+  const hit = cache.get(hours);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.promise;
+  const sinceSec = Math.floor(Date.now() / 1000) - hours * 3600;
+  const entry = {
+    at: Date.now(),
+    promise: getTradesWindow({ minUsd: FLOOR_USD, sinceSec }),
+  };
+  // A failed fetch must not stay cached, or every request within the TTL
+  // would re-reject without retrying.
+  entry.promise.catch(() => {
+    if (cache.get(hours) === entry) cache.delete(hours);
+  });
+  cache.set(hours, entry);
+  return entry.promise;
+}
 
 const ALLOWED_HOURS = new Set([2, 6, 12]);
 
@@ -44,50 +61,44 @@ export async function GET(req: Request) {
 
   try {
     const db = openDb(process.env.DASH_DB ?? "data.sqlite");
-    const smartTags = getAllSmartTags(db);
+    try {
+      const smartTags = getAllSmartTags(db);
+      const { trades, truncated } = await getWindowShared(hours);
 
-    let base = cache.get(hours);
-    if (!base || Date.now() - base.at >= CACHE_TTL_MS) {
-      const sinceSec = Math.floor(Date.now() / 1000) - hours * 3600;
-      const { trades, truncated } = await getTradesWindow({
-        minUsd: FLOOR_USD,
-        sinceSec,
+      const groups = detectConsensus(trades, smartTags, {
+        minWallets,
+        minPerWalletUsd,
       });
-      base = { at: Date.now(), trades, truncated };
-      cache.set(hours, base);
-    }
 
-    const groups = detectConsensus(base.trades, smartTags, {
-      minWallets,
-      minPerWalletUsd,
-    });
-
-    // Current outcome prices via gamma (cached; failures degrade to null).
-    const meta = await getMarketMeta(
-      db,
-      groups.map((g) => g.conditionId),
-    );
-    const views: ConsensusView[] = groups.map((g) => {
-      const m = meta[g.conditionId];
-      const idx = m?.outcomes.findIndex(
-        (o) => o.toLowerCase() === g.outcome.toLowerCase(),
+      // Current outcome prices via gamma (cached; failures degrade to null).
+      const meta = await getMarketMeta(
+        db,
+        groups.map((g) => g.conditionId),
       );
-      const price =
-        m && idx != null && idx >= 0 ? m.outcomePrices[idx] : undefined;
-      return {
-        ...g,
-        currentPrice:
-          typeof price === "number" && Number.isFinite(price) ? price : null,
-        category: m?.category ?? null,
-      };
-    });
+      const views: ConsensusView[] = groups.map((g) => {
+        const m = meta[g.conditionId];
+        const idx = m?.outcomes.findIndex(
+          (o) => o.toLowerCase() === g.outcome.toLowerCase(),
+        );
+        const price =
+          m && idx != null && idx >= 0 ? m.outcomePrices[idx] : undefined;
+        return {
+          ...g,
+          currentPrice:
+            typeof price === "number" && Number.isFinite(price) ? price : null,
+          category: m?.category ?? null,
+        };
+      });
 
-    return Response.json({
-      filters,
-      smartCount: smartTags.size,
-      truncated: base.truncated,
-      groups: views,
-    });
+      return Response.json({
+        filters,
+        smartCount: smartTags.size,
+        truncated,
+        groups: views,
+      });
+    } finally {
+      db.close();
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[/api/consensus] failed:", message);

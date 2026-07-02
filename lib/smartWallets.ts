@@ -138,10 +138,20 @@ export async function seedSmartWallets(
         nowSec,
       );
     }
+    // Retention: auto-seeded wallets that haven't re-appeared on any board for
+    // 30 days (a full MONTH-board cycle) age out — otherwise the pool only
+    // grows and stale frozen scores dilute smartOnly/consensus. Runs only on a
+    // successful seed (merged non-empty), so an API outage never mass-deletes.
+    // Manual whitelist rows (is_whitelist=1) are permanent.
+    db.prepare(
+      "DELETE FROM smart_wallets WHERE is_whitelist = 0 AND (updated_at IS NULL OR updated_at < ?)",
+    ).run(nowSec - STALE_AFTER_SEC);
   });
   tx();
   return { seeded: merged.size, enriched };
 }
+
+const STALE_AFTER_SEC = 30 * 86_400;
 
 const SEED_DAY_KEY = "smart_seed_last_day";
 

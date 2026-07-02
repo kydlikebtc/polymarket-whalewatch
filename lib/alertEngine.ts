@@ -67,7 +67,7 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
   const fetched = await fetchTrades();
   // selectNewTrades drops already-seen and sorts oldest-first; then apply the
   // timestamp gate so we never replay historical fills on a cold/late start.
-  const fresh = selectNewTrades(fetched, (k) => hasSeen(db, k)).filter(
+  let fresh = selectNewTrades(fetched, (k) => hasSeen(db, k)).filter(
     (t) => t.timestamp >= minTimestamp,
   );
 
@@ -120,18 +120,26 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
   }
 
   // Pre-settlement-rush condition: only fire within N hours of market end.
-  // Unknown end time (missing meta / closed market) is dropped, mirroring the
-  // unknown-age semantics above.
+  // KNOWN meta with no usable end time (closed market / missing endDate) is a
+  // deterministic drop. MISSING meta (cold cache + transient gamma failure) is
+  // DEFERRED instead: the trade is excluded from this cycle AND from the
+  // markSeen sweep below, so it re-evaluates next cycle once meta resolves —
+  // a transient gamma blip must not permanently swallow a matching trade.
   if (conditions.maxHoursToEnd != null) {
     const cap = conditions.maxHoursToEnd;
+    const deferred = new Set<string>();
     survivors = survivors.filter((t) => {
-      const ctx = tradeMarketContext(
-        notionalUsd(t),
-        metaByCid[t.conditionId],
-        nowSec,
-      );
+      const meta = metaByCid[t.conditionId];
+      if (!meta) {
+        deferred.add(dedupKey(t));
+        return false;
+      }
+      const ctx = tradeMarketContext(notionalUsd(t), meta, nowSec);
       return ctx?.hoursToEnd != null && ctx.hoursToEnd <= cap;
     });
+    if (deferred.size > 0) {
+      fresh = fresh.filter((t) => !deferred.has(dedupKey(t)));
+    }
   }
 
   // Fire alerts for the final matches (already oldest-first from selectNewTrades).

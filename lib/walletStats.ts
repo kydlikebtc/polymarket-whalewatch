@@ -34,7 +34,7 @@ export async function fetchClosedPositions(
   const { maxPages = 8 } = opts;
   const positions: ClosedPosition[] = [];
   for (let page = 0; page < maxPages; page++) {
-    const url = `${DATA_API}/closed-positions?user=${wallet}&limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`;
+    const url = `${DATA_API}/closed-positions?user=${encodeURIComponent(wallet)}&limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`;
     const res = await fetch(url, {
       signal: AbortSignal.timeout(8000),
       headers: { "User-Agent": "polymarket-monitor" },

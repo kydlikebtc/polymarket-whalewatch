@@ -398,14 +398,19 @@ export default function Page() {
 
   // Lazily fetch validation outcomes for alerts we haven't resolved yet.
   // Unresolved alerts are re-queried (their settlement state can change);
-  // resolved ones are final and skipped.
+  // resolved ones are final and skipped. The 5s poll re-runs this effect with
+  // a fresh `data` identity every time, so an in-flight guard stops overlapping
+  // POSTs while a cold batch (up to 200 upstream price lookups) is computing —
+  // and a completed response is ALWAYS merged (idempotent by id), never
+  // discarded by an effect re-run.
+  const outcomesInFlight = useRef(false);
   useEffect(() => {
     const want = data.alerts
       .filter((a) => a.type !== "consensus")
       .map((a) => a.id)
       .filter((id) => !(id in outcomes) || !outcomes[id].resolved);
-    if (want.length === 0) return;
-    let cancelled = false;
+    if (want.length === 0 || outcomesInFlight.current) return;
+    outcomesInFlight.current = true;
     (async () => {
       try {
         const res = await fetch("/api/alert-outcomes", {
@@ -416,15 +421,15 @@ export default function Page() {
         const json = (await res.json()) as {
           outcomes?: Record<number, AlertOutcome>;
         };
-        if (cancelled || !json.outcomes) return;
-        setOutcomes((prev) => ({ ...prev, ...json.outcomes }));
+        if (json.outcomes) {
+          setOutcomes((prev) => ({ ...prev, ...json.outcomes }));
+        }
       } catch {
         // Best-effort; retried on the next poll.
+      } finally {
+        outcomesInFlight.current = false;
       }
     })();
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- outcomes is
     // intentionally omitted: including it would re-trigger on our own merge.
   }, [data]);
@@ -436,7 +441,10 @@ export default function Page() {
     const d = (outcomes[a.id].price24h as number) - a.price;
     return a.side === "SELL" ? d < 0 : d > 0;
   });
-  const resolvedAlerts = tracked.filter((a) => outcomes[a.id]?.resolved);
+  // 50/50 pushes (won === null) stay out of the win-rate denominator.
+  const resolvedAlerts = tracked.filter(
+    (a) => outcomes[a.id]?.resolved && outcomes[a.id]?.won != null,
+  );
   const wonAlerts = resolvedAlerts.filter((a) => outcomes[a.id]?.won);
 
   // --- New-alert sound notification -------------------------------------
@@ -617,7 +625,7 @@ export default function Page() {
                           />
                           {o?.resolved ? (
                             <span title={`结算价 ${o.resolutionPrice}`}>
-                              {o.won ? "✅" : "❌"}
+                              {o.won == null ? "➖" : o.won ? "✅" : "❌"}
                             </span>
                           ) : null}
                           {!o ||

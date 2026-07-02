@@ -303,6 +303,51 @@ describe("runAlertCycle", () => {
     expect(payload.marketCtx.hoursToEnd).toBeCloseTo(5);
   });
 
+  it("(l) missing meta under maxHoursToEnd defers the trade to the next cycle instead of swallowing it", async () => {
+    const db = openDb(":memory:");
+    const NOW = Math.floor(Date.parse("2026-07-01T00:00:00Z") / 1000);
+    const t = mk({ transactionHash: "0xdefer", conditionId: "0xdefer" });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const metaFor = {
+      conditionId: "0xdefer",
+      volume24hr: 100_000,
+      liquidity: 50_000,
+      endDate: "2026-07-01T05:00:00Z",
+      closed: false,
+      category: null,
+      outcomes: ["Yes", "No"],
+      outcomePrices: [0.5, 0.5],
+    };
+    const base = {
+      db,
+      fetchTrades: async () => [t],
+      conditions: cond({ minUsd: 10000, maxHoursToEnd: 6 }),
+      getAges: noAges,
+      send,
+      minTimestamp: 0,
+      nowSec: NOW,
+    };
+
+    // Cycle 1: gamma is down → meta missing → no fire, and NOT marked seen.
+    expect(
+      await runAlertCycle({ ...base, getMarketMeta: async () => ({}) }),
+    ).toBe(0);
+    expect(
+      db.prepare("SELECT 1 FROM seen_trades WHERE dedup_key = ?").get(
+        dedupKey(t),
+      ),
+    ).toBeUndefined();
+
+    // Cycle 2: gamma recovered → the same trade fires normally.
+    expect(
+      await runAlertCycle({
+        ...base,
+        getMarketMeta: async () => ({ "0xdefer": metaFor }),
+      }),
+    ).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("(h) Telegram-less (send undefined) still records to alerts", async () => {
     const db = openDb(":memory:");
     const t = mk();

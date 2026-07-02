@@ -15,6 +15,16 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS alert_outcomes (alert_id INTEGER PRIMARY KEY, price_1h REAL, price_24h REAL, resolved INTEGER DEFAULT 0, resolution_price REAL, won INTEGER, checked_at INTEGER);
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
   `);
+  // One alert row per (type, dedup_key): running the embedded engine and the
+  // standalone worker against the same db is a documented deployment, and their
+  // check-then-act race could double-insert. The one-time cleanup removes any
+  // duplicates created before the unique index existed (keeps the oldest row).
+  db.exec(`
+    DELETE FROM alerts WHERE dedup_key IS NOT NULL AND id NOT IN (
+      SELECT MIN(id) FROM alerts GROUP BY type, dedup_key
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_type_dedup ON alerts(type, dedup_key);
+  `);
   return db;
 }
 export type DB = ReturnType<typeof openDb>;

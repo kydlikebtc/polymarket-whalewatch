@@ -5,6 +5,9 @@ import type { MarketMeta } from "./gamma";
 
 const T0 = 1_700_000_000;
 
+// Unique per insert — alerts carries a unique (type, dedup_key) index.
+let keySeq = 0;
+
 function insertAlert(
   db: ReturnType<typeof openDb>,
   over: Record<string, unknown> = {},
@@ -21,9 +24,9 @@ function insertAlert(
   };
   const r = db
     .prepare(
-      "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES ('large', 'k', ?, ?)",
+      "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES ('large', ?, ?, ?)",
     )
-    .run(JSON.stringify(payload), T0);
+    .run(`k${keySeq++}`, JSON.stringify(payload), T0);
   return Number(r.lastInsertRowid);
 }
 
@@ -120,6 +123,48 @@ describe("computeAlertOutcomes", () => {
       nowSec: T0 + 90_000 + 7 * 3600,
     });
     expect(fetchPrice).toHaveBeenCalledTimes(4);
+  });
+
+  it("fetches the 1h price at the mark even when the alert was viewed earlier (regression)", async () => {
+    const db = openDb(":memory:");
+    const id = insertAlert(db);
+    const fetchPrice = vi.fn(async () => 0.7);
+    // Dashboard views the fresh alert 10s after it fires — writes a
+    // placeholder row whose checked_at predates the 1h mark.
+    const early = await computeAlertOutcomes(db, [id], {
+      fetchPrice,
+      getMeta: async () => ({}),
+      nowSec: T0 + 10,
+    });
+    expect(early[id].price1h).toBeNull();
+    expect(fetchPrice).not.toHaveBeenCalled();
+    // Just past the mark: the never-attempted 1h fetch must NOT be gated by
+    // the null backoff (it previously waited a full NULL_RETRY_SEC).
+    const atMark = await computeAlertOutcomes(db, [id], {
+      fetchPrice,
+      getMeta: async () => ({}),
+      nowSec: T0 + 3600 + 400,
+    });
+    expect(atMark[id].price1h).toBe(0.7);
+    expect(fetchPrice).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a 50/50 resolution as a push: resolved but won=null for both sides", async () => {
+    const db = openDb(":memory:");
+    const buyId = insertAlert(db, { side: "BUY" });
+    const sellId = insertAlert(db, { side: "SELL" });
+    const out = await computeAlertOutcomes(db, [buyId, sellId], {
+      fetchPrice: async () => null,
+      getMeta: async () => ({
+        "0xc1": meta({ closed: true, outcomePrices: [0.5, 0.5] }),
+      }),
+      nowSec: T0 + 100,
+    });
+    for (const id of [buyId, sellId]) {
+      expect(out[id].resolved).toBe(true);
+      expect(out[id].resolutionPrice).toBe(0.5);
+      expect(out[id].won).toBeNull();
+    }
   });
 
   it("skips untrackable payloads (consensus groups)", async () => {

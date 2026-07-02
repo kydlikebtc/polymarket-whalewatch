@@ -48,6 +48,22 @@ describe("fetchMarketMeta", () => {
     expect(fetchMock.mock.calls[0][0]).toContain("condition_ids=0xc1");
   });
 
+  it("keeps successful chunks when another chunk fails (independent failure)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const ids = Array.from({ length: 25 }, (_, i) => `0xc${i}`);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ids.slice(0, 20).map((c) => gammaRow(c)),
+      })
+      .mockResolvedValueOnce({ ok: false, status: 500 });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await fetchMarketMeta(ids);
+    expect(Object.keys(out)).toHaveLength(20); // chunk 1 kept, chunk 2 skipped
+    warnSpy.mockRestore();
+  });
+
   it("chunks large id sets into multiple requests", async () => {
     const ids = Array.from({ length: 25 }, (_, i) => `0xc${i}`);
     const fetchMock = vi.fn().mockResolvedValue({

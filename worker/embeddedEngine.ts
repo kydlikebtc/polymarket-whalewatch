@@ -13,9 +13,12 @@ import {
 import { getMarketMeta } from "../lib/gamma";
 import { runConsensusCycle } from "../lib/consensus";
 
-// Guarded singleton: instrumentation may call this more than once (per runtime),
-// and `npm run worker` also calls it — the flag makes every call after the first
-// a no-op so we never run two concurrent poll loops against the same db.
+// Guarded singleton PER PROCESS: instrumentation may call this more than once
+// within a runtime, and the flag makes repeat calls no-ops. It does NOT guard
+// across processes — running the Next app AND `npm run worker` concurrently
+// gives two engines on the same db. Alert rows stay deduped either way (unique
+// (type, dedup_key) index + INSERT OR IGNORE), but Telegram pushes may rarely
+// double up in that setup; prefer running one or the other.
 let started = false;
 
 const SECONDS_PER_DAY = 86400;

@@ -12,8 +12,10 @@ export const recordAlert = (
   payload: string,
   createdAt: number,
 ) =>
+  // OR IGNORE + the unique (type, dedup_key) index: if a second process raced
+  // us past its hasSeen check, the alert row still lands exactly once.
   db
     .prepare(
-      "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, ?, ?)",
     )
     .run(type, key, payload, createdAt);

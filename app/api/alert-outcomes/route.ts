@@ -19,10 +19,14 @@ export async function POST(req: Request) {
   ].slice(0, MAX);
   try {
     const db = openDb(process.env.DASH_DB ?? "data.sqlite");
-    const outcomes = await computeAlertOutcomes(db, ids, {
-      getMeta: (cids) => getMarketMeta(db, cids),
-    });
-    return Response.json({ outcomes });
+    try {
+      const outcomes = await computeAlertOutcomes(db, ids, {
+        getMeta: (cids) => getMarketMeta(db, cids),
+      });
+      return Response.json({ outcomes });
+    } finally {
+      db.close();
+    }
   } catch (e) {
     console.error("[/api/alert-outcomes] failed:", e);
     return Response.json(

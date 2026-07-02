@@ -201,7 +201,15 @@ export async function runConsensusCycle(
   } = deps;
   const smartTags = getSmart();
   if (smartTags.size === 0) return 0; // whitelist not seeded yet
-  const { trades } = await fetchWindow();
+  const { trades, truncated } = await fetchWindow();
+  if (truncated) {
+    // Newest-first pagination hit its page cap: the fetched prefix is still a
+    // complete, self-consistent (shorter) window, but early SELL legs beyond
+    // it are missing — netUsd for long-running accumulators may be overstated.
+    console.warn(
+      `[consensus] window truncated at the page cap (${trades.length} rows) — detection runs on the shortened window`,
+    );
+  }
   const groups = detectConsensus(trades, smartTags, opts);
   if (groups.length === 0) return 0;
 
@@ -221,7 +229,7 @@ export async function runConsensusCycle(
     if (!isNews) continue;
     if (send) await send(formatConsensusAlert(g));
     db.prepare(
-      "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, ?, ?)",
     ).run(
       "consensus",
       `consensus:${g.conditionId}:${g.outcome}:${g.walletCount}`,

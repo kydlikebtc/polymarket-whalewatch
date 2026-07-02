@@ -152,14 +152,23 @@ export async function computeAlertOutcomes(
       if (typeof rp === "number" && Number.isFinite(rp)) {
         resolved = true;
         resolutionPrice = rp;
-        won = p.side === "BUY" ? rp > 0.5 : rp < 0.5;
+        // A 50/50 resolution (cancelled event / draw ruling) is a push, not a
+        // loss — won stays null so it never enters the win-rate denominator.
+        won =
+          Math.abs(rp - 0.5) < 1e-9
+            ? null
+            : p.side === "BUY"
+              ? rp > 0.5
+              : rp < 0.5;
         dirty = true;
       }
     }
 
     // Historical prices are immutable: fetch once when the mark has passed;
     // nulls (dead market) back off instead of retrying every request.
-    const canRetryNull = !cached || nowSec - cached.checked_at > NULL_RETRY_SEC;
+    // "Attempted" must be judged PER MARK: a cached row whose checked_at
+    // predates the mark (e.g. the dashboard viewed the alert before the hour
+    // elapsed) has NEVER tried this mark, so the null backoff must not gate it.
     const marks: [number, "1h" | "24h"][] = [
       [HOUR, "1h"],
       [DAY, "24h"],
@@ -167,8 +176,10 @@ export async function computeAlertOutcomes(
     for (const [delta, which] of marks) {
       const have = which === "1h" ? price1h : price24h;
       if (have != null) continue;
-      if (nowSec < p.timestamp + delta + SETTLE_MARGIN_SEC) continue;
-      if (cached && !canRetryNull) continue;
+      const markAt = p.timestamp + delta + SETTLE_MARGIN_SEC;
+      if (nowSec < markAt) continue;
+      const attempted = cached != null && cached.checked_at >= markAt;
+      if (attempted && nowSec - cached.checked_at <= NULL_RETRY_SEC) continue;
       try {
         const price = await fetchPrice(p.asset, p.timestamp + delta);
         if (which === "1h") price1h = price;

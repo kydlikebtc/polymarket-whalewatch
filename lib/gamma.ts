@@ -67,17 +67,34 @@ export async function fetchMarketMeta(
   const out: Record<string, MarketMeta> = {};
   for (let i = 0; i < distinct.length; i += CHUNK) {
     const chunk = distinct.slice(i, i + CHUNK);
-    const qs = chunk.map((c) => `condition_ids=${c}`).join("&");
-    const res = await fetch(`${GAMMA_API}/markets?${qs}`, {
-      signal: AbortSignal.timeout(10_000),
-      headers: { "User-Agent": "polymarket-monitor" },
-    });
-    if (!res.ok) throw new Error(`fetchMarketMeta ${res.status}`);
-    const raw = await res.json();
-    if (!Array.isArray(raw)) continue;
-    for (const row of raw) {
-      const meta = normalize(row as Record<string, unknown>);
-      if (meta) out[meta.conditionId] = meta;
+    const qs = chunk
+      .map((c) => `condition_ids=${encodeURIComponent(c)}`)
+      .join("&");
+    // A failing chunk (transient 5xx / timeout) is skipped, not thrown: the
+    // markets it covered simply stay absent so callers retry them later,
+    // while every other chunk's results are kept.
+    try {
+      const res = await fetch(`${GAMMA_API}/markets?${qs}`, {
+        signal: AbortSignal.timeout(10_000),
+        headers: { "User-Agent": "polymarket-monitor" },
+      });
+      if (!res.ok) {
+        console.warn(
+          `[gamma] chunk fetch failed (${res.status}), skipping ${chunk.length} ids`,
+        );
+        continue;
+      }
+      const raw = await res.json();
+      if (!Array.isArray(raw)) continue;
+      for (const row of raw) {
+        const meta = normalize(row as Record<string, unknown>);
+        if (meta) out[meta.conditionId] = meta;
+      }
+    } catch (e) {
+      console.warn(
+        `[gamma] chunk fetch error, skipping ${chunk.length} ids:`,
+        e,
+      );
     }
   }
   return out;
