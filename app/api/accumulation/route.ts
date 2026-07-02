@@ -1,4 +1,4 @@
-import { getTradesWindow } from "../../../lib/polymarket";
+import { getTradesWindowDeep } from "../../../lib/polymarket";
 import { aggregate, type AccumGroup } from "../../../lib/accumulate";
 import type { Trade } from "../../../lib/types";
 
@@ -9,18 +9,17 @@ export const dynamic = "force-dynamic";
 // single-large-trade monitoring. We surface that by aggregating the trade feed
 // per (wallet, conditionId, outcome).
 //
-// The precision floor is the dollar size we pull at — low enough to catch the
-// small sub-trades that make up a split, high enough that pagination stays inside
-// the Data API's hard offset cap of 3000 (maxPages must be <= 7). It's now
-// configurable: a lower floor catches smaller chunks but covers a shorter real
-// window (more rows per minute → the page cap is reached sooner).
+// The precision floor is the dollar size we pull at — a lower floor catches
+// smaller chunks but covers a shorter real window (more rows per minute → the
+// API's 3000-offset depth cap is reached sooner). The DEEP fetch sweeps
+// BUY/SELL separately, so each side gets its own depth budget and the offset
+// cap is handled inside getTradesWindow (no external page math needed).
 const ALLOWED_FLOORS = new Set([500, 1000, 2000]);
 const DEFAULT_FLOOR = 2000;
 const MIN_BUY_COUNT = 3;
 // Every BUY must be < this. The single-large-trade alert threshold — so a split
 // group never double-counts a position that already fired a single-trade alert.
 const SPLIT_CEILING = 10_000;
-const MAX_PAGES = 7;
 
 // Cache the BASE fetch keyed by floor:hours (NOT by minNetUsd — that's applied
 // in memory). ~30s TTL so rapid filter changes don't hammer the API.
@@ -97,10 +96,9 @@ export async function GET(req: Request) {
     let base = cache.get(baseKey);
     if (!base || Date.now() - base.at >= CACHE_TTL_MS) {
       const sinceSec = Math.floor(Date.now() / 1000) - hours * 3600;
-      const { trades, truncated } = await getTradesWindow({
+      const { trades, truncated } = await getTradesWindowDeep({
         minUsd: floor,
         sinceSec,
-        maxPages: MAX_PAGES,
       });
       base = { at: Date.now(), trades, truncated };
       cache.set(baseKey, base);

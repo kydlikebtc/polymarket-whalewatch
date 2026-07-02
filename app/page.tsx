@@ -557,7 +557,7 @@ export default function Page() {
           className="ds-callout ds-callout--warn"
           style={{ marginBottom: "var(--s-4)" }}
         >
-          ⚠️ 结果可能不全（已达扫描上限）
+          ⏱️ 成交太密集，API 回看深度已用满 — 时间窗尾部的部分成交未覆盖
         </div>
       ) : null}
 

@@ -1,4 +1,4 @@
-import { getTradesWindow } from "../../../lib/polymarket";
+import { getTradesWindowDeep } from "../../../lib/polymarket";
 import { notionalUsd } from "../../../lib/trades";
 import type { Trade } from "../../../lib/types";
 
@@ -116,8 +116,9 @@ export async function GET(req: Request) {
     let base = cache.get(baseKey);
     if (!base || Date.now() - base.at >= CACHE_TTL_MS) {
       const sinceSec = Math.floor(Date.now() / 1000) - hours * 3600;
-      // No side filter at fetch time — fetch both sides once, filter side in memory.
-      const { trades, truncated } = await getTradesWindow({
+      // Deep fetch sweeps BUY and SELL separately (each side gets its own
+      // API depth budget); the user's side filter still applies in memory.
+      const { trades, truncated } = await getTradesWindowDeep({
         minUsd: baseFloor,
         sinceSec,
       });

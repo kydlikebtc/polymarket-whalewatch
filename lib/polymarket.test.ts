@@ -1,5 +1,5 @@
 import { it, expect, vi } from "vitest";
-import { getLargeTrades, getTradesWindow } from "./polymarket";
+import { getLargeTrades, getTradesWindow, getTradesWindowDeep } from "./polymarket";
 
 // A factory for valid trade rows; override fields per test.
 function trade(over: Record<string, unknown> = {}) {
@@ -213,6 +213,66 @@ it("getTradesWindow still throws on a FIRST-page 400 (genuinely bad request)", a
   await expect(
     getTradesWindow({ minUsd: 2000, sinceSec: 1700000000 }),
   ).rejects.toThrow("400");
+});
+
+it("getTradesWindowDeep gives each side its own depth budget and trims to the newest truncation edge", async () => {
+  const sinceSec = 1000;
+  // BUY side: one full page (maxPages=1) of in-window rows → truncated, oldest 1501.
+  const buyPage = Array.from({ length: 500 }, (_, i) =>
+    trade({ side: "BUY", timestamp: 2000 - i, transactionHash: `0xb${i}` }),
+  );
+  // SELL side: complete (short page) — one row newer than the BUY edge, one older.
+  const sellPage = [
+    trade({ side: "SELL", timestamp: 1900, transactionHash: "0xs1" }),
+    trade({ side: "SELL", timestamp: 1200, transactionHash: "0xs2" }), // older than BUY edge → dropped
+    trade({ side: "SELL", timestamp: 900, transactionHash: "0xs3" }), // out of window → stops SELL sweep
+  ];
+  const fetchMock = vi.fn(async (url: string) => ({
+    ok: true,
+    json: async () => (url.includes("side=BUY") ? buyPage : sellPage),
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { trades, truncated, effectiveSinceSec } = await getTradesWindowDeep({
+    minUsd: 2000,
+    sinceSec,
+    maxPages: 1,
+  });
+  expect(truncated).toBe(true);
+  expect(effectiveSinceSec).toBe(1501); // BUY's oldest fetched row
+  // 500 BUY rows + the one SELL row inside the complete window.
+  expect(trades).toHaveLength(501);
+  expect(trades.some((t) => t.transactionHash === "0xs2")).toBe(false);
+  // Merged output is newest-first.
+  expect(trades[0].timestamp).toBe(2000);
+  warnSpy.mockRestore();
+});
+
+it("getTradesWindowDeep merges complete sides untruncated and dedups re-served rows", async () => {
+  const sinceSec = 1000;
+  const dupe = trade({ side: "BUY", timestamp: 1500, transactionHash: "0xa" });
+  const buyPage = [
+    dupe,
+    { ...dupe }, // pagination re-serve of the same fill
+    trade({ side: "BUY", timestamp: 900, transactionHash: "0xold" }), // edge
+  ];
+  const sellPage = [
+    trade({ side: "SELL", timestamp: 1400, transactionHash: "0xs" }),
+    trade({ side: "SELL", timestamp: 800, transactionHash: "0xsold" }),
+  ];
+  const fetchMock = vi.fn(async (url: string) => ({
+    ok: true,
+    json: async () => (url.includes("side=BUY") ? buyPage : sellPage),
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+  const { trades, truncated, effectiveSinceSec } = await getTradesWindowDeep({
+    minUsd: 2000,
+    sinceSec,
+  });
+  expect(truncated).toBe(false);
+  expect(effectiveSinceSec).toBe(sinceSec);
+  expect(trades).toHaveLength(2); // dupe collapsed, out-of-window rows gone
+  expect(trades.map((t) => t.transactionHash)).toEqual(["0xa", "0xs"]);
 });
 
 it("getTradesWindow retries a transient 408 then succeeds", async () => {

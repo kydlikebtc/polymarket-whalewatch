@@ -1,5 +1,5 @@
 import { openDb } from "../../../lib/db";
-import { getTradesWindow } from "../../../lib/polymarket";
+import { getTradesWindowDeep } from "../../../lib/polymarket";
 import { getAllSmartTags } from "../../../lib/smartWallets";
 import { detectConsensus, type ConsensusGroup } from "../../../lib/consensus";
 import { getMarketMeta } from "../../../lib/gamma";
@@ -11,10 +11,15 @@ export const dynamic = "force-dynamic";
 // The window fetch dominates cost (up to 20 pages), so cache it briefly keyed
 // by hours; detection params are applied in memory per request. The cache
 // holds the PROMISE so concurrent misses share one in-flight fetch instead of
-// each hammering the upstream with their own 20-page pull.
+// each hammering the upstream with their own multi-page pull. The DEEP fetch
+// sweeps BUY/SELL separately so each side gets its own offset budget.
 const FLOOR_USD = 2000;
 const CACHE_TTL_MS = 30_000;
-type WindowResult = { trades: Trade[]; truncated: boolean };
+type WindowResult = {
+  trades: Trade[];
+  truncated: boolean;
+  effectiveSinceSec: number;
+};
 const cache = new Map<number, { at: number; promise: Promise<WindowResult> }>();
 
 function getWindowShared(hours: number): Promise<WindowResult> {
@@ -23,7 +28,7 @@ function getWindowShared(hours: number): Promise<WindowResult> {
   const sinceSec = Math.floor(Date.now() / 1000) - hours * 3600;
   const entry = {
     at: Date.now(),
-    promise: getTradesWindow({ minUsd: FLOOR_USD, sinceSec }),
+    promise: getTradesWindowDeep({ minUsd: FLOOR_USD, sinceSec }),
   };
   // A failed fetch must not stay cached, or every request within the TTL
   // would re-reject without retrying.
@@ -65,7 +70,8 @@ export async function GET(req: Request) {
     const db = openDb(process.env.DASH_DB ?? "data.sqlite");
     try {
       const smartTags = getAllSmartTags(db);
-      const { trades, truncated } = await getWindowShared(hours);
+      const { trades, truncated, effectiveSinceSec } =
+        await getWindowShared(hours);
 
       const groups = detectConsensus(trades, smartTags, {
         minWallets,
@@ -97,6 +103,7 @@ export async function GET(req: Request) {
         filters,
         smartCount: smartTags.size,
         truncated,
+        effectiveSinceSec,
         groups: views,
       });
     } finally {
@@ -109,6 +116,7 @@ export async function GET(req: Request) {
       filters,
       smartCount: 0,
       truncated: false,
+      effectiveSinceSec: null,
       groups: [],
       error: message,
     });

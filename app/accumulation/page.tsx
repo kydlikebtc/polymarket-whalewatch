@@ -381,7 +381,9 @@ export default function AccumulationPage() {
             alignItems: "center",
           }}
         >
-          {data.truncated ? <span>⚠️ 窗口可能不全（已达扫描上限）</span> : null}
+          {data.truncated ? (
+            <span>⏱️ 成交太密集，API 回看深度已用满 — 以下为完整覆盖时段</span>
+          ) : null}
           {data.oldestTs ? (
             <span>
               实际覆盖{" "}

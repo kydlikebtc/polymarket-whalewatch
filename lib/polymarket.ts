@@ -1,4 +1,5 @@
 import { TradeSchema, type Trade } from "./types";
+import { dedupKey } from "./trades";
 import { z } from "zod";
 const DATA_API = "https://data-api.polymarket.com";
 
@@ -131,4 +132,60 @@ export async function getTradesWindow({
     `[getTradesWindow] hit maxPages=${maxPages} (${out.length} rows) — window may be incomplete`,
   );
   return { trades: out, truncated: true };
+}
+
+export interface DeepWindowResult {
+  trades: Trade[];
+  truncated: boolean;
+  // Start of the COMPLETE merged window. Equals the requested sinceSec when
+  // the full window was covered; later (more recent) when depth ran out.
+  effectiveSinceSec: number;
+}
+
+/**
+ * Deeper window fetch: BUY and SELL are swept SEPARATELY so each side gets its
+ * own 3000-offset budget (verified live: the cap is per-query), roughly
+ * doubling how far back a dense window can reach — the sparser SELL side often
+ * covers the full window even when BUY caps out.
+ *
+ * The merged result is trimmed to the newest truncation edge so accounting
+ * stays complete for BOTH sides of every wallet (a wallet's sells are never
+ * silently missing from a window that includes its buys). Overlapping
+ * pagination re-serves are deduped.
+ */
+export async function getTradesWindowDeep({
+  minUsd,
+  sinceSec,
+  maxPages = 20,
+}: Omit<TradesWindowQuery, "side">): Promise<DeepWindowResult> {
+  const [buy, sell] = await Promise.all([
+    getTradesWindow({ minUsd, side: "BUY", sinceSec, maxPages }),
+    getTradesWindow({ minUsd, side: "SELL", sinceSec, maxPages }),
+  ]);
+
+  // The complete merged window starts at the NEWEST truncation edge: beyond
+  // it one side is blind, so its rows are dropped to keep netting honest.
+  let effectiveSinceSec = sinceSec;
+  for (const r of [buy, sell]) {
+    if (r.truncated && r.trades.length > 0) {
+      const oldest = r.trades[r.trades.length - 1].timestamp;
+      if (oldest > effectiveSinceSec) effectiveSinceSec = oldest;
+    }
+  }
+
+  const seen = new Set<string>();
+  const trades: Trade[] = [];
+  for (const t of [...buy.trades, ...sell.trades]) {
+    if (t.timestamp < effectiveSinceSec) continue;
+    const k = dedupKey(t);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    trades.push(t);
+  }
+  trades.sort((a, b) => b.timestamp - a.timestamp);
+  return {
+    trades,
+    truncated: effectiveSinceSec > sinceSec,
+    effectiveSinceSec,
+  };
 }

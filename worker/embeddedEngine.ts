@@ -1,6 +1,6 @@
 import { parseConfig } from "../lib/config";
 import { openDb, type DB } from "../lib/db";
-import { getLargeTrades, getTradesWindow } from "../lib/polymarket";
+import { getLargeTrades, getTradesWindowDeep } from "../lib/polymarket";
 import { sendMessage } from "../lib/telegram";
 import { getWalletAges } from "../lib/walletAge";
 import { getAlertConditions } from "../lib/alertConditions";
@@ -132,7 +132,7 @@ export function startAlertEngine(): void {
       const fired = await runConsensusCycle({
         db,
         fetchWindow: () =>
-          getTradesWindow({
+          getTradesWindowDeep({
             minUsd: CONSENSUS_FLOOR_USD,
             sinceSec: Math.floor(Date.now() / 1000) - CONSENSUS_WINDOW_SEC,
           }),

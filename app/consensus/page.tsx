@@ -31,6 +31,8 @@ type ConsensusResponse = {
   filters: { hours: number; minWallets: number; minPerWalletUsd: number };
   smartCount: number;
   truncated: boolean;
+  // Start of the COMPLETE window actually covered (API depth is finite).
+  effectiveSinceSec: number | null;
   groups: ConsensusGroup[];
   error?: string;
 };
@@ -52,6 +54,15 @@ function shortWallet(w: string): string {
 
 function fmtTime(tsSec: number): string {
   return new Date(tsSec * 1000).toLocaleTimeString("zh-CN", { hour12: false });
+}
+
+// Human window length between a start timestamp and now.
+function fmtWindowSpan(sinceSec: number): string {
+  const mins = Math.max(0, Math.round((Date.now() / 1000 - sinceSec) / 60));
+  if (mins < 60) return `~${mins} 分钟`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `~${h} 小时` : `~${h} 小时 ${m} 分`;
 }
 
 export default function ConsensusPage() {
@@ -89,6 +100,7 @@ export default function ConsensusPage() {
         filters: { hours, minWallets, minPerWalletUsd },
         smartCount: 0,
         truncated: false,
+        effectiveSinceSec: null,
         groups: [],
         error: e instanceof Error ? e.message : String(e),
       });
@@ -208,12 +220,11 @@ export default function ConsensusPage() {
         </section>
       ) : null}
 
-      {data?.truncated ? (
-        <div
-          className="ds-callout ds-callout--warn"
-          style={{ marginBottom: "var(--s-4)" }}
-        >
-          ⚠️ 窗口可能不全（已达扫描上限）
+      {data?.truncated && data.effectiveSinceSec ? (
+        <div className="ds-callout" style={{ marginBottom: "var(--s-4)" }}>
+          ⏱️ 成交太密集，API 回看深度已用满 — 本页基于{" "}
+          <strong>完整覆盖的 {fmtWindowSpan(data.effectiveSinceSec)}</strong>
+          （自 {fmtTime(data.effectiveSinceSec)} 起，买卖双侧均完整）检测
         </div>
       ) : null}
 
