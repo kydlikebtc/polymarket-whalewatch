@@ -8,7 +8,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { AgeBadge, Field, Segmented, StatCard, WalletStatsBadge } from "../ui";
+import {
+  AgeBadge,
+  Field,
+  Icon,
+  Segmented,
+  StatCard,
+  WalletStatsBadge,
+} from "../ui";
 import { useWalletIntel } from "../useWalletIntel";
 
 type AccumBuy = {
@@ -506,7 +513,7 @@ export default function AccumulationPage() {
                       </td>
                       <td className="mono is-right">
                         <span className="up" style={{ fontWeight: 700 }}>
-                          {whale ? "🐳" : "🧩"} ${fmtUsd(g.netUsd)}
+                          <Icon s={whale ? "🐳" : "🧩"} /> ${fmtUsd(g.netUsd)}
                         </span>
                       </td>
                       <td className="mono is-right">{g.buyCount} 买</td>

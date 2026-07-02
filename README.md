@@ -23,7 +23,7 @@
 
 A whale on Polymarket rarely announces themselves. They split a big position into many small orders, use freshly-created wallets, and buy at favorable odds. **WhaleWatch surfaces exactly that** — a 7×24 worker that pushes large fills to Telegram, plus a web dashboard to hunt the patterns single-trade alerts miss.
 
-> **中文简介**：监控 Polymarket 上的大额成交、拆单建仓、新钱包行为和**聪明钱共识**。后台 worker 实时把大单推送到 Telegram（🏆 标注高胜率白名单钱包，白名单每日自动从官方盈利榜播种）；网页看板可按金额 / 买卖 / 价格(赔率) / 地址年龄筛选，每行自带**已结算战绩徽章**（胜率 · 已实现盈亏），点击任意地址进入**钱包档案页**（赔率带直方图 / 专攻类别 / 拆单倾向）。当 ≥2 个白名单钱包同向买入同一结果时触发**共识告警**。**验证闭环**自动回填每条告警信号后 1h/24h 的价格走势与最终结算结果——直接回答"这些信号到底准不准"。全程只查询公开 API，不归档成交流水。
+> **中文简介**：监控 Polymarket 上的大额成交、拆单建仓、新钱包行为和**聪明钱共识**。后台 worker 实时把大单推送到 Telegram（🏆 标注高胜率白名单钱包，白名单每日自动从官方盈利榜播种）；网页看板可按金额 / 买卖 / 价格(赔率) / 地址年龄筛选，每行自带**已结算战绩徽章**（胜率 · 已实现盈亏），点击任意地址进入**钱包档案页**（赔率带直方图 / 专攻类别 / 拆单倾向）。当 ≥2 个白名单钱包同向买入同一结果时触发**共识告警**。**验证闭环**自动回填每条告警信号后 1h/24h 的价格走势与最终结算结果——直接回答"这些信号到底准不准"。全站图标（💰🐳🧩🆕🏆🔥✅❌➖📐）**鼠标悬停即出解释**，`/glossary` 说明页收录所有符号与名词定义。全程只查询公开 API，不归档成交流水。
 
 > ⚠️ Research / monitoring tool only. Uses **public** Polymarket data — no authentication, no trading. Not financial advice.
 
@@ -72,6 +72,7 @@ Two or three unrelated high-win-rate wallets independently buying the **same out
 - **Split-buy accumulation board (拆单累计买入榜)** — aggregates trades by `(wallet, market, outcome)` and ranks by **NET buy-in**, catching wallets that build a large position through many sub-threshold orders. In live testing, single-trade monitoring missed **~60%** of ≥$10k accumulators.
 - **Alert history + validation (📐)** — every fired alert shows the market price **1h/24h after the signal** (direction-colored ¢ deltas) and the final settlement result (✅/❌/➖ for 50-50 pushes), plus a live strip: _24h direction hit-rate · settled win-rate_. Computed on demand from public history — the tool grades its own signals.
 - **Address age on every wallet** — lifespan since the wallet's first Polymarket activity, badged `🆕` for new addresses (hours/minutes under a day, exact days ≤30d). Permanently cached.
+- **Built-in glossary (`/glossary`)** — every symbol (💰 🐳 🧩 🆕 🏆 🔥 ✅ ❌ ➖ 📐) and term (冲击占比 · 跟单空间 · 评分构成 · 内幕猎杀组合 …) is documented on a reference page, **and hovering any icon anywhere in the dashboard shows the same explanation** — tooltips and the docs page share one data source (`app/glossary.ts`), so they can never drift apart.
 
 ### 🎯 The insider-hunt combo
 
@@ -175,6 +176,8 @@ app/        Next.js dashboard
   consensus/page.tsx      smart-money consensus board (entry vs current price)
   alerts/page.tsx         alert history + validation column + conditions panel
   wallet/[address]/page.tsx  wallet dossier
+  glossary/page.tsx       icon & term reference (same source as hover tooltips)
+  glossary.ts             single source of truth for every symbol/term
   api/{scan,accumulation,consensus,wallet-age,wallet-stats,alert-outcomes,alerts,alert-config}/route.ts
   api/wallet/[address]/route.ts
 scripts/    dry-run.ts · watch.ts · test-telegram.ts

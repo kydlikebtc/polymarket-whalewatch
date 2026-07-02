@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Field, Segmented, SideTag, SoundToggle } from "../ui";
+import { Field, Icon, Segmented, SideTag, SoundToggle } from "../ui";
+import { iconTip } from "../glossary";
 import { playBubble } from "../sound";
 import { useSoundToggle } from "../useSound";
 
@@ -516,7 +517,9 @@ export default function Page() {
             alignItems: "center",
           }}
         >
-          <span>📐 信号验证（当前列表）</span>
+          <span>
+            <Icon s="📐" /> 信号验证（当前列表）
+          </span>
           {with24h.length > 0 ? (
             <span>
               24h 方向命中{" "}
@@ -565,9 +568,13 @@ export default function Page() {
                 return (
                   <tr key={`${a.id}-${a.txHash}-${i}`}>
                     <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
-                      {whale && a.type === "large"
-                        ? "🐳"
-                        : (TYPE_ICON[a.type] ?? "💰")}{" "}
+                      <Icon
+                        s={
+                          whale && a.type === "large"
+                            ? "🐳"
+                            : (TYPE_ICON[a.type] ?? "💰")
+                        }
+                      />{" "}
                       {a.eventSlug ? (
                         <a
                           href={`https://polymarket.com/event/${a.eventSlug}`}
@@ -624,9 +631,12 @@ export default function Page() {
                             side={a.side}
                           />
                           {o?.resolved ? (
-                            <span title={`结算价 ${o.resolutionPrice}`}>
-                              {o.won == null ? "➖" : o.won ? "✅" : "❌"}
-                            </span>
+                            <Icon
+                              s={o.won == null ? "➖" : o.won ? "✅" : "❌"}
+                              title={`${iconTip(
+                                o.won == null ? "➖" : o.won ? "✅" : "❌",
+                              )} · 结算价 ${o.resolutionPrice}`}
+                            />
                           ) : null}
                           {!o ||
                           (o.price1h == null &&

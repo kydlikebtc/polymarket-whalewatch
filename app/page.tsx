@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AgeBadge,
   Field,
+  Icon,
   Segmented,
   SideTag,
   SoundToggle,
@@ -631,7 +632,7 @@ export default function Page() {
                       <SideTag side={t.side} />
                     </td>
                     <td className="mono is-right">
-                      {whale ? "🐳" : "💰"} ${fmtUsd(t.usd)}
+                      <Icon s={whale ? "🐳" : "💰"} /> ${fmtUsd(t.usd)}
                     </td>
                     <td className="mono is-right">{t.price.toFixed(3)}</td>
                     <td>

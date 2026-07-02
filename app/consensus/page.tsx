@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { Field, Segmented, StatCard, Tag } from "../ui";
+import { Field, Icon, Segmented, StatCard, Tag } from "../ui";
 
 type ConsensusWallet = {
   wallet: string;
@@ -284,7 +284,7 @@ export default function ConsensusPage() {
                       </td>
                       <td className="mono is-right">
                         <span style={{ fontWeight: 700 }}>
-                          🔥 {g.walletCount}
+                          <Icon s="🔥" /> {g.walletCount}
                         </span>
                       </td>
                       <td className="mono is-right">
@@ -359,7 +359,7 @@ export default function ConsensusPage() {
                                       href={`/wallet/${w.wallet}`}
                                       title={`${w.wallet} · 点击查看钱包档案`}
                                     >
-                                      🏆 {shortWallet(w.wallet)}
+                                      <Icon s="🏆" /> {shortWallet(w.wallet)}
                                     </a>
                                   </td>
                                   <td className="mono is-right">

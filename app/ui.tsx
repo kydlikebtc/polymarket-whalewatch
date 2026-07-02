@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { formatAge, type AgeTone } from "./ageFormat";
+import { iconTip } from "./glossary";
 
 /* ---------------------------------------------------------------- TopNav */
 
@@ -16,6 +17,7 @@ const NAV = [
   { href: "/alerts", label: "实时告警" },
   { href: "/accumulation", label: "拆单累计" },
   { href: "/consensus", label: "聪明钱共识" },
+  { href: "/glossary", label: "说明" },
 ] as const;
 
 export function TopNav() {
@@ -78,6 +80,24 @@ export function Segmented<T extends string | number>({
         </button>
       ))}
     </div>
+  );
+}
+
+/* ----------------------------------------------------------------- Icon */
+
+// A glossary-backed symbol: hovering any 🐳/🏆/🔥/… shows what it means.
+// Tooltip text comes from app/glossary.ts (the same source as /glossary),
+// so meanings can never drift between the hover and the docs page.
+export function Icon({ s, title }: { s: string; title?: string }) {
+  const tip = title ?? iconTip(s);
+  return (
+    <span
+      title={tip}
+      style={tip ? { cursor: "help" } : undefined}
+      aria-label={tip || undefined}
+    >
+      {s}
+    </span>
   );
 }
 
@@ -150,7 +170,15 @@ const AGE_CLASS: Record<AgeTone, string> = {
 // from formatAge per product choice; tone drives the (financial) color.
 export function AgeBadge({ ageDays }: { ageDays: number | null | undefined }) {
   const { text, tone } = formatAge(ageDays);
-  return <span className={AGE_CLASS[tone]}>{text}</span>;
+  const title =
+    ageDays == null
+      ? iconTip("…")
+      : "地址年龄：钱包首次 Polymarket 活动至今。🆕 = ≤30 天新钱包，红色 = <7 天 — 为一笔交易专门开的新钱包是最强内幕信号之一";
+  return (
+    <span className={AGE_CLASS[tone]} title={title} style={{ cursor: "help" }}>
+      {text}
+    </span>
+  );
 }
 
 /* ------------------------------------------------------ WalletStatsBadge */
