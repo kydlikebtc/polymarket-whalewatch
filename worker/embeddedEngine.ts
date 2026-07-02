@@ -6,6 +6,7 @@ import { getWalletAges } from "../lib/walletAge";
 import { getAlertConditions } from "../lib/alertConditions";
 import { runAlertCycle } from "../lib/alertEngine";
 import { getSmartTags, maybeDailySeed } from "../lib/smartWallets";
+import { getMarketMeta } from "../lib/gamma";
 
 // Guarded singleton: instrumentation may call this more than once (per runtime),
 // and `npm run worker` also calls it — the flag makes every call after the first
@@ -96,6 +97,7 @@ export function startAlertEngine(): void {
         conditions,
         getAges,
         getSmart: (wallets) => getSmartTags(db, wallets),
+        getMarketMeta: (conditionIds) => getMarketMeta(db, conditionIds),
         send,
         minTimestamp,
       });

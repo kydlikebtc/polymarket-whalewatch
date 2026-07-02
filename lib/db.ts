@@ -10,6 +10,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS wallet_age (wallet TEXT PRIMARY KEY, first_ts INTEGER, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS wallet_stats (wallet TEXT PRIMARY KEY, win_rate REAL, realized_pnl REAL, roi REAL, settled_count INTEGER, truncated INTEGER, fetched_at INTEGER);
+    CREATE TABLE IF NOT EXISTS market_meta (condition_id TEXT PRIMARY KEY, meta_json TEXT, fetched_at INTEGER);
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
   `);
   return db;

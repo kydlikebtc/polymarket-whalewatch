@@ -32,6 +32,7 @@ type AlertConditions = {
   maxPrice: number | null;
   maxAgeDays: number | null;
   smartOnly: boolean;
+  maxHoursToEnd: number | null;
 };
 
 const DEFAULT_CONDITIONS: AlertConditions = {
@@ -42,6 +43,7 @@ const DEFAULT_CONDITIONS: AlertConditions = {
   maxPrice: null,
   maxAgeDays: null,
   smartOnly: false,
+  maxHoursToEnd: null,
 };
 
 function fmtUsd(usd: number): string {
@@ -79,12 +81,16 @@ function ConditionsPanel({ pollSeconds }: { pollSeconds: number }) {
   const [minPriceText, setMinPriceText] = useState<string>("");
   const [maxPriceText, setMaxPriceText] = useState<string>("");
   const [ageText, setAgeText] = useState<string>("");
+  const [hoursToEndText, setHoursToEndText] = useState<string>("");
 
   function hydrate(next: AlertConditions) {
     setC(next);
     setMinPriceText(next.minPrice != null ? String(next.minPrice) : "");
     setMaxPriceText(next.maxPrice != null ? String(next.maxPrice) : "");
     setAgeText(next.maxAgeDays != null ? String(next.maxAgeDays) : "");
+    setHoursToEndText(
+      next.maxHoursToEnd != null ? String(next.maxHoursToEnd) : "",
+    );
   }
 
   useEffect(() => {
@@ -119,6 +125,7 @@ function ConditionsPanel({ pollSeconds }: { pollSeconds: number }) {
       maxPrice: numOrNull(maxPriceText),
       maxAgeDays: numOrNull(ageText),
       smartOnly: c.smartOnly,
+      maxHoursToEnd: numOrNull(hoursToEndText),
     };
     try {
       const res = await fetch("/api/alert-config", {
@@ -245,6 +252,20 @@ function ConditionsPanel({ pollSeconds }: { pollSeconds: number }) {
           style={{ width: 70 }}
         />
         <span className="ds-hint">天（留空 = 不限）</span>
+      </Field>
+
+      <Field label="距结算">
+        <span className="ds-hint">≤</span>
+        <input
+          type="number"
+          min={0}
+          placeholder="不限"
+          value={hoursToEndText}
+          onChange={(e) => setHoursToEndText(e.target.value)}
+          className="ds-input ds-input--mono"
+          style={{ width: 70 }}
+        />
+        <span className="ds-hint">小时（留空 = 不限；抓结算前突击买入）</span>
       </Field>
 
       <Field label="聪明钱">

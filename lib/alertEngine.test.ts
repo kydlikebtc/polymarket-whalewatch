@@ -258,6 +258,51 @@ describe("runAlertCycle", () => {
     expect(fired2).toBe(0);
   });
 
+  it("(k) maxHoursToEnd keeps only pre-settlement trades and enriches the alert", async () => {
+    const db = openDb(":memory:");
+    const NOW = Math.floor(Date.parse("2026-07-01T00:00:00Z") / 1000);
+    const soon = mk({ transactionHash: "0xsoon", conditionId: "0xsoon" });
+    const far = mk({ transactionHash: "0xfar", conditionId: "0xfar" });
+    const unknown = mk({ transactionHash: "0xunk", conditionId: "0xunk" });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const metaFor = (cid: string, endDate: string) => ({
+      conditionId: cid,
+      volume24hr: 100_000,
+      liquidity: 50_000,
+      endDate,
+      closed: false,
+      category: null,
+      outcomes: ["Yes", "No"],
+      outcomePrices: [0.5, 0.5],
+    });
+
+    const fired = await runAlertCycle({
+      db,
+      fetchTrades: async () => [soon, far, unknown],
+      conditions: cond({ minUsd: 10000, maxHoursToEnd: 6 }),
+      getAges: noAges,
+      getMarketMeta: async () => ({
+        "0xsoon": metaFor("0xsoon", "2026-07-01T05:00:00Z"), // 5h out
+        "0xfar": metaFor("0xfar", "2026-07-05T00:00:00Z"), // 96h out
+        // 0xunk missing → dropped
+      }),
+      send,
+      minTimestamp: 0,
+      nowSec: NOW,
+    });
+
+    expect(fired).toBe(1);
+    const msg = send.mock.calls[0][0] as string;
+    expect(msg).toContain("距结算 5h");
+    expect(msg).toContain("占24h量 50%"); // $50k trade / $100k 24h volume
+    // The recorded payload carries the market context for later analysis.
+    const row = db.prepare("SELECT payload FROM alerts").get() as {
+      payload: string;
+    };
+    const payload = JSON.parse(row.payload);
+    expect(payload.marketCtx.hoursToEnd).toBeCloseTo(5);
+  });
+
   it("(h) Telegram-less (send undefined) still records to alerts", async () => {
     const db = openDb(":memory:");
     const t = mk();

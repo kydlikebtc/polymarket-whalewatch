@@ -11,6 +11,8 @@ export interface AlertConditions {
   maxPrice: number | null; // 0..1, null = no upper bound
   maxAgeDays: number | null; // address-age cap in days, null = no cap
   smartOnly: boolean; // only fire for wallets present in smart_wallets
+  // Only fire within N hours of market end (pre-settlement rush), null = no cap.
+  maxHoursToEnd: number | null;
 }
 
 export const DEFAULT_CONDITIONS: AlertConditions = {
@@ -21,6 +23,7 @@ export const DEFAULT_CONDITIONS: AlertConditions = {
   maxPrice: null,
   maxAgeDays: null,
   smartOnly: false,
+  maxHoursToEnd: null,
 };
 
 const CONFIG_KEY = "alert_conditions";
