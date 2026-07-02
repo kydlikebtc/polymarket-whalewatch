@@ -662,10 +662,12 @@ export default function Page() {
                       ) : (
                         t.title
                       )}
-                      <CopyButton text={t.slug} label="复制市场 slug" />
-                      <div className="kpi-sub">
+                      {/* Copy button lives on the (short, single-line) subtitle
+                          row so it can never orphan-wrap under a long title. */}
+                      <div className="kpi-sub" style={{ whiteSpace: "nowrap" }}>
                         {t.outcome}
                         {t.category ? ` · ${catLabel(t.category)}` : ""}
+                        <CopyButton text={t.slug} label="复制市场 slug" />
                       </div>
                     </td>
                     <td>
