@@ -5,7 +5,6 @@ const DATA_API = "https://data-api.polymarket.com";
 // Verified live limits for /activity: limit caps at 1000, offset hard-caps at
 // 3000 (400 beyond) — so "recent 2000 trades" is exactly two max-size pages.
 const PAGE_LIMIT = 1000;
-const MAX_PAGES = 2;
 
 // One TRADE row from /activity (usdcSize is USD — verified size*price≈usdcSize).
 const ActivityTradeSchema = z.object({
@@ -22,31 +21,52 @@ const ActivityTradeSchema = z.object({
 });
 export type ActivityTrade = z.infer<typeof ActivityTradeSchema>;
 
-export async function fetchRecentTrades(
+// One /activity page with a retry. The _cb param busts the CDN's per-URL cache
+// (it can pin a mis-sorted origin response — sortBy=TIMESTAMP is REQUIRED, and
+// even then a poisoned cached copy must be avoided), which means every call
+// hits the origin: measured ~3s per max-size page, occasionally slower — hence
+// the generous timeout plus one retry.
+async function fetchActivityPage(
   wallet: string,
-): Promise<ActivityTrade[]> {
-  const out: ActivityTrade[] = [];
-  for (let page = 0; page < MAX_PAGES; page++) {
-    // sortBy=TIMESTAMP is REQUIRED: sortDirection alone does not sort by time
-    // (verified live). The _cb param busts the CDN's per-URL cache, which can
-    // pin a mis-sorted origin response.
+  offset: number,
+): Promise<unknown[]> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
     const cb =
       Date.now().toString(36) + Math.floor(Math.random() * 1e9).toString(36);
     const url =
       `${DATA_API}/activity?user=${encodeURIComponent(wallet)}&type=TRADE` +
-      `&sortBy=TIMESTAMP&sortDirection=DESC&limit=${PAGE_LIMIT}&offset=${page * PAGE_LIMIT}&_cb=${cb}`;
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(10_000),
-      headers: { "User-Agent": "polymarket-monitor" },
-    });
-    if (!res.ok) throw new Error(`fetchRecentTrades ${res.status}`);
-    const raw = await res.json();
-    if (!Array.isArray(raw) || raw.length === 0) break;
-    for (const row of raw) {
-      const parsed = ActivityTradeSchema.safeParse(row);
-      if (parsed.success) out.push(parsed.data);
+      `&sortBy=TIMESTAMP&sortDirection=DESC&limit=${PAGE_LIMIT}&offset=${offset}&_cb=${cb}`;
+    try {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(15_000),
+        headers: { "User-Agent": "polymarket-monitor" },
+      });
+      if (!res.ok) throw new Error(`fetchRecentTrades ${res.status}`);
+      const raw = await res.json();
+      return Array.isArray(raw) ? raw : [];
+    } catch (e) {
+      lastErr = e;
     }
-    if (raw.length < PAGE_LIMIT) break;
+  }
+  throw lastErr;
+}
+
+export async function fetchRecentTrades(
+  wallet: string,
+): Promise<ActivityTrade[]> {
+  // Both pages fire CONCURRENTLY (uncached origin pages are ~3s each — serial
+  // was the dossier's whole latency budget). Page 2 costs one wasted request
+  // for small wallets and is discarded unless page 1 came back full.
+  const [p0, p1] = await Promise.all([
+    fetchActivityPage(wallet, 0),
+    fetchActivityPage(wallet, PAGE_LIMIT),
+  ]);
+  const rows = p0.length === PAGE_LIMIT ? [...p0, ...p1] : p0;
+  const out: ActivityTrade[] = [];
+  for (const row of rows) {
+    const parsed = ActivityTradeSchema.safeParse(row);
+    if (parsed.success) out.push(parsed.data);
   }
   return out;
 }
