@@ -55,11 +55,13 @@ export async function GET() {
         .all() as AlertRow[];
 
       const alerts: AlertView[] = rows.map((row) => {
-        let p: TradePayload & { totalNetUsd?: number } = {};
+        let p: TradePayload & { totalNetUsd?: number; avgBuyPrice?: number } =
+          {};
         try {
           p = row.payload
             ? (JSON.parse(row.payload) as TradePayload & {
                 totalNetUsd?: number;
+                avgBuyPrice?: number;
               })
             : {};
         } catch {
@@ -75,7 +77,9 @@ export async function GET() {
             outcome: p.outcome ?? "",
             side: "BUY",
             usd: typeof p.totalNetUsd === "number" ? p.totalNetUsd : 0,
-            price: 0,
+            // The group's usd-weighted average buy price — the "entry" that
+            // the validation loop and follow-through badges measure against.
+            price: typeof p.avgBuyPrice === "number" ? p.avgBuyPrice : 0,
             wallet: "",
             eventSlug: p.eventSlug ?? "",
             txHash: "",

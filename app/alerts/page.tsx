@@ -5,6 +5,12 @@ import { Field, Icon, Segmented, SideTag, SoundToggle } from "../ui";
 import { iconTip } from "../glossary";
 import { playBubble } from "../sound";
 import { useSoundToggle } from "../useSound";
+import {
+  directionVerdict,
+  summarizeOutcomes,
+  wilsonInterval,
+  type OutcomeStat,
+} from "../../lib/outcomeStats";
 
 type AlertView = {
   id: number;
@@ -38,6 +44,13 @@ const TYPE_ICON: Record<string, string> = {
   large: "💰",
   smart: "🏆",
   consensus: "🔥",
+};
+
+// Per-type labels for the validation strip's grouped breakdown.
+const TYPE_LABEL: Record<string, string> = {
+  large: "💰大单",
+  smart: "🏆聪明钱",
+  consensus: "🔥共识",
 };
 
 type Side = "ALL" | "BUY" | "SELL";
@@ -80,7 +93,9 @@ function fmtTime(sec: number): string {
 
 // Direction-aware follow-through badge: for a BUY, price moving UP after the
 // signal is confirmation (green); for a SELL, DOWN is confirmation. `entry` is
-// the alert's fill price, `later` the market price at the mark.
+// the alert's fill price, `later` the market price at the mark. Moves inside
+// the shared ε deadband are muted — the SAME deadband the summary strip uses,
+// so a badge never looks like a hit that the stats refuse to count.
 function FollowBadge({
   label,
   entry,
@@ -93,14 +108,53 @@ function FollowBadge({
   side: string;
 }) {
   if (later == null) return null;
-  const delta = later - entry;
-  const cents = delta * 100;
-  const good = side === "SELL" ? delta < 0 : delta > 0;
-  const cls = Math.abs(cents) < 0.05 ? "muted" : good ? "up" : "down";
+  const cents = (later - entry) * 100;
+  const v = directionVerdict(side, entry, later);
+  const cls = v === "push" ? "muted" : v === "hit" ? "up" : "down";
   return (
     <span className={`mono ${cls}`} style={{ whiteSpace: "nowrap" }}>
       {label} {cents >= 0 ? "+" : ""}
       {cents.toFixed(1)}¢
+    </span>
+  );
+}
+
+// One stat of the validation strip: overall hits/total, a Wilson 95% interval
+// when the sample can support one (n ≥ 10; a lone 2/3 = "67%" is really
+// ~21%–94%), and the per-type breakdown so 💰 large and 🏆 smart never hide
+// behind a mixed-pool average.
+function StatLine({ label, stat }: { label: string; stat: OutcomeStat }) {
+  if (stat.total === 0) return null;
+  const pct = Math.round((stat.hits / stat.total) * 100);
+  const small = stat.total < 10;
+  const { lo, hi } = wilsonInterval(stat.hits, stat.total);
+  const parts = Object.entries(stat.byType).map(
+    ([type, t]) => `${TYPE_LABEL[type] ?? type} ${t.hits}/${t.total}`,
+  );
+  return (
+    <span className={small ? "muted" : undefined}>
+      {label}{" "}
+      <strong className="mono">
+        {stat.hits}/{stat.total}
+      </strong>{" "}
+      ({pct}%)
+      {small ? (
+        <span className="muted" style={{ fontSize: "var(--t-sm)" }}>
+          {" "}
+          样本不足
+        </span>
+      ) : (
+        <span className="muted mono" style={{ fontSize: "var(--t-sm)" }}>
+          {" "}
+          95%区间 {Math.round(lo * 100)}–{Math.round(hi * 100)}%
+        </span>
+      )}
+      {parts.length > 1 ? (
+        <span className="muted" style={{ fontSize: "var(--t-sm)" }}>
+          {" "}
+          · {parts.join(" · ")}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -406,8 +460,10 @@ export default function Page() {
   // discarded by an effect re-run.
   const outcomesInFlight = useRef(false);
   useEffect(() => {
+    // Consensus alerts are tracked too (synthetic BUY at the group's
+    // avgBuyPrice); pre-upgrade consensus payloads missing token fields are
+    // skipped server-side — a cheap parse-and-drop, never an upstream call.
     const want = data.alerts
-      .filter((a) => a.type !== "consensus")
       .map((a) => a.id)
       .filter((id) => !(id in outcomes) || !outcomes[id].resolved);
     if (want.length === 0 || outcomesInFlight.current) return;
@@ -435,18 +491,14 @@ export default function Page() {
     // intentionally omitted: including it would re-trigger on our own merge.
   }, [data]);
 
-  // Aggregate validation stats over whatever has been computed so far.
-  const tracked = data.alerts.filter((a) => a.type !== "consensus");
-  const with24h = tracked.filter((a) => outcomes[a.id]?.price24h != null);
-  const hits24h = with24h.filter((a) => {
-    const d = (outcomes[a.id].price24h as number) - a.price;
-    return a.side === "SELL" ? d < 0 : d > 0;
-  });
-  // 50/50 pushes (won === null) stay out of the win-rate denominator.
-  const resolvedAlerts = tracked.filter(
-    (a) => outcomes[a.id]?.resolved && outcomes[a.id]?.won != null,
-  );
-  const wonAlerts = resolvedAlerts.filter((a) => outcomes[a.id]?.won);
+  // Aggregate validation stats over whatever has been computed so far —
+  // 1h + 24h direction hits and the settled win-rate, grouped by type, with
+  // ε-deadband pushes excluded from both sides (see lib/outcomeStats).
+  const summary = summarizeOutcomes(data.alerts, outcomes);
+  const hasStats =
+    summary.dir1h.total > 0 ||
+    summary.dir24h.total > 0 ||
+    summary.settled.total > 0;
 
   // --- New-alert sound notification -------------------------------------
   // Toggle state + persistence + chime-on-enable live in useSoundToggle; this
@@ -506,7 +558,7 @@ export default function Page() {
       <ConditionsPanel pollSeconds={4} />
 
       {/* Validation summary — the "was this signal any good" strip. */}
-      {with24h.length > 0 || resolvedAlerts.length > 0 ? (
+      {hasStats ? (
         <div
           className="ds-callout"
           style={{
@@ -520,25 +572,9 @@ export default function Page() {
           <span>
             <Icon s="📐" /> 信号验证（当前列表）
           </span>
-          {with24h.length > 0 ? (
-            <span>
-              24h 方向命中{" "}
-              <strong className="mono">
-                {hits24h.length}/{with24h.length}
-              </strong>{" "}
-              ({Math.round((hits24h.length / with24h.length) * 100)}%)
-            </span>
-          ) : null}
-          {resolvedAlerts.length > 0 ? (
-            <span>
-              已结算胜率{" "}
-              <strong className="mono">
-                {wonAlerts.length}/{resolvedAlerts.length}
-              </strong>{" "}
-              ({Math.round((wonAlerts.length / resolvedAlerts.length) * 100)}
-              %)
-            </span>
-          ) : null}
+          <StatLine label="1h 方向命中" stat={summary.dir1h} />
+          <StatLine label="24h 方向命中" stat={summary.dir24h} />
+          <StatLine label="已结算胜率" stat={summary.settled} />
         </div>
       ) : null}
 
@@ -607,45 +643,43 @@ export default function Page() {
                       )}
                     </td>
                     <td>
-                      {a.type === "consensus" ? (
-                        <span className="muted">—</span>
-                      ) : (
-                        <span
-                          style={{
-                            display: "flex",
-                            gap: "var(--s-2)",
-                            alignItems: "center",
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          <FollowBadge
-                            label="1h"
-                            entry={a.price}
-                            later={o?.price1h ?? null}
-                            side={a.side}
+                      {/* Consensus rows validate too: entry = the group's
+                          avgBuyPrice, timed at the last member fill. */}
+                      <span
+                        style={{
+                          display: "flex",
+                          gap: "var(--s-2)",
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <FollowBadge
+                          label="1h"
+                          entry={a.price}
+                          later={o?.price1h ?? null}
+                          side={a.side}
+                        />
+                        <FollowBadge
+                          label="24h"
+                          entry={a.price}
+                          later={o?.price24h ?? null}
+                          side={a.side}
+                        />
+                        {o?.resolved ? (
+                          <Icon
+                            s={o.won == null ? "➖" : o.won ? "✅" : "❌"}
+                            title={`${iconTip(
+                              o.won == null ? "➖" : o.won ? "✅" : "❌",
+                            )} · 结算价 ${o.resolutionPrice} vs 成交价 ${a.price.toFixed(3)}`}
                           />
-                          <FollowBadge
-                            label="24h"
-                            entry={a.price}
-                            later={o?.price24h ?? null}
-                            side={a.side}
-                          />
-                          {o?.resolved ? (
-                            <Icon
-                              s={o.won == null ? "➖" : o.won ? "✅" : "❌"}
-                              title={`${iconTip(
-                                o.won == null ? "➖" : o.won ? "✅" : "❌",
-                              )} · 结算价 ${o.resolutionPrice}`}
-                            />
-                          ) : null}
-                          {!o ||
-                          (o.price1h == null &&
-                            o.price24h == null &&
-                            !o.resolved) ? (
-                            <span className="muted">…</span>
-                          ) : null}
-                        </span>
-                      )}
+                        ) : null}
+                        {!o ||
+                        (o.price1h == null &&
+                          o.price24h == null &&
+                          !o.resolved) ? (
+                          <span className="muted">…</span>
+                        ) : null}
+                      </span>
                     </td>
                     <td className="mono muted">{fmtTime(a.createdAt)}</td>
                   </tr>

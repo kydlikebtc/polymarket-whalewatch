@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { settleWon } from "./outcomeStats";
 export function openDb(path = "data.sqlite") {
   const db = new Database(path);
   db.pragma("journal_mode = WAL");
@@ -38,6 +39,64 @@ export function openDb(path = "data.sqlite") {
     db.prepare(
       "INSERT OR REPLACE INTO config (key, value) VALUES ('wallet_age_v', '2')",
     ).run();
+  }
+  // alert_outcomes v2: `won` used to be judged against a fixed 0.5 divider
+  // regardless of the fill price — a BUY@0.9 settling at 0.6 (a real
+  // 0.3/share loss) was cached as ✅. Settlements are immutable, so the wrong
+  // verdicts never self-heal: rescore every cached settled row from
+  // resolution_price + the payload's fill price (settleWon). The marker keeps
+  // this one-time backfill from re-running; unreadable payloads are skipped.
+  const wonVer = db
+    .prepare("SELECT value FROM config WHERE key = 'outcome_won_v'")
+    .get() as { value: string | null } | undefined;
+  if (wonVer?.value !== "2") {
+    const rows = db
+      .prepare(
+        `SELECT ao.alert_id AS id, ao.resolution_price AS rp, ao.won AS won,
+                a.type AS type, a.payload AS payload
+           FROM alert_outcomes ao JOIN alerts a ON a.id = ao.alert_id
+          WHERE ao.resolved = 1 AND ao.resolution_price IS NOT NULL`,
+      )
+      .all() as {
+      id: number;
+      rp: number;
+      won: number | null;
+      type: string | null;
+      payload: string | null;
+    }[];
+    const upd = db.prepare(
+      "UPDATE alert_outcomes SET won = ? WHERE alert_id = ?",
+    );
+    let corrected = 0;
+    db.transaction(() => {
+      for (const r of rows) {
+        try {
+          const p = JSON.parse(r.payload ?? "") as Record<string, unknown>;
+          // Consensus groups are tracked as a synthetic BUY at avgBuyPrice
+          // (mirrors parseTrackable in lib/alertOutcomes).
+          const side = r.type === "consensus" ? "BUY" : p.side;
+          const entry = r.type === "consensus" ? p.avgBuyPrice : p.price;
+          if ((side !== "BUY" && side !== "SELL") || typeof entry !== "number")
+            continue;
+          const won = settleWon(side, entry, r.rp);
+          const wonInt = won == null ? null : won ? 1 : 0;
+          if (wonInt !== r.won) {
+            upd.run(wonInt, r.id);
+            corrected++;
+          }
+        } catch {
+          // Malformed payload — leave the cached verdict untouched.
+        }
+      }
+      db.prepare(
+        "INSERT OR REPLACE INTO config (key, value) VALUES ('outcome_won_v', '2')",
+      ).run();
+    })();
+    if (rows.length > 0) {
+      console.log(
+        `[db] outcome_won v2 backfill: rescored ${rows.length} settled rows vs fill price, corrected ${corrected}`,
+      );
+    }
   }
   return db;
 }

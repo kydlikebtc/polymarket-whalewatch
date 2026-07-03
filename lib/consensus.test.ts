@@ -51,6 +51,9 @@ describe("detectConsensus", () => {
     expect(groups[0].walletCount).toBe(2);
     expect(groups[0].totalNetUsd).toBe(20000);
     expect(groups[0].wallets.map((w) => w.wallet)).toEqual(["0xa", "0xb"]);
+    // Token identity for the validation loop (all members fill the same token).
+    expect(groups[0].asset).toBe("asset1");
+    expect(groups[0].outcomeIndex).toBe(0);
   });
 
   it("nets sells against buys per wallet (a flip-flopper doesn't qualify)", () => {
@@ -165,6 +168,19 @@ describe("runConsensusCycle", () => {
     expect(rows).toHaveLength(2);
     expect(rows.every((r) => r.type === "consensus")).toBe(true);
     expect(rows[1].dedup_key).toContain(":3"); // escalation level in the key
+  });
+
+  it("stores the token fields the alert_outcomes validation loop needs in the payload", async () => {
+    const db = openDb(":memory:");
+    await runConsensusCycle(deps(db));
+    const row = db
+      .prepare("SELECT payload FROM alerts WHERE type = 'consensus'")
+      .get() as { payload: string };
+    const p = JSON.parse(row.payload) as Record<string, unknown>;
+    expect(p.asset).toBe("asset1");
+    expect(p.outcomeIndex).toBe(0);
+    expect(typeof p.avgBuyPrice).toBe("number");
+    expect(typeof p.lastTs).toBe("number");
   });
 
   it("re-fires after the state TTL expires (group re-formed = news again)", async () => {

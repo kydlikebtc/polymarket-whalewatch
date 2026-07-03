@@ -19,6 +19,11 @@ export interface ConsensusGroup {
   outcome: string;
   title: string;
   eventSlug: string;
+  // Token identity for the alert_outcomes validation loop: every member trade
+  // of a (conditionId, outcome) group fills the SAME token, so any member's
+  // asset/outcomeIndex identify the group's token.
+  asset: string;
+  outcomeIndex: number;
   wallets: ConsensusWallet[]; // qualified only, sorted by netUsd desc
   walletCount: number;
   totalNetUsd: number;
@@ -64,6 +69,8 @@ export function detectConsensus(
       outcome: string;
       title: string;
       eventSlug: string;
+      asset: string;
+      outcomeIndex: number;
       firstTs: number;
       lastTs: number;
       byWallet: Map<string, Acc>;
@@ -83,6 +90,8 @@ export function detectConsensus(
         outcome: t.outcome,
         title: t.title,
         eventSlug: t.eventSlug,
+        asset: t.asset,
+        outcomeIndex: t.outcomeIndex,
         firstTs: t.timestamp,
         lastTs: t.timestamp,
         byWallet: new Map(),
@@ -132,6 +141,8 @@ export function detectConsensus(
       outcome: g.outcome,
       title: g.title,
       eventSlug: g.eventSlug,
+      asset: g.asset,
+      outcomeIndex: g.outcomeIndex,
       wallets: qualified,
       walletCount: qualified.length,
       totalNetUsd,

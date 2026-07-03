@@ -2,6 +2,7 @@ import type { DB } from "./db";
 import type { MarketMeta } from "./gamma";
 import { fetchPriceAt } from "./priceHistory";
 import { mapLimit } from "./mapLimit";
+import { settleWon } from "./outcomeStats";
 
 // The validation loop's answer to "was this signal any good?": the market
 // price 1h/24h after the signal plus the final settlement result. Everything
@@ -12,10 +13,13 @@ export interface AlertOutcome {
   price24h: number | null;
   resolved: boolean;
   resolutionPrice: number | null; // settled price of the alert's outcome (≈0 or 1)
-  won: boolean | null; // side-aware: BUY wins at 1, SELL wins at 0
+  won: boolean | null; // P&L direction vs the fill price (settleWon); null = push
 }
 
-// Minimal payload fields required for outcome tracking (large/smart alerts).
+// Minimal payload fields required for outcome tracking. Large/smart payloads
+// are single fills; consensus payloads are group aggregates tracked as a
+// synthetic BUY at the group's usd-weighted average price, timed at the LAST
+// member fill (the moment the alert-worthy formation completed).
 interface TrackablePayload {
   asset: string;
   conditionId: string;
@@ -25,10 +29,35 @@ interface TrackablePayload {
   outcomeIndex: number;
 }
 
-function parseTrackable(payload: string | null): TrackablePayload | null {
+function parseTrackable(
+  type: string | null,
+  payload: string | null,
+): TrackablePayload | null {
   if (!payload) return null;
   try {
     const p = JSON.parse(payload) as Record<string, unknown>;
+    if (type === "consensus") {
+      // Every member trade of a (conditionId, outcome) group shares the same
+      // token, so the group-level asset/outcomeIndex identify it. Pre-upgrade
+      // payloads (before detectConsensus carried these fields) skip gracefully.
+      if (
+        typeof p.asset !== "string" ||
+        typeof p.conditionId !== "string" ||
+        typeof p.avgBuyPrice !== "number" ||
+        typeof p.lastTs !== "number" ||
+        typeof p.outcomeIndex !== "number"
+      ) {
+        return null;
+      }
+      return {
+        asset: p.asset,
+        conditionId: p.conditionId,
+        price: p.avgBuyPrice,
+        timestamp: p.lastTs,
+        side: "BUY",
+        outcomeIndex: p.outcomeIndex,
+      };
+    }
     if (
       typeof p.asset !== "string" ||
       typeof p.conditionId !== "string" ||
@@ -70,7 +99,8 @@ export interface OutcomeDeps {
  * Compute (and cache) outcomes for the given alert ids. Immutable facts —
  * historical prices and settlements — are written once to alert_outcomes;
  * unresolved markets are re-checked via the (cached) gamma meta each call.
- * Untrackable rows (consensus groups, malformed payloads) are skipped.
+ * Untrackable rows (pre-upgrade consensus payloads, malformed payloads) are
+ * skipped.
  */
 export async function computeAlertOutcomes(
   db: DB,
@@ -87,11 +117,17 @@ export async function computeAlertOutcomes(
 
   const placeholders = ids.map(() => "?").join(",");
   const alerts = db
-    .prepare(`SELECT id, payload FROM alerts WHERE id IN (${placeholders})`)
-    .all(...ids) as { id: number; payload: string | null }[];
+    .prepare(
+      `SELECT id, type, payload FROM alerts WHERE id IN (${placeholders})`,
+    )
+    .all(...ids) as {
+    id: number;
+    type: string | null;
+    payload: string | null;
+  }[];
 
   const trackable = alerts
-    .map((a) => ({ id: a.id, p: parseTrackable(a.payload) }))
+    .map((a) => ({ id: a.id, p: parseTrackable(a.type, a.payload) }))
     .filter((a): a is { id: number; p: TrackablePayload } => a.p !== null);
   if (trackable.length === 0) return {};
 
@@ -152,14 +188,13 @@ export async function computeAlertOutcomes(
       if (typeof rp === "number" && Number.isFinite(rp)) {
         resolved = true;
         resolutionPrice = rp;
-        // A 50/50 resolution (cancelled event / draw ruling) is a push, not a
-        // loss — won stays null so it never enters the win-rate denominator.
-        won =
-          Math.abs(rp - 0.5) < 1e-9
-            ? null
-            : p.side === "BUY"
-              ? rp > 0.5
-              : rp < 0.5;
+        // Win/loss is judged by P&L direction against the FILL price, not a
+        // fixed 0.5 divider — BUY@0.9 settling at 0.6 lost 0.3/share even
+        // though 0.6 > 0.5 (fractional settlements). Pushes (≈50/50
+        // cancellation/draw ruling, or a settle within ε of the fill) stay
+        // null and never enter the win-rate denominator; standard 0/1
+        // settlements score exactly as before.
+        won = settleWon(p.side, p.price, rp);
         dirty = true;
       }
     }

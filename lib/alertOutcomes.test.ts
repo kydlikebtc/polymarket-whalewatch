@@ -149,6 +149,43 @@ describe("computeAlertOutcomes", () => {
     expect(fetchPrice).toHaveBeenCalledTimes(1);
   });
 
+  it("scores fractional settlements by P&L direction vs the fill price", async () => {
+    const db = openDb(":memory:");
+    // BUY@0.9 settling 0.6: a 0.3/share loss (the old 0.5-divider said ✅).
+    const highBuy = insertAlert(db, { side: "BUY", price: 0.9 });
+    // BUY@0.3 settling 0.45: a real profit (the old logic said ❌).
+    const lowBuy = insertAlert(db, {
+      side: "BUY",
+      price: 0.3,
+      outcomeIndex: 1,
+    });
+    const out = await computeAlertOutcomes(db, [highBuy, lowBuy], {
+      fetchPrice: async () => null,
+      getMeta: async () => ({
+        "0xc1": meta({ closed: true, outcomePrices: [0.6, 0.45] }),
+      }),
+      nowSec: T0 + 100,
+    });
+    expect(out[highBuy].resolved).toBe(true);
+    expect(out[highBuy].won).toBe(false);
+    expect(out[lowBuy].won).toBe(true);
+  });
+
+  it("treats a settle within ε of the fill price as a push (won=null)", async () => {
+    const db = openDb(":memory:");
+    const id = insertAlert(db, { side: "BUY", price: 0.598 });
+    const out = await computeAlertOutcomes(db, [id], {
+      fetchPrice: async () => null,
+      getMeta: async () => ({
+        "0xc1": meta({ closed: true, outcomePrices: [0.6, 0.4] }),
+      }),
+      nowSec: T0 + 100,
+    });
+    expect(out[id].resolved).toBe(true);
+    expect(out[id].resolutionPrice).toBe(0.6);
+    expect(out[id].won).toBeNull();
+  });
+
   it("treats a 50/50 resolution as a push: resolved but won=null for both sides", async () => {
     const db = openDb(":memory:");
     const buyId = insertAlert(db, { side: "BUY" });
@@ -167,7 +204,44 @@ describe("computeAlertOutcomes", () => {
     }
   });
 
-  it("skips untrackable payloads (consensus groups)", async () => {
+  it("tracks consensus alerts as a synthetic BUY at avgBuyPrice, timed at lastTs", async () => {
+    const db = openDb(":memory:");
+    const payload = {
+      conditionId: "0xc1",
+      outcome: "Yes",
+      title: "M",
+      eventSlug: "e",
+      asset: "tok1",
+      outcomeIndex: 0,
+      avgBuyPrice: 0.42,
+      lastTs: T0,
+      totalNetUsd: 12000,
+      walletCount: 2,
+    };
+    const r = db
+      .prepare(
+        "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES ('consensus', 'ck', ?, ?)",
+      )
+      .run(JSON.stringify(payload), T0);
+    const id = Number(r.lastInsertRowid);
+    const fetchPrice = vi.fn(async (_tok: string, ts: number) =>
+      ts === T0 + 3600 ? 0.5 : 0.6,
+    );
+    const out = await computeAlertOutcomes(db, [id], {
+      fetchPrice,
+      getMeta: async () => ({
+        "0xc1": meta({ closed: true, outcomePrices: [1, 0] }),
+      }),
+      nowSec: T0 + 90_000,
+    });
+    expect(out[id].price1h).toBe(0.5);
+    expect(out[id].price24h).toBe(0.6);
+    expect(out[id].resolved).toBe(true);
+    expect(out[id].won).toBe(true); // BUY@0.42 settled at 1
+    expect(fetchPrice).toHaveBeenCalledWith("tok1", T0 + 3600);
+  });
+
+  it("skips pre-upgrade consensus payloads missing token fields (graceful downgrade)", async () => {
     const db = openDb(":memory:");
     const r = db
       .prepare(
