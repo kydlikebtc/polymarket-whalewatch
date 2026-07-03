@@ -7,8 +7,9 @@ import {
 } from "../../../../lib/alertHits";
 import { getWalletAges } from "../../../../lib/walletAge";
 import { getWalletStats } from "../../../../lib/walletStats";
+import { fetchPusdBalance } from "../../../../lib/pusdBalance";
 import { getSmartTags } from "../../../../lib/smartWallets";
-import { getMarketMeta } from "../../../../lib/gamma";
+import { getEventCategories } from "../../../../lib/gamma";
 import {
   analyzeTrades,
   fetchRecentTrades,
@@ -68,22 +69,25 @@ export async function GET(
       }
       const { profile, recent } = cached;
 
-      // Age + settled record + whitelist flag (all cached server-side).
-      const [ages, stats] = await Promise.all([
+      // Age + settled record + live PUSD cash (all fetched concurrently; the
+      // balance is a single RPC eth_call and degrades to null on failure).
+      const [ages, stats, pusdBalance] = await Promise.all([
         getWalletAges(db, [address]),
         getWalletStats(db, [address]),
+        fetchPusdBalance(address),
       ]);
       const firstTs = ages[address] ?? null;
       const smart = getSmartTags(db, [address])[address] ?? null;
 
-      // Category focus via gamma over the top markets (cheap, cached).
-      const meta = await getMarketMeta(
+      // Category focus via EVENT TAGS over the top markets (cheap, cached) —
+      // the market-level category field is null for most modern markets.
+      const eventCats = await getEventCategories(
         db,
-        profile.topMarkets.map((m) => m.conditionId),
+        profile.topMarkets.map((m) => m.eventSlug),
       );
       const catUsd = new Map<string, number>();
       const topMarkets = profile.topMarkets.map((m) => {
-        const category = meta[m.conditionId]?.category ?? null;
+        const category = eventCats[m.eventSlug] ?? null;
         if (category) {
           catUsd.set(
             category,
@@ -113,6 +117,7 @@ export async function GET(
         ageDays: firstTs != null ? (Date.now() / 1000 - firstTs) / 86400 : null,
         stats: stats[address],
         smart,
+        pusdBalance,
         profile: { ...profile, topMarkets },
         categories,
         alertHits,

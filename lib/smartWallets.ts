@@ -14,11 +14,11 @@ export interface SmartTag {
   isWhitelist: boolean;
 }
 
-// Survivorship haircut on the win-rate axis: positions ridden to zero never
-// reach /closed-positions (verified live: a "100% · +$56.6M" wallet hid 39
-// zeroed positions worth -$1.46M — true rate 91.1%), so a FLAWLESS settled
-// record is an upper bound, not a measurement. A truncated record (page cap
-// hit) only covers the newest positions and inherits the same doubt.
+// Incomplete-record haircut on the win-rate axis. walletStats already merges
+// held-to-zero losers from /positions (the survivorship fix — a complete
+// flawless record is now honest and takes no haircut), but a TRUNCATED record
+// (page cap hit on either source) only covers the newest positions, and the
+// unseen tail skews toward exactly those parked losers.
 const WIN_RATE_SURVIVORSHIP_DISCOUNT = 0.9;
 
 /**
@@ -30,9 +30,8 @@ const WIN_RATE_SURVIVORSHIP_DISCOUNT = 0.9;
  *    SAME basis) when the wallet is enriched; falls back to the leaderboard's
  *    paired pnl/vol row otherwise.
  *  - up to 30 pts for settled win rate (unknown treated as a neutral 0.5);
- *    a perfect (100%) or truncated record is discounted for survivorship bias
- *    (see WIN_RATE_SURVIVORSHIP_DISCOUNT) — win rates only count SETTLED
- *    positions, so "ride it to zero" wallets systematically overstate theirs.
+ *    a truncated record is discounted (see WIN_RATE_SURVIVORSHIP_DISCOUNT) —
+ *    the pages never fetched skew toward parked held-to-zero losers.
  * Weights are config-free v1 seeds; the validation loop can calibrate later.
  */
 export function computeScore(input: {
@@ -47,7 +46,7 @@ export function computeScore(input: {
     input.roi != null ? input.roi : input.vol > 0 ? input.pnl / input.vol : 0;
   const eff = Math.min(1, Math.max(0, effRatio) / 0.1);
   let wr = input.winRate ?? 0.5;
-  if (input.winRate != null && (input.winRate >= 1 || input.truncated)) {
+  if (input.winRate != null && input.truncated) {
     wr *= WIN_RATE_SURVIVORSHIP_DISCOUNT;
   }
   return Math.round(40 * pnlNorm + 30 * eff + 30 * wr);

@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { Field, Icon, Segmented, StatCard, Tag } from "../ui";
+import { Field, Icon, Segmented, StatCard, Tag, catLabel } from "../ui";
 import {
   buildQueryString,
   parseChoiceParam,
@@ -358,7 +358,7 @@ export default function ConsensusPage() {
                         )}
                         <div className="kpi-sub">
                           {g.outcome}
-                          {g.category ? ` · ${g.category}` : ""}
+                          {g.category ? ` · ${catLabel(g.category)}` : ""}
                         </div>
                       </td>
                       <td className="mono is-right">

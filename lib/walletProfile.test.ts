@@ -80,30 +80,55 @@ describe("fetchRecentTrades", () => {
     transactionHash: `0x${i}`,
   });
 
-  it("stops after a short page and filters malformed rows", async () => {
-    const page = [row(1), { bad: true }];
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue({ ok: true, json: async () => page });
+  // Pages fire concurrently, so a short page 1 still issues (and discards)
+  // the page-2 request. Route by offset in the mock.
+  const mockByOffset = (pages: Record<number, unknown[]>) =>
+    vi.fn(async (url: string) => {
+      const offset = Number(new URL(url).searchParams.get("offset"));
+      return { ok: true, json: async () => pages[offset] ?? [] };
+    });
+
+  it("discards page 2 after a short page 1 and filters malformed rows", async () => {
+    const fetchMock = mockByOffset({
+      0: [row(1), { bad: true }],
+      1000: [row(2)], // must be DISCARDED — page 1 wasn't full
+    });
     vi.stubGlobal("fetch", fetchMock);
     const trades = await fetchRecentTrades("0xabc");
     expect(trades).toHaveLength(1);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(trades[0].transactionHash).toBe("0x1");
+    expect(fetchMock).toHaveBeenCalledTimes(2); // concurrent pages
     const url = fetchMock.mock.calls[0][0] as string;
     expect(url).toContain("type=TRADE");
     expect(url).toContain("sortDirection=DESC");
     expect(url).toContain("limit=1000");
   });
 
-  it("fetches at most two max-size pages (the verified offset cap)", async () => {
+  it("keeps both max-size pages (the verified offset cap)", async () => {
     const fullPage = Array.from({ length: 1000 }, (_, i) => row(i));
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue({ ok: true, json: async () => fullPage });
+    const fetchMock = mockByOffset({ 0: fullPage, 1000: fullPage });
     vi.stubGlobal("fetch", fetchMock);
     const trades = await fetchRecentTrades("0xabc");
     expect(trades).toHaveLength(2000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[1][0]).toContain("offset=1000");
+    const urls = fetchMock.mock.calls.map((c) => c[0] as string);
+    expect(urls.some((u) => u.includes("offset=1000"))).toBe(true);
+  });
+
+  it("retries a failed page once before giving up", async () => {
+    const fetchMock = vi
+      .fn()
+      // page 0 attempt 1 + page 1000 attempt 1 fire together: fail page 0.
+      .mockImplementationOnce(async () => {
+        throw new Error("timeout");
+      })
+      .mockImplementation(async (url: string) => ({
+        ok: true,
+        json: async () => (String(url).includes("offset=0") ? [row(1)] : []),
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const trades = await fetchRecentTrades("0xabc");
+    expect(trades).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3); // 2 pages + 1 retry
   });
 });

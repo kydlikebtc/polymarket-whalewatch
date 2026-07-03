@@ -187,6 +187,125 @@ export async function getMarketMeta(
   return out;
 }
 
+/* ------------------------------------------------------- Event categories */
+
+// The `category` field on /markets rows is null for most modern markets — the
+// real taxonomy lives in EVENT TAGS (verified live: /events?slug= returns
+// tags like ["Soccer","Sports","FIFA World Cup"]). The first major label
+// found in the tags becomes the market's category; niche tags fall through
+// to the first label.
+const PRIMARY_CATEGORIES = [
+  "Politics",
+  "Elections",
+  "Sports",
+  "Esports",
+  "Crypto",
+  "Economy",
+  "Finance",
+  "Business",
+  "Tech",
+  "Science",
+  "Pop Culture",
+  "Culture",
+  "World",
+  "Weather",
+];
+
+/**
+ * Batched event-tag lookup: slug -> primary category label. A slug covered by
+ * a SUCCESSFUL chunk but lacking tags maps to "" (known-none) so callers can
+ * cache the miss; slugs in failed chunks are simply absent (retry later).
+ */
+export async function fetchEventCategories(
+  slugs: string[],
+): Promise<Record<string, string>> {
+  const distinct = [...new Set(slugs.filter(Boolean))];
+  const out: Record<string, string> = {};
+  for (let i = 0; i < distinct.length; i += CHUNK) {
+    const chunk = distinct.slice(i, i + CHUNK);
+    const qs = chunk.map((s) => `slug=${encodeURIComponent(s)}`).join("&");
+    try {
+      const res = await fetch(`${GAMMA_API}/events?${qs}`, {
+        signal: AbortSignal.timeout(10_000),
+        headers: { "User-Agent": "polymarket-monitor" },
+      });
+      if (!res.ok) {
+        console.warn(
+          `[gamma] events chunk failed (${res.status}), skipping ${chunk.length} slugs`,
+        );
+        continue;
+      }
+      const raw = await res.json();
+      if (!Array.isArray(raw)) continue;
+      // Successful chunk: every requested slug is now KNOWN (possibly "").
+      for (const s of chunk) out[s] = "";
+      for (const ev of raw) {
+        const slug = typeof ev?.slug === "string" ? ev.slug : null;
+        if (!slug || !(slug in out)) continue;
+        const labels: string[] = Array.isArray(ev?.tags)
+          ? ev.tags
+              .map((t: { label?: unknown }) => t?.label)
+              .filter((l: unknown): l is string => typeof l === "string")
+          : [];
+        const primary =
+          PRIMARY_CATEGORIES.find((c) => labels.includes(c)) ?? labels[0];
+        if (primary) out[slug] = primary;
+      }
+    } catch (e) {
+      console.warn(
+        `[gamma] events chunk error, skipping ${chunk.length} slugs:`,
+        e,
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * SQLite-cached event categories (event_category table). Tags are effectively
+ * immutable, so known results — including known-none ("") — cache permanently;
+ * failed lookups stay uncached and retry. Returns slug -> category|null.
+ */
+export async function getEventCategories(
+  db: DB,
+  slugs: string[],
+  opts: {
+    fetcher?: typeof fetchEventCategories;
+    nowSec?: number;
+  } = {},
+): Promise<Record<string, string | null>> {
+  const {
+    fetcher = fetchEventCategories,
+    nowSec = Math.floor(Date.now() / 1000),
+  } = opts;
+  const distinct = [...new Set(slugs.filter(Boolean))];
+  const sel = db.prepare(
+    "SELECT category FROM event_category WHERE event_slug = ?",
+  );
+  const ins = db.prepare(
+    "INSERT OR REPLACE INTO event_category (event_slug, category, fetched_at) VALUES (?, ?, ?)",
+  );
+  const out: Record<string, string | null> = {};
+  const misses: string[] = [];
+  for (const s of distinct) {
+    const row = sel.get(s) as { category: string | null } | undefined;
+    if (row) out[s] = row.category || null;
+    else misses.push(s);
+  }
+  if (misses.length > 0) {
+    const fetched = await fetcher(misses);
+    for (const s of misses) {
+      if (s in fetched) {
+        ins.run(s, fetched[s], nowSec);
+        out[s] = fetched[s] || null;
+      } else {
+        out[s] = null; // chunk failed — uncached, retried next time
+      }
+    }
+  }
+  return out;
+}
+
 // Per-trade market context derived from meta — the "what does this money mean
 // for THIS market" layer attached to alerts.
 export interface TradeMarketContext {

@@ -3,13 +3,16 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AgeBadge,
+  CopyButton,
   Field,
   Icon,
+  QuietLink,
   Segmented,
   SideTag,
   SoundToggle,
   StatCard,
   WalletStatsBadge,
+  catLabel,
   type SmartInfoLite,
   type WalletStatsLite,
 } from "./ui";
@@ -33,8 +36,10 @@ type ScanTrade = {
   price: number;
   wallet: string;
   eventSlug: string;
+  slug: string;
   txHash: string;
   ts: number;
+  category: string | null;
 };
 
 type ScanStats = {
@@ -59,6 +64,10 @@ type SortKey = "time" | "amount";
 type SortDir = "asc" | "desc";
 
 const AMOUNT_PRESETS = [10000, 50000, 100000];
+
+// External trade page for a market slug (wired.fund tooling).
+const TRADE_LINK_BASE =
+  "https://onchain-dev.wired.fund/polymarket/trade-slug?slug=";
 // Sentinel for the "全部" (no cap) option in the address-age segmented control,
 // since the control's value type can't be null.
 const AGE_ALL = -1;
@@ -120,7 +129,23 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
         ) : (
           t.title
         )}
-        <div className="kpi-sub">{t.outcome}</div>
+        {/* Copy button lives on the (short, single-line) subtitle row so it
+            can never orphan-wrap under a long title. It copies the MARKET slug
+            (the per-market key gamma /markets?slug= takes) — not the event
+            slug. */}
+        <div className="kpi-sub" style={{ whiteSpace: "nowrap" }}>
+          {t.outcome}
+          {t.category ? ` · ${catLabel(t.category)}` : ""}
+          <CopyButton text={t.slug || t.eventSlug} label="复制 market slug" />
+          {t.slug || t.eventSlug ? (
+            <QuietLink
+              href={`${TRADE_LINK_BASE}${encodeURIComponent(t.slug || t.eventSlug)}`}
+              title={`在 wired.fund 打开交易页：${t.slug || t.eventSlug}`}
+            >
+              ↗
+            </QuietLink>
+          ) : null}
+        </div>
       </td>
       <td>
         <SideTag side={t.side} />
@@ -188,6 +213,9 @@ export default function Page() {
   // Render cap escape hatch ("显示其余 N 行"). Sticky once expanded so the 30s
   // auto-refresh doesn't collapse the table under the user.
   const [showAllRows, setShowAllRows] = useState<boolean>(false);
+  // Market-category filter (client-side, over the server-enriched rows).
+  // null = 全部; matches on the DISPLAY label so "其他" buckets all unknowns.
+  const [category, setCategory] = useState<string | null>(null);
 
   const activeReq = useRef<number>(0);
 
@@ -355,6 +383,7 @@ export default function Page() {
     return sortedTrades.filter((t) => {
       if (hasMin && t.price < min) return false;
       if (hasMax && t.price > max) return false;
+      if (category != null && catLabel(t.category) !== category) return false;
       if (maxAgeDays != null) {
         const a = ages[t.wallet?.toLowerCase()];
         if (typeof a !== "number" || !Number.isFinite(a) || a > maxAgeDays) {
@@ -363,7 +392,21 @@ export default function Page() {
       }
       return true;
     });
-  }, [sortedTrades, minPrice, maxPrice, maxAgeDays, ages]);
+  }, [sortedTrades, minPrice, maxPrice, category, maxAgeDays, ages]);
+
+  // Category chips: the display labels present in the current pull, by row
+  // count (max 8 shown) — the taxonomy on screen always matches the data.
+  const categoryOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const t of data?.trades ?? []) {
+      const label = catLabel(t.category);
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([label]) => label);
+  }, [data]);
 
   // When the age filter is active, some rows that pass the price band may still
   // have unresolved age (showing "…"); the result keeps converging as ages load.
@@ -376,10 +419,11 @@ export default function Page() {
     return sortedTrades.some((t) => {
       if (hasMin && t.price < min) return false;
       if (hasMax && t.price > max) return false;
+      if (category != null && catLabel(t.category) !== category) return false;
       const w = t.wallet?.toLowerCase();
       return !w || !(w in ages);
     });
-  }, [sortedTrades, minPrice, maxPrice, maxAgeDays, ages]);
+  }, [sortedTrades, minPrice, maxPrice, category, maxAgeDays, ages]);
 
   // Settled-market track record + smart-wallet flags, enriched lazily for the
   // rows that survive the client-side filters (the narrowed view fills first).
@@ -562,6 +606,19 @@ export default function Page() {
             </button>
           ) : null}
           <span className="ds-hint">赔率 0–1</span>
+        </Field>
+
+        {/* Market category — from the event's gamma tags, server-enriched. */}
+        <Field label="类型">
+          <Segmented<string>
+            ariaLabel="市场类型"
+            value={category ?? "__ALL__"}
+            onChange={(v) => setCategory(v === "__ALL__" ? null : v)}
+            options={[
+              { label: "全部", value: "__ALL__" },
+              ...categoryOptions.map((c) => ({ label: c, value: c })),
+            ]}
+          />
         </Field>
 
         {/* Address age — insider money tends to use relatively new wallets. */}

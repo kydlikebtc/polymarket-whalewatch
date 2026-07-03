@@ -30,7 +30,7 @@ const stats = (over: Partial<WalletStats> = {}): WalletStats => ({
 
 describe("computeScore", () => {
   it("saturates at 100 for a big, efficient, high-win-rate wallet", () => {
-    // 40 + 30 + 30*0.99 = 99.7 → 100 (winRate 1.0 would be haircut — below)
+    // 40 + 30 + 30*0.99 = 99.7 → 100
     expect(
       computeScore({ pnl: 2_000_000, vol: 4_000_000, winRate: 0.99 }),
     ).toBe(100);
@@ -42,12 +42,22 @@ describe("computeScore", () => {
   it("never goes below 0 for a losing wallet", () => {
     expect(computeScore({ pnl: -50_000, vol: 100_000, winRate: 0 })).toBe(0);
   });
-  it("haircuts a PERFECT settled record for survivorship bias", () => {
-    // Zeroed positions never settle into /closed-positions, so 100% is an
-    // upper bound: 40 + 30 + 30*(1*0.9) = 97, not 100.
+  it("takes a COMPLETE perfect record at face value (survivorship fixed upstream)", () => {
+    // walletStats merges held-to-zero losers from /positions, so an
+    // untruncated 100% is honest: 40 + 30 + 30 = 100.
     expect(computeScore({ pnl: 2_000_000, vol: 4_000_000, winRate: 1 })).toBe(
-      97,
+      100,
     );
+    // …but the same record with a page-cap truncation keeps the haircut:
+    // 40 + 30 + 30*0.9 = 97.
+    expect(
+      computeScore({
+        pnl: 2_000_000,
+        vol: 4_000_000,
+        winRate: 1,
+        truncated: true,
+      }),
+    ).toBe(97);
   });
   it("haircuts a truncated record's win-rate axis", () => {
     // 30*0.8 = 24 untruncated; 30*(0.8*0.9) = 21.6 → 22 truncated.

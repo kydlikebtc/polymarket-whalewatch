@@ -92,11 +92,64 @@ export async function fetchClosedPositions(
   return { positions, truncated: true };
 }
 
-// Pure aggregation — a position with realizedPnl > 0 counts as a win; break-even
-// and losing positions both count against the win rate.
+// A RESOLVED position still sitting in /positions. This is the survivorship-
+// bias fix (verified live): a position held to ZERO never produces a closing
+// transaction — there is nothing to redeem — so it NEVER appears in
+// /closed-positions. Wallets that ride losers into the ground would otherwise
+// show a fake 100% win rate (one live sample: "100% · +$56.6m" with 39
+// resolved-to-zero losers worth -$1.46m parked in open positions).
+// `redeemable: true` marks a resolved market (it is true for LOSERS too);
+// curPrice tells the verdict (0 = lost, 1 = unredeemed win).
+const ResolvedOpenSchema = z.object({
+  redeemable: z.boolean(),
+  curPrice: z.number(),
+  cashPnl: z.number(),
+  initialValue: z.number(), // USD cost basis of the position
+});
+export type ResolvedOpenPosition = z.infer<typeof ResolvedOpenSchema>;
+
+export async function fetchResolvedOpenPositions(
+  wallet: string,
+  opts: { maxPages?: number } = {},
+): Promise<{ positions: ResolvedOpenPosition[]; truncated: boolean }> {
+  const { maxPages = 8 } = opts;
+  const positions: ResolvedOpenPosition[] = [];
+  for (let page = 0; page < maxPages; page++) {
+    const url = `${DATA_API}/positions?user=${encodeURIComponent(wallet)}&limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`;
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(8000),
+      headers: { "User-Agent": "polymarket-monitor" },
+    });
+    if (!res.ok) throw new Error(`fetchResolvedOpenPositions ${res.status}`);
+    const raw = await res.json();
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return { positions, truncated: false };
+    }
+    for (const row of raw) {
+      const parsed = ResolvedOpenSchema.safeParse(row);
+      // Keep only DECIDED positions: resolved markets with a clear verdict.
+      // Live (unresolved) positions and 50/50 pushes stay out of the record.
+      if (
+        parsed.success &&
+        parsed.data.redeemable &&
+        (parsed.data.curPrice < 0.5 || parsed.data.curPrice > 0.5)
+      ) {
+        positions.push(parsed.data);
+      }
+    }
+    if (raw.length < PAGE_SIZE) return { positions, truncated: false };
+  }
+  return { positions, truncated: true };
+}
+
+// Pure aggregation over BOTH settled sources:
+//  - closed positions (sold or redeemed): win = realizedPnl > 0
+//  - resolved-but-unclosed positions: win = curPrice > 0.5 (1 = unredeemed win,
+//    0 = held-to-zero loss); their cashPnl is final at resolution.
 export function computeWalletStats(
   positions: ClosedPosition[],
   truncated: boolean,
+  resolvedOpen: ResolvedOpenPosition[] = [],
 ): WalletStats {
   let wins = 0;
   let realizedPnl = 0;
@@ -106,7 +159,12 @@ export function computeWalletStats(
     realizedPnl += p.realizedPnl;
     costBasis += p.totalBought * p.avgPrice;
   }
-  const settledCount = positions.length;
+  for (const p of resolvedOpen) {
+    if (p.curPrice > 0.5) wins++;
+    realizedPnl += p.cashPnl;
+    costBasis += p.initialValue;
+  }
+  const settledCount = positions.length + resolvedOpen.length;
   return {
     winRate: settledCount > 0 ? wins / settledCount : null,
     realizedPnl,
@@ -117,8 +175,15 @@ export function computeWalletStats(
 }
 
 async function fetchWalletStats(wallet: string): Promise<WalletStats> {
-  const { positions, truncated } = await fetchClosedPositions(wallet);
-  return computeWalletStats(positions, truncated);
+  const [closed, open] = await Promise.all([
+    fetchClosedPositions(wallet),
+    fetchResolvedOpenPositions(wallet),
+  ]);
+  return computeWalletStats(
+    closed.positions,
+    closed.truncated || open.truncated,
+    open.positions,
+  );
 }
 
 const DEFAULT_TTL_SEC = 86_400; // track records move slowly; a day is fresh enough

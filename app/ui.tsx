@@ -4,10 +4,11 @@
 // Single source of truth so the three pages stop duplicating inline styles.
 // Visuals live in app/globals.css; these components only wire props → classes.
 
-import type {
-  FocusEvent as ReactFocusEvent,
-  MouseEvent as ReactMouseEvent,
-  ReactNode,
+import {
+  useState,
+  type FocusEvent as ReactFocusEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
@@ -123,6 +124,128 @@ export function Segmented<T extends string | number>({
       ))}
     </div>
   );
+}
+
+/* ----------------------------------------------------------- CopyButton */
+
+// execCommand fallback for contexts without the async clipboard API — e.g.
+// the dashboard opened over plain http from another device on the LAN.
+function legacyCopy(text: string): boolean {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  ta.remove();
+  return ok;
+}
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Permission denied / insecure context — fall through to execCommand.
+    }
+  }
+  return legacyCopy(text);
+}
+
+// Tiny inline copy-to-clipboard button (e.g. the market slug next to a title).
+// Shows ✓ briefly after copying. Click never bubbles (rows may be clickable).
+export function CopyButton({
+  text,
+  label = "复制",
+}: {
+  text: string;
+  label?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  if (!text) return null;
+  return (
+    <button
+      type="button"
+      className={copied ? "copy-btn is-copied" : "copy-btn"}
+      title={copied ? "已复制" : `${label}：${text}`}
+      aria-label={`${label} ${text}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        void copyToClipboard(text).then((ok) => {
+          if (!ok) return;
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        });
+      }}
+    >
+      {copied ? "✓" : "⧉"}
+    </button>
+  );
+}
+
+/* ------------------------------------------------------------ QuietLink */
+
+// External jump in the same barely-there style as CopyButton (shares its
+// .copy-btn look: faint glyph, row-hover reveal). Click never bubbles.
+export function QuietLink({
+  href,
+  title,
+  children,
+}: {
+  href: string;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <a
+      className="copy-btn"
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      title={title}
+      aria-label={title}
+      onClick={(e) => e.stopPropagation()}
+      style={{ textDecoration: "none" }}
+    >
+      {children}
+    </a>
+  );
+}
+
+/* ------------------------------------------------------------- Category */
+
+// Chinese display names for the gamma tag taxonomy; unknown labels pass
+// through as-is (the taxonomy grows over time).
+const CATEGORY_ZH: Record<string, string> = {
+  Politics: "政治",
+  Elections: "选举",
+  Sports: "体育",
+  Esports: "电竞",
+  Crypto: "加密",
+  Economy: "经济",
+  Finance: "金融",
+  Business: "商业",
+  Tech: "科技",
+  Science: "科学",
+  "Pop Culture": "文娱",
+  Culture: "文娱",
+  World: "国际",
+  Weather: "天气",
+  Games: "游戏",
+};
+
+// null/"" → 其他 (unknown category bucket).
+export function catLabel(category: string | null | undefined): string {
+  if (!category) return "其他";
+  return CATEGORY_ZH[category] ?? category;
 }
 
 /* ----------------------------------------------------------------- Icon */
@@ -309,13 +432,13 @@ export function WalletStatsBadge({
   }
   const pct = Math.round((stats.winRate ?? 0) * 100);
   const tone = stats.realizedPnl >= 0 ? "up" : "down";
-  // Survivorship caveat mirrors computeScore's haircut cases: 100% or a
-  // truncated record are upper bounds — zeroed positions never settle into
-  // /closed-positions, so "ride it to zero" wallets overstate their win rate.
-  const survivorship =
-    stats.truncated || (stats.winRate != null && stats.winRate >= 1)
-      ? "\n仅含已结算仓位：持有到归零的仓位不计入，死扛型胜率被高估"
-      : "";
+  // Caveat mirrors computeScore's haircut case: held-to-zero losers are now
+  // merged in from /positions (survivorship fixed upstream), so the doubt
+  // only remains when the record is TRUNCATED — the unfetched pages skew
+  // toward exactly those parked losers.
+  const survivorship = stats.truncated
+    ? "\n记录不完整（分页截断）：未拉取的仓位偏向持有到归零的亏损单，胜率应视为上界"
+    : "";
   const title =
     `已结算 ${stats.settledCount}${stats.truncated ? "+" : ""} 市场 · 胜率 ${pct}%` +
     (stats.roi != null ? ` · ROI ${(stats.roi * 100).toFixed(1)}%` : "") +

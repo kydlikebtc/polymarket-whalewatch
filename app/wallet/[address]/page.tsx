@@ -7,6 +7,7 @@ import {
   SideTag,
   StatCard,
   Tag,
+  catLabel,
   fmtSignedUsdCompact,
   type SmartInfoLite,
   type WalletStatsLite,
@@ -61,6 +62,8 @@ type WalletResponse = {
   ageDays: number | null;
   stats: WalletStatsLite | null;
   smart: SmartInfoLite | null;
+  // Live PUSD (Polymarket cash) balance in USD; null = RPC unavailable.
+  pusdBalance: number | null;
   profile: Profile;
   categories: { category: string; usd: number; share: number }[];
   alertHits: AlertHit[];
@@ -210,6 +213,19 @@ export default function WalletPage() {
                   : "—"}
               </div>
             </StatCard>
+            <StatCard label="PUSD 现金余额">
+              <div className="kpi-value">
+                {data.pusdBalance != null
+                  ? `$${fmtUsd(data.pusdBalance)}`
+                  : "—"}
+              </div>
+              <div
+                className="kpi-sub"
+                title="Polymarket 账户内未下注的现金（链上 PUSD 余额，实时查询）"
+              >
+                {data.pusdBalance != null ? "账户内可用资金" : "RPC 暂不可用"}
+              </div>
+            </StatCard>
             <StatCard label="近窗买入 / 卖出">
               <div className="kpi-value" style={{ fontSize: 18 }}>
                 <span className="up">${fmtUsd(p.buyUsd)}</span>
@@ -243,7 +259,7 @@ export default function WalletPage() {
               >
                 {data.categories.map((c) => (
                   <Tag key={c.category} variant="default">
-                    {c.category} {Math.round(c.share * 100)}%
+                    {catLabel(c.category)} {Math.round(c.share * 100)}%
                   </Tag>
                 ))}
               </div>
@@ -345,7 +361,9 @@ export default function WalletPage() {
                           m.title
                         )}
                       </td>
-                      <td className="muted">{m.category ?? "—"}</td>
+                      <td className="muted">
+                        {m.category ? catLabel(m.category) : "—"}
+                      </td>
                       <td className="mono is-right up">${fmtUsd(m.buyUsd)}</td>
                       <td className="mono is-right down">
                         ${fmtUsd(m.sellUsd)}

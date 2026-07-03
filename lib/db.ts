@@ -12,6 +12,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS wallet_age (wallet TEXT PRIMARY KEY, first_ts INTEGER, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS wallet_stats (wallet TEXT PRIMARY KEY, win_rate REAL, realized_pnl REAL, roi REAL, settled_count INTEGER, truncated INTEGER, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS market_meta (condition_id TEXT PRIMARY KEY, meta_json TEXT, fetched_at INTEGER);
+    CREATE TABLE IF NOT EXISTS event_category (event_slug TEXT PRIMARY KEY, category TEXT, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS consensus_state (condition_id TEXT, outcome TEXT, wallet_count INTEGER, total_usd REAL, last_alert_ts INTEGER, PRIMARY KEY (condition_id, outcome));
     CREATE TABLE IF NOT EXISTS alert_outcomes (alert_id INTEGER PRIMARY KEY, price_1h REAL, price_24h REAL, resolved INTEGER DEFAULT 0, resolution_price REAL, won INTEGER, checked_at INTEGER);
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
@@ -119,6 +120,22 @@ export function openDb(path = "data.sqlite") {
         `[db] outcome_won v2 backfill: rescored ${rows.length} settled rows vs fill price, corrected ${corrected}`,
       );
     }
+  }
+  // wallet_stats v2: earlier stats were survivorship-biased — positions held
+  // to ZERO never enter /closed-positions (nothing to redeem), so pure-closed
+  // win rates read 100% for wallets that ride losers into the ground. v2 also
+  // counts resolved-but-unclosed positions from /positions. Purge the biased
+  // cache and clear the seed-day marker so the smart-wallet whitelist re-scores
+  // with honest win rates on the engine's next cycle.
+  const statsVer = db
+    .prepare("SELECT value FROM config WHERE key = 'wallet_stats_v'")
+    .get() as { value: string | null } | undefined;
+  if (statsVer?.value !== "2") {
+    db.prepare("DELETE FROM wallet_stats").run();
+    db.prepare("DELETE FROM config WHERE key = 'smart_seed_last_day'").run();
+    db.prepare(
+      "INSERT OR REPLACE INTO config (key, value) VALUES ('wallet_stats_v', '2')",
+    ).run();
   }
   return db;
 }

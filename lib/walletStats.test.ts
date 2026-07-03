@@ -3,7 +3,9 @@ import { openDb } from "./db";
 import {
   computeWalletStats,
   fetchClosedPositions,
+  fetchResolvedOpenPositions,
   getWalletStats,
+  type ResolvedOpenPosition,
   type WalletStats,
 } from "./walletStats";
 
@@ -43,6 +45,83 @@ describe("computeWalletStats", () => {
     expect(s.realizedPnl).toBe(100);
     expect(s.roi).toBeCloseTo(100 / 850);
     expect(s.truncated).toBe(true);
+  });
+});
+
+describe("computeWalletStats with resolved-open positions (survivorship fix)", () => {
+  const zeroLoss = (cost: number): ResolvedOpenPosition => ({
+    redeemable: true,
+    curPrice: 0,
+    cashPnl: -cost,
+    initialValue: cost,
+  });
+
+  it("held-to-zero losers break a fake 100% win rate", () => {
+    // 4 redeemed wins in closed-positions + 1 loser parked at zero.
+    const closed = Array.from({ length: 4 }, () => ({
+      realizedPnl: 100,
+      totalBought: 400,
+      avgPrice: 0.5,
+    }));
+    const s = computeWalletStats(closed, false, [zeroLoss(300)]);
+    expect(s.settledCount).toBe(5);
+    expect(s.winRate).toBeCloseTo(0.8); // was 1.0 before the fix
+    expect(s.realizedPnl).toBe(400 - 300);
+    expect(s.roi).toBeCloseTo(100 / (4 * 200 + 300));
+  });
+
+  it("counts an unredeemed win (curPrice=1) as a win with its final cashPnl", () => {
+    const s = computeWalletStats([], false, [
+      {
+        redeemable: true,
+        curPrice: 1,
+        cashPnl: 500, // size*1 - cost, final at resolution
+        initialValue: 500,
+      },
+    ]);
+    expect(s.winRate).toBe(1);
+    expect(s.realizedPnl).toBe(500);
+    expect(s.settledCount).toBe(1);
+  });
+});
+
+describe("fetchResolvedOpenPositions", () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    redeemable: true,
+    curPrice: 0,
+    cashPnl: -100,
+    initialValue: 100,
+    title: "M",
+    ...over,
+  });
+
+  it("keeps only decided positions: live rows and 50/50 pushes are excluded", async () => {
+    const page = [
+      row(), // resolved loss → kept
+      row({ curPrice: 1, cashPnl: 80 }), // unredeemed win → kept
+      row({ redeemable: false, curPrice: 0.4 }), // live market → out
+      row({ curPrice: 0.5 }), // push → out
+      { bad: true }, // malformed → out
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => page }),
+    );
+    const { positions, truncated } = await fetchResolvedOpenPositions("0xabc");
+    expect(positions).toHaveLength(2);
+    expect(truncated).toBe(false);
+  });
+
+  it("paginates by offset until a short page", async () => {
+    const fullPage = Array.from({ length: 50 }, () => row());
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => fullPage })
+      .mockResolvedValueOnce({ ok: true, json: async () => [row()] });
+    vi.stubGlobal("fetch", fetchMock);
+    const { positions } = await fetchResolvedOpenPositions("0xabc");
+    expect(positions).toHaveLength(51);
+    expect(fetchMock.mock.calls[1][0]).toContain("offset=50");
   });
 });
 
