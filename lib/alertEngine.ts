@@ -5,7 +5,7 @@ import type { MarketMeta } from "./gamma";
 import { tradeMarketContext } from "./gamma";
 import { selectNewTrades } from "./poll";
 import { dedupKey, notionalUsd } from "./trades";
-import { formatLargeTradeAlert } from "./alert";
+import { formatLargeTradeAlert, type SmartTagLabel } from "./alert";
 import { esc, usd } from "./tgFormat";
 import { isPermanentSendError } from "./telegram";
 import {
@@ -50,9 +50,9 @@ export interface EngineDeps {
   // Smart-wallet tags by lowercased wallet (sync SQLite lookup). Absent entries
   // mean "not smart". When the dep itself is undefined, no tagging happens and
   // smartOnly matches nothing (there is no whitelist to match against).
-  getSmart?: (
-    wallets: string[],
-  ) => Record<string, { score: number | null } | undefined>;
+  // SmartTagLabel is the label-facing slice (score/winRate/realizedPnl) —
+  // smartWallets.getSmartTags already returns a superset, zero extra queries.
+  getSmart?: (wallets: string[]) => Record<string, SmartTagLabel | undefined>;
   // Batched, cached market metadata by conditionId (gamma). Powers the
   // maxHoursToEnd condition and the context line on fired alerts. Optional:
   // without it alerts fire un-enriched and maxHoursToEnd matches nothing.
@@ -361,7 +361,7 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
         try {
           // The format function's output is untouched; the burst summary is a
           // cooldown-owned suffix composed here in the engine.
-          let html = formatLargeTradeAlert(t, conditions.minUsd, smart, ctx);
+          let html = formatLargeTradeAlert(t, smart, ctx);
           const burst = burstCount.get(cooldownKey(t)) ?? 1;
           if (burst > 1) {
             html += `\n⏳ 该钱包本轮在此市场共 ${burst} 笔，冷却 ${conditions.cooldownMinutes} 分钟内其余仅入库`;

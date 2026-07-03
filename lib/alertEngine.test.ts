@@ -290,7 +290,7 @@ describe("runAlertCycle", () => {
     const plainTrade = mk({ transactionHash: "0xp", proxyWallet: "0xPLAIN" });
     const send = vi.fn().mockResolvedValue(undefined);
     const getSmart = vi.fn((_wallets: string[]) => ({
-      "0xsmart": { score: 82 },
+      "0xsmart": { score: 82, winRate: 0.68, realizedPnl: 1_200_000 },
     }));
 
     const fired = await runAlertCycle({
@@ -306,7 +306,11 @@ describe("runAlertCycle", () => {
 
     expect(fired).toBe(2);
     const sent = send.mock.calls.map((c) => c[0] as string);
-    expect(sent.some((m) => m.includes("🏆 聪明钱(82)"))).toBe(true);
+    // The full credential label (score · win rate · realized pnl) flows from
+    // getSmart straight into the pushed headline.
+    expect(sent.some((m) => m.includes("🏆 聪明钱 82分·胜率68%·盈$1.2M"))).toBe(
+      true,
+    );
     const types = db
       .prepare("SELECT type, dedup_key FROM alerts ORDER BY id")
       .all() as { type: string; dedup_key: string }[];

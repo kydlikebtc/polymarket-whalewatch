@@ -36,12 +36,13 @@ export async function runOnce({ db, send, fetchTrades, thresholds }: Deps) {
   for (const t of selectNewTrades(fetched, isSeen)) {
     const n = notionalUsd(t);
     if (n < minTier) continue;
-    const tier = [...thresholds].reverse().find((x) => n >= x) ?? minTier;
     const k = dedupKey(t);
     // Send first, then persist seen+alert. This is at-least-once: if send() throws the trade
     // is NOT marked seen and will retry next poll (good); the rare send-ok-but-persist-fails
     // case yields one duplicate alert, which we accept over dropping alerts.
-    await send(formatLargeTradeAlert(t, tier));
+    // 🐳/💰 tiering now lives INSIDE formatLargeTradeAlert on fixed notional
+    // cutoffs — thresholds[0] is only the alert floor here.
+    await send(formatLargeTradeAlert(t));
     markSeen(db, k, t.timestamp);
     recordAlert(db, "large", k, JSON.stringify(t), t.timestamp);
   }

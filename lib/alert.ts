@@ -1,7 +1,44 @@
 import type { Trade } from "./types";
 import type { TradeMarketContext } from "./gamma";
 import { notionalUsd } from "./trades";
-import { esc, short, urlSeg, usd } from "./tgFormat";
+import { cents, esc, short, urlSeg, usd, usdCompact } from "./tgFormat";
+
+// FIXED notional tier for the leading emoji: the first character of the
+// message must encode trade SIZE, not configuration. (The old `tier` param
+// leaked conditions.minUsd here — minUsd=$10k showed 💰 for a $500k fill,
+// minUsd≥$50k made everything 🐳.) Matches the dashboard's 🐳 cutoff
+// (app/page.tsx / app/alerts/page.tsx) and the glossary entry.
+export const WHALE_TIER_USD = 50_000;
+
+// The slice of a smart-wallet tag the alert label renders. Structurally
+// satisfied by smartWallets.SmartTag; winRate/realizedPnl optional so legacy
+// score-only callers/tests still typecheck. Values may be null — each null
+// segment is simply omitted from the label.
+export interface SmartTagLabel {
+  score: number | null;
+  winRate?: number | null;
+  realizedPnl?: number | null;
+}
+
+// "🏆 聪明钱 72分·胜率68%·盈$1.2M " (trailing space; null segments omitted —
+// an all-null tag degrades to the bare "🏆 聪明钱 ").
+export function formatSmartTag(
+  smart: SmartTagLabel | null | undefined,
+): string {
+  if (!smart) return "";
+  const parts: string[] = [];
+  if (smart.score != null) parts.push(`${Math.round(smart.score)}分`);
+  if (smart.winRate != null)
+    parts.push(`胜率${Math.round(smart.winRate * 100)}%`);
+  if (smart.realizedPnl != null) {
+    parts.push(
+      smart.realizedPnl < 0
+        ? `亏${usdCompact(-smart.realizedPnl)}`
+        : `盈${usdCompact(smart.realizedPnl)}`,
+    );
+  }
+  return parts.length > 0 ? `🏆 聪明钱 ${parts.join("·")} ` : "🏆 聪明钱 ";
+}
 
 // "占24h量 18% · 流动性 $229,073 · 距结算 5h" — whichever parts are known.
 // Returns null when the context carries nothing displayable.
@@ -27,21 +64,18 @@ export function formatMarketCtxLine(
 
 export function formatLargeTradeAlert(
   t: Trade,
-  tier: number,
-  smart?: { score: number | null },
+  smart?: SmartTagLabel | null,
   ctx?: TradeMarketContext | null,
 ): string {
   const n = notionalUsd(t);
-  const tag = smart
-    ? smart.score != null
-      ? `🏆 聪明钱(${smart.score.toFixed(0)}) `
-      : "🏆 聪明钱 "
-    : "";
-  // tier is already the highest threshold n cleared (see runOnce), so 🐳 = top tier (>= $50k)
-  const whale = tier >= 50000 ? "🐳 " : "💰 ";
+  const tag = formatSmartTag(smart);
+  const whale = n >= WHALE_TIER_USD ? "🐳 " : "💰 ";
+  // Decision essentials first: direction (color-coded), bolded amount, then
+  // outcome @ price in Polymarket's ¢ notation.
+  const side = t.side === "SELL" ? "🔴卖出" : "🟢买入";
   const lines = [
     `${whale}${tag}<b>${esc(t.title)}</b>`,
-    `${esc(t.outcome)} · <b>${t.side}</b> · ${usd(n)} @ ${t.price.toFixed(3)}`,
+    `${side} <b>${usd(n)}</b> · ${esc(t.outcome)} @ ${cents(t.price)}`,
   ];
   const ctxLine = formatMarketCtxLine(ctx);
   if (ctxLine) lines.push(ctxLine);

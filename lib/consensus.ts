@@ -2,7 +2,7 @@ import type { DB } from "./db";
 import type { Trade } from "./types";
 import type { SmartTag } from "./smartWallets";
 import { dedupKey, notionalUsd } from "./trades";
-import { esc, short, urlSeg, usd } from "./tgFormat";
+import { cents, durText, esc, short, urlSeg, usd } from "./tgFormat";
 import { isPermanentSendError } from "./telegram";
 
 // One smart wallet's aggregated position inside a consensus group.
@@ -12,6 +12,7 @@ export interface ConsensusWallet {
   buyCount: number;
   avgBuyPrice: number; // size-weighted
   score: number | null;
+  winRate: number | null; // settled win rate from the smart tag (0-1)
 }
 
 // N distinct smart wallets net-buying the SAME outcome of the SAME market
@@ -123,12 +124,14 @@ export function detectConsensus(
     for (const [wallet, acc] of g.byWallet) {
       const netUsd = acc.buyUsd - acc.sellUsd;
       if (netUsd < opts.minPerWalletUsd) continue;
+      const tag = smartTags.get(wallet);
       qualified.push({
         wallet,
         netUsd,
         buyCount: acc.buyCount,
         avgBuyPrice: acc.buyShares > 0 ? acc.buyUsd / acc.buyShares : 0,
-        score: smartTags.get(wallet)?.score ?? null,
+        score: tag?.score ?? null,
+        winRate: tag?.winRate ?? null,
       });
     }
     if (qualified.length < opts.minWallets) continue;
@@ -159,20 +162,50 @@ export function detectConsensus(
   return out;
 }
 
-export function formatConsensusAlert(g: ConsensusGroup): string {
+// Push-time context for formatConsensusAlert. Everything is computed locally
+// from data the cycle already holds — no new queries.
+export interface ConsensusAlertMeta {
+  // Clock for the "最近一笔 X 前" half of the time-span line; defaults to now.
+  nowSec?: number;
+  // Present ONLY when the fetch window was truncated at the page cap: the push
+  // then carries an honest lower-bound note instead of silently posing as the
+  // full requested window (the dashboard has shown this for a while — Telegram
+  // readers were the ones left uninformed).
+  coverage?: { coveredSec: number; windowSec: number };
+}
+
+export function formatConsensusAlert(
+  g: ConsensusGroup,
+  meta: ConsensusAlertMeta = {},
+): string {
+  const nowSec = meta.nowSec ?? Math.floor(Date.now() / 1000);
   const lines = [
     `🔥 <b>聪明钱共识</b> · ${g.walletCount} 个白名单钱包同向买入`,
     `<b>${esc(g.title)}</b>`,
-    `${esc(g.outcome)} · 合计净买入 ${usd(g.totalNetUsd)} · 均价 ${g.avgBuyPrice.toFixed(3)}`,
+    `${esc(g.outcome)} · 合计净买入 <b>${usd(g.totalNetUsd)}</b> · 均价 ${cents(g.avgBuyPrice)}`,
+    // "15 分钟内集中买入" vs "6 小时里分散各买一笔" are very different signals
+    // — and under the rolling window an OLD formation would otherwise push
+    // with the same face as a fresh one.
+    `⏱ 集中于 ${durText(g.lastTs - g.firstTs)}内 · 最近一笔 ${durText(nowSec - g.lastTs)}前`,
   ];
   for (const w of g.wallets.slice(0, 3)) {
-    const score = w.score != null ? ` (评分${Math.round(w.score)})` : "";
+    const bits: string[] = [];
+    if (w.score != null) bits.push(`评分${Math.round(w.score)}`);
+    if (w.winRate != null) bits.push(`胜率${Math.round(w.winRate * 100)}%`);
+    const cred = bits.length > 0 ? ` (${bits.join("·")})` : "";
     lines.push(
       `🏆 <a href="https://polymarket.com/profile/${urlSeg(w.wallet)}">${short(w.wallet)}</a>` +
-        ` 净买 ${usd(w.netUsd)} @${w.avgBuyPrice.toFixed(3)}${score}`,
+        ` 净买 ${usd(w.netUsd)} @${cents(w.avgBuyPrice)}${cred}`,
     );
   }
   if (g.walletCount > 3) lines.push(`… 及另外 ${g.walletCount - 3} 个钱包`);
+  if (meta.coverage) {
+    const wh = meta.coverage.windowSec / 3600;
+    lines.push(
+      `⚠️ 窗口仅覆盖 ~${(meta.coverage.coveredSec / 3600).toFixed(1)}h/` +
+        `${Number.isInteger(wh) ? wh : wh.toFixed(1)}h，共识金额为下界`,
+    );
+  }
   lines.push(
     `<a href="https://polymarket.com/event/${urlSeg(g.eventSlug)}">市场</a>`,
   );
@@ -182,8 +215,9 @@ export function formatConsensusAlert(g: ConsensusGroup): string {
 export interface ConsensusCycleDeps {
   db: DB;
   // effectiveSinceSec (when provided — getTradesWindowDeep always returns it)
-  // is the REAL start of the complete merged window, used purely for the
-  // coverage log below; pushes are untouched.
+  // is the REAL start of the complete merged window. It feeds the coverage log
+  // below AND, when the window was truncated, the honest coverage note
+  // appended to the Telegram push (see ConsensusAlertMeta.coverage).
   fetchWindow: () => Promise<{
     trades: Trade[];
     truncated: boolean;
@@ -242,11 +276,10 @@ export async function runConsensusCycle(
     return 0;
   }
   const { trades, truncated, effectiveSinceSec } = await fetchWindow();
-  // Window-coverage quantification (observability only — pushes untouched):
-  // row count + real coverage vs the requested window, every cycle. A week of
-  // these lines is the data needed to decide whether the $2k fetch floor has
-  // depth headroom to drop to $1k (coverage consistently >80%) or is already
-  // depth-bound at the current floor.
+  // Window-coverage quantification: row count + real coverage vs the requested
+  // window, every cycle. A week of these lines is the data needed to decide
+  // whether the $2k fetch floor has depth headroom to drop to $1k (coverage
+  // consistently >80%) or is already depth-bound at the current floor.
   if (effectiveSinceSec != null) {
     const coveredSec = Math.max(0, nowSec - effectiveSinceSec);
     const pct = Math.min(100, Math.round((coveredSec / windowSec) * 100));
@@ -254,6 +287,15 @@ export async function runConsensusCycle(
       `[consensus] window: ${trades.length} rows · coverage ${(coveredSec / 3600).toFixed(1)}h/${(windowSec / 3600).toFixed(1)}h (${pct}%) · truncated=${truncated}`,
     );
   }
+  // Truncated window → the push must say so: relative to the requested 6h the
+  // totals are LOWER BOUNDS (older signals simply invisible this cycle).
+  const coverage =
+    truncated && effectiveSinceSec != null
+      ? {
+          coveredSec: Math.max(0, nowSec - effectiveSinceSec),
+          windowSec,
+        }
+      : undefined;
   if (truncated) {
     // The deep fetch trims BOTH sides to the newest truncation edge (see
     // getTradesWindowDeep), so the rows form a complete-but-SHORTER window:
@@ -334,7 +376,7 @@ export async function runConsensusCycle(
     }
     if (send) {
       try {
-        await send(formatConsensusAlert(g));
+        await send(formatConsensusAlert(g, { nowSec, coverage }));
       } catch (e) {
         if (isPermanentSendError(e)) {
           // Poison message (non-429 4xx even after the plain-text downgrade):

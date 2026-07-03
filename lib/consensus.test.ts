@@ -52,6 +52,9 @@ describe("detectConsensus", () => {
     expect(groups[0].walletCount).toBe(2);
     expect(groups[0].totalNetUsd).toBe(20000);
     expect(groups[0].wallets.map((w) => w.wallet)).toEqual(["0xa", "0xb"]);
+    // Credential fields copied off the smart tag for the alert copy.
+    expect(groups[0].wallets[0].score).toBe(80);
+    expect(groups[0].wallets[0].winRate).toBe(0.7);
     // Token identity for the validation loop (all members fill the same token).
     expect(groups[0].asset).toBe("asset1");
     expect(groups[0].outcomeIndex).toBe(0);
@@ -145,6 +148,10 @@ describe("runConsensusCycle", () => {
     expect(await runConsensusCycle(deps(db, { send }))).toBe(1);
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][0] as string).toContain("聪明钱共识");
+    // Formation push carries the time-span line; a NON-truncated window never
+    // carries the coverage caveat.
+    expect(send.mock.calls[0][0] as string).toContain("⏱ 集中于");
+    expect(send.mock.calls[0][0] as string).not.toContain("窗口仅覆盖");
 
     // Same group again → silent.
     expect(await runConsensusCycle(deps(db, { send, nowSec: 10_300 }))).toBe(0);
@@ -266,9 +273,11 @@ describe("runConsensusCycle", () => {
         l.includes("qualified-wallet min single fill USD: [6000, 10000]"),
       ),
     ).toBe(true);
-    // The pushed message is byte-identical to the format function's output —
-    // the coverage data goes to the logs only.
-    expect(send.mock.calls[0][0] as string).not.toContain("覆盖");
+    // The truncated window is no longer a logs-only secret: the push itself
+    // carries the honest lower-bound note (effectiveSinceSec passed through).
+    expect(send.mock.calls[0][0] as string).toContain(
+      "⚠️ 窗口仅覆盖 ~3.0h/6h，共识金额为下界",
+    );
     logSpy.mockRestore();
     warnSpy.mockRestore();
   });
@@ -355,18 +364,54 @@ describe("runConsensusCycle", () => {
 });
 
 describe("formatConsensusAlert", () => {
-  it("escapes HTML and lists the top wallets", () => {
+  const group = (overA: Partial<Trade> = {}, overB: Partial<Trade> = {}) => {
     const trades = [
-      mk({ proxyWallet: "0xA", transactionHash: "0x1", title: "A <b>&</b> B" }),
-      mk({ proxyWallet: "0xB", transactionHash: "0x2", title: "A <b>&</b> B" }),
+      mk({ proxyWallet: "0xA", transactionHash: "0x1", ...overA }),
+      mk({ proxyWallet: "0xB", transactionHash: "0x2", ...overB }),
     ];
     const [g] = detectConsensus(trades, smartSet("0xA", "0xB"), {
       minWallets: 2,
       minPerWalletUsd: 5000,
     });
+    return g;
+  };
+
+  it("escapes HTML and lists the top wallets", () => {
+    const g = group({ title: "A <b>&</b> B" }, { title: "A <b>&</b> B" });
     const html = formatConsensusAlert(g);
     expect(html).toContain("A &lt;b&gt;&amp;&lt;/b&gt; B");
     expect(html).toContain("2 个白名单钱包");
     expect(html).toContain("polymarket.com/profile/0xa");
+  });
+
+  it("bolds the total, prints prices in ¢, and credentials wallets with 评分·胜率", () => {
+    const html = formatConsensusAlert(group(), { nowSec: 1060 });
+    expect(html).toContain("合计净买入 <b>$20,000</b> · 均价 50¢");
+    // smartSet's tag: score 80, winRate 0.7 — both ride the wallet line.
+    expect(html).toContain("净买 $10,000 @50¢ (评分80·胜率70%)");
+  });
+
+  it("appends the time-span line computed from firstTs/lastTs (<60min in minutes)", () => {
+    const g = group({ timestamp: 1000 }, { timestamp: 1900 });
+    const html = formatConsensusAlert(g, { nowSec: 2080 });
+    expect(html).toContain("⏱ 集中于 15 分钟内 · 最近一笔 3 分钟前");
+  });
+
+  it("switches the span to hours for a spread-out group", () => {
+    const g = group({ timestamp: 1000 }, { timestamp: 1000 + 12600 }); // 3.5h apart
+    const html = formatConsensusAlert(g, { nowSec: 1000 + 12600 + 120 });
+    expect(html).toContain("⏱ 集中于 3.5 小时内 · 最近一笔 2 分钟前");
+  });
+
+  it("appends the coverage caveat only when a truncated window's coverage is passed", () => {
+    const g = group();
+    const withNote = formatConsensusAlert(g, {
+      nowSec: 2000,
+      coverage: { coveredSec: 1.5 * 3600, windowSec: 6 * 3600 },
+    });
+    expect(withNote).toContain("⚠️ 窗口仅覆盖 ~1.5h/6h，共识金额为下界");
+    expect(formatConsensusAlert(g, { nowSec: 2000 })).not.toContain(
+      "窗口仅覆盖",
+    );
   });
 });
