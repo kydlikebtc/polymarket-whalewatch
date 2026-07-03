@@ -2,6 +2,12 @@
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Field, Icon, Segmented, StatCard, Tag } from "../ui";
+import {
+  buildQueryString,
+  parseChoiceParam,
+  parseNumParam,
+  replaceUrlQuery,
+} from "../urlQuery";
 
 type ConsensusWallet = {
   wallet: string;
@@ -40,6 +46,11 @@ type ConsensusResponse = {
 type Hours = 2 | 6 | 12;
 
 const PER_WALLET_PRESETS = [5000, 10000, 25000];
+const HOURS_CHOICES = [2, 6, 12] as const;
+const MIN_WALLETS_CHOICES = [2, 3, 4] as const;
+// Page defaults — doubling as the "omit from URL" baseline so the default
+// view serializes to a bare pathname.
+const DEFAULTS = { hours: 6 as Hours, minWallets: 2, minPerWalletUsd: 5000 };
 // "Still followable": current price within 5¢ of the smart-money entry.
 const FOLLOWABLE_GAP = 0.05;
 
@@ -66,15 +77,62 @@ function fmtWindowSpan(sinceSec: number): string {
 }
 
 export default function ConsensusPage() {
-  const [hours, setHours] = useState<Hours>(6);
-  const [minWallets, setMinWallets] = useState<number>(2);
-  const [minPerWalletUsd, setMinPerWalletUsd] = useState<number>(5000);
+  const [hours, setHours] = useState<Hours>(DEFAULTS.hours);
+  const [minWallets, setMinWallets] = useState<number>(DEFAULTS.minWallets);
+  const [minPerWalletUsd, setMinPerWalletUsd] = useState<number>(
+    DEFAULTS.minPerWalletUsd,
+  );
   const [data, setData] = useState<ConsensusResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [lastRefreshed, setLastRefreshed] = useState<string>("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Flips true once the URL params have been read into state — the first fetch
+  // and the URL write-back both wait for it.
+  const [urlReady, setUrlReady] = useState<boolean>(false);
 
   const activeReq = useRef<number>(0);
+
+  // Hydrate filters from the URL once on mount (client-only, so SSR markup and
+  // the first client render agree — no hydration mismatch). Absent or invalid
+  // params keep the defaults; the write-back effect below then canonicalizes
+  // the address bar.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const qHours = parseChoiceParam(p.get("hours"), HOURS_CHOICES);
+    if (qHours != null) setHours(qHours);
+    const qMinWallets = parseChoiceParam(
+      p.get("minWallets"),
+      MIN_WALLETS_CHOICES,
+    );
+    if (qMinWallets != null) setMinWallets(qMinWallets);
+    const qMinPer = parseNumParam(p.get("minPerWalletUsd"), {
+      min: 1,
+      int: true,
+    });
+    if (qMinPer != null) setMinPerWalletUsd(qMinPer);
+    setUrlReady(true);
+  }, []);
+
+  // Mirror the filter state back into the URL (replaceState → no history spam)
+  // so a tuned view survives refresh and can be shared as a link.
+  useEffect(() => {
+    if (!urlReady) return;
+    replaceUrlQuery(
+      buildQueryString([
+        ["hours", hours !== DEFAULTS.hours ? String(hours) : null],
+        [
+          "minWallets",
+          minWallets !== DEFAULTS.minWallets ? String(minWallets) : null,
+        ],
+        [
+          "minPerWalletUsd",
+          minPerWalletUsd !== DEFAULTS.minPerWalletUsd
+            ? String(minPerWalletUsd)
+            : null,
+        ],
+      ]),
+    );
+  }, [urlReady, hours, minWallets, minPerWalletUsd]);
 
   const load = useCallback(async () => {
     const reqId = ++activeReq.current;
@@ -109,9 +167,12 @@ export default function ConsensusPage() {
     }
   }, [hours, minWallets, minPerWalletUsd]);
 
+  // Refetch whenever a filter changes. The FIRST fetch waits for the URL
+  // hydration above so a shared link never fires a throwaway default query.
   useEffect(() => {
+    if (!urlReady) return;
     load();
-  }, [load]);
+  }, [urlReady, load]);
 
   function toggleExpand(key: string) {
     setExpanded((prev) => {

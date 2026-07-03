@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AgeBadge,
   Field,
@@ -10,10 +10,20 @@ import {
   SoundToggle,
   StatCard,
   WalletStatsBadge,
+  type SmartInfoLite,
+  type WalletStatsLite,
 } from "./ui";
 import { playBubble } from "./sound";
 import { useSoundToggle } from "./useSound";
 import { useWalletIntel } from "./useWalletIntel";
+import { useWalletAges } from "./useWalletAges";
+import { capRows, tableViewState } from "./tableView";
+import {
+  buildQueryString,
+  parseChoiceParam,
+  parseNumParam,
+  replaceUrlQuery,
+} from "./urlQuery";
 
 type ScanTrade = {
   title: string;
@@ -45,11 +55,27 @@ type ScanResponse = {
 
 type Side = "ALL" | "BUY" | "SELL";
 type Hours = 1 | 6 | 24;
+type SortKey = "time" | "amount";
+type SortDir = "asc" | "desc";
 
 const AMOUNT_PRESETS = [10000, 50000, 100000];
 // Sentinel for the "全部" (no cap) option in the address-age segmented control,
 // since the control's value type can't be null.
 const AGE_ALL = -1;
+
+const SIDES = ["ALL", "BUY", "SELL"] as const;
+const HOURS_CHOICES = [1, 6, 24] as const;
+const SORT_KEYS = ["time", "amount"] as const;
+const SORT_DIRS = ["asc", "desc"] as const;
+// Page defaults — doubling as the "omit from URL" baseline so the default
+// view serializes to a bare pathname.
+const DEFAULTS = {
+  minUsd: 10000,
+  side: "ALL" as Side,
+  hours: 24 as Hours,
+  sortKey: "time" as SortKey,
+  sortDir: "desc" as SortDir,
+};
 
 function fmtUsd(usd: number): string {
   return usd.toLocaleString("en-US", { maximumFractionDigits: 0 });
@@ -65,10 +91,80 @@ function fmtClock(sec: number): string {
   return new Date(sec * 1000).toLocaleTimeString("zh-CN", { hour12: false });
 }
 
+/* ------------------------------------------------------------------ Row */
+
+// One table row, memoized so the lazy age/stats batches (100 / 50 wallets per
+// chunk) only re-render the rows whose wallet data actually arrived — without
+// this every merged batch re-rendered ALL rows (~6000 on a low-floor scan).
+type ScanRowProps = {
+  t: ScanTrade;
+  age: number | null | undefined;
+  stats: WalletStatsLite | null | undefined;
+  smart: SmartInfoLite | null | undefined;
+};
+
+const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
+  const whale = t.usd >= 50000;
+  return (
+    <tr>
+      <td className="mono muted">{fmtClock(t.ts)}</td>
+      <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
+        {t.eventSlug ? (
+          <a
+            href={`https://polymarket.com/event/${t.eventSlug}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {t.title}
+          </a>
+        ) : (
+          t.title
+        )}
+        <div className="kpi-sub">{t.outcome}</div>
+      </td>
+      <td>
+        <SideTag side={t.side} />
+      </td>
+      <td className="mono is-right">
+        <Icon s={whale ? "🐳" : "💰"} /> ${fmtUsd(t.usd)}
+      </td>
+      <td className="mono is-right">{t.price.toFixed(3)}</td>
+      <td>
+        <a
+          className="mono"
+          href={`/wallet/${t.wallet?.toLowerCase()}`}
+          title={`${t.wallet} · 点击查看钱包档案`}
+        >
+          {shortWallet(t.wallet)}
+        </a>
+      </td>
+      <td>
+        <AgeBadge ageDays={age} />
+      </td>
+      <td>
+        <WalletStatsBadge stats={stats} smart={smart} />
+      </td>
+      <td>
+        {t.txHash ? (
+          <a
+            href={`https://polygonscan.com/tx/${t.txHash}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            ↗
+          </a>
+        ) : (
+          ""
+        )}
+      </td>
+    </tr>
+  );
+});
+
 export default function Page() {
-  const [minUsd, setMinUsd] = useState<number>(10000);
-  const [side, setSide] = useState<Side>("ALL");
-  const [hours, setHours] = useState<Hours>(24);
+  const [minUsd, setMinUsd] = useState<number>(DEFAULTS.minUsd);
+  const [side, setSide] = useState<Side>(DEFAULTS.side);
+  const [hours, setHours] = useState<Hours>(DEFAULTS.hours);
   const [data, setData] = useState<ScanResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [lastRefreshed, setLastRefreshed] = useState<string>("");
@@ -77,11 +173,8 @@ export default function Page() {
   // (e.g. while clearing the field) doesn't immediately refetch with garbage.
   const [customText, setCustomText] = useState<string>("");
   // Sorting is purely client-side over the already-fetched rows.
-  const [sortKey, setSortKey] = useState<"time" | "amount">("time");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  // wallet(lowercased) -> ageDays|null. Filled lazily after the table renders;
-  // permanently cached server-side so repeat lookups are instant.
-  const [ages, setAges] = useState<Record<string, number | null>>({});
+  const [sortKey, setSortKey] = useState<SortKey>(DEFAULTS.sortKey);
+  const [sortDir, setSortDir] = useState<SortDir>(DEFAULTS.sortDir);
   // Client-side insider-pattern filters. Insider-information money tends to buy
   // at FAVORABLE ODDS (a price band) using RELATIVELY NEW wallets, so these two
   // filters let the user isolate that pattern (e.g. price 0.5–0.9 AND age ≤ 7天).
@@ -89,8 +182,69 @@ export default function Page() {
   const [maxPrice, setMaxPrice] = useState<string>("");
   // null = 全部 (no age cap); otherwise keep only confirmed wallets with age ≤ N天.
   const [maxAgeDays, setMaxAgeDays] = useState<number | null>(null);
+  // Flips true once the URL params have been read into state — the first fetch
+  // and the URL write-back both wait for it.
+  const [urlReady, setUrlReady] = useState<boolean>(false);
+  // Render cap escape hatch ("显示其余 N 行"). Sticky once expanded so the 30s
+  // auto-refresh doesn't collapse the table under the user.
+  const [showAllRows, setShowAllRows] = useState<boolean>(false);
 
   const activeReq = useRef<number>(0);
+
+  // Hydrate filters from the URL once on mount (client-only, so SSR markup and
+  // the first client render agree — no hydration mismatch). Absent or invalid
+  // params keep the defaults; the write-back effect below then canonicalizes
+  // the address bar.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const qMinUsd = parseNumParam(p.get("minUsd"), { min: 1, int: true });
+    if (qMinUsd != null) setMinUsd(qMinUsd);
+    const qSide = parseChoiceParam(p.get("side"), SIDES);
+    if (qSide != null) setSide(qSide);
+    const qHours = parseChoiceParam(p.get("hours"), HOURS_CHOICES);
+    if (qHours != null) setHours(qHours);
+    if (parseNumParam(p.get("minPrice"), { min: 0, max: 1 }) != null) {
+      setMinPrice(p.get("minPrice") as string);
+    }
+    if (parseNumParam(p.get("maxPrice"), { min: 0, max: 1 }) != null) {
+      setMaxPrice(p.get("maxPrice") as string);
+    }
+    const qMaxAge = parseNumParam(p.get("maxAgeDays"), { min: 0, int: true });
+    if (qMaxAge != null) setMaxAgeDays(qMaxAge);
+    const qSort = parseChoiceParam(p.get("sort"), SORT_KEYS);
+    if (qSort != null) setSortKey(qSort);
+    const qDir = parseChoiceParam(p.get("dir"), SORT_DIRS);
+    if (qDir != null) setSortDir(qDir);
+    setUrlReady(true);
+  }, []);
+
+  // Mirror the filter state back into the URL (replaceState → no history spam)
+  // so a tuned view survives refresh and can be shared as a link.
+  useEffect(() => {
+    if (!urlReady) return;
+    replaceUrlQuery(
+      buildQueryString([
+        ["minUsd", minUsd !== DEFAULTS.minUsd ? String(minUsd) : null],
+        ["side", side !== DEFAULTS.side ? side : null],
+        ["hours", hours !== DEFAULTS.hours ? String(hours) : null],
+        ["minPrice", minPrice || null],
+        ["maxPrice", maxPrice || null],
+        ["maxAgeDays", maxAgeDays != null ? String(maxAgeDays) : null],
+        ["sort", sortKey !== DEFAULTS.sortKey ? sortKey : null],
+        ["dir", sortDir !== DEFAULTS.sortDir ? sortDir : null],
+      ]),
+    );
+  }, [
+    urlReady,
+    minUsd,
+    side,
+    hours,
+    minPrice,
+    maxPrice,
+    maxAgeDays,
+    sortKey,
+    sortDir,
+  ]);
 
   const load = useCallback(async () => {
     const reqId = ++activeReq.current;
@@ -125,10 +279,12 @@ export default function Page() {
     }
   }, [minUsd, side, hours]);
 
-  // Refetch whenever a filter changes (and on mount).
+  // Refetch whenever a filter changes. The FIRST fetch waits for the URL
+  // hydration above so a shared link never fires a throwaway default query.
   useEffect(() => {
+    if (!urlReady) return;
     load();
-  }, [load]);
+  }, [urlReady, load]);
 
   // Optional 30s auto-refresh.
   useEffect(() => {
@@ -137,48 +293,9 @@ export default function Page() {
     return () => clearInterval(id);
   }, [autoRefresh, load]);
 
-  // Lazily enrich rows with address age. Collect distinct wallets not yet resolved,
-  // POST them, and merge ageDays into `ages` (keyed by lowercased wallet).
-  useEffect(() => {
-    const trades = data?.trades;
-    if (!trades || trades.length === 0) return;
-    const want = [
-      ...new Set(
-        trades
-          .map((t) => t.wallet?.toLowerCase())
-          .filter((w): w is string => Boolean(w)),
-      ),
-    ].filter((w) => !(w in ages));
-    if (want.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      // Chunk so every requested wallet stays under the route's cap and resolves
-      // (progressive fill for large result sets instead of dropping the overflow).
-      const CHUNK = 100;
-      for (let i = 0; i < want.length && !cancelled; i += CHUNK) {
-        const batch = want.slice(i, i + CHUNK);
-        try {
-          const res = await fetch("/api/wallet-age", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ wallets: batch }),
-          });
-          const json = (await res.json()) as {
-            ages?: Record<string, { ageDays: number | null }>;
-          };
-          if (cancelled) return;
-          const next: Record<string, number | null> = {};
-          for (const w of batch) next[w] = json.ages?.[w]?.ageDays ?? null;
-          setAges((prev) => ({ ...prev, ...next }));
-        } catch {
-          // Best-effort enrichment; leave this batch showing "…".
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [data, ages]);
+  // wallet(lowercased) -> ageDays|null. Filled lazily after the table renders;
+  // permanently cached server-side so repeat lookups are instant.
+  const ages = useWalletAges((data?.trades ?? []).map((t) => t.wallet));
 
   // --- New-trade sound notification --------------------------------------
   // Chime when a refresh (auto/manual) brings genuinely new trades. A change of
@@ -270,7 +387,14 @@ export default function Page() {
     displayedTrades.map((t) => t.wallet),
   );
 
-  function toggleSort(key: "time" | "amount") {
+  // Cap the DOM rows — sorting/filtering/stat cards above all keep operating
+  // on the FULL displayedTrades set; only the rendered row count truncates.
+  const { visible: visibleTrades, hiddenCount } = capRows(
+    displayedTrades,
+    showAllRows,
+  );
+
+  function toggleSort(key: SortKey) {
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
@@ -279,7 +403,7 @@ export default function Page() {
     }
   }
 
-  const sortArrow = (key: "time" | "amount") =>
+  const sortArrow = (key: SortKey) =>
     sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "";
 
   const stats = data?.stats;
@@ -288,6 +412,8 @@ export default function Page() {
   const sideTotal = buyUsd + sellUsd;
   const buyPct = sideTotal > 0 ? (buyUsd / sideTotal) * 100 : 0;
   const sellPct = sideTotal > 0 ? 100 - buyPct : 0;
+
+  const view = tableViewState(data != null, data?.trades.length ?? 0, loading);
 
   return (
     <main className="ds-main">
@@ -576,102 +702,72 @@ export default function Page() {
       ) : null}
 
       {/* Table */}
-      {data && data.trades.length === 0 && !loading ? (
-        <div className="ds-empty">该筛选条件下 {hours}h 内暂无成交</div>
-      ) : data && data.trades.length > 0 ? (
-        <div className="ds-table-wrap">
-          <table className="ds-table">
-            <thead>
-              <tr>
-                <th
-                  className="is-sortable"
-                  onClick={() => toggleSort("time")}
-                  title="点击按时间排序"
-                >
-                  时间{sortArrow("time")}
-                </th>
-                <th>市场 / 结果</th>
-                <th>方向</th>
-                <th
-                  className="is-sortable is-right"
-                  onClick={() => toggleSort("amount")}
-                  title="点击按金额排序"
-                >
-                  金额{sortArrow("amount")}
-                </th>
-                <th className="is-right">价格</th>
-                <th>钱包</th>
-                <th>地址年龄</th>
-                <th title="已结算市场胜率 · 已实现盈亏（🏆 = 聪明钱白名单）">
-                  战绩
-                </th>
-                <th>tx</th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayedTrades.map((t, i) => {
-                const whale = t.usd >= 50000;
-                return (
-                  <tr key={`${t.txHash}-${t.wallet}-${i}`}>
-                    <td className="mono muted">{fmtClock(t.ts)}</td>
-                    <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
-                      {t.eventSlug ? (
-                        <a
-                          href={`https://polymarket.com/event/${t.eventSlug}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {t.title}
-                        </a>
-                      ) : (
-                        t.title
-                      )}
-                      <div className="kpi-sub">{t.outcome}</div>
-                    </td>
-                    <td>
-                      <SideTag side={t.side} />
-                    </td>
-                    <td className="mono is-right">
-                      <Icon s={whale ? "🐳" : "💰"} /> ${fmtUsd(t.usd)}
-                    </td>
-                    <td className="mono is-right">{t.price.toFixed(3)}</td>
-                    <td>
-                      <a
-                        className="mono"
-                        href={`/wallet/${t.wallet?.toLowerCase()}`}
-                        title={`${t.wallet} · 点击查看钱包档案`}
-                      >
-                        {shortWallet(t.wallet)}
-                      </a>
-                    </td>
-                    <td>
-                      <AgeBadge ageDays={ages[t.wallet?.toLowerCase()]} />
-                    </td>
-                    <td>
-                      <WalletStatsBadge
-                        stats={walletStats[t.wallet?.toLowerCase()]}
-                        smart={smart[t.wallet?.toLowerCase()]}
-                      />
-                    </td>
-                    <td>
-                      {t.txHash ? (
-                        <a
-                          href={`https://polygonscan.com/tx/${t.txHash}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          ↗
-                        </a>
-                      ) : (
-                        ""
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      {view === "loading" ? (
+        // First fetch, nothing to show yet — a deep 24h pull can take 5-15s
+        // and a blank area reads as "the tool is broken".
+        <div className="ds-empty">
+          ⏳ 正在扫描 {hours}h 成交 — 深度拉取首次约 5-15 秒，请稍候…
         </div>
+      ) : view === "empty" ? (
+        <div className="ds-empty">该筛选条件下 {hours}h 内暂无成交</div>
+      ) : view === "rows" ? (
+        <>
+          <div className="ds-table-wrap">
+            <table className="ds-table">
+              <thead>
+                <tr>
+                  <th
+                    className="is-sortable"
+                    onClick={() => toggleSort("time")}
+                    title="点击按时间排序"
+                  >
+                    时间{sortArrow("time")}
+                  </th>
+                  <th>市场 / 结果</th>
+                  <th>方向</th>
+                  <th
+                    className="is-sortable is-right"
+                    onClick={() => toggleSort("amount")}
+                    title="点击按金额排序"
+                  >
+                    金额{sortArrow("amount")}
+                  </th>
+                  <th className="is-right">价格</th>
+                  <th>钱包</th>
+                  <th>地址年龄</th>
+                  <th title="已结算市场胜率 · 已实现盈亏（🏆 = 聪明钱白名单）">
+                    战绩
+                  </th>
+                  <th>tx</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleTrades.map((t, i) => (
+                  <ScanRow
+                    key={`${t.txHash}-${t.wallet}-${i}`}
+                    t={t}
+                    age={ages[t.wallet?.toLowerCase()]}
+                    stats={walletStats[t.wallet?.toLowerCase()]}
+                    smart={smart[t.wallet?.toLowerCase()]}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {hiddenCount > 0 ? (
+            <div style={{ textAlign: "center", marginTop: "var(--s-3)" }}>
+              <button
+                className="ds-btn ds-btn--ghost"
+                onClick={() => setShowAllRows(true)}
+              >
+                显示其余 {hiddenCount} 行
+              </button>
+              <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
+                统计卡与「符合筛选」计数已包含全部 {displayedTrades.length} 笔
+              </div>
+            </div>
+          ) : null}
+        </>
       ) : null}
     </main>
   );
