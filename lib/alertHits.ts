@@ -18,8 +18,60 @@ export type AlertHitRow = {
   created_at: number;
 };
 
+// A parsed alert-history row as the wallet page's 历史命中 table consumes it.
+export type AlertHit = {
+  type: string;
+  createdAt: number;
+  title: string;
+  outcome: string;
+  side: string;
+  usd: number;
+  price: number | null;
+  // Polymarket event slug when the payload carried one ("" otherwise) — the
+  // page links the title to polymarket.com/event/<slug> exactly like its
+  // recent-trades table, closing the 告警 → 档案 → 市场 drill-down.
+  eventSlug: string;
+};
+
+// Shape one raw alert row into an AlertHit; null for unparseable payloads
+// (the caller filters those out). Consensus payloads are group aggregates
+// (totalNetUsd, no single fill price); trade payloads price out as size×price.
+export function parseAlertHit(row: AlertHitRow): AlertHit | null {
+  try {
+    const p = JSON.parse(row.payload) as Record<string, unknown>;
+    // Trade payloads store eventSlug (slug is the market slug fallback, same
+    // precedence as /api/alerts); consensus payloads only ever set eventSlug.
+    const eventSlug = String(p.eventSlug ?? p.slug ?? "");
+    if (row.type === "consensus") {
+      return {
+        type: row.type,
+        createdAt: row.created_at,
+        title: String(p.title ?? ""),
+        outcome: String(p.outcome ?? ""),
+        side: "BUY",
+        usd: Number(p.totalNetUsd ?? 0),
+        price: null,
+        eventSlug,
+      };
+    }
+    const size = Number(p.size ?? 0);
+    const price = Number(p.price ?? 0);
+    return {
+      type: row.type,
+      createdAt: row.created_at,
+      title: String(p.title ?? ""),
+      outcome: String(p.outcome ?? ""),
+      side: String(p.side ?? ""),
+      usd: size * price,
+      price,
+      eventSlug,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Raw alert rows mentioning `address` within the recent window, newest first.
-// Payload parsing/shaping stays with the caller (the wallet route).
 export function queryAlertHitRows(
   db: DB,
   address: string,

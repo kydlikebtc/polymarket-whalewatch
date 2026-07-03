@@ -139,7 +139,18 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
     ? getSmart([...new Set(survivors.map((t) => t.proxyWallet.toLowerCase()))])
     : {};
   if (conditions.smartOnly) {
+    const evaluated = survivors.length;
     survivors = survivors.filter((t) => smartTags[t.proxyWallet.toLowerCase()]);
+    // smartOnly's failure mode is SILENCE (empty whitelist, or thresholds
+    // starving the whitelist∩large-trade intersection to zero), which looks
+    // exactly like "no signal". Log the hit ratio whenever there were
+    // candidates so the two cases are tellable apart from the engine logs.
+    if (evaluated > 0) {
+      console.log(
+        `[alertEngine] smartOnly: ${survivors.length}/${evaluated} candidate trade(s) from whitelist wallets` +
+          ` (whitelist-tagged wallets in batch: ${Object.keys(smartTags).length})`,
+      );
+    }
   }
 
   // Address-age filter (network-bound) — only when a cap is set and survivors

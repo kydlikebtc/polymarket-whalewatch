@@ -3,6 +3,7 @@ import { openDb } from "./db";
 import {
   computeScore,
   getAllSmartTags,
+  getSmartPoolStatus,
   getSmartTags,
   maybeDailySeed,
   seedSmartWallets,
@@ -376,5 +377,49 @@ describe("getAllSmartTags", () => {
     expect(map.size).toBe(2);
     expect(map.get("0xaaa")?.score).toBe(80);
     expect(map.get("0xbbb")?.isWhitelist).toBe(true);
+  });
+});
+
+describe("getSmartPoolStatus", () => {
+  const NOW = 1_700_000_000;
+
+  it("counts the whitelist and only the last-24h 'smart' alerts", () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO smart_wallets (address, score) VALUES ('0xaaa', 80), ('0xbbb', 60)",
+    ).run();
+    const ins = db.prepare(
+      "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, '{}', ?)",
+    );
+    ins.run("smart", "k1", NOW - 100); // in window
+    ins.run("smart", "k2", NOW - 86_400 - 1); // aged out
+    ins.run("large", "k3", NOW - 100); // wrong type
+    expect(getSmartPoolStatus(db, NOW)).toEqual({
+      smartWalletCount: 2,
+      smartAlerts24h: 1,
+    });
+  });
+
+  it("empty tables report zero (an EMPTY pool is a real answer, not unknown)", () => {
+    const db = openDb(":memory:");
+    expect(getSmartPoolStatus(db, NOW)).toEqual({
+      smartWalletCount: 0,
+      smartAlerts24h: 0,
+    });
+  });
+
+  it("a missing table degrades that counter to null without throwing", () => {
+    const db = openDb(":memory:");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    db.prepare("DROP TABLE smart_wallets").run();
+    expect(getSmartPoolStatus(db, NOW)).toEqual({
+      smartWalletCount: null,
+      smartAlerts24h: 0,
+    });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("pool-status"),
+      expect.anything(),
+    );
+    warnSpy.mockRestore();
   });
 });

@@ -344,6 +344,49 @@ describe("runAlertCycle", () => {
     expect(fired2).toBe(0);
   });
 
+  it("(j2) smartOnly logs its hit ratio whenever candidates were evaluated", async () => {
+    const db = openDb(":memory:");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const smartTrade = mk({ transactionHash: "0xs", proxyWallet: "0xSMART" });
+    const plainTrade = mk({ transactionHash: "0xp", proxyWallet: "0xPLAIN" });
+    const send = vi.fn().mockResolvedValue(undefined);
+
+    await runAlertCycle({
+      db,
+      fetchTrades: async () => [smartTrade, plainTrade],
+      conditions: cond({ minUsd: 10000, smartOnly: true }),
+      getAges: noAges,
+      getSmart: () => ({ "0xsmart": { score: 82 } }),
+      send,
+      minTimestamp: 0,
+    });
+    // 1 of the 2 candidates hit the whitelist — SILENCE must be tellable
+    // apart from "filter eats everything" straight from the engine logs.
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining("smartOnly: 1/2 candidate trade(s)"),
+    );
+
+    // A cycle with zero candidates (nothing cleared the cheap filters) stays
+    // quiet — no per-cycle log spam at the 4s cadence.
+    logSpy.mockClear();
+    await runAlertCycle({
+      db,
+      fetchTrades: async () => [
+        mk({ transactionHash: "0xtiny", size: 10, price: 0.5 }), // $5
+      ],
+      conditions: cond({ minUsd: 10000, smartOnly: true }),
+      getAges: noAges,
+      getSmart: () => ({}),
+      send,
+      minTimestamp: 0,
+    });
+    const smartLogs = logSpy.mock.calls.filter((c) =>
+      String(c[0]).includes("smartOnly:"),
+    );
+    expect(smartLogs).toHaveLength(0);
+    logSpy.mockRestore();
+  });
+
   it("(k) maxHoursToEnd keeps only pre-settlement trades and enriches the alert", async () => {
     const db = openDb(":memory:");
     const NOW = Math.floor(Date.parse("2026-07-01T00:00:00Z") / 1000);

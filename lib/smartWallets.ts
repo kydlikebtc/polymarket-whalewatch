@@ -339,6 +339,44 @@ export function getSmartTags(
   return out;
 }
 
+// Pool-status snapshot for the dashboard's smartOnly feedback: whitelist size
+// plus the last-24h 🏆 alert count. Each count degrades to null INDEPENDENTLY
+// (the alerts page opens a readonly db that may predate either table) so the
+// alerts feed itself never breaks over a missing counter.
+export interface SmartPoolStatus {
+  smartWalletCount: number | null;
+  smartAlerts24h: number | null;
+}
+
+export function getSmartPoolStatus(
+  db: DB,
+  nowSec: number = Math.floor(Date.now() / 1000),
+): SmartPoolStatus {
+  let smartWalletCount: number | null = null;
+  try {
+    smartWalletCount = (
+      db.prepare("SELECT COUNT(*) AS n FROM smart_wallets").get() as {
+        n: number;
+      }
+    ).n;
+  } catch (e) {
+    console.warn("[smartWallets] pool-status wallet count failed:", e);
+  }
+  let smartAlerts24h: number | null = null;
+  try {
+    smartAlerts24h = (
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM alerts WHERE type = 'smart' AND created_at >= ?",
+        )
+        .get(nowSec - 86_400) as { n: number }
+    ).n;
+  } catch (e) {
+    console.warn("[smartWallets] pool-status 24h alert count failed:", e);
+  }
+  return { smartWalletCount, smartAlerts24h };
+}
+
 // Full smart-wallet map (address -> tag) for consensus detection over a trade
 // window. Table stays small (hundreds of rows), so loading it whole is cheap.
 export function getAllSmartTags(db: DB): Map<string, SmartTag> {

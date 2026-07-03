@@ -210,11 +210,35 @@ h3 {
   font-size: var(--t-md);
   font-weight: 600;
   color: rgba(255, 255, 255, 0.95);
+  white-space: nowrap;
+  flex-shrink: 0; /* the nav scrolls; the brand never crumples */
+}
+
+/* 375px-class phones: brand + 5 nav links + tag cannot fit — reclaim the
+   decorative 只读监控 tag's width for the nav and tighten the gutters. */
+@media (max-width: 600px) {
+  .topbar__inner {
+    padding: 0 var(--s-3);
+    gap: var(--s-3);
+  }
+  .topbar .ds-tag {
+    display: none;
+  }
 }
 .topbar__nav {
   display: flex;
   align-items: center;
   gap: var(--s-1);
+  /* Narrow viewports: the nav row scrolls in place instead of overflowing
+     into a page-level horizontal scroll. min-width:0 lets the flex item
+     actually shrink below its content (flex min-width defaults to auto). */
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; /* the row IS the scroller — no visible bar */
+}
+.topbar__nav::-webkit-scrollbar {
+  display: none;
 }
 .nav-link {
   display: inline-flex;
@@ -226,6 +250,7 @@ h3 {
   font-weight: 500;
   color: rgba(255, 255, 255, 0.6);
   text-decoration: none;
+  white-space: nowrap; /* "24h 扫描" must not wrap inside the scroll row */
   transition:
     background var(--d-fast) var(--ease),
     color var(--d-fast) var(--ease);
@@ -583,6 +608,39 @@ h3 {
   max-width: 1180px;
   margin: 0 auto;
   padding: var(--s-6) var(--s-5) var(--s-12);
+}
+
+/* =====================================================================
+   Tap popover — touch-reachable glossary tips (app extension)
+   Desktop hover keeps the native `title` tooltip untouched; a tap/click
+   focuses the element (tabindex=-1: click-focusable, never a tab stop)
+   and :focus paints the SAME text — data-tip mirrors title — as a small
+   dark popover. Tapping the symbol again or anywhere else dismisses it.
+   ===================================================================== */
+.tip-pop {
+  position: relative;
+  cursor: help;
+}
+.tip-pop:focus {
+  outline: none;
+}
+.tip-pop:focus::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  z-index: 40;
+  width: max-content;
+  max-width: min(320px, 78vw);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-sm);
+  background: var(--n-900);
+  color: var(--n-0);
+  font: 400 var(--t-sm) / var(--lh-snug) var(--font-ui);
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: pre-line; /* stats-badge tips carry a \n caveat line */
+  box-shadow: var(--shadow-pop);
 }
 
 /* address-age tones (financial-freshness signal) */

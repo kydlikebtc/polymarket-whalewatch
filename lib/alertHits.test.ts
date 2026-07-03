@@ -1,6 +1,10 @@
-import { it, expect } from "vitest";
+import { describe, it, expect } from "vitest";
 import { openDb } from "./db";
-import { ALERT_HITS_WINDOW_DAYS, queryAlertHitRows } from "./alertHits";
+import {
+  ALERT_HITS_WINDOW_DAYS,
+  parseAlertHit,
+  queryAlertHitRows,
+} from "./alertHits";
 
 const ADDR = "0x00000000000000000000000000000000000000ab";
 const NOW = 1_700_000_000;
@@ -38,4 +42,75 @@ it("applies the row limit newest-first", () => {
   }
   const rows = queryAlertHitRows(db, ADDR, { nowSec: NOW, limit: 3 });
   expect(rows.map((r) => r.created_at)).toEqual([NOW, NOW - 1, NOW - 2]);
+});
+
+describe("parseAlertHit", () => {
+  it("shapes a trade payload and keeps its eventSlug for the market link", () => {
+    const hit = parseAlertHit({
+      type: "large",
+      created_at: NOW,
+      payload: JSON.stringify({
+        title: "Market A",
+        outcome: "Yes",
+        side: "BUY",
+        size: 20000,
+        price: 0.5,
+        eventSlug: "market-a",
+      }),
+    });
+    expect(hit).toEqual({
+      type: "large",
+      createdAt: NOW,
+      title: "Market A",
+      outcome: "Yes",
+      side: "BUY",
+      usd: 10000, // size × price
+      price: 0.5,
+      eventSlug: "market-a",
+    });
+  });
+
+  it("falls back to the market slug, and to '' when neither slug exists (never 'undefined')", () => {
+    const slugOnly = parseAlertHit({
+      type: "large",
+      created_at: NOW,
+      payload: JSON.stringify({ title: "B", slug: "market-b" }),
+    });
+    expect(slugOnly?.eventSlug).toBe("market-b");
+    const none = parseAlertHit({
+      type: "large",
+      created_at: NOW,
+      payload: JSON.stringify({ title: "C" }),
+    });
+    expect(none?.eventSlug).toBe("");
+  });
+
+  it("consensus payloads map the group aggregate (BUY, totalNetUsd, no fill price)", () => {
+    const hit = parseAlertHit({
+      type: "consensus",
+      created_at: NOW,
+      payload: JSON.stringify({
+        title: "Market D",
+        outcome: "No",
+        totalNetUsd: 12345,
+        eventSlug: "market-d",
+      }),
+    });
+    expect(hit).toEqual({
+      type: "consensus",
+      createdAt: NOW,
+      title: "Market D",
+      outcome: "No",
+      side: "BUY",
+      usd: 12345,
+      price: null,
+      eventSlug: "market-d",
+    });
+  });
+
+  it("returns null for unparseable payloads", () => {
+    expect(
+      parseAlertHit({ type: "large", created_at: NOW, payload: "not json" }),
+    ).toBeNull();
+  });
 });

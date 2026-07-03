@@ -6,6 +6,11 @@ import { iconTip } from "../glossary";
 import { playBubble } from "../sound";
 import { useSoundToggle } from "../useSound";
 import {
+  OUTCOMES_MIN_INTERVAL_MS,
+  alertsSnapshot,
+  shouldFetchOutcomes,
+} from "../alertsPolling";
+import {
   directionVerdict,
   summarizeOutcomes,
   wilsonInterval,
@@ -29,6 +34,16 @@ type AlertView = {
 type AlertsResponse = {
   count: number;
   alerts: AlertView[];
+  // smartOnly feedback (see /api/alerts): whitelist pool size and the last-24h
+  // 🏆 alert count. null/absent = unknown (missing table / pre-upgrade API).
+  smartWalletCount?: number | null;
+  smartAlerts24h?: number | null;
+};
+
+// Pool-status props the ConditionsPanel shows beside the smartOnly checkbox.
+type SmartPoolMeta = {
+  smartWalletCount: number | null;
+  smartAlerts24h: number | null;
 };
 
 // On-demand validation data per alert (computed lazily from public history).
@@ -173,7 +188,13 @@ function numOrNull(s: string): number | null {
 // 告警条件 panel — edits the conditions stored in the `config` table that the
 // embedded engine reads every poll. Telegram-optional: matches always land in the
 // alerts table regardless of whether Telegram is configured.
-function ConditionsPanel({ pollSeconds }: { pollSeconds: number }) {
+function ConditionsPanel({
+  pollSeconds,
+  smartMeta,
+}: {
+  pollSeconds: number;
+  smartMeta: SmartPoolMeta;
+}) {
   const [c, setC] = useState<AlertConditions>(DEFAULT_CONDITIONS);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -412,7 +433,32 @@ function ConditionsPanel({ pollSeconds }: { pollSeconds: number }) {
           />
           只推送聪明钱白名单钱包（🏆，每日自动从官方盈利榜播种）
         </label>
+        {/* Hit-count feedback: with smartOnly a forever-silent feed is
+            indistinguishable from a broken one — surface the pool size and
+            how many 🏆 alerts the engine actually produced in the last 24h. */}
+        {smartMeta.smartWalletCount != null ? (
+          <span className="ds-hint mono">
+            白名单 {smartMeta.smartWalletCount} 个
+            {smartMeta.smartAlerts24h != null
+              ? ` · 近24h 🏆 ${smartMeta.smartAlerts24h} 条`
+              : ""}
+          </span>
+        ) : null}
       </Field>
+      {c.smartOnly && smartMeta.smartWalletCount === 0 ? (
+        // Same empty-pool copy as the consensus page — the two features share
+        // the same whitelist and the same "seed hasn't run yet" failure mode.
+        <div className="ds-callout ds-callout--warn">
+          聪明钱白名单为空 — 开启后将不会推送任何告警。引擎启动后每日自动从
+          官方盈利榜播种（首次约 1 分钟内完成），播种失败会自动重试
+        </div>
+      ) : null}
+      {c.smartOnly ? (
+        <span className="ds-hint">
+          💡 开启后建议把最低金额降至 $2k–5k：聪明钱大单通常拆小，$10k
+          单笔线与白名单的交集近零
+        </span>
+      ) : null}
 
       <div
         style={{
@@ -451,20 +497,33 @@ export default function Page() {
   // alertId -> validation outcome, filled lazily after the list renders.
   const [outcomes, setOutcomes] = useState<Record<number, AlertOutcome>>({});
 
+  // Last-applied payload fingerprint (alerts + smart-pool counters): an
+  // unchanged poll skips setData so `data` keeps its identity and the
+  // [data]-effects below don't re-run every 5s over the same list.
+  const lastSnapshot = useRef<string>("");
+
   useEffect(() => {
     let active = true;
 
     async function load() {
+      // Background tabs sleep — no fetch, no re-render. The visibilitychange
+      // listener below fires a catch-up load the moment we're foregrounded.
+      if (document.hidden) return;
       try {
         const res = await fetch("/api/alerts", { cache: "no-store" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = (await res.json()) as AlertsResponse;
         if (!active) return;
-        setData(json);
         setLastRefreshed(
           new Date().toLocaleTimeString("zh-CN", { hour12: false }),
         );
         setError("");
+        const snap =
+          alertsSnapshot(json.alerts) +
+          `|${json.smartWalletCount ?? "?"}|${json.smartAlerts24h ?? "?"}`;
+        if (snap === lastSnapshot.current) return;
+        lastSnapshot.current = snap;
+        setData(json);
       } catch (e) {
         if (!active) return;
         setError(e instanceof Error ? e.message : String(e));
@@ -473,20 +532,37 @@ export default function Page() {
 
     load();
     const id = setInterval(load, 5000);
+    const onVisible = () => {
+      if (!document.hidden) load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       active = false;
       clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
   // Lazily fetch validation outcomes for alerts we haven't resolved yet.
   // Unresolved alerts are re-queried (their settlement state can change);
-  // resolved ones are final and skipped. The 5s poll re-runs this effect with
-  // a fresh `data` identity every time, so an in-flight guard stops overlapping
+  // resolved ones are final and skipped. Throttled: the 1h/24h marks move on
+  // an hourly scale, so POSTs fire only for never-queried ids (fresh alerts)
+  // or after OUTCOMES_MIN_INTERVAL_MS — the minute tick below re-arms the
+  // effect between new-alert arrivals. The in-flight guard stops overlapping
   // POSTs while a cold batch (up to 200 upstream price lookups) is computing —
   // and a completed response is ALWAYS merged (idempotent by id), never
   // discarded by an effect re-run.
   const outcomesInFlight = useRef(false);
+  const lastOutcomesAt = useRef(0);
+  // Ids POSTed at least once — a new id bypasses the 60s throttle.
+  const outcomesKnownIds = useRef<Set<number>>(new Set());
+  const [outcomesTick, setOutcomesTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!document.hidden) setOutcomesTick((t) => t + 1);
+    }, OUTCOMES_MIN_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, []);
   useEffect(() => {
     // Consensus alerts are tracked too (synthetic BUY at the group's
     // avgBuyPrice); pre-upgrade consensus payloads missing token fields are
@@ -494,8 +570,20 @@ export default function Page() {
     const want = data.alerts
       .map((a) => a.id)
       .filter((id) => !(id in outcomes) || !outcomes[id].resolved);
-    if (want.length === 0 || outcomesInFlight.current) return;
+    if (outcomesInFlight.current) return;
+    if (
+      !shouldFetchOutcomes({
+        wantIds: want,
+        knownIds: outcomesKnownIds.current,
+        lastFetchAt: lastOutcomesAt.current,
+        nowMs: Date.now(),
+      })
+    ) {
+      return;
+    }
     outcomesInFlight.current = true;
+    lastOutcomesAt.current = Date.now();
+    for (const id of want) outcomesKnownIds.current.add(id);
     (async () => {
       try {
         const res = await fetch("/api/alert-outcomes", {
@@ -510,14 +598,14 @@ export default function Page() {
           setOutcomes((prev) => ({ ...prev, ...json.outcomes }));
         }
       } catch {
-        // Best-effort; retried on the next poll.
+        // Best-effort; retried on the next tick / data change.
       } finally {
         outcomesInFlight.current = false;
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- outcomes is
     // intentionally omitted: including it would re-trigger on our own merge.
-  }, [data]);
+  }, [data, outcomesTick]);
 
   // Aggregate validation stats over whatever has been computed so far —
   // 1h + 24h direction hits and the settled win-rate, grouped by type, with
@@ -576,14 +664,20 @@ export default function Page() {
             {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
             {error ? <span className="down"> · 刷新失败: {error}</span> : null}
             <span className="muted" style={{ marginLeft: "var(--s-2)" }}>
-              · 每 5 秒自动刷新
+              · 每 5 秒自动刷新（后台标签页暂停）
             </span>
           </div>
         </div>
         <SoundToggle on={soundOn} onToggle={toggle} />
       </header>
 
-      <ConditionsPanel pollSeconds={4} />
+      <ConditionsPanel
+        pollSeconds={4}
+        smartMeta={{
+          smartWalletCount: data.smartWalletCount ?? null,
+          smartAlerts24h: data.smartAlerts24h ?? null,
+        }}
+      />
 
       {/* Validation summary — the "was this signal any good" strip. */}
       {hasStats ? (

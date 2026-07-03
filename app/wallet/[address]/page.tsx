@@ -43,6 +43,8 @@ type AlertHit = {
   side: string;
   usd: number;
   price: number | null;
+  // "" when the recorded payload carried no event slug (very old rows).
+  eventSlug: string;
 };
 type RecentTrade = {
   timestamp: number;
@@ -385,7 +387,17 @@ export default function WalletPage() {
                       <tr key={`${h.createdAt}-${i}`}>
                         <td>{ALERT_TYPE_LABEL[h.type] ?? h.type}</td>
                         <td style={{ whiteSpace: "normal", maxWidth: 320 }}>
-                          {h.title}
+                          {h.eventSlug ? (
+                            <a
+                              href={`https://polymarket.com/event/${h.eventSlug}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {h.title}
+                            </a>
+                          ) : (
+                            h.title
+                          )}
                           <div className="kpi-sub">{h.outcome}</div>
                         </td>
                         <td>
