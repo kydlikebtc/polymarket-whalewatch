@@ -3,6 +3,7 @@ import { openDb } from "./db";
 import { runAlertCycle } from "./alertEngine";
 import { DEFAULT_CONDITIONS, type AlertConditions } from "./alertConditions";
 import { dedupKey } from "./trades";
+import { markSeen } from "./seen";
 import type { Trade } from "./types";
 
 // Trade factory. size*price = notional; defaults clear the 10k default minUsd.
@@ -134,27 +135,31 @@ describe("runAlertCycle", () => {
     expect(new Set(asked)).toEqual(new Set(["0xyoung", "0xold", "0xunknown"]));
   });
 
-  it("(e) timestamp gate drops trades older than minTimestamp", async () => {
+  it("(e) timestamp gate: pre-window trades never fire but are seeded seen once", async () => {
     const db = openDb(":memory:");
     const fresh = mk({ transactionHash: "0xfresh", timestamp: 2000 });
     const stale = mk({ transactionHash: "0xstale", timestamp: 500 });
     const send = vi.fn().mockResolvedValue(undefined);
-
-    const fired = await runAlertCycle({
+    const deps = {
       db,
       fetchTrades: async () => [fresh, stale],
       conditions: cond({ minUsd: 10000 }),
       getAges: noAges,
       send,
       minTimestamp: 1000,
-    });
+    };
 
-    expect(fired).toBe(1);
-    // the stale trade was NOT marked seen (it never passed the timestamp gate)
+    expect(await runAlertCycle(deps)).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1); // only the fresh trade
+    // The stale trade IS marked seen (backlog seed, with its own ts) so the
+    // same historical row isn't re-fetched-and-re-checked every cycle…
     const staleSeen = db
-      .prepare("SELECT 1 FROM seen_trades WHERE dedup_key = ?")
-      .get(dedupKey(stale));
-    expect(staleSeen).toBeUndefined();
+      .prepare("SELECT ts FROM seen_trades WHERE dedup_key = ?")
+      .get(dedupKey(stale)) as { ts: number } | undefined;
+    expect(staleSeen?.ts).toBe(500);
+    // …and it still never fires on a later cycle.
+    expect(await runAlertCycle(deps)).toBe(0);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it("(f) disabled conditions fire nothing", async () => {
@@ -333,9 +338,9 @@ describe("runAlertCycle", () => {
       await runAlertCycle({ ...base, getMarketMeta: async () => ({}) }),
     ).toBe(0);
     expect(
-      db.prepare("SELECT 1 FROM seen_trades WHERE dedup_key = ?").get(
-        dedupKey(t),
-      ),
+      db
+        .prepare("SELECT 1 FROM seen_trades WHERE dedup_key = ?")
+        .get(dedupKey(t)),
     ).toBeUndefined();
 
     // Cycle 2: gamma recovered → the same trade fires normally.
@@ -362,6 +367,63 @@ describe("runAlertCycle", () => {
     });
 
     expect(fired).toBe(1);
+    expect(countAlerts(db)).toBe(1);
+  });
+
+  it("(m) claim lock: a trade claimed by another process mid-cycle is not double-pushed", async () => {
+    const db = openDb(":memory:");
+    const t = mk({ transactionHash: "0xrace", proxyWallet: "0xRACE" });
+    const send = vi.fn().mockResolvedValue(undefined);
+    // Simulate the second process winning the race INSIDE our cycle: the age
+    // lookup runs after our batched seen check but before our markSeen claim,
+    // so marking the trade seen here lands exactly in the contested window.
+    const getAges = async (): Promise<Record<string, number | null>> => {
+      markSeen(db, dedupKey(t), t.timestamp);
+      return { "0xrace": 1 };
+    };
+
+    const fired = await runAlertCycle({
+      db,
+      fetchTrades: async () => [t],
+      conditions: cond({ minUsd: 10000, maxAgeDays: 7 }),
+      getAges,
+      send,
+      minTimestamp: 0,
+    });
+
+    expect(fired).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    // The claiming process records the alert row, not us.
+    expect(countAlerts(db)).toBe(0);
+  });
+
+  it("(n) send failure rolls the claim back so the trade retries next cycle", async () => {
+    const db = openDb(":memory:");
+    const t = mk({ transactionHash: "0xretry" });
+    const failingSend = vi.fn().mockRejectedValue(new Error("telegram 500"));
+    const base = {
+      db,
+      fetchTrades: async () => [t],
+      conditions: cond({ minUsd: 10000 }),
+      getAges: noAges,
+      minTimestamp: 0,
+    };
+
+    await expect(runAlertCycle({ ...base, send: failingSend })).rejects.toThrow(
+      "telegram 500",
+    );
+    // Claim rolled back: not seen, no alert row.
+    expect(
+      db
+        .prepare("SELECT 1 FROM seen_trades WHERE dedup_key = ?")
+        .get(dedupKey(t)),
+    ).toBeUndefined();
+    expect(countAlerts(db)).toBe(0);
+
+    // Next cycle with a healthy send delivers exactly once.
+    const send = vi.fn().mockResolvedValue(undefined);
+    expect(await runAlertCycle({ ...base, send })).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
     expect(countAlerts(db)).toBe(1);
   });
 });

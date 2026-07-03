@@ -6,7 +6,13 @@ import { tradeMarketContext } from "./gamma";
 import { selectNewTrades } from "./poll";
 import { dedupKey, notionalUsd } from "./trades";
 import { formatLargeTradeAlert } from "./alert";
-import { hasSeen, markSeen, recordAlert } from "./seen";
+import {
+  markSeen,
+  markSeenBatch,
+  recordAlert,
+  seenKeySet,
+  unmarkSeen,
+} from "./seen";
 
 export interface EngineDeps {
   db: DB;
@@ -39,12 +45,17 @@ export interface EngineDeps {
  *
  * Pipeline (cheap filters first, then the network-bound age filter):
  *  1. disabled → 0.
- *  2. fetch → drop already-seen → drop older than minTimestamp.
+ *  2. fetch → drop already-seen (batched IN(...) check) → seed pre-window
+ *     backlog (< minTimestamp) as seen ONCE instead of re-checking it forever.
  *  3. amount / side / price-band filters (pure, no I/O).
  *  4. age filter (only if maxAgeDays set): fetch ages for survivor wallets, keep
  *     wallets with a finite ageDays <= cap (unknown-age and older are dropped).
- *  5. for each match (oldest-first): optionally push to Telegram, then record.
- *  6. mark EVERY evaluated `fresh` trade seen so it isn't re-evaluated next cycle.
+ *  5. for each match (oldest-first): CLAIM via markSeen (cross-process lock),
+ *     then push to Telegram; a failed send rolls the claim back and rethrows so
+ *     the trade retries next cycle (at-least-once). A lost claim skips the push
+ *     — the other process owns it.
+ *  6. mark EVERY evaluated `fresh` trade seen (one transaction) so it isn't
+ *     re-evaluated next cycle.
  *
  * NOTE: condition changes apply only to trades arriving AFTER the change — trades
  * already marked seen are never re-evaluated against new conditions.
@@ -65,11 +76,28 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
   if (!conditions.enabled) return 0;
 
   const fetched = await fetchTrades();
-  // selectNewTrades drops already-seen and sorts oldest-first; then apply the
-  // timestamp gate so we never replay historical fills on a cold/late start.
-  let fresh = selectNewTrades(fetched, (k) => hasSeen(db, k)).filter(
-    (t) => t.timestamp >= minTimestamp,
+  // Batched seen check (one IN(...) query per ~900 keys instead of a point
+  // query per row); selectNewTrades then drops seen rows and sorts oldest-first.
+  const seenKeys = seenKeySet(
+    db,
+    fetched.map((t) => dedupKey(t)),
   );
+  let fresh = selectNewTrades(fetched, (k) => seenKeys.has(k));
+  // Timestamp gate: trades older than minTimestamp are historical backlog —
+  // never alerted, but seeded as seen ONCE. Without the seed the same backlog
+  // rows would be re-fetched and re-checked every cycle until they age out of
+  // the /trades page.
+  const backlog = fresh.filter((t) => t.timestamp < minTimestamp);
+  fresh = fresh.filter((t) => t.timestamp >= minTimestamp);
+  if (backlog.length > 0) {
+    markSeenBatch(
+      db,
+      backlog.map((t) => ({ key: dedupKey(t), ts: t.timestamp })),
+    );
+    console.log(
+      `[alertEngine] seeded ${backlog.length} pre-window trade(s) as seen (minTimestamp=${minTimestamp})`,
+    );
+  }
 
   const minPrice = conditions.minPrice ?? 0;
   const maxPrice = conditions.maxPrice ?? 1;
@@ -143,6 +171,7 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
   }
 
   // Fire alerts for the final matches (already oldest-first from selectNewTrades).
+  let fired = 0;
   for (const t of survivors) {
     const k = dedupKey(t);
     const smart = smartTags[t.proxyWallet.toLowerCase()];
@@ -151,12 +180,24 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
       metaByCid[t.conditionId],
       nowSec,
     );
-    // At-least-once: send first; if send() throws, the trade is NOT marked seen
-    // below (we throw out of the loop) and retries next cycle.
-    if (send) {
-      await send(formatLargeTradeAlert(t, conditions.minUsd, smart, ctx));
+    // Claim-then-send: markSeen's INSERT OR IGNORE is the cross-process
+    // preemption lock — with the embedded engine AND the standalone worker on
+    // one db, both pass their seen check for the same trade and would each
+    // push without it. changes === 0 → the other process claimed first.
+    if (markSeen(db, k, t.timestamp).changes === 0) {
+      console.log(`[alertEngine] skip ${k}: claimed by another process`);
+      continue;
     }
-    markSeen(db, k, t.timestamp);
+    if (send) {
+      try {
+        await send(formatLargeTradeAlert(t, conditions.minUsd, smart, ctx));
+      } catch (e) {
+        // Roll back the claim so the trade retries next cycle (at-least-once).
+        // Known tradeoff: a crash BETWEEN claim and send loses that one push.
+        unmarkSeen(db, k);
+        throw e;
+      }
+    }
     recordAlert(
       db,
       smart ? "smart" : "large",
@@ -164,13 +205,16 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
       JSON.stringify(ctx ? { ...t, marketCtx: ctx } : t),
       t.timestamp,
     );
+    fired++;
   }
 
-  // Mark every evaluated fresh trade seen (matches were marked above; this covers
-  // the non-matches) so condition-failing trades aren't re-evaluated next cycle.
-  for (const t of fresh) {
-    markSeen(db, dedupKey(t), t.timestamp);
-  }
+  // Mark every evaluated fresh trade seen in one transaction (matches were
+  // claimed above; OR IGNORE makes re-marking them a no-op) so condition-
+  // failing trades aren't re-evaluated next cycle.
+  markSeenBatch(
+    db,
+    fresh.map((t) => ({ key: dedupKey(t), ts: t.timestamp })),
+  );
 
-  return survivors.length;
+  return fired;
 }

@@ -187,6 +187,48 @@ describe("runConsensusCycle", () => {
     expect(fired).toBe(0);
     expect(fetchWindow).not.toHaveBeenCalled();
   });
+
+  it("claim lock: a group recently claimed by another process is not double-pushed", async () => {
+    const db = openDb(":memory:");
+    const send = vi.fn().mockResolvedValue(undefined);
+    // The other process claimed this exact formation moments ago (its alerts
+    // row is RECENT — well within the state TTL).
+    db.prepare(
+      "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, ?, ?)",
+    ).run("consensus", "consensus:0xc:Yes:2", "{}", 9_990);
+
+    const fired = await runConsensusCycle(deps(db, { send }));
+    expect(fired).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    // State stays untouched — the claiming process owns the update.
+    const state = db
+      .prepare("SELECT COUNT(*) AS c FROM consensus_state")
+      .get() as { c: number };
+    expect(state.c).toBe(0);
+  });
+
+  it("rolls the alerts claim back when send fails, so the group retries", async () => {
+    const db = openDb(":memory:");
+    const failingSend = vi.fn().mockRejectedValue(new Error("telegram down"));
+
+    await expect(
+      runConsensusCycle(deps(db, { send: failingSend })),
+    ).rejects.toThrow("telegram down");
+    // Claim rolled back: no alerts row, no state row.
+    const alerts = db.prepare("SELECT COUNT(*) AS c FROM alerts").get() as {
+      c: number;
+    };
+    expect(alerts.c).toBe(0);
+    const state = db
+      .prepare("SELECT COUNT(*) AS c FROM consensus_state")
+      .get() as { c: number };
+    expect(state.c).toBe(0);
+
+    // Next cycle with a healthy send delivers exactly once.
+    const send = vi.fn().mockResolvedValue(undefined);
+    expect(await runConsensusCycle(deps(db, { send, nowSec: 10_100 }))).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("formatConsensusAlert", () => {

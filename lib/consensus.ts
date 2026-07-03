@@ -220,6 +220,15 @@ export async function runConsensusCycle(
     `INSERT OR REPLACE INTO consensus_state (condition_id, outcome, wallet_count, total_usd, last_alert_ts)
      VALUES (?, ?, ?, ?, ?)`,
   );
+  const insAlert = db.prepare(
+    "INSERT OR IGNORE INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, ?, ?)",
+  );
+  const selAlert = db.prepare(
+    "SELECT created_at FROM alerts WHERE type = 'consensus' AND dedup_key = ?",
+  );
+  const delAlert = db.prepare(
+    "DELETE FROM alerts WHERE type = 'consensus' AND dedup_key = ?",
+  );
   let fired = 0;
   for (const g of groups) {
     const row = sel.get(g.conditionId, g.outcome) as
@@ -227,15 +236,37 @@ export async function runConsensusCycle(
     const expired = row ? nowSec - row.last_alert_ts > stateTtlSec : false;
     const isNews = !row || expired || g.walletCount > row.wallet_count;
     if (!isNews) continue;
-    if (send) await send(formatConsensusAlert(g));
-    db.prepare(
-      "INSERT OR IGNORE INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, ?, ?)",
-    ).run(
-      "consensus",
-      `consensus:${g.conditionId}:${g.outcome}:${g.walletCount}`,
-      JSON.stringify(g),
-      nowSec,
-    );
+    const dk = `consensus:${g.conditionId}:${g.outcome}:${g.walletCount}`;
+    // Claim-then-send: the unique (type, dedup_key) index makes this INSERT a
+    // cross-process preemption lock (embedded engine + standalone worker on
+    // one db). changes === 0 means the row already exists — two very
+    // different cases:
+    //  (a) a RECENT row: the other process claimed this exact formation/
+    //      escalation moments ago and owns the push + state update → skip;
+    //  (b) an OLD row (> stateTtlSec): that is OUR OWN original alert and this
+    //      is the TTL-expiry reminder — no new alerts row (matches the old OR
+    //      IGNORE semantics), push proceeds. Reminder pushes are the one path
+    //      two processes can still rarely both take.
+    const claimed =
+      insAlert.run("consensus", dk, JSON.stringify(g), nowSec).changes === 1;
+    if (!claimed) {
+      const prior = selAlert.get(dk) as { created_at: number } | undefined;
+      if (prior && nowSec - prior.created_at <= stateTtlSec) {
+        console.log(`[consensus] skip ${dk}: claimed by another process`);
+        continue;
+      }
+    }
+    if (send) {
+      try {
+        await send(formatConsensusAlert(g));
+      } catch (e) {
+        // Roll back a fresh claim so the group re-fires next cycle
+        // (at-least-once); a reminder wrote nothing, so nothing to undo.
+        // Known tradeoff: a crash BETWEEN claim and send loses that one push.
+        if (claimed) delAlert.run(dk);
+        throw e;
+      }
+    }
     ups.run(g.conditionId, g.outcome, g.walletCount, g.totalNetUsd, nowSec);
     fired++;
   }
