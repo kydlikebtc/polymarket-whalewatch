@@ -22,6 +22,7 @@ import {
 } from "../ui";
 import { useWalletIntel } from "../useWalletIntel";
 import { useWalletAges } from "../useWalletAges";
+import { useAutoRetryOnError } from "../autoRetry";
 import { capRows, tableViewState } from "../tableView";
 import {
   buildQueryString,
@@ -416,6 +417,15 @@ export default function AccumulationPage() {
     load();
   }, [urlReady, load]);
 
+  // One-shot auto retry: a cold upstream cache 408s the deep pull (first load
+  // AND filter switches — a new floor:hours baseKey is a new cold query); our
+  // failed attempts warm it, so a single delayed retry usually succeeds.
+  const { retrying: autoRetrying, rearm: rearmAutoRetry } = useAutoRetryOnError(
+    data,
+    data?.groups.length ?? 0,
+    load,
+  );
+
   // wallet(lowercased) -> ageDays|null. Filled lazily after the table renders;
   // permanently cached server-side so repeat lookups are instant.
   const ages = useWalletAges((data?.groups ?? []).map((g) => g.wallet));
@@ -574,7 +584,15 @@ export default function AccumulationPage() {
             当前净买入 ≥ <span className="mono">${fmtUsd(minNetUsd)}</span>
           </span>
           <span style={{ flex: 1 }} />
-          <button className="ds-btn ds-btn--ghost" onClick={() => load()}>
+          <button
+            className="ds-btn ds-btn--ghost"
+            onClick={() => {
+              // Manual refresh = a fresh user-triggered pull: re-arm the
+              // one-shot auto-retry budget before firing.
+              rearmAutoRetry();
+              load();
+            }}
+          >
             刷新
           </button>
         </Field>
@@ -585,7 +603,10 @@ export default function AccumulationPage() {
         </div>
       </section>
 
-      {data?.error ? (
+      {/* While the one-shot auto retry is pending, the transient error is
+          being handled — show the warm-up notice (below) instead of a scary
+          callout. A retry that fails again falls through to this callout. */}
+      {data?.error && !autoRetrying ? (
         <div
           className="ds-callout ds-callout--error"
           style={{ marginBottom: "var(--s-4)" }}
@@ -636,7 +657,11 @@ export default function AccumulationPage() {
       ) : null}
 
       {/* Table */}
-      {view === "loading" ? (
+      {autoRetrying ? (
+        // The pull failed on a cold upstream cache and a one-shot retry is
+        // scheduled — show progress instead of an error + empty table.
+        <div className="ds-empty">⏳ 上游缓存预热中，自动重试…</div>
+      ) : view === "loading" ? (
         // First fetch, nothing to show yet — the deep double-sided window pull
         // can take 5-15s and a blank area reads as "the tool is broken".
         <div className="ds-empty">

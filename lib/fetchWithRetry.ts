@@ -8,7 +8,11 @@
 // Contract kept from the original: non-transient statuses return immediately,
 // and the LAST attempt returns the response as-is (even when non-ok) so every
 // caller keeps its own `!res.ok` handling.
-const TRANSIENT_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+//
+// Exported so callers that implement their own post-retry degradation (e.g.
+// getTradesWindow keeping the already-fetched prefix on a mid-pagination 408)
+// classify statuses with the SAME set instead of a drifting copy.
+export const TRANSIENT_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 export interface FetchWithRetryOpts {
   attempts?: number;

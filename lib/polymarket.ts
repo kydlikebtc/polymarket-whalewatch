@@ -1,6 +1,6 @@
 import { TradeSchema, type Trade } from "./types";
 import { dedupKey } from "./trades";
-import { fetchWithRetry } from "./fetchWithRetry";
+import { fetchWithRetry, TRANSIENT_STATUS } from "./fetchWithRetry";
 const DATA_API = "https://data-api.polymarket.com";
 
 // /trades-specific retry wrapper: 12s timeout (server-side filterAmount scans
@@ -136,14 +136,36 @@ export interface TradesWindowQuery {
 // pagination below treats the cap as "window truncated", never as a failure.
 const MAX_TRADES_OFFSET = 3000;
 
+// Window-sweep page size. 250 (down from 500): the origin fills a page by
+// scanning history until `limit` rows match, so on a sparse side (e.g.
+// SELL @ $10k) a 250-row page needs ~half the scan — far less likely to hit
+// the ~5.75s origin timeout that produced cold-cache 408s. The embedded
+// engine's getLargeTrades made the same 500→250 move earlier (POLL_PAGE_LIMIT)
+// for the same reason; this aligns the window sweeps.
+const WINDOW_PAGE_LIMIT = 250;
+
+// When a page STILL comes back transient after fetchWithRetry's whole backoff
+// budget, halve the page at the SAME offset before degrading: a cheaper query
+// usually completes even on a cold cache. 250 → 125 → 60 (max 2 shrinks).
+const SHRINK_LIMITS = [125, 60];
+
 /**
  * Fetch all large trades newer than `sinceSec`, paginating by offset because the
  * Data API has no time-range param. Rows come back newest-first, so we stop as
  * soon as we see a row older than the cutoff (window edge reached → complete).
- * `truncated:true` means we hit `maxPages` OR the API's hard offset cap before
- * reaching the edge, so older in-window trades may still exist and are NOT
- * included — the fetched prefix is still a complete, self-consistent
- * (shorter) window.
+ *
+ * Offsets advance by the RAW row count of each page (not a fixed stride), so a
+ * page can be re-fetched at the same offset with a smaller `limit` — that's
+ * how the shrink-retry works — and mixed page sizes stay gap-free and
+ * overlap-free. `maxPages` bounds the number of CONSUMED pages (shrink
+ * retries at the same offset don't burn budget); the default 20 comfortably
+ * reaches the 3000-offset cap at 250 rows/page (13 pages) with shrink slack.
+ *
+ * `truncated:true` means we hit `maxPages`, the API's hard offset cap, or a
+ * mid-window transient failure (408/5xx surviving every retry — cold upstream
+ * cache) before reaching the edge, so older in-window trades may still exist
+ * and are NOT included — the fetched prefix is still a complete,
+ * self-consistent (shorter) window.
  */
 export async function getTradesWindow({
   minUsd,
@@ -152,24 +174,48 @@ export async function getTradesWindow({
   maxPages = 20,
 }: TradesWindowQuery): Promise<{ trades: Trade[]; truncated: boolean }> {
   const out: Trade[] = [];
-  for (let page = 0; page < maxPages; page++) {
-    const offset = page * 500;
+  const sideParam = side ? `&side=${side}` : "";
+  const pageUrl = (limit: number, offset: number) =>
+    `${DATA_API}/trades?filterType=CASH&filterAmount=${minUsd}&takerOnly=true&limit=${limit}&offset=${offset}${sideParam}`;
+
+  let offset = 0;
+  for (let pages = 0; pages < maxPages; pages++) {
     if (offset > MAX_TRADES_OFFSET) {
       console.warn(
         `[getTradesWindow] offset cap ${MAX_TRADES_OFFSET} reached (${out.length} rows) — window truncated`,
       );
       return { trades: out, truncated: true };
     }
-    const sideParam = side ? `&side=${side}` : "";
-    const url = `${DATA_API}/trades?filterType=CASH&filterAmount=${minUsd}&takerOnly=true&limit=500&offset=${offset}${sideParam}`;
-    const res = await fetchTrades(url);
+    let limit = WINDOW_PAGE_LIMIT;
+    let res = await fetchTrades(pageUrl(limit, offset));
+    // Shrink-retry: a transient status that survived fetchWithRetry's backoff
+    // means the origin timed out filling this page (cold cache on an expensive
+    // query) — retry the SAME offset with a halved limit before giving up.
+    for (const shrunk of SHRINK_LIMITS) {
+      if (res.ok || !TRANSIENT_STATUS.has(res.status)) break;
+      console.warn(
+        `[getTradesWindow] transient ${res.status} at offset=${offset} limit=${limit} — retrying same offset with limit=${shrunk}`,
+      );
+      limit = shrunk;
+      res = await fetchTrades(pageUrl(limit, offset));
+    }
     if (!res.ok) {
       // A mid-pagination 400 is the deep-offset cap (possibly moved server-side):
       // degrade to the fetched prefix instead of failing the whole scan. A 400
       // on the FIRST page is a genuinely bad request and still throws.
-      if (res.status === 400 && page > 0) {
+      if (res.status === 400 && offset > 0) {
         console.warn(
-          `[getTradesWindow] offset rejected at page ${page} (${out.length} rows) — window truncated`,
+          `[getTradesWindow] offset rejected at offset=${offset} (${out.length} rows) — window truncated`,
+        );
+        return { trades: out, truncated: true };
+      }
+      // A transient status that survived every retry AND every shrink: the
+      // already-fetched prefix is still a complete, self-consistent shorter
+      // window — return it truncated instead of discarding paid-for pages.
+      // A FIRST-page transient still throws: there is no prefix to salvage.
+      if (TRANSIENT_STATUS.has(res.status) && offset > 0) {
+        console.warn(
+          `[getTradesWindow] transient ${res.status} persisted at offset=${offset} after retries+shrinks (${out.length} rows fetched) — window truncated`,
         );
         return { trades: out, truncated: true };
       }
@@ -187,7 +233,9 @@ export async function getTradesWindow({
       if (t.timestamp < sinceSec) return { trades: out, truncated: false };
       out.push(t);
     }
-    if (rawCount < 500) return { trades: out, truncated: false }; // last available page
+    // Short RAW page (vs THIS page's possibly-shrunk limit) = last available page.
+    if (rawCount < limit) return { trades: out, truncated: false };
+    offset += rawCount;
   }
   // Hit the page cap before reaching the window edge — more in-window rows may exist.
   console.warn(
@@ -214,30 +262,76 @@ export interface DeepWindowResult {
  * stays complete for BOTH sides of every wallet (a wallet's sells are never
  * silently missing from a window that includes its buys). Overlapping
  * pagination re-serves are deduped.
+ *
+ * Degradation: the two sides are ISOLATED (allSettled). If one side fails
+ * outright (e.g. a first-page 408 that survived every retry — typical of the
+ * upstream's cold cache on expensive sparse-side queries), the survivor is
+ * returned as a truncated window whose effectiveSinceSec is the survivor's
+ * own oldest row ("now" = zero coverage when the survivor is empty), instead
+ * of failing the whole scan. Only when BOTH sides fail does an error
+ * propagate — with the original "getTradesWindow <status>" message shape
+ * that /api/scan's error presentation relies on.
  */
 export async function getTradesWindowDeep({
   minUsd,
   sinceSec,
   maxPages = 20,
 }: Omit<TradesWindowQuery, "side">): Promise<DeepWindowResult> {
-  const [buy, sell] = await Promise.all([
+  const [buyRes, sellRes] = await Promise.allSettled([
     getTradesWindow({ minUsd, side: "BUY", sinceSec, maxPages }),
     getTradesWindow({ minUsd, side: "SELL", sinceSec, maxPages }),
   ]);
 
+  if (buyRes.status === "rejected" && sellRes.status === "rejected") {
+    // Nothing to salvage — surface the BUY error AS-IS so callers keep seeing
+    // the "getTradesWindow <status>" shape; log both reasons for diagnosis.
+    console.warn(
+      `[getTradesWindowDeep] BOTH sides failed (BUY: ${String(buyRes.reason)}; SELL: ${String(sellRes.reason)})`,
+    );
+    throw buyRes.reason;
+  }
+
+  const fulfilled: Array<{ trades: Trade[]; truncated: boolean }> = [];
+  let sideFailed = false;
+  for (const [label, settled] of [
+    ["BUY", buyRes],
+    ["SELL", sellRes],
+  ] as const) {
+    if (settled.status === "fulfilled") {
+      fulfilled.push(settled.value);
+      continue;
+    }
+    sideFailed = true;
+    console.warn(
+      `[getTradesWindowDeep] ${label} side failed (${String(settled.reason)}) — degrading to the surviving side, window truncated`,
+    );
+  }
+
   // The complete merged window starts at the NEWEST truncation edge: beyond
   // it one side is blind, so its rows are dropped to keep netting honest.
   let effectiveSinceSec = sinceSec;
-  for (const r of [buy, sell]) {
+  for (const r of fulfilled) {
     if (r.truncated && r.trades.length > 0) {
       const oldest = r.trades[r.trades.length - 1].timestamp;
       if (oldest > effectiveSinceSec) effectiveSinceSec = oldest;
     }
   }
+  if (sideFailed) {
+    // The failed side is blind for the WHOLE window, so honest coverage only
+    // reaches back to the survivor's own oldest row. An EMPTY survivor means
+    // zero verified coverage — report "now" and return the empty window
+    // rather than throwing (callers render the coverage note, not an error).
+    const survivor = fulfilled[0];
+    const oldest =
+      survivor.trades.length > 0
+        ? survivor.trades[survivor.trades.length - 1].timestamp
+        : Math.floor(Date.now() / 1000);
+    if (oldest > effectiveSinceSec) effectiveSinceSec = oldest;
+  }
 
   const seen = new Set<string>();
   const trades: Trade[] = [];
-  for (const t of [...buy.trades, ...sell.trades]) {
+  for (const t of fulfilled.flatMap((r) => r.trades)) {
     if (t.timestamp < effectiveSinceSec) continue;
     const k = dedupKey(t);
     if (seen.has(k)) continue;
@@ -247,7 +341,7 @@ export async function getTradesWindowDeep({
   trades.sort((a, b) => b.timestamp - a.timestamp);
   return {
     trades,
-    truncated: effectiveSinceSec > sinceSec,
+    truncated: sideFailed || effectiveSinceSec > sinceSec,
     effectiveSinceSec,
   };
 }

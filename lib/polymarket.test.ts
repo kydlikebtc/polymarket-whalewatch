@@ -421,3 +421,229 @@ it("getTradesWindow retries a transient 408 then succeeds", async () => {
   expect(trades).toHaveLength(1);
   expect(trades[0].transactionHash).toBe("0xa");
 });
+
+/* ---------------------------------------------------- transient degradation
+ * The upstream origin times out (~5.75s → 408) filling expensive cold-cache
+ * pages. Recovery ladder: fetchWithRetry backoff → same-offset shrink retry
+ * (250→125→60) → keep-the-prefix degradation (mid-window) / throw (page 0).
+ * These tests exhaust fetchWithRetry's backoff, so they run on fake timers.
+ */
+
+// Response helpers for URL-driven mocks: fetchWithRetry re-hits the SAME url
+// on its internal attempts, so keying the mock off the url keeps the scripted
+// sequence deterministic regardless of retry count.
+const okPage = (rows: unknown[]) => ({ ok: true, json: async () => rows });
+const status408 = { ok: false, status: 408, json: async () => ({}) };
+const limitOf = (url: string) => Number(new URL(url).searchParams.get("limit"));
+const offsetOf = (url: string) =>
+  Number(new URL(url).searchParams.get("offset"));
+// Collapse fetchWithRetry's identical retry attempts so assertions see the
+// logical page sequence.
+const distinctUrls = (fetchMock: { mock: { calls: unknown[][] } }) =>
+  fetchMock.mock.calls
+    .map((c) => c[0] as string)
+    .filter((u, i, a) => i === 0 || u !== a[i - 1]);
+
+it("getTradesWindow shrinks the page at the SAME offset when a 408 survives the backoff", async () => {
+  vi.useFakeTimers();
+  try {
+    const sinceSec = 1000;
+    const mkRows = (start: number, n: number) =>
+      Array.from({ length: n }, (_, i) =>
+        trade({ timestamp: 2000, transactionHash: `0x${start + i}` }),
+      );
+    const fetchMock = vi.fn(async (url: string) => {
+      const limit = limitOf(url);
+      const offset = offsetOf(url);
+      // The full-size page-0 query 408s every attempt; the halved one works.
+      if (offset === 0 && limit === 250) return status408;
+      if (offset === 0 && limit === 125) return okPage(mkRows(0, 125)); // full page
+      if (offset === 125 && limit === 250) return okPage(mkRows(125, 10)); // short → done
+      throw new Error(`unexpected request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const promise = getTradesWindow({ minUsd: 10000, sinceSec });
+    await vi.runAllTimersAsync();
+    const { trades, truncated } = await promise;
+    expect(truncated).toBe(false);
+    expect(trades).toHaveLength(135);
+    // No dupes, no gaps across the mixed page sizes.
+    expect(new Set(trades.map((t) => t.transactionHash)).size).toBe(135);
+    const urls = distinctUrls(fetchMock);
+    expect(urls).toHaveLength(3);
+    expect(urls[0]).toContain("limit=250");
+    expect(urls[0]).toContain("offset=0");
+    expect(urls[1]).toContain("limit=125");
+    expect(urls[1]).toContain("offset=0"); // shrink retries the SAME offset
+    expect(urls[2]).toContain("limit=250"); // next page back at full size
+    expect(urls[2]).toContain("offset=125"); // offset advanced by RAW rows
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("retrying same offset with limit=125"),
+    );
+    warnSpy.mockRestore();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("getTradesWindow accumulates offsets by RAW rows across mixed page sizes (no overlap, no gap)", async () => {
+  vi.useFakeTimers();
+  try {
+    const sinceSec = 1000;
+    const mkRows = (start: number, n: number) =>
+      Array.from({ length: n }, (_, i) =>
+        trade({ timestamp: 2000, transactionHash: `0x${start + i}` }),
+      );
+    const fetchMock = vi.fn(async (url: string) => {
+      const limit = limitOf(url);
+      const offset = offsetOf(url);
+      if (offset === 0 && limit === 250) return okPage(mkRows(0, 250)); // full
+      if (offset === 250 && limit === 250) return status408; // cold mid-page
+      if (offset === 250 && limit === 125) return okPage(mkRows(250, 125)); // shrunk full
+      if (offset === 375 && limit === 250) return okPage(mkRows(375, 10)); // short → done
+      throw new Error(`unexpected request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const promise = getTradesWindow({ minUsd: 10000, sinceSec });
+    await vi.runAllTimersAsync();
+    const { trades, truncated } = await promise;
+    expect(truncated).toBe(false);
+    expect(trades).toHaveLength(385); // 250 + 125 + 10, complete
+    expect(new Set(trades.map((t) => t.transactionHash)).size).toBe(385);
+    const urls = distinctUrls(fetchMock);
+    expect(urls.map((u) => `${limitOf(u)}@${offsetOf(u)}`)).toEqual([
+      "250@0",
+      "250@250",
+      "125@250",
+      "250@375",
+    ]);
+    warnSpy.mockRestore();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("getTradesWindow degrades a mid-window 408 to the fetched prefix after retries AND shrinks fail", async () => {
+  vi.useFakeTimers();
+  try {
+    const sinceSec = 1000;
+    const page0 = Array.from({ length: 250 }, (_, i) =>
+      trade({ timestamp: 2000, transactionHash: `0x${i}` }),
+    );
+    const fetchMock = vi.fn(async (url: string) =>
+      offsetOf(url) === 0 ? okPage(page0) : status408,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const promise = getTradesWindow({ minUsd: 10000, sinceSec });
+    await vi.runAllTimersAsync();
+    const { trades, truncated } = await promise;
+    expect(truncated).toBe(true);
+    expect(trades).toHaveLength(250); // the fetched prefix survives
+    // Full shrink ladder was attempted at offset 250 before degrading.
+    const urls = distinctUrls(fetchMock);
+    expect(urls.map((u) => `${limitOf(u)}@${offsetOf(u)}`)).toEqual([
+      "250@0",
+      "250@250",
+      "125@250",
+      "60@250",
+    ]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("transient 408 persisted at offset=250"),
+    );
+    warnSpy.mockRestore();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("getTradesWindow still throws when the FIRST page 408s through retries and shrinks (no prefix to salvage)", async () => {
+  vi.useFakeTimers();
+  try {
+    const fetchMock = vi.fn().mockResolvedValue(status408);
+    vi.stubGlobal("fetch", fetchMock);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const promise = getTradesWindow({ minUsd: 10000, sinceSec: 1000 });
+    const assertion = expect(promise).rejects.toThrow("getTradesWindow 408");
+    await vi.runAllTimersAsync();
+    await assertion;
+    // 3 limit sizes × 4 fetchWithRetry attempts each.
+    expect(fetchMock).toHaveBeenCalledTimes(12);
+    warnSpy.mockRestore();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("getTradesWindowDeep degrades to the surviving side when one side fails outright", async () => {
+  vi.useFakeTimers();
+  try {
+    const sinceSec = 1000;
+    const buyPage = [
+      trade({ side: "BUY", timestamp: 1900, transactionHash: "0xb1" }),
+      trade({ side: "BUY", timestamp: 1500, transactionHash: "0xb2" }),
+      trade({ side: "BUY", timestamp: 900, transactionHash: "0xbold" }), // window edge
+    ];
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes("side=BUY") ? okPage(buyPage) : status408,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const promise = getTradesWindowDeep({ minUsd: 10000, sinceSec });
+    await vi.runAllTimersAsync();
+    const { trades, truncated, effectiveSinceSec } = await promise;
+    expect(truncated).toBe(true);
+    // Honest coverage only reaches back to the survivor's own oldest row.
+    expect(effectiveSinceSec).toBe(1500);
+    expect(trades.map((t) => t.transactionHash)).toEqual(["0xb1", "0xb2"]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("SELL side failed"),
+    );
+    warnSpy.mockRestore();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("getTradesWindowDeep reports zero coverage (empty window, effectiveSinceSec=now) when the survivor is empty", async () => {
+  vi.useFakeTimers();
+  try {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes("side=BUY")
+        ? okPage([])
+        : { ok: false, status: 503, json: async () => ({}) },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const promise = getTradesWindowDeep({ minUsd: 10000, sinceSec: 1000 });
+    await vi.runAllTimersAsync();
+    const { trades, truncated, effectiveSinceSec } = await promise;
+    expect(trades).toEqual([]);
+    expect(truncated).toBe(true);
+    // Fake timers freeze Date after runAllTimersAsync, so "now" is exact.
+    expect(effectiveSinceSec).toBe(Math.floor(Date.now() / 1000));
+    warnSpy.mockRestore();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("getTradesWindowDeep throws only when BOTH sides fail (keeps the getTradesWindow error shape)", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(status408));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const promise = getTradesWindowDeep({ minUsd: 10000, sinceSec: 1000 });
+    const assertion = expect(promise).rejects.toThrow("getTradesWindow 408");
+    await vi.runAllTimersAsync();
+    await assertion;
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("BOTH sides failed"),
+    );
+    warnSpy.mockRestore();
+  } finally {
+    vi.useRealTimers();
+  }
+});
