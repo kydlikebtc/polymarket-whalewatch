@@ -84,6 +84,43 @@ describe("fetchClosedPositions", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("stops as truncated when a page re-serves already-seen positions", async () => {
+    // Fingerprints come from the raw rows' conditionId+asset; the second page
+    // re-serving the SAME rows (offset clamping) must not double-count them.
+    const fullPage = Array.from({ length: 50 }, (_, i) => ({
+      ...pos(1),
+      conditionId: `c${i}`,
+      asset: `a${i}`,
+    }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => fullPage })
+      .mockResolvedValueOnce({ ok: true, json: async () => fullPage });
+    vi.stubGlobal("fetch", fetchMock);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { positions, truncated } = await fetchClosedPositions("0xabc");
+    expect(positions).toHaveLength(50); // repeated page dropped, not appended
+    expect(truncated).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenCalledOnce();
+    warnSpy.mockRestore();
+  });
+
+  it("a partially-fresh page still appends in full (guard only trips on ZERO progress)", async () => {
+    const mk = (i: number) => ({ ...pos(1), conditionId: `c${i}`, asset: "a" });
+    const page0 = Array.from({ length: 50 }, (_, i) => mk(i));
+    // Page 1 overlaps page 0 by one row but brings fresh rows — legit data.
+    const page1 = [mk(49), mk(50), mk(51)];
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => page0 })
+      .mockResolvedValueOnce({ ok: true, json: async () => page1 });
+    vi.stubGlobal("fetch", fetchMock);
+    const { positions, truncated } = await fetchClosedPositions("0xabc");
+    expect(positions).toHaveLength(53);
+    expect(truncated).toBe(false); // short page = genuine end
+  });
+
   it("throws on a non-ok response", async () => {
     // Non-transient status: no retry, immediate throw (persistent transient
     // 5xx exhaustion is covered by the fetchWithRetry tests).

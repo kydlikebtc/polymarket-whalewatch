@@ -14,20 +14,28 @@ export async function POST(req: Request) {
   ].slice(0, MAX);
   try {
     const db = openDb(process.env.DASH_DB ?? "data.sqlite");
-    const tsMap = await getWalletAges(db, wallets);
-    const now = Math.floor(Date.now() / 1000);
-    const ages: Record<
-      string,
-      { firstTs: number | null; ageDays: number | null }
-    > = {};
-    for (const w of wallets) {
-      const ts = tsMap[w] ?? null;
-      ages[w] = {
-        firstTs: ts,
-        ageDays: ts != null ? (now - ts) / 86400 : null,
-      };
+    try {
+      const tsMap = await getWalletAges(db, wallets);
+      const now = Math.floor(Date.now() / 1000);
+      const ages: Record<
+        string,
+        { firstTs: number | null; ageDays: number | null }
+      > = {};
+      for (const w of wallets) {
+        const ts = tsMap[w] ?? null;
+        ages[w] = {
+          firstTs: ts,
+          ageDays: ts != null ? (now - ts) / 86400 : null,
+        };
+      }
+      return Response.json({ ages });
+    } finally {
+      // Per-request connection, same as /api/wallet-stats: this was the one
+      // route that leaked its handle — heavy batch age lookups accumulated
+      // open fds until EMFILE took down the whole Next process (dashboard
+      // AND embedded engine).
+      db.close();
     }
-    return Response.json({ ages });
   } catch (e) {
     console.error("[/api/wallet-age] lookup failed:", e);
     return Response.json(

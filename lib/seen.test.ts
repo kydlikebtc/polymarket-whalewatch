@@ -1,9 +1,10 @@
-import { it, expect } from "vitest";
+import { it, expect, vi } from "vitest";
 import { openDb } from "./db";
 import {
   hasSeen,
   markSeen,
   markSeenBatch,
+  maybePruneSeen,
   recordAlert,
   seenKeySet,
   unmarkSeen,
@@ -53,6 +54,27 @@ it("markSeenBatch inserts all rows transactionally and is idempotent", () => {
     { dedup_key: "b", ts: 200 },
   ]);
 });
+it("maybePruneSeen removes 7d-old rows once per UTC day and keeps recent ones", () => {
+  const db = openDb(":memory:");
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const now = 1_700_000_000;
+  markSeen(db, "old", now - 8 * 86_400);
+  markSeen(db, "young", now - 6 * 86_400);
+  expect(maybePruneSeen(db, now)).toBe(1);
+  expect(hasSeen(db, "old")).toBe(false);
+  expect(hasSeen(db, "young")).toBe(true);
+  // Same UTC day: day-gated off, even though another row has aged past the
+  // cutoff in the meantime.
+  markSeen(db, "old2", now - 8 * 86_400);
+  expect(maybePruneSeen(db, now + 3600)).toBeNull();
+  expect(hasSeen(db, "old2")).toBe(true);
+  // Next UTC day: prunes again; the 6d-old row still survives its window.
+  expect(maybePruneSeen(db, now + 86_400)).toBe(1);
+  expect(hasSeen(db, "old2")).toBe(false);
+  expect(hasSeen(db, "young")).toBe(true);
+  logSpy.mockRestore();
+});
+
 it("records an alert row", () => {
   const db = openDb(":memory:");
   recordAlert(db, "large", "k1", '{"foo":"bar"}', 1700000000);

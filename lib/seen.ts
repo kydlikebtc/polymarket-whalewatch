@@ -54,6 +54,45 @@ export function markSeenBatch(db: DB, rows: { key: string; ts: number }[]) {
   })();
 }
 
+// --- Daily retention prune ----------------------------------------------
+// seen_trades is a dedup ledger, not product data (alerts is — never pruned):
+// a row only matters while its trade can still reappear in some fetch window.
+// 7 days dwarfs every window in the system — the poll resume window (startup
+// backfill, capped at 30 min), the consensus/scan deep windows (≤24h), and
+// the /trades 3000-offset depth cap — so pruning older rows can never
+// resurrect a duplicate alert. It also can't disturb the startup backfill
+// resume point: MAX(seen_trades.ts) is read at engine start, and pruning only
+// removes the OLDEST rows (a >7d-idle db prunes to empty, which
+// computeMinTimestamp already treats as a cold start at "now").
+const PRUNE_DAY_KEY = "seen_prune_last_day";
+const PRUNE_RETENTION_SEC = 7 * 86_400;
+
+// Day-gated via a config marker (same pattern as maybeDailySeed's day key).
+// Returns rows removed, or null when today's prune already ran. The marker is
+// written AFTER the DELETE so a failed prune retries on the next cycle.
+export function maybePruneSeen(
+  db: DB,
+  nowSec = Math.floor(Date.now() / 1000),
+): number | null {
+  const today = new Date(nowSec * 1000).toISOString().slice(0, 10);
+  const row = db
+    .prepare("SELECT value FROM config WHERE key = ?")
+    .get(PRUNE_DAY_KEY) as { value: string | null } | undefined;
+  if (row?.value === today) return null;
+  const cutoff = nowSec - PRUNE_RETENTION_SEC;
+  const removed = db
+    .prepare("DELETE FROM seen_trades WHERE ts < ?")
+    .run(cutoff).changes;
+  db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)").run(
+    PRUNE_DAY_KEY,
+    today,
+  );
+  console.log(
+    `[seen] daily prune: removed ${removed} row(s) older than 7d (cutoff=${cutoff})`,
+  );
+  return removed;
+}
+
 export const recordAlert = (
   db: DB,
   type: string,

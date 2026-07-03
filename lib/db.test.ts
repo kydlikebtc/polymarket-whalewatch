@@ -53,6 +53,58 @@ describe("openDb", () => {
     }
   });
 
+  it("runs the alerts dedup sweep exactly once via the version marker", () => {
+    const dir = mkdtempSync(join(tmpdir(), "whaledb-"));
+    const path = join(dir, "t.sqlite");
+    try {
+      // Simulate a pre-index database: index dropped (duplicates possible
+      // again), no marker.
+      const db1 = openDb(path);
+      db1.prepare("DROP INDEX idx_alerts_type_dedup").run();
+      db1.prepare("DELETE FROM config WHERE key = 'alerts_dedup_v'").run();
+      const ins1 = db1.prepare(
+        "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, '{}', ?)",
+      );
+      ins1.run("large", "dup", 1);
+      ins1.run("large", "dup", 2);
+      ins1.run("large", "solo", 3);
+      db1.close();
+
+      // Reopen: marker missing → sweep collapses the duplicate group to its
+      // oldest row and writes the marker.
+      const db2 = openDb(path);
+      const rows = db2
+        .prepare("SELECT dedup_key, created_at FROM alerts ORDER BY created_at")
+        .all();
+      expect(rows).toEqual([
+        { dedup_key: "dup", created_at: 1 },
+        { dedup_key: "solo", created_at: 3 },
+      ]);
+      const marker = db2
+        .prepare("SELECT value FROM config WHERE key = 'alerts_dedup_v'")
+        .get() as { value: string };
+      expect(marker.value).toBe("1");
+      db2.close();
+
+      // Marker present → the sweep must be SKIPPED (that's the whole point:
+      // per-request openDb callers no longer pay a table-scan write). Plant
+      // duplicates again with the index dropped: an ungated sweep would
+      // silently heal them, so the gated openDb instead trips on recreating
+      // the unique index — proof no DELETE ran.
+      const db3 = openDb(path);
+      db3.prepare("DROP INDEX idx_alerts_type_dedup").run();
+      const ins3 = db3.prepare(
+        "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, '{}', ?)",
+      );
+      ins3.run("large", "dup2", 10);
+      ins3.run("large", "dup2", 11);
+      db3.close();
+      expect(() => openDb(path)).toThrow(/UNIQUE/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("rescores cached settled outcomes vs the fill price exactly once (outcome_won_v marker)", () => {
     const dir = mkdtempSync(join(tmpdir(), "whaledb-"));
     const path = join(dir, "t.sqlite");

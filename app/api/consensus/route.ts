@@ -1,4 +1,5 @@
 import { openDb } from "../../../lib/db";
+import { createPromiseCache } from "../../../lib/promiseCache";
 import { getTradesWindowDeep } from "../../../lib/polymarket";
 import { getAllSmartTags } from "../../../lib/smartWallets";
 import { detectConsensus, type ConsensusGroup } from "../../../lib/consensus";
@@ -9,8 +10,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // The window fetch dominates cost (up to 20 pages), so cache it briefly keyed
-// by hours; detection params are applied in memory per request. The cache
-// holds the PROMISE so concurrent misses share one in-flight fetch instead of
+// by hours; detection params are applied in memory per request. Promise-cached
+// (lib/promiseCache) so concurrent misses share one in-flight fetch instead of
 // each hammering the upstream with their own multi-page pull. The DEEP fetch
 // sweeps BUY/SELL separately so each side gets its own offset budget.
 const FLOOR_USD = 2000;
@@ -26,23 +27,13 @@ type WindowResult = {
   truncated: boolean;
   effectiveSinceSec: number;
 };
-const cache = new Map<number, { at: number; promise: Promise<WindowResult> }>();
+const windowCache = createPromiseCache<WindowResult>(CACHE_TTL_MS);
 
 function getWindowShared(hours: number): Promise<WindowResult> {
-  const hit = cache.get(hours);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.promise;
-  const sinceSec = Math.floor(Date.now() / 1000) - hours * 3600;
-  const entry = {
-    at: Date.now(),
-    promise: getTradesWindowDeep({ minUsd: FLOOR_USD, sinceSec }),
-  };
-  // A failed fetch must not stay cached, or every request within the TTL
-  // would re-reject without retrying.
-  entry.promise.catch(() => {
-    if (cache.get(hours) === entry) cache.delete(hours);
+  return windowCache(String(hours), () => {
+    const sinceSec = Math.floor(Date.now() / 1000) - hours * 3600;
+    return getTradesWindowDeep({ minUsd: FLOOR_USD, sinceSec });
   });
-  cache.set(hours, entry);
-  return entry.promise;
 }
 
 const ALLOWED_HOURS = new Set([2, 6, 12]);

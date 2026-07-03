@@ -1,7 +1,7 @@
 import { parseConfig } from "../lib/config";
 import { openDb, type DB } from "../lib/db";
 import { getLargeTrades, getTradesWindowDeep } from "../lib/polymarket";
-import { seenKeySet } from "../lib/seen";
+import { maybePruneSeen, seenKeySet } from "../lib/seen";
 import { dedupKey } from "../lib/trades";
 import { sendMessage } from "../lib/telegram";
 import { getWalletAges } from "../lib/walletAge";
@@ -161,6 +161,13 @@ export function startAlertEngine(): void {
           ),
         )
         .catch((e) => console.error("[engine] smart-wallet seed failed", e));
+
+      // Daily seen_trades retention prune (synchronous, day-gated, sub-ms on
+      // the steady-state table): the dedup ledger otherwise grows without
+      // bound and every seenKeySet IN(...) probe and startup MAX(ts) scan
+      // pays for it. 7d retention dwarfs every fetch window (see
+      // maybePruneSeen), so this can never resurrect a duplicate alert.
+      maybePruneSeen(db);
 
       const conditions = getAlertConditions(db);
       const fired = await runAlertCycle({

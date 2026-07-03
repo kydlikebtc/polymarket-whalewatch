@@ -1,4 +1,5 @@
 import { getTradesWindowDeep } from "../../../lib/polymarket";
+import { createPromiseCache } from "../../../lib/promiseCache";
 import { aggregate, type AccumGroup } from "../../../lib/accumulate";
 import type { Trade } from "../../../lib/types";
 
@@ -23,11 +24,12 @@ const SPLIT_CEILING = 10_000;
 
 // Cache the BASE fetch keyed by floor:hours (NOT by minNetUsd — that's applied
 // in memory). ~30s TTL so rapid filter changes don't hammer the API.
+// Promise-cached (lib/promiseCache, same pattern as /api/consensus): a cold
+// cache under concurrent requests collapses to ONE in-flight deep fetch
+// instead of a stampede of multi-page pulls.
 const CACHE_TTL_MS = 30_000;
-const cache = new Map<
-  string,
-  { at: number; trades: Trade[]; truncated: boolean }
->();
+type WindowBase = { trades: Trade[]; truncated: boolean };
+const baseCache = createPromiseCache<WindowBase>(CACHE_TTL_MS);
 
 const ALLOWED_HOURS = new Set([1, 2, 4]);
 
@@ -93,16 +95,14 @@ export async function GET(req: Request) {
   const baseKey = `${floor}:${hours}`;
 
   try {
-    let base = cache.get(baseKey);
-    if (!base || Date.now() - base.at >= CACHE_TTL_MS) {
+    const base = await baseCache(baseKey, async () => {
       const sinceSec = Math.floor(Date.now() / 1000) - hours * 3600;
       const { trades, truncated } = await getTradesWindowDeep({
         minUsd: floor,
         sinceSec,
       });
-      base = { at: Date.now(), trades, truncated };
-      cache.set(baseKey, base);
-    }
+      return { trades, truncated };
+    });
 
     const groups = aggregate(base.trades, {
       minNetUsd,

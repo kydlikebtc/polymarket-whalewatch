@@ -1,4 +1,5 @@
 import { getTradesWindowDeep } from "../../../lib/polymarket";
+import { createPromiseCache } from "../../../lib/promiseCache";
 import { notionalUsd } from "../../../lib/trades";
 import type { Trade } from "../../../lib/types";
 
@@ -51,11 +52,12 @@ const SAFE_FLOOR = 10_000;
 
 // Cache the BASE fetch keyed by floor:hours (NOT by amount/side — those are
 // applied client-side). ~20s TTL so rapid filter changes don't hammer the API.
+// Promise-cached (lib/promiseCache, same pattern as /api/consensus): a cold
+// cache under concurrent requests collapses to ONE in-flight deep fetch
+// instead of a stampede of multi-page pulls.
 const CACHE_TTL_MS = 20_000;
-const cache = new Map<
-  string,
-  { at: number; trades: Trade[]; truncated: boolean }
->();
+type WindowBase = { trades: Trade[]; truncated: boolean };
+const baseCache = createPromiseCache<WindowBase>(CACHE_TTL_MS);
 
 const ALLOWED_HOURS = new Set([1, 6, 24]);
 
@@ -113,8 +115,7 @@ export async function GET(req: Request) {
   const baseKey = `${baseFloor}:${hours}`;
 
   try {
-    let base = cache.get(baseKey);
-    if (!base || Date.now() - base.at >= CACHE_TTL_MS) {
+    const base = await baseCache(baseKey, async () => {
       const sinceSec = Math.floor(Date.now() / 1000) - hours * 3600;
       // Deep fetch sweeps BUY and SELL separately (each side gets its own
       // API depth budget); the user's side filter still applies in memory.
@@ -122,9 +123,8 @@ export async function GET(req: Request) {
         minUsd: baseFloor,
         sinceSec,
       });
-      base = { at: Date.now(), trades, truncated };
-      cache.set(baseKey, base);
-    }
+      return { trades, truncated };
+    });
 
     const filtered = base.trades
       .map(toScanTrade)

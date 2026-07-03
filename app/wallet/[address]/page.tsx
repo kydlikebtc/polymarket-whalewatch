@@ -62,6 +62,8 @@ type WalletResponse = {
   profile: Profile;
   categories: { category: string; usd: number; share: number }[];
   alertHits: AlertHit[];
+  // Coverage window of alertHits in days (the API bounds the LIKE scan).
+  alertHitsWindowDays?: number;
   recent: RecentTrade[];
   error?: string;
 };
@@ -358,10 +360,13 @@ export default function WalletPage() {
           {/* This tool's alert history for the wallet */}
           <section style={{ marginBottom: "var(--s-5)" }}>
             <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-              本工具历史命中（{data.alertHits.length}）
+              本工具历史命中（近 {data.alertHitsWindowDays ?? 90} 天 ·{" "}
+              {data.alertHits.length}）
             </div>
             {data.alertHits.length === 0 ? (
-              <div className="ds-empty">该钱包尚未触发过告警</div>
+              <div className="ds-empty">
+                近 {data.alertHitsWindowDays ?? 90} 天内该钱包未触发过告警
+              </div>
             ) : (
               <div className="ds-table-wrap">
                 <table className="ds-table">

@@ -20,12 +20,34 @@ export function openDb(path = "data.sqlite") {
   // standalone worker against the same db is a documented deployment, and their
   // check-then-act race could double-insert. The one-time cleanup removes any
   // duplicates created before the unique index existed (keeps the oldest row).
-  db.exec(`
-    DELETE FROM alerts WHERE dedup_key IS NOT NULL AND id NOT IN (
-      SELECT MIN(id) FROM alerts GROUP BY type, dedup_key
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_type_dedup ON alerts(type, dedup_key);
-  `);
+  // Version-gated like wallet_age_v below: the GROUP BY sweep scans the whole
+  // alerts table, and several dashboard routes open a fresh connection per
+  // request — ungated, it re-ran a table-sized WRITE on every request,
+  // contending with the worker's WAL lock for zero benefit after the first
+  // pass (the unique index prevents any new duplicates).
+  const dedupVer = db
+    .prepare("SELECT value FROM config WHERE key = 'alerts_dedup_v'")
+    .get() as { value: string | null } | undefined;
+  if (dedupVer?.value !== "1") {
+    const swept = db
+      .prepare(
+        `DELETE FROM alerts WHERE dedup_key IS NOT NULL AND id NOT IN (
+           SELECT MIN(id) FROM alerts GROUP BY type, dedup_key
+         )`,
+      )
+      .run().changes;
+    db.prepare(
+      "INSERT OR REPLACE INTO config (key, value) VALUES ('alerts_dedup_v', '1')",
+    ).run();
+    if (swept > 0) {
+      console.log(
+        `[db] alerts dedup v1 sweep: removed ${swept} duplicate row(s)`,
+      );
+    }
+  }
+  db.prepare(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_type_dedup ON alerts(type, dedup_key)",
+  ).run();
   // wallet_age v2: earlier builds could PERMANENTLY cache a wrong first_ts —
   // the upstream sort occasionally misbehaves and the CDN then serves the
   // mis-sorted payload, so "first row of the ASC query" was sometimes a much
