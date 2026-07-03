@@ -1,10 +1,7 @@
 import type { Trade } from "./types";
 import type { TradeMarketContext } from "./gamma";
 import { notionalUsd } from "./trades";
-const esc = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const usd = (n: number) => "$" + Math.round(n).toLocaleString("en-US");
-const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+import { esc, short, urlSeg, usd } from "./tgFormat";
 
 // "占24h量 18% · 流动性 $229,073 · 距结算 5h" — whichever parts are known.
 // Returns null when the context carries nothing displayable.
@@ -49,9 +46,9 @@ export function formatLargeTradeAlert(
   const ctxLine = formatMarketCtxLine(ctx);
   if (ctxLine) lines.push(ctxLine);
   lines.push(
-    `<a href="https://polymarket.com/event/${t.eventSlug}">市场</a> · ` +
-      `<a href="https://polymarket.com/profile/${t.proxyWallet}">${short(t.proxyWallet)}</a> · ` +
-      `<a href="https://polygonscan.com/tx/${t.transactionHash}">tx</a>`,
+    `<a href="https://polymarket.com/event/${urlSeg(t.eventSlug)}">市场</a> · ` +
+      `<a href="https://polymarket.com/profile/${urlSeg(t.proxyWallet)}">${short(t.proxyWallet)}</a> · ` +
+      `<a href="https://polygonscan.com/tx/${urlSeg(t.transactionHash)}">tx</a>`,
   );
   return lines.join("\n");
 }

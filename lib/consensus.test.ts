@@ -5,6 +5,7 @@ import {
   formatConsensusAlert,
   runConsensusCycle,
 } from "./consensus";
+import { TelegramPermanentError } from "./telegram";
 import type { SmartTag } from "./smartWallets";
 import type { Trade } from "./types";
 
@@ -321,6 +322,35 @@ describe("runConsensusCycle", () => {
     const send = vi.fn().mockResolvedValue(undefined);
     expect(await runConsensusCycle(deps(db, { send, nowSec: 10_100 }))).toBe(1);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("a PERMANENT send failure keeps the claim + state so the group can't jam the loop", async () => {
+    const db = openDb(":memory:");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const poisonSend = vi
+      .fn()
+      .mockRejectedValue(new TelegramPermanentError("tg 400"));
+
+    // No throw; the formation is claimed, state written, counted as fired.
+    expect(await runConsensusCycle(deps(db, { send: poisonSend }))).toBe(1);
+    const alerts = db.prepare("SELECT COUNT(*) AS c FROM alerts").get() as {
+      c: number;
+    };
+    expect(alerts.c).toBe(1);
+    const state = db
+      .prepare("SELECT COUNT(*) AS c FROM consensus_state")
+      .get() as { c: number };
+    expect(state.c).toBe(1);
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("permanent send failure"),
+      expect.anything(),
+    );
+
+    // Next cycle: same group is old news — no re-push (unlike transient).
+    const send = vi.fn().mockResolvedValue(undefined);
+    expect(await runConsensusCycle(deps(db, { send, nowSec: 10_100 }))).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 });
 

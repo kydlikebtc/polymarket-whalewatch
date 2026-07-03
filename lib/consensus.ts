@@ -2,6 +2,8 @@ import type { DB } from "./db";
 import type { Trade } from "./types";
 import type { SmartTag } from "./smartWallets";
 import { dedupKey, notionalUsd } from "./trades";
+import { esc, short, urlSeg, usd } from "./tgFormat";
+import { isPermanentSendError } from "./telegram";
 
 // One smart wallet's aggregated position inside a consensus group.
 export interface ConsensusWallet {
@@ -105,13 +107,13 @@ export function detectConsensus(
       acc = { buyUsd: 0, sellUsd: 0, buyShares: 0, buyCount: 0 };
       g.byWallet.set(wallet, acc);
     }
-    const usd = notionalUsd(t);
+    const tradeUsd = notionalUsd(t);
     if (t.side === "BUY") {
-      acc.buyUsd += usd;
+      acc.buyUsd += tradeUsd;
       acc.buyShares += t.size;
       acc.buyCount += 1;
     } else {
-      acc.sellUsd += usd;
+      acc.sellUsd += tradeUsd;
     }
   }
 
@@ -157,11 +159,6 @@ export function detectConsensus(
   return out;
 }
 
-const esc = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const usd = (n: number) => "$" + Math.round(n).toLocaleString("en-US");
-const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
-
 export function formatConsensusAlert(g: ConsensusGroup): string {
   const lines = [
     `🔥 <b>聪明钱共识</b> · ${g.walletCount} 个白名单钱包同向买入`,
@@ -171,12 +168,14 @@ export function formatConsensusAlert(g: ConsensusGroup): string {
   for (const w of g.wallets.slice(0, 3)) {
     const score = w.score != null ? ` (评分${Math.round(w.score)})` : "";
     lines.push(
-      `🏆 <a href="https://polymarket.com/profile/${w.wallet}">${short(w.wallet)}</a>` +
+      `🏆 <a href="https://polymarket.com/profile/${urlSeg(w.wallet)}">${short(w.wallet)}</a>` +
         ` 净买 ${usd(w.netUsd)} @${w.avgBuyPrice.toFixed(3)}${score}`,
     );
   }
   if (g.walletCount > 3) lines.push(`… 及另外 ${g.walletCount - 3} 个钱包`);
-  lines.push(`<a href="https://polymarket.com/event/${g.eventSlug}">市场</a>`);
+  lines.push(
+    `<a href="https://polymarket.com/event/${urlSeg(g.eventSlug)}">市场</a>`,
+  );
   return lines.join("\n");
 }
 
@@ -337,11 +336,22 @@ export async function runConsensusCycle(
       try {
         await send(formatConsensusAlert(g));
       } catch (e) {
-        // Roll back a fresh claim so the group re-fires next cycle
-        // (at-least-once); a reminder wrote nothing, so nothing to undo.
-        // Known tradeoff: a crash BETWEEN claim and send loses that one push.
-        if (claimed) delAlert.run(dk);
-        throw e;
+        if (isPermanentSendError(e)) {
+          // Poison message (non-429 4xx even after the plain-text downgrade):
+          // retrying can never succeed — KEEP the claim and the state update
+          // below so this group doesn't jam the consensus loop every cycle.
+          console.error(
+            `[consensus] permanent send failure for ${dk} — keeping claim, state updated without push:`,
+            e,
+          );
+        } else {
+          // Transient: roll back a fresh claim so the group re-fires next
+          // cycle (at-least-once); a reminder wrote nothing, so nothing to
+          // undo. Known tradeoff: a crash BETWEEN claim and send loses that
+          // one push.
+          if (claimed) delAlert.run(dk);
+          throw e;
+        }
       }
     }
     ups.run(g.conditionId, g.outcome, g.walletCount, g.totalNetUsd, nowSec);

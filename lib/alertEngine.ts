@@ -6,6 +6,8 @@ import { tradeMarketContext } from "./gamma";
 import { selectNewTrades } from "./poll";
 import { dedupKey, notionalUsd } from "./trades";
 import { formatLargeTradeAlert } from "./alert";
+import { esc, usd } from "./tgFormat";
+import { isPermanentSendError } from "./telegram";
 import {
   markSeen,
   markSeenBatch,
@@ -19,6 +21,14 @@ import {
 // up with a warn — a persistent /activity outage must not pin the same trades
 // in the retry path forever.
 export const MAX_AGE_LOOKUP_CYCLES = 5;
+
+// Telegram channel throttle: minimum gap between pushes inside one cycle
+// (~18 msgs/min leaves margin under Telegram's ~20/min channel limit) and the
+// per-cycle push cap. Pushes beyond the cap are folded into ONE summary
+// message — every folded match is still recorded to `alerts`, so no detail is
+// lost, only the individual push.
+export const SEND_MIN_GAP_MS = 3200;
+export const MAX_PUSHES_PER_CYCLE = 15;
 
 // Cross-cycle retry ledger for the age-deferred path: dedupKey -> consecutive
 // cycles the wallet-age lookup has failed. Module-level because runAlertCycle
@@ -55,6 +65,11 @@ export interface EngineDeps {
   minTimestamp: number;
   // Injectable clock (unix sec) for hoursToEnd math; defaults to Date.now().
   nowSec?: number;
+  // Push-throttle knobs (defaults SEND_MIN_GAP_MS / MAX_PUSHES_PER_CYCLE) and
+  // an injectable sleep — tests override these to avoid real multi-second waits.
+  sendMinGapMs?: number;
+  maxPushesPerCycle?: number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -71,11 +86,16 @@ export interface EngineDeps {
  *     this cycle and the seen sweep, retried next cycle, given up with a warn
  *     after MAX_AGE_LOOKUP_CYCLES consecutive failures.
  *  5. for each match (oldest-first): CLAIM via markSeen (cross-process lock),
- *     then push to Telegram; a failed send rolls the claim back and rethrows so
- *     the trade retries next cycle (at-least-once). A lost claim skips the push
- *     — the other process owns it. With a cooldown configured, repeat matches
+ *     then push to Telegram; a TRANSIENT send failure (5xx/network/429
+ *     exhausted) rolls the claim back and rethrows so the trade retries next
+ *     cycle (at-least-once), while a PERMANENT failure (non-429 4xx even after
+ *     the plain-text downgrade) KEEPS the claim and records without a push so
+ *     a poison message can't jam the pipeline. A lost claim skips the push —
+ *     the other process owns it. With a cooldown configured, repeat matches
  *     for the same (wallet, market) inside the window are recorded WITHOUT a
  *     push (the first push of a same-cycle burst carries a "共 N 笔" summary).
+ *     Pushes are throttled (SEND_MIN_GAP_MS apart, at most MAX_PUSHES_PER_CYCLE
+ *     per cycle); over-cap matches fold into one summary push.
  *  6. mark EVERY evaluated `fresh` trade seen (one transaction) so it isn't
  *     re-evaluated next cycle.
  *
@@ -94,6 +114,9 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
     send,
     minTimestamp,
     nowSec = Math.floor(Date.now() / 1000),
+    sendMinGapMs = SEND_MIN_GAP_MS,
+    maxPushesPerCycle = MAX_PUSHES_PER_CYCLE,
+    sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
   } = deps;
 
   if (!conditions.enabled) return 0;
@@ -268,16 +291,36 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
   const pushedThisCycle = new Set<string>();
   let suppressedCount = 0;
 
+  // --- Push throttle state (one cycle's scope) ----------------------------
+  // Attempts (not just successes) are what consume Telegram API budget, so the
+  // cap counts every push try. The gap sleep sits between claim and send —
+  // the claim rollback on transient failure still works; the documented
+  // crash-between-claim-and-send tradeoff merely widens by the gap. The final
+  // markSeenBatch sweep runs after the loop regardless (transient send errors
+  // rethrow, everything else falls through).
+  let lastPushAtMs = 0;
+  let pushAttempts = 0;
+  const overflow: { usd: number; title: string }[] = [];
+  const throttledSend = async (html: string) => {
+    if (!send) return;
+    const wait =
+      lastPushAtMs === 0 ? 0 : sendMinGapMs - (Date.now() - lastPushAtMs);
+    if (wait > 0) await sleep(wait);
+    try {
+      await send(html);
+    } finally {
+      lastPushAtMs = Date.now();
+      pushAttempts++;
+    }
+  };
+
   // Fire alerts for the final matches (already oldest-first from selectNewTrades).
   let fired = 0;
   for (const t of survivors) {
     const k = dedupKey(t);
+    const n = notionalUsd(t);
     const smart = smartTags[t.proxyWallet.toLowerCase()];
-    const ctx = tradeMarketContext(
-      notionalUsd(t),
-      metaByCid[t.conditionId],
-      nowSec,
-    );
+    const ctx = tradeMarketContext(n, metaByCid[t.conditionId], nowSec);
     // Claim-then-send: markSeen's INSERT OR IGNORE is the cross-process
     // preemption lock — with the embedded engine AND the standalone worker on
     // one db, both pass their seen check for the same trade and would each
@@ -309,22 +352,41 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
       }
     }
     if (send && !suppress) {
-      try {
-        // The format function's output is untouched; the burst summary is a
-        // cooldown-owned suffix composed here in the engine.
-        let html = formatLargeTradeAlert(t, conditions.minUsd, smart, ctx);
-        const burst = burstCount.get(cooldownKey(t)) ?? 1;
-        if (burst > 1) {
-          html += `\n⏳ 该钱包本轮在此市场共 ${burst} 笔，冷却 ${conditions.cooldownMinutes} 分钟内其余仅入库`;
+      if (pushAttempts >= maxPushesPerCycle) {
+        // Cap hit: fold into the one summary push below. The match is still
+        // claimed + recorded like every other — only the individual push is
+        // replaced.
+        overflow.push({ usd: n, title: t.title });
+      } else {
+        try {
+          // The format function's output is untouched; the burst summary is a
+          // cooldown-owned suffix composed here in the engine.
+          let html = formatLargeTradeAlert(t, conditions.minUsd, smart, ctx);
+          const burst = burstCount.get(cooldownKey(t)) ?? 1;
+          if (burst > 1) {
+            html += `\n⏳ 该钱包本轮在此市场共 ${burst} 笔，冷却 ${conditions.cooldownMinutes} 分钟内其余仅入库`;
+          }
+          await throttledSend(html);
+          pushedThisCycle.add(cooldownKey(t));
+        } catch (e) {
+          if (isPermanentSendError(e)) {
+            // Poison message (Telegram 4xx after the plain-text downgrade):
+            // retrying can never succeed, so KEEP the claim, record the alert
+            // below and keep the pipeline moving — rolling back would pin this
+            // oldest-first head trade in front of every later alert forever.
+            console.error(
+              `[alertEngine] permanent send failure for ${k} — keeping claim, recorded without push:`,
+              e,
+            );
+          } else {
+            // Transient (5xx/network/429 exhausted): roll back the claim so
+            // the trade retries next cycle (at-least-once). Known tradeoff: a
+            // crash BETWEEN claim and send loses that one push.
+            unmarkSeen(db, k);
+            throw e;
+          }
         }
-        await send(html);
-      } catch (e) {
-        // Roll back the claim so the trade retries next cycle (at-least-once).
-        // Known tradeoff: a crash BETWEEN claim and send loses that one push.
-        unmarkSeen(db, k);
-        throw e;
       }
-      pushedThisCycle.add(cooldownKey(t));
     }
     recordAlert(
       db,
@@ -340,6 +402,27 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
     console.log(
       `[alertEngine] cooldown suppressed ${suppressedCount}/${survivors.length} push(es) this cycle (window=${conditions.cooldownMinutes}min) — all recorded to alerts`,
     );
+  }
+
+  // Over-cap matches collapse into ONE summary push (details are all in the
+  // alerts table already). Best-effort: every folded match is claimed +
+  // recorded above, so a failed summary is logged and dropped — it must never
+  // roll anything back or block the seen sweep below.
+  if (overflow.length > 0) {
+    const top = overflow.reduce((a, b) => (b.usd > a.usd ? b : a));
+    console.log(
+      `[alertEngine] push cap ${maxPushesPerCycle} hit — folding ${overflow.length} push(es) into one summary (max ${Math.round(top.usd)})`,
+    );
+    try {
+      await throttledSend(
+        `📦 本轮另有 ${overflow.length} 笔 ≥${usd(conditions.minUsd)} 成交，最大 ${usd(top.usd)}（${esc(top.title)}），明细已全部入库`,
+      );
+    } catch (e) {
+      console.error(
+        `[alertEngine] overflow summary send failed (${overflow.length} folded, all recorded):`,
+        e,
+      );
+    }
   }
 
   // Mark every evaluated fresh trade seen in one transaction (matches were

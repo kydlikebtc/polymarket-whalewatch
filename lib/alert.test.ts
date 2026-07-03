@@ -22,3 +22,21 @@ it("escapes HTML and includes notional + links", () => {
   expect(html).toContain("polygonscan.com/tx/0xhash");
   expect(html).toContain("polymarket.com/event/e");
 });
+
+it("URL-encodes special-character slugs/wallets so an href can never be truncated", () => {
+  const html = formatLargeTradeAlert(
+    { ...t, eventSlug: 'weird "slug"?&x', proxyWallet: "0xAB CD" },
+    50000,
+  );
+  // The quote/space/ampersand live only percent-encoded inside the URL —
+  // a raw `"` here truncates the attribute and 400s the whole message.
+  expect(html).toContain(
+    'href="https://polymarket.com/event/weird%20%22slug%22%3F%26x"',
+  );
+  expect(html).toContain('href="https://polymarket.com/profile/0xAB%20CD"');
+  // Every href value stays quote-free between its delimiters.
+  for (const m of html.matchAll(/href="([^"]*)"/g)) {
+    expect(m[1]).not.toContain(" ");
+    expect(m[1]).not.toContain('"');
+  }
+});

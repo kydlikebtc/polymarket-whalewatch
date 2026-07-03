@@ -1,9 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
 import { openDb } from "./db";
-import { MAX_AGE_LOOKUP_CYCLES, runAlertCycle } from "./alertEngine";
+import {
+  MAX_AGE_LOOKUP_CYCLES,
+  SEND_MIN_GAP_MS,
+  runAlertCycle,
+} from "./alertEngine";
 import { DEFAULT_CONDITIONS, type AlertConditions } from "./alertConditions";
 import { dedupKey } from "./trades";
 import { markSeen } from "./seen";
+import { TelegramPermanentError } from "./telegram";
 import type { Trade } from "./types";
 
 // Trade factory. size*price = notional; defaults clear the 10k default minUsd.
@@ -296,6 +301,7 @@ describe("runAlertCycle", () => {
       getSmart,
       send,
       minTimestamp: 0,
+      sendMinGapMs: 0, // multi-push test: skip the real 3.2s throttle gap
     });
 
     expect(fired).toBe(2);
@@ -614,6 +620,7 @@ describe("runAlertCycle", () => {
       send,
       minTimestamp: 0,
       nowSec: 1002,
+      sendMinGapMs: 0, // multi-push test: skip the real 3.2s throttle gap
     });
     expect(send).toHaveBeenCalledTimes(3);
   });
@@ -632,6 +639,7 @@ describe("runAlertCycle", () => {
       send,
       minTimestamp: 0,
       nowSec: 1001,
+      sendMinGapMs: 0, // multi-push test: skip the real 3.2s throttle gap
     });
     expect(send).toHaveBeenCalledTimes(2);
     const sent = send.mock.calls.map((c) => c[0] as string);
@@ -666,5 +674,164 @@ describe("runAlertCycle", () => {
     expect(await runAlertCycle({ ...base, send })).toBe(1);
     expect(send).toHaveBeenCalledTimes(1);
     expect(countAlerts(db)).toBe(1);
+  });
+
+  it("(u) a PERMANENT send failure keeps the claim (marked seen + recorded) and does not throw", async () => {
+    const db = openDb(":memory:");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const poison = mk({ transactionHash: "0xpoison", timestamp: 1000 });
+    const healthy = mk({
+      transactionHash: "0xok",
+      proxyWallet: "0xOTHER",
+      conditionId: "0xc2",
+      timestamp: 1001,
+    });
+    // Poison message: first send perma-fails (post-downgrade 4xx), the next
+    // one succeeds — the pipeline must keep moving past the poison head.
+    const send = vi
+      .fn()
+      .mockRejectedValueOnce(new TelegramPermanentError("tg 400"))
+      .mockResolvedValue(undefined);
+    const base = {
+      db,
+      fetchTrades: async () => [poison, healthy],
+      conditions: cond({ minUsd: 10000 }),
+      getAges: noAges,
+      send,
+      minTimestamp: 0,
+      sendMinGapMs: 0,
+    };
+
+    // No throw; BOTH matches recorded; the healthy one still pushed.
+    expect(await runAlertCycle(base)).toBe(2);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(countAlerts(db)).toBe(2);
+    // The poison trade stays claimed — it can never re-fire.
+    expect(
+      db
+        .prepare("SELECT 1 FROM seen_trades WHERE dedup_key = ?")
+        .get(dedupKey(poison)),
+    ).toBeDefined();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("permanent send failure"),
+      expect.anything(),
+    );
+    // Next cycle: nothing re-fires (unlike the transient rollback path).
+    expect(await runAlertCycle(base)).toBe(0);
+    expect(send).toHaveBeenCalledTimes(2);
+    errSpy.mockRestore();
+  });
+
+  it("(v) throttle: consecutive pushes in one cycle are spaced by ~SEND_MIN_GAP_MS", async () => {
+    const db = openDb(":memory:");
+    const t1 = mk({ transactionHash: "0xv1", timestamp: 1000 });
+    const t2 = mk({
+      transactionHash: "0xv2",
+      proxyWallet: "0xOTHER",
+      timestamp: 1001,
+    });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const sleep = vi.fn(async (_ms: number) => {});
+
+    await runAlertCycle({
+      db,
+      fetchTrades: async () => [t1, t2],
+      conditions: cond({ minUsd: 10000 }),
+      getAges: noAges,
+      send,
+      minTimestamp: 0,
+      sleep,
+    });
+
+    expect(send).toHaveBeenCalledTimes(2);
+    // First push goes immediately; the second waits out the remaining gap.
+    expect(sleep).toHaveBeenCalledTimes(1);
+    const waited = sleep.mock.calls[0][0];
+    expect(waited).toBeGreaterThan(SEND_MIN_GAP_MS - 200);
+    expect(waited).toBeLessThanOrEqual(SEND_MIN_GAP_MS);
+  });
+
+  it("(w) push cap: over-cap matches fold into ONE summary message, all recorded", async () => {
+    const db = openDb(":memory:");
+    // 4 pushable matches (distinct wallet+market so cooldown never bites),
+    // cap of 2 → 2 individual pushes + 1 summary.
+    const trades = [10_500, 11_000, 52_000, 12_000].map((notional, i) =>
+      mk({
+        transactionHash: `0xw${i}`,
+        proxyWallet: `0xW${i}`,
+        conditionId: `0xc${i}`,
+        title: `Market ${i}`,
+        size: notional * 2, // price 0.5 → notionalUsd = notional
+        timestamp: 1000 + i,
+      }),
+    );
+    const send = vi.fn().mockResolvedValue(undefined);
+
+    const fired = await runAlertCycle({
+      db,
+      fetchTrades: async () => trades,
+      conditions: cond({ minUsd: 10000 }),
+      getAges: noAges,
+      send,
+      minTimestamp: 0,
+      sendMinGapMs: 0,
+      maxPushesPerCycle: 2,
+    });
+
+    // Every match is a real alert (recorded + seen), only pushes are capped.
+    expect(fired).toBe(4);
+    expect(countAlerts(db)).toBe(4);
+    expect(send).toHaveBeenCalledTimes(3);
+    const summary = send.mock.calls[2][0] as string;
+    expect(summary).toContain("本轮另有 2 笔");
+    expect(summary).toContain("≥$10,000");
+    // Max of the two folded trades ($52k, "Market 2") — not of the pushed ones.
+    expect(summary).toContain("$52,000");
+    expect(summary).toContain("Market 2");
+  });
+
+  it("(x) a failed summary send is best-effort: logged, nothing rolled back, no throw", async () => {
+    const db = openDb(":memory:");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const trades = [0, 1, 2].map((i) =>
+      mk({
+        transactionHash: `0xx${i}`,
+        proxyWallet: `0xX${i}`,
+        conditionId: `0xc${i}`,
+        timestamp: 1000 + i,
+      }),
+    );
+    // Individual push succeeds, the summary (2nd call) blows up transiently.
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("telegram 500"));
+
+    const fired = await runAlertCycle({
+      db,
+      fetchTrades: async () => trades,
+      conditions: cond({ minUsd: 10000 }),
+      getAges: noAges,
+      send,
+      minTimestamp: 0,
+      sendMinGapMs: 0,
+      maxPushesPerCycle: 1,
+    });
+
+    expect(fired).toBe(3);
+    expect(countAlerts(db)).toBe(3); // details all recorded — nothing lost
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("overflow summary send failed"),
+      expect.anything(),
+    );
+    // All three stay seen: the failed summary must not resurrect anything.
+    for (const t of trades) {
+      expect(
+        db
+          .prepare("SELECT 1 FROM seen_trades WHERE dedup_key = ?")
+          .get(dedupKey(t)),
+      ).toBeDefined();
+    }
+    errSpy.mockRestore();
   });
 });
