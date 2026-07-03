@@ -147,6 +147,36 @@ describe("sendMessage", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2); // original + one downgrade, never more
   });
 
+  it("a MIXED 429 + 5xx sequence terminates: independent bounded counters, no infinite wait", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    // Alternate 429 (capped wait) and 5xx (backoff). rateAttempt (max 5) and
+    // transientAttempt (max 3) are separate counters — the interleaving must
+    // not reset either one. Sequence: 429,500,429,502,429,503,500 → three 1s
+    // rate waits + three backoffs consumed, the 4th 5xx throws transiently.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(errRes(429, { parameters: { retry_after: 1 } }))
+      .mockResolvedValueOnce(errRes(500))
+      .mockResolvedValueOnce(errRes(429, { parameters: { retry_after: 1 } }))
+      .mockResolvedValueOnce(errRes(502))
+      .mockResolvedValueOnce(errRes(429, { parameters: { retry_after: 1 } }))
+      .mockResolvedValueOnce(errRes(503))
+      .mockResolvedValue(errRes(500));
+    vi.stubGlobal("fetch", fetchMock);
+    const sleep = sleepSpy();
+    let caught: unknown;
+    await sendMessage({ botToken: "T", chatId: "@c" }, "hi", { sleep }).catch(
+      (e) => (caught = e),
+    );
+    expect(String(caught)).toContain("status 500");
+    expect(isPermanentSendError(caught)).toBe(false); // transient → claim rollback + next-cycle retry
+    expect(fetchMock).toHaveBeenCalledTimes(7); // bounded: never loops forever
+    // 3 capped rate waits (1s each) interleaved with the 1s/2s/4s backoff.
+    expect(sleep.mock.calls.map((c) => c[0])).toEqual([
+      1000, 1000, 1000, 2000, 1000, 4000,
+    ]);
+  });
+
   it("does NOT classify 429 as permanent", async () => {
     const fetchMock = vi
       .fn()
