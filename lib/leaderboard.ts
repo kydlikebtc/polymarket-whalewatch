@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { fetchWithRetry } from "./fetchWithRetry";
 
 const LB_API = "https://data-api.polymarket.com/v1/leaderboard";
 
@@ -34,11 +35,35 @@ export async function fetchLeaderboard(opts: {
   const pages = Math.ceil(maxEntries / PAGE_SIZE);
   for (let page = 0; page < pages; page++) {
     const url = `${LB_API}?timePeriod=${period}&orderBy=${orderBy}&limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`;
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(10_000),
-      headers: { "User-Agent": "polymarket-monitor" },
-    });
-    if (!res.ok) throw new Error(`fetchLeaderboard ${period} ${res.status}`);
+    // Transient Cloudflare 5xx are retried (shared backoff); if a page still
+    // fails after retries, the collected prefix is returned instead of thrown
+    // away — it holds the board's TOP ranks, and the daily seeding window
+    // must not lose 100 wallets to one stubborn 502. Total first-page failure
+    // still throws so callers can tell "no board" from "short board".
+    let res: Response;
+    try {
+      res = await fetchWithRetry(url, {
+        timeoutMs: 10_000,
+        headers: { "User-Agent": "polymarket-monitor" },
+        label: "fetchLeaderboard",
+      });
+    } catch (e) {
+      if (out.length === 0) throw e;
+      console.warn(
+        `[fetchLeaderboard] ${period} page ${page} failed after retries — returning ${out.length} collected rows:`,
+        e,
+      );
+      break;
+    }
+    if (!res.ok) {
+      if (out.length === 0) {
+        throw new Error(`fetchLeaderboard ${period} ${res.status}`);
+      }
+      console.warn(
+        `[fetchLeaderboard] ${period} page ${page} HTTP ${res.status} — returning ${out.length} collected rows`,
+      );
+      break;
+    }
     const raw = await res.json();
     if (!Array.isArray(raw) || raw.length === 0) break;
     let fresh = 0;

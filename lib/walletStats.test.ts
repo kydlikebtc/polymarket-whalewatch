@@ -85,11 +85,27 @@ describe("fetchClosedPositions", () => {
   });
 
   it("throws on a non-ok response", async () => {
+    // Non-transient status: no retry, immediate throw (persistent transient
+    // 5xx exhaustion is covered by the fetchWithRetry tests).
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: false, status: 500 }),
+      vi.fn().mockResolvedValue({ ok: false, status: 404 }),
     );
-    await expect(fetchClosedPositions("0xabc")).rejects.toThrow("500");
+    await expect(fetchClosedPositions("0xabc")).rejects.toThrow("404");
+  });
+
+  it("retries a transient 5xx page then succeeds", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 502 })
+      .mockResolvedValueOnce({ ok: true, json: async () => [pos(1)] });
+    vi.stubGlobal("fetch", fetchMock);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { positions, truncated } = await fetchClosedPositions("0xabc");
+    expect(positions).toHaveLength(1);
+    expect(truncated).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    warnSpy.mockRestore();
   });
 });
 

@@ -1,6 +1,8 @@
 import { parseConfig } from "../lib/config";
 import { openDb, type DB } from "../lib/db";
 import { getLargeTrades, getTradesWindowDeep } from "../lib/polymarket";
+import { seenKeySet } from "../lib/seen";
+import { dedupKey } from "../lib/trades";
 import { sendMessage } from "../lib/telegram";
 import { getWalletAges } from "../lib/walletAge";
 import { getAlertConditions } from "../lib/alertConditions";
@@ -113,10 +115,31 @@ export function startAlertEngine(): void {
   // the exact (higher) minUsd in memory. The floor never EXCEEDS minUsd, so a
   // low-threshold config (e.g. $500) still sees its trades.
   const SAFE_FLOOR = 10_000;
+  // Steady-state page size, downshifted from the old single 1000-row page: on
+  // a 4s cadence the page is overwhelmingly already-seen rows, so 250 cuts
+  // ~75% of the per-cycle bandwidth/parse cost. A genuinely hot cycle (a full
+  // page of entirely-unseen in-window rows) tops up with offset pages back to
+  // the old 1000-row depth instead of silently dropping the overflow.
+  const POLL_PAGE_LIMIT = 250;
+  const POLL_MAX_PAGES = 4; // 4 × 250 = the previous single-page depth
   // `conditions` is read fresh each cycle, so fetchTrades must take the floor as
   // an argument rather than closing over a startup value.
   const fetchTrades = (minUsd: number) =>
-    getLargeTrades(Math.min(minUsd, SAFE_FLOOR), 1000);
+    getLargeTrades(Math.min(minUsd, SAFE_FLOOR), POLL_PAGE_LIMIT, {
+      // Stop paginating at the startup backfill boundary — deeper rows are
+      // pre-window backlog runAlertCycle would drop anyway.
+      sinceSec: minTimestamp,
+      maxPages: POLL_MAX_PAGES,
+      // Batched seen probe, one indexed IN(...) query per full page (the
+      // all-time feed always fills page 0, so this runs ~once per cycle —
+      // sub-ms): once a page touches already-processed trades, deeper pages
+      // are old news and the top-up stops.
+      hasSeenAny: (rows) =>
+        seenKeySet(
+          db,
+          rows.map((t) => dedupKey(t)),
+        ).size > 0,
+    });
 
   console.log(
     `[engine] starting · db=${dbPath} · telegram=${

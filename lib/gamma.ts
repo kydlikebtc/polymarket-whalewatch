@@ -1,4 +1,5 @@
 import type { DB } from "./db";
+import { fetchWithRetry } from "./fetchWithRetry";
 
 const GAMMA_API = "https://gamma-api.polymarket.com";
 
@@ -75,9 +76,12 @@ async function sweepMarkets(
       chunk.map((c) => `condition_ids=${encodeURIComponent(c)}`).join("&") +
       extraQs;
     try {
-      const res = await fetch(`${GAMMA_API}/markets?${qs}`, {
-        signal: AbortSignal.timeout(10_000),
+      // Shared transient-5xx retry: a chunk is only skipped once retries are
+      // exhausted (or the failure is non-transient).
+      const res = await fetchWithRetry(`${GAMMA_API}/markets?${qs}`, {
+        timeoutMs: 10_000,
         headers: { "User-Agent": "polymarket-monitor" },
+        label: "gamma",
       });
       if (!res.ok) {
         console.warn(

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { DB } from "./db";
+import { fetchWithRetry } from "./fetchWithRetry";
 import { mapLimit } from "./mapLimit";
 
 const DATA_API = "https://data-api.polymarket.com";
@@ -35,9 +36,12 @@ export async function fetchClosedPositions(
   const positions: ClosedPosition[] = [];
   for (let page = 0; page < maxPages; page++) {
     const url = `${DATA_API}/closed-positions?user=${encodeURIComponent(wallet)}&limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`;
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(8000),
+    // Shared transient-5xx retry; a still-failing page throws as before (the
+    // walletStats caller treats a throw as "uncached, retry next call").
+    const res = await fetchWithRetry(url, {
+      timeoutMs: 8000,
       headers: { "User-Agent": "polymarket-monitor" },
+      label: "fetchClosedPositions",
     });
     if (!res.ok) throw new Error(`fetchClosedPositions ${res.status}`);
     const raw = await res.json();

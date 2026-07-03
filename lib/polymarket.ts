@@ -1,67 +1,126 @@
 import { TradeSchema, type Trade } from "./types";
 import { dedupKey } from "./trades";
-import { z } from "zod";
+import { fetchWithRetry } from "./fetchWithRetry";
 const DATA_API = "https://data-api.polymarket.com";
 
-// The public Data API (Cloudflare front) intermittently returns 408/5xx on
-// expensive queries (high filterAmount + side filter) — the origin times out
-// around ~5.75s. These are transient: a retry almost always succeeds (and warms
-// the CDN, so the next attempt is fast). Bounded exponential backoff so a
-// probabilistic 408 never surfaces to the user as a scan failure.
-const TRANSIENT_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
-async function fetchTrades(
-  url: string,
-  attempts = 4,
-  baseDelayMs = 300,
-): Promise<Response> {
-  let lastErr: unknown;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
-      if (res.ok || !TRANSIENT_STATUS.has(res.status) || i === attempts - 1) {
-        return res;
-      }
-      console.warn(
-        `[fetchTrades] transient ${res.status}, retry ${i + 1}/${attempts}`,
-      );
-    } catch (e) {
-      lastErr = e;
-      if (i === attempts - 1) throw e;
-      console.warn(`[fetchTrades] fetch error, retry ${i + 1}/${attempts}`);
-    }
-    await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** i));
+// /trades-specific retry wrapper: 12s timeout (server-side filterAmount scans
+// are slow when matches are sparse) and the historical [fetchTrades] log label.
+// The backoff/transient-status policy lives in the shared fetchWithRetry.
+const fetchTrades = (url: string) =>
+  fetchWithRetry(url, { timeoutMs: 12_000, label: "fetchTrades" });
+
+// Per-row salvage parse: one malformed row (API shape drift) must not poison
+// the whole page — the old all-or-nothing z.array fallback returned RAW rows,
+// letting NaN notionals slip past every filter (NaN comparisons are all false)
+// and fire "$NaN" alerts. Bad rows are dropped and summarized in one warn with
+// the first issue path so shape drift stays diagnosable from the log.
+function parseTradeRows(raw: unknown, source: string): Trade[] {
+  if (!Array.isArray(raw)) {
+    console.warn(`[${source}] response is not an array — treating as empty`);
+    return [];
   }
-  if (lastErr) throw lastErr;
-  throw new Error("fetchTrades: retries exhausted");
+  const rows: Trade[] = [];
+  let dropped = 0;
+  let firstIssue: string | null = null;
+  for (const row of raw) {
+    const parsed = TradeSchema.safeParse(row);
+    if (parsed.success) {
+      rows.push(parsed.data);
+      continue;
+    }
+    dropped++;
+    if (!firstIssue) {
+      const i = parsed.error.issues[0];
+      firstIssue = i ? `${i.path.join(".")}: ${i.message}` : "unknown issue";
+    }
+  }
+  if (dropped > 0) {
+    console.warn(
+      `[${source}] dropped ${dropped}/${raw.length} malformed row(s), kept ${rows.length} (first issue: ${firstIssue})`,
+    );
+  }
+  return rows;
 }
 
+export interface LargeTradesOpts {
+  // Window edge: rows older than this are pre-window backlog the engine has
+  // already dispositioned — stop paginating (and drop them) on first sight.
+  sinceSec?: number;
+  // Full-page top-up budget. 1 (default) keeps the historical single-page
+  // behavior for scripts; the embedded engine passes more so a hot cycle can
+  // page deeper instead of silently dropping the overflow.
+  maxPages?: number;
+  // Batched "any of these already processed?" probe (one seen_trades IN(...)
+  // query per full page). Once a page touches previously-seen trades, deeper
+  // pages are all old news — no point topping up.
+  hasSeenAny?: (trades: Trade[]) => boolean;
+}
+
+/**
+ * Newest-first large-trades feed. The page-0 request is identical to the
+ * historical single-page fetch; when the page comes back FULL and every row is
+ * still new to the caller (unseen + inside the window), offset pages are
+ * appended (same ≤3000-offset budget and mid-pagination degradation policy as
+ * getTradesWindow) so a burst cycle no longer silently loses the overflow.
+ * Page-size decisions use the RAW row count: salvage-dropped rows still
+ * occupied page slots.
+ */
 export async function getLargeTrades(
   minUsd: number,
   limit = 500,
+  opts: LargeTradesOpts = {},
 ): Promise<Trade[]> {
-  const url = `${DATA_API}/trades?filterType=CASH&filterAmount=${minUsd}&takerOnly=true&limit=${limit}`;
-  const res = await fetchTrades(url);
-  if (!res.ok) throw new Error(`getLargeTrades ${res.status}`);
-  const raw = await res.json();
-  const parsed = z.array(TradeSchema).safeParse(raw);
-  if (!parsed.success) {
-    const issues = parsed.error.issues
-      .slice(0, 3)
-      .map((i) => `${i.path.join(".")}: ${i.message}`)
-      .join("; ");
+  const { sinceSec, maxPages = 1, hasSeenAny } = opts;
+  const out: Trade[] = [];
+  for (let page = 0; page < maxPages; page++) {
+    const offset = page * limit;
+    if (offset > MAX_TRADES_OFFSET) {
+      console.warn(
+        `[getLargeTrades] offset cap ${MAX_TRADES_OFFSET} reached (${out.length} rows) — stopping top-up`,
+      );
+      return out;
+    }
+    const url =
+      `${DATA_API}/trades?filterType=CASH&filterAmount=${minUsd}&takerOnly=true&limit=${limit}` +
+      (page > 0 ? `&offset=${offset}` : "");
+    const res = await fetchTrades(url);
+    if (!res.ok) {
+      // Mid-top-up failure degrades to the fetched prefix (same policy as
+      // getTradesWindow's mid-pagination handling); a first-page failure is
+      // still a real error for the caller to handle.
+      if (page > 0) {
+        console.warn(
+          `[getLargeTrades] top-up page ${page} failed (${res.status}) — keeping ${out.length} fetched rows`,
+        );
+        return out;
+      }
+      throw new Error(`getLargeTrades ${res.status}`);
+    }
+    const raw = await res.json();
+    const rawCount = Array.isArray(raw) ? raw.length : 0;
+    const rows = parseTradeRows(raw, "getLargeTrades");
+    for (const t of rows) {
+      // Newest-first: the first row older than sinceSec marks the window edge;
+      // everything deeper is pre-window backlog.
+      if (sinceSec != null && t.timestamp < sinceSec) return out;
+      out.push(t);
+    }
+    if (rawCount < limit) return out; // genuine last page of the feed
+    // Full page. Only rows NEW to the engine justify going deeper — at any
+    // realistic floor the all-time feed always fills page 0, so "full" alone
+    // is not a burst signal.
+    if (hasSeenAny && rows.length > 0 && hasSeenAny(rows)) return out;
+    if (page === maxPages - 1) {
+      console.warn(
+        `[getLargeTrades] full page (${limit} rows, page ${page + 1}/${maxPages}) — some large trades this cycle may be missed`,
+      );
+      return out;
+    }
     console.warn(
-      `[getLargeTrades] response shape mismatch (falling back to raw): ${issues}`,
-    );
-    return raw as Trade[];
-  }
-  if (parsed.data.length === limit) {
-    // Full page: more than `limit` large trades may exist this cycle and would be missed.
-    // Single-page fetch is the MVP choice; offset pagination is a P2+ item (design §5).
-    console.warn(
-      `[getLargeTrades] full page (${limit} rows) — some large trades this cycle may be missed`,
+      `[getLargeTrades] full page of unseen in-window rows — topping up at offset=${(page + 1) * limit}`,
     );
   }
-  return parsed.data;
+  return out;
 }
 
 export interface TradesWindowQuery {
@@ -117,15 +176,18 @@ export async function getTradesWindow({
       throw new Error(`getTradesWindow ${res.status}`);
     }
     const raw = await res.json();
-    const parsed = z.array(TradeSchema).safeParse(raw);
-    const rows: Trade[] = parsed.success ? parsed.data : (raw as Trade[]);
-    if (rows.length === 0) return { trades: out, truncated: false };
+    // Salvage parse; pagination decisions below use the RAW page length, not
+    // the salvaged length — a dropped row still occupied a page slot, so a
+    // salvaged short page must not be mistaken for the last available page.
+    const rawCount = Array.isArray(raw) ? raw.length : 0;
+    const rows = parseTradeRows(raw, "getTradesWindow");
+    if (rawCount === 0) return { trades: out, truncated: false };
     for (const t of rows) {
       // Newest-first ordering: the first older-than-cutoff row marks the window edge.
       if (t.timestamp < sinceSec) return { trades: out, truncated: false };
       out.push(t);
     }
-    if (rows.length < 500) return { trades: out, truncated: false }; // last available page
+    if (rawCount < 500) return { trades: out, truncated: false }; // last available page
   }
   // Hit the page cap before reaching the window edge — more in-window rows may exist.
   console.warn(

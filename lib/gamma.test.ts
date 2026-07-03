@@ -57,12 +57,30 @@ describe("fetchMarketMeta", () => {
         ok: true,
         json: async () => ids.slice(0, 20).map((c) => gammaRow(c)),
       })
-      .mockResolvedValueOnce({ ok: false, status: 500 })
+      // Non-transient failure (a 5xx would now be retried and recover via the
+      // fallback mock below): the chunk is skipped immediately, others kept.
+      .mockResolvedValueOnce({ ok: false, status: 400 })
       // closed=true retry sweep for the failed chunk's ids — also empty here.
       .mockResolvedValue({ ok: true, json: async () => [] });
     vi.stubGlobal("fetch", fetchMock);
     const out = await fetchMarketMeta(ids);
     expect(Object.keys(out)).toHaveLength(20); // chunk 1 kept, chunk 2 skipped
+    warnSpy.mockRestore();
+  });
+
+  it("retries a transient 5xx chunk and recovers it instead of skipping", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 502 })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [gammaRow("0xc1")],
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await fetchMarketMeta(["0xc1"]);
+    expect(out["0xc1"]).toBeDefined(); // recovered on retry, not skipped
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     warnSpy.mockRestore();
   });
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { parseConfig } from "./config";
 describe("parseConfig", () => {
   it("parses thresholds into a sorted number array", () => {
@@ -36,5 +36,52 @@ describe("parseConfig", () => {
     expect(c.telegramChannelId).toBe("");
     expect(c.largeThresholds).toEqual([10000, 50000]);
     expect(c.pollIntervalMs).toBe(5000);
+  });
+
+  it("falls back to the default interval on a non-numeric POLL_INTERVAL_MS (NaN would busy-loop the poll)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // "4_000" is a classic typo: Number("4_000") is NaN and setTimeout(NaN)
+    // fires every ~1ms.
+    const c = parseConfig({ POLL_INTERVAL_MS: "4_000" });
+    expect(c.pollIntervalMs).toBe(4000);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('POLL_INTERVAL_MS="4_000"'),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("clamps a below-floor POLL_INTERVAL_MS instead of crashing (7×24 principle)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const c = parseConfig({ POLL_INTERVAL_MS: "200" });
+    expect(c.pollIntervalMs).toBe(1000);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("floor"));
+    warnSpy.mockRestore();
+  });
+
+  it("treats an empty POLL_INTERVAL_MS as invalid (Number('') is 0, not a config)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const c = parseConfig({ POLL_INTERVAL_MS: "" });
+    expect(c.pollIntervalMs).toBe(4000);
+    warnSpy.mockRestore();
+  });
+
+  it("drops non-finite threshold entries and keeps the valid ones", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const c = parseConfig({ LARGE_THRESHOLDS: "5000,10_000,abc" });
+    expect(c.largeThresholds).toEqual([5000]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("dropped 2 non-numeric"),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("falls back to default thresholds when nothing parses (empty array would disable grouping)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const c = parseConfig({ LARGE_THRESHOLDS: "10_000;50k" });
+    expect(c.largeThresholds).toEqual([10000, 50000]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("no parseable numbers"),
+    );
+    warnSpy.mockRestore();
   });
 });

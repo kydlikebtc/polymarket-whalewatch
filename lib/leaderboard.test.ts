@@ -67,4 +67,38 @@ describe("fetchLeaderboard", () => {
     );
     await expect(fetchLeaderboard({ period: "WEEK" })).rejects.toThrow("400");
   });
+
+  it("retries a transient 502 on a page then succeeds", async () => {
+    const page = [row(1, "0xAAA")];
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 502 })
+      .mockResolvedValueOnce({ ok: true, json: async () => page });
+    vi.stubGlobal("fetch", fetchMock);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const rows = await fetchLeaderboard({ period: "WEEK", maxEntries: 50 });
+    expect(rows).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    warnSpy.mockRestore();
+  });
+
+  it("returns the collected prefix when a later page still fails after retries (partial beats none)", async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const pageA = Array.from({ length: 50 }, (_, i) => row(i + 1, `0xa${i}`));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => pageA })
+      .mockResolvedValue({ ok: false, status: 502 }); // page 2: persistent 502
+    vi.stubGlobal("fetch", fetchMock);
+    const promise = fetchLeaderboard({ period: "ALL", maxEntries: 100 });
+    await vi.runAllTimersAsync(); // drain the retry backoff sleeps
+    const rows_ = await promise;
+    expect(rows_).toHaveLength(50); // page 1 kept, not thrown away
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("returning 50 collected rows"),
+    );
+    warnSpy.mockRestore();
+    vi.useRealTimers();
+  });
 });
