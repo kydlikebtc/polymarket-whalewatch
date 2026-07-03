@@ -64,17 +64,20 @@ type AlertConditions = {
   maxAgeDays: number | null;
   smartOnly: boolean;
   maxHoursToEnd: number | null;
+  cooldownMinutes: number;
 };
 
+// Mirrors lib/alertConditions DEFAULT_CONDITIONS (pre-hydration placeholder).
 const DEFAULT_CONDITIONS: AlertConditions = {
   enabled: true,
   minUsd: 10000,
   side: "ALL",
   minPrice: null,
-  maxPrice: null,
+  maxPrice: 0.95,
   maxAgeDays: null,
   smartOnly: false,
   maxHoursToEnd: null,
+  cooldownMinutes: 30,
 };
 
 function fmtUsd(usd: number): string {
@@ -225,6 +228,7 @@ function ConditionsPanel({ pollSeconds }: { pollSeconds: number }) {
       maxAgeDays: numOrNull(ageText),
       smartOnly: c.smartOnly,
       maxHoursToEnd: numOrNull(hoursToEndText),
+      cooldownMinutes: c.cooldownMinutes,
     };
     try {
       const res = await fetch("/api/alert-config", {
@@ -336,7 +340,9 @@ function ConditionsPanel({ pollSeconds }: { pollSeconds: number }) {
           className="ds-input ds-input--mono"
           style={{ width: 80 }}
         />
-        <span className="ds-hint">赔率 0–1</span>
+        <span className="ds-hint">
+          赔率 0–1（默认上限 0.95：排除 ≥0.95 的结算扫尾单，清空 = 不设上限）
+        </span>
       </Field>
 
       <Field label="地址年龄">
@@ -365,6 +371,28 @@ function ConditionsPanel({ pollSeconds }: { pollSeconds: number }) {
           style={{ width: 70 }}
         />
         <span className="ds-hint">小时（留空 = 不限；抓结算前突击买入）</span>
+      </Field>
+
+      <Field label="冷却窗口">
+        <input
+          type="number"
+          min={0}
+          value={c.cooldownMinutes}
+          onChange={(e) =>
+            setC({
+              ...c,
+              cooldownMinutes: Math.max(
+                0,
+                Math.floor(Number(e.target.value) || 0),
+              ),
+            })
+          }
+          className="ds-input ds-input--mono"
+          style={{ width: 70 }}
+        />
+        <span className="ds-hint">
+          分钟（同一钱包·同一市场冷却期内只推首笔，其余仅入库；0 = 关闭）
+        </span>
       </Field>
 
       <Field label="聪明钱">

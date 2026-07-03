@@ -10,6 +10,7 @@ function trade(over: Record<string, unknown>) {
     proxyWallet: "0xW1",
     conditionId: "0xCOND",
     outcome: "Yes",
+    outcomeIndex: 0,
     side: "BUY",
     size: 1000,
     price: 1,
@@ -220,6 +221,144 @@ describe("aggregate (split-buy accumulation)", () => {
     expect(out[0].buyCount).toBe(3);
     expect(out[0].buyUsd).toBe(15_000);
     expect(out[0].netUsd).toBe(15_000);
+  });
+
+  it("flags hedge suspicion when the same wallet net-buys the OPPOSITE outcome, with binary 1−price deduction", () => {
+    // Yes side (qualifying): 3 × $5k @0.5 → netUsd $15k.
+    // No side (NOT qualifying — 1 buy, under the floor): $4k @0.8 net buy.
+    // Binary deduction: opposite shares 4000/0.8 = 5000 → equivalent Yes-sell
+    // 5000 × (1−0.8) = $1000 → adjusted 15000 − 1000 = $14000.
+    const trades = [
+      trade({ transactionHash: "0x1", size: 10_000, price: 0.5 }),
+      trade({ transactionHash: "0x2", size: 10_000, price: 0.5 }),
+      trade({ transactionHash: "0x3", size: 10_000, price: 0.5 }),
+      trade({
+        transactionHash: "0x4",
+        outcome: "No",
+        outcomeIndex: 1,
+        size: 5000,
+        price: 0.8,
+      }),
+    ];
+    const out = aggregate(trades, DEFAULTS);
+    expect(out).toHaveLength(1);
+    const g = out[0];
+    expect(g.outcome).toBe("Yes");
+    expect(g.hedgeSuspect).toBe(true);
+    expect(g.hedgeAdjustedNetUsd).toBeCloseTo(14_000, 6);
+  });
+
+  it("multi-outcome hedge (outcomeIndex >= 2) is flagged WITHOUT the 1−price deduction", () => {
+    const trades = [
+      trade({ transactionHash: "0x1", size: 5000, price: 1 }),
+      trade({ transactionHash: "0x2", size: 5000, price: 1 }),
+      trade({ transactionHash: "0x3", size: 5000, price: 1 }),
+      // Same market, a THIRD outcome — the 1−price identity doesn't hold.
+      trade({
+        transactionHash: "0x4",
+        outcome: "Candidate C",
+        outcomeIndex: 2,
+        size: 4000,
+        price: 0.5,
+      }),
+    ];
+    const out = aggregate(trades, DEFAULTS);
+    expect(out).toHaveLength(1);
+    expect(out[0].hedgeSuspect).toBe(true);
+    expect(out[0].hedgeAdjustedNetUsd).toBeNull();
+  });
+
+  it("no hedge flag when the opposite outcome was net-SOLD (netUsd <= 0)", () => {
+    const trades = [
+      trade({ transactionHash: "0x1", size: 5000, price: 1 }),
+      trade({ transactionHash: "0x2", size: 5000, price: 1 }),
+      trade({ transactionHash: "0x3", size: 5000, price: 1 }),
+      // Opposite outcome: bought $1k then sold $3k → net −$2k, not a hedge.
+      trade({
+        transactionHash: "0x4",
+        outcome: "No",
+        outcomeIndex: 1,
+        size: 1000,
+        price: 1,
+      }),
+      trade({
+        transactionHash: "0x5",
+        outcome: "No",
+        outcomeIndex: 1,
+        side: "SELL",
+        size: 3000,
+        price: 1,
+      }),
+    ];
+    const out = aggregate(trades, DEFAULTS);
+    expect(out).toHaveLength(1);
+    expect(out[0].hedgeSuspect).toBe(false);
+    expect(out[0].hedgeAdjustedNetUsd).toBeNull();
+  });
+
+  it("flags market-making suspicion on high BUY/SELL alternation (chronological flip rate)", () => {
+    // Chronological (by ts, deliberately fed out of order): B S B S B →
+    // 4 flips / 4 gaps = 1.0 > 0.4. buyUsd $18k vs sellUsd $4k keeps the
+    // side-consistency guard satisfied so the group still qualifies.
+    const trades = [
+      trade({ transactionHash: "0x3", size: 6000, price: 1, timestamp: 3000 }),
+      trade({ transactionHash: "0x1", size: 6000, price: 1, timestamp: 1000 }),
+      trade({
+        transactionHash: "0x2",
+        side: "SELL",
+        size: 2000,
+        price: 1,
+        timestamp: 2000,
+      }),
+      trade({ transactionHash: "0x5", size: 6000, price: 1, timestamp: 5000 }),
+      trade({
+        transactionHash: "0x4",
+        side: "SELL",
+        size: 2000,
+        price: 1,
+        timestamp: 4000,
+      }),
+    ];
+    const out = aggregate(trades, DEFAULTS);
+    expect(out).toHaveLength(1);
+    expect(out[0].flipRate).toBeCloseTo(1.0, 6);
+    expect(out[0].mmSuspect).toBe(true);
+  });
+
+  it("pure-buy groups have flipRate 0 and no suspicion tags", () => {
+    const trades = [
+      trade({ transactionHash: "0x1", size: 5000, price: 1 }),
+      trade({ transactionHash: "0x2", size: 5000, price: 1 }),
+      trade({ transactionHash: "0x3", size: 5000, price: 1 }),
+    ];
+    const out = aggregate(trades, DEFAULTS);
+    expect(out[0].flipRate).toBe(0);
+    expect(out[0].mmSuspect).toBe(false);
+    expect(out[0].hedgeSuspect).toBe(false);
+  });
+
+  it("suspect groups sink below clean groups in the default ordering", () => {
+    const trades = [
+      // Clean group: net $12k (smaller).
+      trade({ transactionHash: "0xa1", proxyWallet: "0xCLEAN", size: 4000 }),
+      trade({ transactionHash: "0xa2", proxyWallet: "0xCLEAN", size: 4000 }),
+      trade({ transactionHash: "0xa3", proxyWallet: "0xCLEAN", size: 4000 }),
+      // Hedged group: net $27k on Yes but also net-buys No → suspect.
+      trade({ transactionHash: "0xb1", proxyWallet: "0xHEDGE", size: 9000 }),
+      trade({ transactionHash: "0xb2", proxyWallet: "0xHEDGE", size: 9000 }),
+      trade({ transactionHash: "0xb3", proxyWallet: "0xHEDGE", size: 9000 }),
+      trade({
+        transactionHash: "0xb4",
+        proxyWallet: "0xHEDGE",
+        outcome: "No",
+        outcomeIndex: 1,
+        size: 4000,
+        price: 0.5,
+      }),
+    ];
+    const out = aggregate(trades, DEFAULTS);
+    expect(out.map((g) => g.wallet)).toEqual(["0xCLEAN", "0xHEDGE"]);
+    expect(out[1].hedgeSuspect).toBe(true);
   });
 
   it("returns results sorted by netUsd desc", () => {

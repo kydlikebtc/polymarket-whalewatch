@@ -14,6 +14,7 @@ import {
   Icon,
   Segmented,
   StatCard,
+  Tag,
   WalletStatsBadge,
 } from "../ui";
 import { useWalletIntel } from "../useWalletIntel";
@@ -28,6 +29,7 @@ type AccumGroup = {
   wallet: string;
   conditionId: string;
   outcome: string;
+  outcomeIndex: number;
   title: string;
   eventSlug: string;
   buyUsd: number;
@@ -41,6 +43,12 @@ type AccumGroup = {
   firstTs: number;
   lastTs: number;
   buys: AccumBuy[];
+  // Suspicion tags computed server-side (lib/accumulate): suspects sink to
+  // the bottom of every sort so clean directional accumulation ranks first.
+  hedgeSuspect: boolean;
+  hedgeAdjustedNetUsd: number | null;
+  flipRate: number;
+  mmSuspect: boolean;
 };
 
 type AccumStats = {
@@ -214,6 +222,12 @@ export default function AccumulationPage() {
       }
     };
     arr.sort((a, b) => {
+      // Hedge/market-making suspects sink to the bottom regardless of the
+      // active sort — they are noise for the "directional accumulation" lens
+      // and must never outrank clean groups (still sorted among themselves).
+      const sa = a.hedgeSuspect || a.mmSuspect ? 1 : 0;
+      const sb = b.hedgeSuspect || b.mmSuspect ? 1 : 0;
+      if (sa !== sb) return sa - sb;
       const av = pick(a);
       const bv = pick(b);
       return sortDir === "asc" ? av - bv : bv - av;
@@ -340,7 +354,7 @@ export default function AccumulationPage() {
 
         <div className="ds-hint">
           精度 floor <span className="mono">${fmtUsd(floor)}</span> · 每笔 &lt;
-          $10k 才算拆单 · ≥3 笔买入
+          $10k 才算拆单 · ≥3 笔买入 · 低于 floor 的卖出不可见，净买入为上界
         </div>
       </section>
 
@@ -409,6 +423,9 @@ export default function AccumulationPage() {
                   战绩
                 </th>
                 <th>市场 · 结果</th>
+                <th title="对冲嫌疑 = 同钱包也净买入了同市场的对侧结果；做市嫌疑 = 买卖高频交替。两类默认沉底">
+                  标记
+                </th>
                 <th className="is-right">平均赔率</th>
                 <th className="is-right">时间</th>
                 <th
@@ -439,7 +456,12 @@ export default function AccumulationPage() {
                 >
                   毛买入{sortArrow("buyUsd")}
                 </th>
-                <th className="is-right">毛卖出</th>
+                <th
+                  className="is-right"
+                  title="仅统计 ≥ 精度 floor 的卖出——更小的卖单在此精度下不可见，净买入应视为上界"
+                >
+                  毛卖出(≥floor)
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -498,6 +520,46 @@ export default function AccumulationPage() {
                         )}
                         <div className="kpi-sub">{g.outcome}</div>
                       </td>
+                      <td>
+                        {g.hedgeSuspect || g.mmSuspect ? (
+                          <span
+                            style={{
+                              display: "flex",
+                              gap: "var(--s-1)",
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            {g.hedgeSuspect ? (
+                              <span
+                                title={
+                                  "同钱包在同市场的对侧结果也有净买入——对冲/套利嫌疑，方向意图存疑。" +
+                                  (g.hedgeAdjustedNetUsd != null
+                                    ? `按 1−价格 折算对侧买入后，本方向净买入约 $${fmtUsd(
+                                        g.hedgeAdjustedNetUsd,
+                                      )}（仅二元市场折算）。`
+                                    : "多结果市场仅标记不折算。") +
+                                  "默认沉底"
+                                }
+                                style={{ cursor: "help" }}
+                              >
+                                <Tag variant="warn">对冲?</Tag>
+                              </span>
+                            ) : null}
+                            {g.mmSuspect ? (
+                              <span
+                                title={`买卖高频交替（换向率 ${Math.round(
+                                  g.flipRate * 100,
+                                )}%，仅统计 ≥floor 的可见单，实际只高不低）——更像做市库存管理而非定向建仓。默认沉底`}
+                                style={{ cursor: "help" }}
+                              >
+                                <Tag variant="warn">做市?</Tag>
+                              </span>
+                            ) : null}
+                          </span>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
                       <td
                         className="mono is-right"
                         style={{ color: "var(--warn-700)", fontWeight: 600 }}
@@ -536,7 +598,7 @@ export default function AccumulationPage() {
                     {isOpen ? (
                       <tr>
                         <td
-                          colSpan={12}
+                          colSpan={13}
                           style={{
                             padding: "0 var(--s-3) var(--s-3) var(--s-10)",
                             borderBottom: "1px solid var(--n-150)",

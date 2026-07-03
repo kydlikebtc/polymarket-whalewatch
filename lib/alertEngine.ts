@@ -53,7 +53,9 @@ export interface EngineDeps {
  *  5. for each match (oldest-first): CLAIM via markSeen (cross-process lock),
  *     then push to Telegram; a failed send rolls the claim back and rethrows so
  *     the trade retries next cycle (at-least-once). A lost claim skips the push
- *     — the other process owns it.
+ *     — the other process owns it. With a cooldown configured, repeat matches
+ *     for the same (wallet, market) inside the window are recorded WITHOUT a
+ *     push (the first push of a same-cycle burst carries a "共 N 笔" summary).
  *  6. mark EVERY evaluated `fresh` trade seen (one transaction) so it isn't
  *     re-evaluated next cycle.
  *
@@ -170,6 +172,39 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
     }
   }
 
+  // --- Per-(wallet, market) push cooldown --------------------------------
+  // Production-measured noise: one wallet re-firing on one market was 14.2%
+  // of all pushes. Inside the cooldown window only the FIRST match pushes;
+  // later matches are still claimed + recorded (they ARE alerts), just not
+  // sent. The recent-alert probe walks the created_at index over the small
+  // window and matches wallet/market via json_extract — payload has no
+  // dedicated columns, but the window keeps the scan tiny. Push-only concern:
+  // without a `send` there is nothing to suppress.
+  const cooldownSec = Math.max(0, conditions.cooldownMinutes ?? 0) * 60;
+  const cooldownActive = cooldownSec > 0 && !!send;
+  const cooldownKey = (t: Trade) =>
+    `${t.proxyWallet.toLowerCase()}:${t.conditionId}`;
+  // Burst size per key among THIS cycle's matches: the one pushed message
+  // carries a "共 N 笔" summary for the siblings suppressed below it.
+  const burstCount = new Map<string, number>();
+  if (cooldownActive) {
+    for (const t of survivors) {
+      const ck = cooldownKey(t);
+      burstCount.set(ck, (burstCount.get(ck) ?? 0) + 1);
+    }
+  }
+  const recentAlertStmt = cooldownActive
+    ? db.prepare(
+        `SELECT COUNT(*) AS n FROM alerts
+          WHERE created_at >= ?
+            AND type IN ('large','smart')
+            AND lower(json_extract(payload, '$.proxyWallet')) = ?
+            AND json_extract(payload, '$.conditionId') = ?`,
+      )
+    : null;
+  const pushedThisCycle = new Set<string>();
+  let suppressedCount = 0;
+
   // Fire alerts for the final matches (already oldest-first from selectNewTrades).
   let fired = 0;
   for (const t of survivors) {
@@ -188,15 +223,45 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
       console.log(`[alertEngine] skip ${k}: claimed by another process`);
       continue;
     }
-    if (send) {
+    // Cooldown disposition BEFORE the push: a suppressed match is recorded
+    // below exactly like a pushed one — only the Telegram send is skipped.
+    let suppress = false;
+    if (recentAlertStmt) {
+      const ck = cooldownKey(t);
+      if (pushedThisCycle.has(ck)) {
+        suppress = true;
+      } else {
+        const { n } = recentAlertStmt.get(
+          nowSec - cooldownSec,
+          t.proxyWallet.toLowerCase(),
+          t.conditionId,
+        ) as { n: number };
+        suppress = n > 0;
+      }
+      if (suppress) {
+        suppressedCount++;
+        console.log(
+          `[alertEngine] cooldown: record-only for ${k} (wallet=${t.proxyWallet.toLowerCase()} market=${t.conditionId} window=${conditions.cooldownMinutes}min)`,
+        );
+      }
+    }
+    if (send && !suppress) {
       try {
-        await send(formatLargeTradeAlert(t, conditions.minUsd, smart, ctx));
+        // The format function's output is untouched; the burst summary is a
+        // cooldown-owned suffix composed here in the engine.
+        let html = formatLargeTradeAlert(t, conditions.minUsd, smart, ctx);
+        const burst = burstCount.get(cooldownKey(t)) ?? 1;
+        if (burst > 1) {
+          html += `\n⏳ 该钱包本轮在此市场共 ${burst} 笔，冷却 ${conditions.cooldownMinutes} 分钟内其余仅入库`;
+        }
+        await send(html);
       } catch (e) {
         // Roll back the claim so the trade retries next cycle (at-least-once).
         // Known tradeoff: a crash BETWEEN claim and send loses that one push.
         unmarkSeen(db, k);
         throw e;
       }
+      pushedThisCycle.add(cooldownKey(t));
     }
     recordAlert(
       db,
@@ -206,6 +271,12 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
       t.timestamp,
     );
     fired++;
+  }
+
+  if (suppressedCount > 0) {
+    console.log(
+      `[alertEngine] cooldown suppressed ${suppressedCount}/${survivors.length} push(es) this cycle (window=${conditions.cooldownMinutes}min) — all recorded to alerts`,
+    );
   }
 
   // Mark every evaluated fresh trade seen in one transaction (matches were

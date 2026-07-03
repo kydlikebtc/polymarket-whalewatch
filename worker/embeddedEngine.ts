@@ -200,6 +200,9 @@ export function startAlertEngine(): void {
           }),
         getSmart: () => getAllSmartTags(db),
         send,
+        // Coverage-log denominator: fetchWindow's effectiveSinceSec is
+        // measured against this requested window.
+        windowSec: CONSENSUS_WINDOW_SEC,
       });
       if (fired > 0) {
         console.log(`[engine] consensus cycle fired ${fired} alert(s)`);

@@ -15,6 +15,12 @@ export const dynamic = "force-dynamic";
 // sweeps BUY/SELL separately so each side gets its own offset budget.
 const FLOOR_USD = 2000;
 const CACHE_TTL_MS = 30_000;
+// currentPrice is THE "still followable" actionability signal on this page —
+// the default market_meta TTL (1h) can serve an hour-stale "current" price
+// and misdirect a follow/skip decision. Refresh on the same order as the 30s
+// window cache; closed markets short-circuit inside getMarketMeta and never
+// refetch regardless.
+const CURRENT_PRICE_TTL_SEC = 60;
 type WindowResult = {
   trades: Trade[];
   truncated: boolean;
@@ -82,6 +88,7 @@ export async function GET(req: Request) {
       const meta = await getMarketMeta(
         db,
         groups.map((g) => g.conditionId),
+        { ttlSec: CURRENT_PRICE_TTL_SEC },
       );
       const views: ConsensusView[] = groups.map((g) => {
         const m = meta[g.conditionId];

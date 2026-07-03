@@ -182,7 +182,14 @@ export function formatConsensusAlert(g: ConsensusGroup): string {
 
 export interface ConsensusCycleDeps {
   db: DB;
-  fetchWindow: () => Promise<{ trades: Trade[]; truncated: boolean }>;
+  // effectiveSinceSec (when provided — getTradesWindowDeep always returns it)
+  // is the REAL start of the complete merged window, used purely for the
+  // coverage log below; pushes are untouched.
+  fetchWindow: () => Promise<{
+    trades: Trade[];
+    truncated: boolean;
+    effectiveSinceSec?: number;
+  }>;
   getSmart: () => Map<string, SmartTag>;
   send?: (html: string) => Promise<void>;
   opts?: ConsensusOptions;
@@ -190,6 +197,8 @@ export interface ConsensusCycleDeps {
   // and a re-formation counts as NEWS again (also acts as a periodic reminder
   // for a persistently-held consensus).
   stateTtlSec?: number;
+  // Requested window length (sec) — denominator of the coverage log.
+  windowSec?: number;
   nowSec?: number;
 }
 
@@ -215,6 +224,7 @@ export async function runConsensusCycle(
     send,
     opts = DEFAULT_CONSENSUS,
     stateTtlSec = 6 * 3600,
+    windowSec = 6 * 3600,
     nowSec = Math.floor(Date.now() / 1000),
   } = deps;
   const smartTags = getSmart();
@@ -232,17 +242,53 @@ export async function runConsensusCycle(
     }
     return 0;
   }
-  const { trades, truncated } = await fetchWindow();
+  const { trades, truncated, effectiveSinceSec } = await fetchWindow();
+  // Window-coverage quantification (observability only — pushes untouched):
+  // row count + real coverage vs the requested window, every cycle. A week of
+  // these lines is the data needed to decide whether the $2k fetch floor has
+  // depth headroom to drop to $1k (coverage consistently >80%) or is already
+  // depth-bound at the current floor.
+  if (effectiveSinceSec != null) {
+    const coveredSec = Math.max(0, nowSec - effectiveSinceSec);
+    const pct = Math.min(100, Math.round((coveredSec / windowSec) * 100));
+    console.log(
+      `[consensus] window: ${trades.length} rows · coverage ${(coveredSec / 3600).toFixed(1)}h/${(windowSec / 3600).toFixed(1)}h (${pct}%) · truncated=${truncated}`,
+    );
+  }
   if (truncated) {
-    // Newest-first pagination hit its page cap: the fetched prefix is still a
-    // complete, self-consistent (shorter) window, but early SELL legs beyond
-    // it are missing — netUsd for long-running accumulators may be overstated.
+    // The deep fetch trims BOTH sides to the newest truncation edge (see
+    // getTradesWindowDeep), so the rows form a complete-but-SHORTER window:
+    // netting inside it is honest; signals older than effectiveSinceSec are
+    // simply not visible this cycle.
     console.warn(
       `[consensus] window truncated at the page cap (${trades.length} rows) — detection runs on the shortened window`,
     );
   }
   const groups = detectConsensus(trades, smartTags, opts);
   if (groups.length === 0) return 0;
+  // Per qualified wallet: the smallest single visible BUY fill (lower bound —
+  // fills under the fetch floor are invisible). Minima hugging the floor mean
+  // the wallet's real chunks are likely smaller and the floor is masking them
+  // ($2k fetch floor vs $5k/wallet qualification mismatch).
+  {
+    const qualified = new Set<string>();
+    for (const g of groups) for (const w of g.wallets) qualified.add(w.wallet);
+    const minFill = new Map<string, number>();
+    for (const t of trades) {
+      if (t.side !== "BUY") continue;
+      const w = t.proxyWallet.toLowerCase();
+      if (!qualified.has(w)) continue;
+      const usdVal = notionalUsd(t);
+      const prev = minFill.get(w);
+      if (prev == null || usdVal < prev) minFill.set(w, usdVal);
+    }
+    const dist = [...minFill.values()]
+      .map((v) => Math.round(v))
+      .sort((a, b) => a - b);
+    console.log(
+      `[consensus] ${groups.length} group(s) · qualified-wallet min single fill USD: [${dist.join(", ")}]`,
+    );
+  }
 
   const sel = db.prepare(
     "SELECT wallet_count, last_alert_ts FROM consensus_state WHERE condition_id = ? AND outcome = ?",

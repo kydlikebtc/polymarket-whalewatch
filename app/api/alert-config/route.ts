@@ -49,6 +49,14 @@ function clampSide(v: unknown): AlertConditions["side"] {
   return v === "BUY" || v === "SELL" ? v : "ALL";
 }
 
+// Coerce the per-(wallet, market) push cooldown (minutes). Non-number / NaN /
+// negative all degrade to the default; 0 is a valid "disabled" value.
+function clampCooldown(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0
+    ? Math.floor(v)
+    : DEFAULT_CONDITIONS.cooldownMinutes;
+}
+
 function clampMinUsd(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) && v >= 0
     ? Math.floor(v)
@@ -72,6 +80,7 @@ function validate(body: unknown): AlertConditions {
         : DEFAULT_CONDITIONS.smartOnly,
     // Same non-negative-or-null semantics as the age cap.
     maxHoursToEnd: clampAge(b.maxHoursToEnd),
+    cooldownMinutes: clampCooldown(b.cooldownMinutes),
   };
 }
 

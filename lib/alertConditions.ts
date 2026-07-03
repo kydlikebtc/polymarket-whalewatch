@@ -13,6 +13,10 @@ export interface AlertConditions {
   smartOnly: boolean; // only fire for wallets present in smart_wallets
   // Only fire within N hours of market end (pre-settlement rush), null = no cap.
   maxHoursToEnd: number | null;
+  // Per-(wallet, market) push cooldown in minutes: inside the window only the
+  // FIRST match pushes to Telegram, later matches are recorded to SQLite only.
+  // 0 = disabled.
+  cooldownMinutes: number;
 }
 
 export const DEFAULT_CONDITIONS: AlertConditions = {
@@ -20,10 +24,18 @@ export const DEFAULT_CONDITIONS: AlertConditions = {
   minUsd: 10000,
   side: "ALL",
   minPrice: null,
-  maxPrice: null,
+  // Production-measured: 28.6% of alerts land at >=0.90 — settlement-sweep
+  // fills on near-certain outcomes carrying ~zero information. Excluded by
+  // default. A user-SAVED config always stores its own maxPrice (null when
+  // the field was left blank) and merges OVER this default in
+  // getAlertConditions, so existing saved setups are never overridden.
+  maxPrice: 0.95,
   maxAgeDays: null,
   smartOnly: false,
   maxHoursToEnd: null,
+  // Production-measured: a single wallet re-firing on the same market was
+  // 14.2% of all pushes — one summary push per window is plenty.
+  cooldownMinutes: 30,
 };
 
 const CONFIG_KEY = "alert_conditions";

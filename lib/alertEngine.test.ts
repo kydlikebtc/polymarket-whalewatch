@@ -397,6 +397,123 @@ describe("runAlertCycle", () => {
     expect(countAlerts(db)).toBe(0);
   });
 
+  it("(o) cooldown: a same-cycle (wallet,market) burst pushes ONE message with the ×N summary, all recorded", async () => {
+    const db = openDb(":memory:");
+    const t1 = mk({ transactionHash: "0xb1", timestamp: 1000 });
+    const t2 = mk({ transactionHash: "0xb2", timestamp: 1001 });
+    const send = vi.fn().mockResolvedValue(undefined);
+
+    const fired = await runAlertCycle({
+      db,
+      fetchTrades: async () => [t1, t2],
+      conditions: cond({ minUsd: 10000, cooldownMinutes: 30 }),
+      getAges: noAges,
+      send,
+      minTimestamp: 0,
+      nowSec: 1001,
+    });
+
+    // Both matches are real alerts (recorded), only the first one pushes.
+    expect(fired).toBe(2);
+    expect(countAlerts(db)).toBe(2);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0] as string).toContain("共 2 笔");
+  });
+
+  it("(p) cooldown: a later cycle inside the window records without pushing; past the window it pushes again", async () => {
+    const db = openDb(":memory:");
+    const send = vi.fn().mockResolvedValue(undefined);
+    const base = {
+      db,
+      conditions: cond({ minUsd: 10000, cooldownMinutes: 30 }),
+      getAges: noAges,
+      send,
+      minTimestamp: 0,
+    };
+
+    // Cycle 1: pushes (no burst → no summary suffix).
+    await runAlertCycle({
+      ...base,
+      fetchTrades: async () => [
+        mk({ transactionHash: "0xc1", timestamp: 1000 }),
+      ],
+      nowSec: 1000,
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0] as string).not.toContain("共 1 笔");
+
+    // Cycle 2, 10 min later: same wallet+market → record-only.
+    const fired2 = await runAlertCycle({
+      ...base,
+      fetchTrades: async () => [
+        mk({ transactionHash: "0xc2", timestamp: 1600 }),
+      ],
+      nowSec: 1600,
+    });
+    expect(fired2).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(countAlerts(db)).toBe(2);
+
+    // Cycle 3, past the 30-min window (measured from the LAST recorded alert):
+    // pushes again.
+    await runAlertCycle({
+      ...base,
+      fetchTrades: async () => [
+        mk({ transactionHash: "0xc3", timestamp: 1600 + 1801 }),
+      ],
+      nowSec: 1600 + 1801,
+    });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(countAlerts(db)).toBe(3);
+  });
+
+  it("(q) cooldown scopes by (wallet,market): other wallets / markets still push", async () => {
+    const db = openDb(":memory:");
+    const send = vi.fn().mockResolvedValue(undefined);
+    const t1 = mk({ transactionHash: "0xq1", timestamp: 1000 });
+    const otherWallet = mk({
+      transactionHash: "0xq2",
+      proxyWallet: "0xOTHER",
+      timestamp: 1001,
+    });
+    const otherMarket = mk({
+      transactionHash: "0xq3",
+      conditionId: "0xc2",
+      timestamp: 1002,
+    });
+
+    await runAlertCycle({
+      db,
+      fetchTrades: async () => [t1, otherWallet, otherMarket],
+      conditions: cond({ minUsd: 10000, cooldownMinutes: 30 }),
+      getAges: noAges,
+      send,
+      minTimestamp: 0,
+      nowSec: 1002,
+    });
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+
+  it("(r) cooldownMinutes=0 disables suppression entirely", async () => {
+    const db = openDb(":memory:");
+    const send = vi.fn().mockResolvedValue(undefined);
+    const t1 = mk({ transactionHash: "0xz1", timestamp: 1000 });
+    const t2 = mk({ transactionHash: "0xz2", timestamp: 1001 });
+
+    await runAlertCycle({
+      db,
+      fetchTrades: async () => [t1, t2],
+      conditions: cond({ minUsd: 10000, cooldownMinutes: 0 }),
+      getAges: noAges,
+      send,
+      minTimestamp: 0,
+      nowSec: 1001,
+    });
+    expect(send).toHaveBeenCalledTimes(2);
+    const sent = send.mock.calls.map((c) => c[0] as string);
+    expect(sent.some((m) => m.includes("共"))).toBe(false);
+  });
+
   it("(n) send failure rolls the claim back so the trade retries next cycle", async () => {
     const db = openDb(":memory:");
     const t = mk({ transactionHash: "0xretry" });

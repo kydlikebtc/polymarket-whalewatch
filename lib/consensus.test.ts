@@ -226,6 +226,61 @@ describe("runConsensusCycle", () => {
     warnSpy.mockRestore();
   });
 
+  it("logs window coverage and the qualified-wallet min-fill distribution (pushes untouched)", async () => {
+    const db = openDb(":memory:");
+    const send = vi.fn().mockResolvedValue(undefined);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const nowSec = 100_000;
+    // Truncated fetch that only reached back 3h of the requested 6h window.
+    const fired = await runConsensusCycle(
+      deps(db, {
+        send,
+        nowSec,
+        windowSec: 6 * 3600,
+        fetchWindow: async () => ({
+          trades: [
+            mk({ proxyWallet: "0xA", transactionHash: "0x1" }), // $10k BUY
+            // 0xA's smaller second fill → its min single fill is $6k.
+            mk({
+              proxyWallet: "0xA",
+              transactionHash: "0x1b",
+              size: 12000,
+              price: 0.5,
+            }),
+            mk({ proxyWallet: "0xB", transactionHash: "0x2" }),
+          ],
+          truncated: true,
+          effectiveSinceSec: nowSec - 3 * 3600,
+        }),
+      }),
+    );
+    expect(fired).toBe(1);
+    const lines = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes("coverage 3.0h/6.0h (50%)"))).toBe(
+      true,
+    );
+    expect(
+      lines.some((l) =>
+        l.includes("qualified-wallet min single fill USD: [6000, 10000]"),
+      ),
+    ).toBe(true);
+    // The pushed message is byte-identical to the format function's output —
+    // the coverage data goes to the logs only.
+    expect(send.mock.calls[0][0] as string).not.toContain("覆盖");
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("omits the coverage line when fetchWindow reports no effectiveSinceSec (legacy shape)", async () => {
+    const db = openDb(":memory:");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await runConsensusCycle(deps(db, { nowSec: 200_000 }));
+    const lines = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes("coverage"))).toBe(false);
+    logSpy.mockRestore();
+  });
+
   it("claim lock: a group recently claimed by another process is not double-pushed", async () => {
     const db = openDb(":memory:");
     const send = vi.fn().mockResolvedValue(undefined);
