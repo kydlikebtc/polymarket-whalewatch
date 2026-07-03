@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { getSmartPoolStatus } from "../../../lib/smartWallets";
+import { getTelegramHealth } from "../../../lib/telegramHealth";
 
 // Node runtime is required: better-sqlite3 is a native module and cannot run on
 // the Edge runtime. force-dynamic disables caching so each poll reads fresh rows.
@@ -108,7 +109,17 @@ export async function GET() {
       // alert count (each null when its table is missing — see the helper).
       const pool = getSmartPoolStatus(db);
 
-      return Response.json({ count: alerts.length, alerts, ...pool });
+      // Push-channel health (same pattern as the smart-pool status): the
+      // engine's send wrapper keeps consecutive-failure counters in the config
+      // table; null = unknown (missing table on a cold db).
+      const telegramHealth = getTelegramHealth(db);
+
+      return Response.json({
+        count: alerts.length,
+        alerts,
+        ...pool,
+        telegramHealth,
+      });
     } finally {
       db.close();
     }
@@ -120,6 +131,7 @@ export async function GET() {
       alerts: [],
       smartWalletCount: null,
       smartAlerts24h: null,
+      telegramHealth: null,
     });
   }
 }

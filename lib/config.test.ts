@@ -75,6 +75,20 @@ describe("parseConfig", () => {
     warnSpy.mockRestore();
   });
 
+  it("TELEGRAM_STARTUP_PING defaults to OFF and accepts explicit truthy spellings", () => {
+    expect(parseConfig({}).telegramStartupPing).toBe(false);
+    for (const v of ["1", "true", "TRUE", "yes", "on", " On "]) {
+      expect(
+        parseConfig({ TELEGRAM_STARTUP_PING: v }).telegramStartupPing,
+      ).toBe(true);
+    }
+    for (const v of ["", "0", "false", "off", "nope"]) {
+      expect(
+        parseConfig({ TELEGRAM_STARTUP_PING: v }).telegramStartupPing,
+      ).toBe(false);
+    }
+  });
+
   it("falls back to default thresholds when nothing parses (empty array would disable grouping)", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const c = parseConfig({ LARGE_THRESHOLDS: "10_000;50k" });

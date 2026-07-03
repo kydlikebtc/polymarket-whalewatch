@@ -14,6 +14,7 @@ import {
 } from "../lib/smartWallets";
 import { getMarketMeta } from "../lib/gamma";
 import { runConsensusCycle } from "../lib/consensus";
+import { wrapSendWithHealth } from "../lib/telegramHealth";
 
 // Guarded singleton PER PROCESS: instrumentation may call this more than once
 // within a runtime, and the flag makes repeat calls no-ops. It does NOT guard
@@ -31,6 +32,28 @@ const SECONDS_PER_DAY = 86400;
 // never further back than this — a long-dead engine must not replay hours of
 // history (the single /trades page wouldn't reach much deeper anyway).
 const BACKFILL_CAP_SEC = 30 * 60;
+
+// Startup connectivity ping (opt-in via TELEGRAM_STARTUP_PING, default off):
+// same "monitor online" idea as scripts/test-telegram, pushed through the
+// health-wrapped send so a failed ping immediately lands in the telegramHealth
+// counters. Fire-and-forget — must never delay the first poll cycle.
+export const STARTUP_PING_HTML =
+  "🟢 Polymarket 监控已上线 · Telegram 推送通道连通性验证";
+
+export function maybeStartupPing(
+  send: ((html: string) => Promise<void>) | undefined,
+  enabled: boolean,
+): void {
+  if (!send || !enabled) return;
+  send(STARTUP_PING_HTML).then(
+    () => console.log("[engine] startup ping sent — Telegram channel OK"),
+    (e) =>
+      console.error(
+        "[engine] startup ping FAILED — check TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL_ID / bot channel permission:",
+        e,
+      ),
+  );
+}
 
 // Startup replay boundary. Resume from the newest seen_trades.ts so a restart/
 // deploy gap is backfilled instead of becoming a permanent blind window;
@@ -69,9 +92,15 @@ export function startAlertEngine(): void {
     botToken: cfg.telegramBotToken,
     chatId: cfg.telegramChannelId,
   };
-  const send = cfg.telegramEnabled
+  const rawSend = cfg.telegramEnabled
     ? (html: string) => sendMessage(creds, html)
     : undefined;
+  // Health-instrumented send, shared by the alert AND consensus loops:
+  // consecutive-failure counters land in the config table (surfaced by
+  // /api/alerts → alerts-page callout) and a rate-limited self-diagnostic
+  // pushes after the threshold — see lib/telegramHealth. Errors rethrow
+  // unchanged, so claim-rollback / poison semantics are untouched.
+  const send = rawSend ? wrapSendWithHealth(db, rawSend) : undefined;
   // Backfill window: resume from the last seen trade (bounded by the cap) so a
   // restart/deploy gap no longer permanently swallows the trades that landed
   // during the downtime. The pre-window backlog is seeded as seen by the first
@@ -148,6 +177,8 @@ export function startAlertEngine(): void {
       cfg.telegramEnabled ? "on" : "off (records to SQLite only)"
     } · interval=${cfg.pollIntervalMs}ms`,
   );
+
+  maybeStartupPing(send, cfg.telegramStartupPing);
 
   async function loop() {
     try {

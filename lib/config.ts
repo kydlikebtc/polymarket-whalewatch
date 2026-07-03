@@ -6,6 +6,10 @@ import { z } from "zod";
 const Env = z.object({
   TELEGRAM_BOT_TOKEN: z.string().default(""),
   TELEGRAM_CHANNEL_ID: z.string().default(""),
+  // Opt-in startup connectivity ping (default OFF): when truthy AND Telegram
+  // is enabled, the engine pushes one online message at start so a creds /
+  // permission problem surfaces at deploy time instead of as days of silence.
+  TELEGRAM_STARTUP_PING: z.string().default(""),
   LARGE_THRESHOLDS: z.string().default("10000,50000"),
   POLL_INTERVAL_MS: z.string().default("4000"),
 });
@@ -57,6 +61,14 @@ function parseLargeThresholds(raw: string): number[] {
   return valid.sort((a, b) => a - b);
 }
 
+// Boolean env flags: explicit truthy spellings only, everything else (including
+// "" — the default) is false. No warn on unrecognized values: an unset flag is
+// the normal case, and "0"/"false" must stay silent.
+const TRUTHY = new Set(["1", "true", "yes", "on"]);
+function parseBoolEnv(raw: string): boolean {
+  return TRUTHY.has(raw.trim().toLowerCase());
+}
+
 // Accept any string-keyed env-like record (not the full NodeJS.ProcessEnv
 // contract). Once Next's types are in the program they augment ProcessEnv to
 // require NODE_ENV, which would otherwise reject partial test fixtures; the
@@ -70,6 +82,7 @@ export function parseConfig(raw: Record<string, string | undefined>) {
     telegramChannelId,
     // Telegram is on only when BOTH creds are non-empty.
     telegramEnabled: !!(telegramBotToken && telegramChannelId),
+    telegramStartupPing: parseBoolEnv(e.TELEGRAM_STARTUP_PING),
     largeThresholds: parseLargeThresholds(e.LARGE_THRESHOLDS),
     pollIntervalMs: parsePollIntervalMs(e.POLL_INTERVAL_MS),
   };

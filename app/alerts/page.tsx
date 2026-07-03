@@ -31,6 +31,16 @@ type AlertView = {
   createdAt: number;
 };
 
+// Push-channel health from /api/alerts (engine-written counters in the config
+// table). null/absent = unknown (cold db / pre-upgrade API), NOT healthy.
+type TelegramHealthView = {
+  consecutiveSendFailures: number;
+  lastErrorMessage: string | null;
+  lastErrorAt: number | null;
+  lastOkAt: number | null;
+  failing: boolean;
+};
+
 type AlertsResponse = {
   count: number;
   alerts: AlertView[];
@@ -38,6 +48,7 @@ type AlertsResponse = {
   // 🏆 alert count. null/absent = unknown (missing table / pre-upgrade API).
   smartWalletCount?: number | null;
   smartAlerts24h?: number | null;
+  telegramHealth?: TelegramHealthView | null;
 };
 
 // Pool-status props the ConditionsPanel shows beside the smartOnly checkbox.
@@ -520,7 +531,8 @@ export default function Page() {
         setError("");
         const snap =
           alertsSnapshot(json.alerts) +
-          `|${json.smartWalletCount ?? "?"}|${json.smartAlerts24h ?? "?"}`;
+          `|${json.smartWalletCount ?? "?"}|${json.smartAlerts24h ?? "?"}` +
+          `|tg${json.telegramHealth?.consecutiveSendFailures ?? "?"}`;
         if (snap === lastSnapshot.current) return;
         lastSnapshot.current = snap;
         setData(json);
@@ -678,6 +690,35 @@ export default function Page() {
           smartAlerts24h: data.smartAlerts24h ?? null,
         }}
       />
+
+      {/* Push-channel health callout — "no messages" must be tellable apart
+          from "no large trades". Gated on `failing` (streak ≥ threshold), so
+          a single transient blip never flashes red. */}
+      {data.telegramHealth?.failing ? (
+        <div
+          className="ds-callout ds-callout--error"
+          style={{ marginBottom: "var(--s-4)" }}
+        >
+          ⚠️ Telegram 推送通道异常：已连续{" "}
+          <strong className="mono">
+            {data.telegramHealth.consecutiveSendFailures}
+          </strong>{" "}
+          次发送失败
+          {data.telegramHealth.lastErrorAt
+            ? `（最近失败 ${fmtTime(data.telegramHealth.lastErrorAt)}）`
+            : ""}
+          。新告警仍正常入库并显示在下方列表，仅推送受影响 — 请检查 bot token
+          / 频道权限 / 限流。
+          {data.telegramHealth.lastErrorMessage ? (
+            <div
+              className="muted mono"
+              style={{ fontSize: "var(--t-sm)", marginTop: "var(--s-1)" }}
+            >
+              {data.telegramHealth.lastErrorMessage}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Validation summary — the "was this signal any good" strip. */}
       {hasStats ? (
