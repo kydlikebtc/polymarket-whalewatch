@@ -8,7 +8,7 @@
 [![Next.js 16](https://img.shields.io/badge/Next.js%2016-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org/)
 [![Node 20+](https://img.shields.io/badge/Node-20%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-![Tests](https://img.shields.io/badge/tests-110%20passing-3fb950)
+![Tests](https://img.shields.io/badge/tests-352%20passing-3fb950)
 ![License](https://img.shields.io/badge/license-research%20use-blue)
 [![Last commit](https://img.shields.io/github/last-commit/kydlikebtc/polymarket-whalewatch?color=blue)](https://github.com/kydlikebtc/polymarket-whalewatch/commits/main)
 [![Stars](https://img.shields.io/github/stars/kydlikebtc/polymarket-whalewatch?style=social)](https://github.com/kydlikebtc/polymarket-whalewatch/stargazers)
@@ -23,7 +23,7 @@
 
 A whale on Polymarket rarely announces themselves. They split a big position into many small orders, use freshly-created wallets, and buy at favorable odds. **WhaleWatch surfaces exactly that** — a 7×24 worker that pushes large fills to Telegram, plus a web dashboard to hunt the patterns single-trade alerts miss.
 
-> **中文简介**：监控 Polymarket 上的大额成交、拆单建仓、新钱包行为和**聪明钱共识**。后台 worker 实时把大单推送到 Telegram（🏆 标注高胜率白名单钱包，白名单每日自动从官方盈利榜播种）；网页看板可按金额 / 买卖 / 价格(赔率) / 地址年龄筛选，每行自带**已结算战绩徽章**（胜率 · 已实现盈亏），点击任意地址进入**钱包档案页**（赔率带直方图 / 专攻类别 / 拆单倾向）。当 ≥2 个白名单钱包同向买入同一结果时触发**共识告警**。**验证闭环**自动回填每条告警信号后 1h/24h 的价格走势与最终结算结果——直接回答"这些信号到底准不准"。全站图标（💰🐳🧩🆕🏆🔥✅❌➖📐）**鼠标悬停即出解释**，`/glossary` 说明页收录所有符号与名词定义。全程只查询公开 API，不归档成交流水。
+> **中文简介**：监控 Polymarket 上的大额成交、拆单建仓、新钱包行为和**聪明钱共识**。后台 worker 实时把大单推送到 Telegram（🏆 标注高胜率白名单钱包，白名单每日自动从官方盈利榜播种）；网页看板可按金额 / 买卖 / 价格(赔率) / 地址年龄筛选，每行自带**已结算战绩徽章**（胜率 · 已实现盈亏），点击任意地址进入**钱包档案页**（**当前持仓** / 赔率带直方图 / 专攻类别 / 拆单倾向，新标签打开）。当 ≥2 个白名单钱包同向买入同一结果时触发**共识告警**；对立结果都有聪明钱时归为**分歧**（共识与分歧同页、互斥）。**验证闭环**自动回填每条告警信号后 1h/24h 的价格走势与最终结算结果——直接回答"这些信号到底准不准"。全站图标（💰🐳🧩🆕🏆🔥✅❌➖📐）**鼠标悬停即出解释**，`/glossary` 说明页收录所有符号与名词定义。全程只查询公开 API，不归档成交流水。
 
 > ⚠️ Research / monitoring tool only. Uses **public** Polymarket data — no authentication, no trading. Not financial advice.
 
@@ -31,16 +31,17 @@ A whale on Polymarket rarely announces themselves. They split a big position int
 
 ## ✨ At a glance
 
-|     | Capability                | What it catches                                                         |
-| :-: | :------------------------ | :---------------------------------------------------------------------- |
-| 🔔  | **Large-trade alerts**    | Big executed fills, pushed to Telegram in seconds                       |
-| 🧩  | **Split-buy detection**   | Positions built from many small sub-threshold orders                    |
-| 🆕  | **Fresh-wallet flagging** | Address lifespan + new-wallet badges on every row                       |
-| 🎯  | **Insider-hunt filters**  | New wallet **＋** favorable odds **＋** pre-settlement rush             |
-| 🏆  | **Smart-money whitelist** | Auto-seeded daily from the official profit leaderboards, 🏆-tagged live |
-| 🔥  | **Consensus detection**   | ≥N whitelist wallets independently buying the SAME outcome              |
-| 📈  | **Track-record badges**   | Settled win-rate · realized PnL on every wallet, plus a full dossier    |
-| 📐  | **Validation loop**       | 1h/24h follow-through + settlement result on every alert it fired       |
+|     | Capability                 | What it catches                                                         |
+| :-: | :------------------------- | :---------------------------------------------------------------------- |
+| 🔔  | **Large-trade alerts**     | Big executed fills, pushed to Telegram in seconds                       |
+| 🧩  | **Split-buy detection**    | Positions built from many small sub-threshold orders                    |
+| 🆕  | **Fresh-wallet flagging**  | Address lifespan + new-wallet badges on every row                       |
+| 🎯  | **Insider-hunt filters**   | New wallet **＋** favorable odds **＋** pre-settlement rush             |
+| 🏆  | **Smart-money whitelist**  | Auto-seeded daily from the official profit leaderboards, 🏆-tagged live |
+| 🔥  | **Consensus detection**    | ≥N whitelist wallets independently buying the SAME outcome              |
+| ⚖️  | **Disagreement detection** | Smart money split across OPPOSING outcomes — a quality-weighted balance |
+| 📈  | **Track-record badges**    | Settled win-rate · realized PnL on every wallet, plus a full dossier    |
+| 📐  | **Validation loop**        | 1h/24h follow-through + settlement result on every alert it fired       |
 
 ---
 
@@ -58,21 +59,25 @@ A whale on Polymarket rarely announces themselves. They split a big position int
 
 - Seeded **daily and automatically** from the official profit leaderboards (WEEK / MONTH / ALL, merged per wallet; volume-0 holding accounts dropped; stale wallets age out after 30 days; manual whitelist entries are permanent).
 - Top earners get a **settled track-record enrichment** from `/closed-positions` — win rate, realized PnL, ROI — feeding an explainable 0-100 score (profit 40 + capital efficiency 30 + win rate 30).
-- The alert engine cross-checks every fill against the whitelist in real time: 🏆 prefix on Telegram, `type='smart'` in history, plus a **smart-only alert mode**.
+- The alert engine cross-checks every fill against the whitelist in real time: 🏆 prefix on Telegram, `type='smart'` in history, plus a **smart-only alert mode**. On the dashboard the whitelist count is **clickable → a searchable dialog** of every whitelisted wallet (score · win rate · realized PnL, each linking to its dossier).
 
 ### 🔥 Consensus detection (聪明钱共识)
 
-Two or three unrelated high-win-rate wallets independently buying the **same outcome** beats any single whale fill. A 5-minute worker loop scans a 6h window and pushes `🔥 聪明钱共识` when ≥N whitelist wallets each net-buy ≥$X of one outcome — alerting only on **formation and escalation** (a third wallet joining), never repeats. The `/consensus` board shows every live group with the smart-money entry price vs the current price (**仍可跟 +1.2¢** / 已跑).
+Two or three unrelated high-win-rate wallets independently buying the **same outcome** beats any single whale fill. A 5-minute worker loop scans a 6h window and pushes `🔥 聪明钱共识` when ≥N whitelist wallets each net-buy ≥$X of one outcome — alerting only on **formation and escalation** (a third wallet joining), never repeats.
+
+### ⚖️ Disagreement detection (聪明钱分歧)
+
+When smart money piles into a market's **opposing outcomes**, the old per-outcome view showed it as two contradictory "consensuses". Disagreement detection collapses that into one honest signal — a **quality-weighted balance** (each wallet's net buy × its 0–100 score, so a top wallet's $10k outweighs a fresh wallet's $20k) that leans **一边倒** (one side dominates) or **势均力敌** (genuinely split). Same-wallet-both-sides hedgers are dropped as fake opposition. The `/consensus` board now shows **🔥 共识 and ⚖️ 分歧 under a tab toggle**, and the two are **mutually exclusive** — a contested market is classified as disagreement and never masquerades as a consensus. Read-only by design: it reports the balance, never a follow/skip call. Each live consensus group still shows the smart-money entry price vs the current price (**仍可跟 +1.2¢** / 已跑).
 
 ### 📊 Web dashboard (Next.js)
 
 - **24h Scanner** — every large fill in a rolling window. Filter by **amount**, **buy/sell**, **time window (1h/6h/24h)**, **price band (odds)**, and **address age**; sort by time or amount. Live, no database.
 - **Track-record badges (战绩)** — every wallet row shows its settled win rate and realized PnL (`72% · +$38k`), computed from `/closed-positions` and cached for a day. Same badge on the accumulation board.
-- **Wallet dossier (`/wallet/<address>`)** — click any address: age, win rate/ROI, category focus, **odds-band histogram**, split-buy tendency (share of sub-$1k buys), this tool's own alert history for the wallet, recent trades. One click replaces ten minutes of block-explorer digging.
+- **Wallet dossier (`/wallet/<address>`, opens in a new tab)** — click any address: **current live holdings** (per-market shares / entry price / current price / value / unrealized PnL, each with ⧉ copy-slug + ↗ trade-page jump), age, win rate/ROI, category focus, **odds-band histogram**, split-buy tendency, this tool's own alert history, recent trades. One click replaces ten minutes of block-explorer digging.
 - **Split-buy accumulation board (拆单累计买入榜)** — aggregates trades by `(wallet, market, outcome)` and ranks by **NET buy-in**, catching wallets that build a large position through many sub-threshold orders. In live testing, single-trade monitoring missed **~60%** of ≥$10k accumulators.
 - **Alert history + validation (📐)** — every fired alert shows the market price **1h/24h after the signal** (direction-colored ¢ deltas) and the final settlement result (✅/❌/➖ for 50-50 pushes), plus a live strip: _24h direction hit-rate · settled win-rate_. Computed on demand from public history — the tool grades its own signals.
 - **Address age on every wallet** — lifespan since the wallet's first Polymarket activity, badged `🆕` for new addresses (hours/minutes under a day, exact days ≤30d). Permanently cached.
-- **Built-in glossary (`/glossary`)** — every symbol (💰 🐳 🧩 🆕 🏆 🔥 ✅ ❌ ➖ 📐) and term (冲击占比 · 跟单空间 · 评分构成 · 内幕猎杀组合 …) is documented on a reference page, **and hovering any icon anywhere in the dashboard shows the same explanation** — tooltips and the docs page share one data source (`app/glossary.ts`), so they can never drift apart.
+- **Built-in glossary (`/glossary`)** — every symbol (💰 🐳 🧩 🆕 🏆 🔥 ⚖️ ✅ ❌ ➖ 📐) and term (冲击占比 · 跟单空间 · 评分构成 · 质量加权 · 内幕猎杀组合 …) is documented on a reference page, **and hovering any icon anywhere in the dashboard shows the same explanation** — tooltips and the docs page share one data source (`app/glossary.ts`), so they can never drift apart.
 
 ### 🎯 The insider-hunt combo
 
@@ -164,6 +169,9 @@ lib/        shared core — Polymarket/Telegram clients, types, SQLite, pure log
   leaderboard.ts   official profit-leaderboard client (clamp/dedup aware)
   smartWallets.ts  daily whitelist seeding + scoring + live tag lookup
   consensus.ts     smart-money consensus detection + state-deduped alerting
+  disagreement.ts  smart-money DISAGREEMENT (opposing outcomes, quality-weighted balance)
+  marketSignals.ts consensus <-> disagreement mutual exclusion (page-level)
+  holdings.ts      a wallet's current live positions from /positions
   gamma.ts         market metadata (volume/liquidity/endDate/resolution) + cache
   priceHistory.ts  CLOB prices-history point lookup
   alertOutcomes.ts per-alert 1h/24h follow-through + settlement backfill
@@ -173,18 +181,20 @@ worker/     7×24 polling worker (4s alert cycle + 5min consensus loop + daily s
 app/        Next.js dashboard
   page.tsx                24h scanner (+ price/age filters, track-record badges)
   accumulation/page.tsx   split-buy ranking board
-  consensus/page.tsx      smart-money consensus board (entry vs current price)
+  consensus/page.tsx      combined 🔥 consensus + ⚖️ disagreement board (tab toggle)
+  DisagreementSection.tsx quality-weighted disagreement table (balance bar)
+  WhitelistDialog.tsx     searchable whitelist dialog (opened from the clickable count)
   alerts/page.tsx         alert history + validation column + conditions panel
-  wallet/[address]/page.tsx  wallet dossier
+  wallet/[address]/page.tsx  wallet dossier (+ current holdings)
   glossary/page.tsx       icon & term reference (same source as hover tooltips)
   glossary.ts             single source of truth for every symbol/term
-  api/{scan,accumulation,consensus,wallet-age,wallet-stats,alert-outcomes,alerts,alert-config}/route.ts
+  api/{scan,accumulation,consensus,whitelist,wallet-age,wallet-stats,alert-outcomes,alerts,alert-config}/route.ts
   api/wallet/[address]/route.ts
 scripts/    dry-run.ts · watch.ts · test-telegram.ts
 docs/plans/ design + implementation docs
 ```
 
-**Stack:** TypeScript · Next.js 16 · better-sqlite3 · zod · vitest · 110 unit tests.
+**Stack:** TypeScript · Next.js 16 · better-sqlite3 · zod · vitest · 352 unit tests.
 
 ---
 
@@ -196,6 +206,8 @@ docs/plans/ design + implementation docs
 - [x] Wallet-age annotation with new-address badges
 - [x] Smart-money whitelist (daily leaderboard seed → settled win-rate/ROI scoring → live 🏆 tagging)
 - [x] Smart-money **consensus** detection + board + push alerts
+- [x] Smart-money **disagreement** detection — combined board (tab toggle), quality-weighted balance, mutually exclusive with consensus
+- [x] Wallet dossier **current holdings** + clickable searchable whitelist + new-tab dossier links
 - [x] Wallet track-record badges + full dossier page
 - [x] Market-context enrichment (impact ratio · liquidity · pre-settlement rush condition)
 - [x] Validation loop: 1h/24h follow-through + settlement backfill on every alert
