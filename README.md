@@ -8,7 +8,7 @@
 [![Next.js 16](https://img.shields.io/badge/Next.js%2016-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org/)
 [![Node 20+](https://img.shields.io/badge/Node-20%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-![Tests](https://img.shields.io/badge/tests-352%20passing-3fb950)
+![Tests](https://img.shields.io/badge/tests-357%20passing-3fb950)
 ![License](https://img.shields.io/badge/license-research%20use-blue)
 [![Last commit](https://img.shields.io/github/last-commit/kydlikebtc/polymarket-whalewatch?color=blue)](https://github.com/kydlikebtc/polymarket-whalewatch/commits/main)
 [![Stars](https://img.shields.io/github/stars/kydlikebtc/polymarket-whalewatch?style=social)](https://github.com/kydlikebtc/polymarket-whalewatch/stargazers)
@@ -63,7 +63,7 @@ A whale on Polymarket rarely announces themselves. They split a big position int
 
 ### 🔥 Consensus detection (聪明钱共识)
 
-Two or three unrelated high-win-rate wallets independently buying the **same outcome** beats any single whale fill. A 5-minute worker loop scans a 6h window and pushes `🔥 聪明钱共识` when ≥N whitelist wallets each net-buy ≥$X of one outcome — alerting only on **formation and escalation** (a third wallet joining), never repeats.
+Two or three unrelated high-win-rate wallets independently buying the **same outcome** beats any single whale fill. A 5-minute worker loop scans a 6h window and pushes `🔥 聪明钱共识` when ≥N whitelist wallets each net-buy ≥$X of one outcome — alerting only on **formation and escalation** (a third wallet joining), never repeats. Expanding any consensus group — or disagreement market below — lists its wallets with both their **window net-buy (flow)** and their **current position in that market (stock)**, lazily fetched per market; a fresh entry, a long-time accumulator, and someone who already sold out then read differently at a glance.
 
 ### ⚖️ Disagreement detection (聪明钱分歧)
 
@@ -188,13 +188,13 @@ app/        Next.js dashboard
   wallet/[address]/page.tsx  wallet dossier (+ current holdings)
   glossary/page.tsx       icon & term reference (same source as hover tooltips)
   glossary.ts             single source of truth for every symbol/term
-  api/{scan,accumulation,consensus,whitelist,wallet-age,wallet-stats,alert-outcomes,alerts,alert-config}/route.ts
+  api/{scan,accumulation,consensus,whitelist,positions,wallet-age,wallet-stats,alert-outcomes,alerts,alert-config}/route.ts
   api/wallet/[address]/route.ts
 scripts/    dry-run.ts · watch.ts · test-telegram.ts
 docs/plans/ design + implementation docs
 ```
 
-**Stack:** TypeScript · Next.js 16 · better-sqlite3 · zod · vitest · 352 unit tests.
+**Stack:** TypeScript · Next.js 16 · better-sqlite3 · zod · vitest · 357 unit tests.
 
 ---
 

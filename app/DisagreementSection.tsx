@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useState } from "react";
-import { Icon, Tag, catLabel } from "./ui";
+import { HoldingCell, Icon, Tag, catLabel } from "./ui";
+import { useMarketPositions } from "./useMarketPositions";
 
 export type DisagreementWallet = {
   wallet: string;
@@ -114,6 +115,106 @@ function SideChip({ side, i }: { side: DisagreementSide; i: number }) {
       />
       {side.outcome} ${fmtUsd(side.weightedUsd)}
     </span>
+  );
+}
+
+// Expanded per-side wallet detail. Rendered only when a market row is open, so
+// mounting it triggers the lazy current-position fetch (window net-buy = "flow";
+// the added 当前持仓 column = "stock", i.e. what each wallet holds right now).
+function MarketDetail({ market }: { market: DisagreementMarket }) {
+  const wallets = market.sides.flatMap((s) => s.wallets.map((w) => w.wallet));
+  const { positions, loading } = useMarketPositions(
+    market.conditionId,
+    wallets,
+    true,
+  );
+  return (
+    <>
+      {market.sides.map((s, i) => (
+        <div key={s.outcome} style={{ margin: "var(--s-3) 0" }}>
+          <div className="ds-hint" style={{ marginBottom: "var(--s-1)" }}>
+            <span
+              style={{
+                display: "inline-block",
+                width: 8,
+                height: 8,
+                borderRadius: 2,
+                marginRight: 6,
+                background: sideColor(i),
+              }}
+            />
+            <strong>{s.outcome}</strong> · {s.walletCount} 个钱包 · 净买 $
+            {fmtUsd(s.netUsd)} · 质量加权 ${fmtUsd(s.weightedUsd)} · 建仓均价{" "}
+            {s.avgBuyPrice.toFixed(3)}
+            {s.currentPrice != null
+              ? ` · 现价 ${s.currentPrice.toFixed(3)}`
+              : ""}
+          </div>
+          <table className="ds-table--compact" style={{ maxWidth: 720 }}>
+            <thead>
+              <tr>
+                <th>钱包</th>
+                <th className="is-right">评分</th>
+                <th className="is-right">胜率</th>
+                <th className="is-right">净买入</th>
+                <th className="is-right">建仓均价</th>
+                <th
+                  className="is-right"
+                  title="该钱包当前在此结果的持仓市值与浮动盈亏"
+                >
+                  当前持仓
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {s.wallets.map((w) => (
+                <tr key={`${s.outcome}-${w.wallet}`}>
+                  <td>
+                    <a
+                      className="mono"
+                      href={`/wallet/${w.wallet}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`${w.wallet} · 新标签打开钱包档案`}
+                    >
+                      <Icon s="🏆" /> {shortWallet(w.wallet)}
+                    </a>
+                  </td>
+                  <td className="mono is-right" data-label="评分">
+                    {w.score != null ? Math.round(w.score) : "—"}
+                  </td>
+                  <td className="mono is-right" data-label="胜率">
+                    {w.winRate != null
+                      ? `${Math.round(w.winRate * 100)}%`
+                      : "—"}
+                  </td>
+                  <td className="mono is-right" data-label="净买入">
+                    ${fmtUsd(w.netUsd)}
+                  </td>
+                  <td
+                    className="mono is-right"
+                    data-label="建仓均价"
+                    style={{ color: "var(--warn-700)" }}
+                  >
+                    {w.avgBuyPrice.toFixed(3)}
+                  </td>
+                  <td className="mono is-right" data-label="当前持仓">
+                    <HoldingCell
+                      pos={
+                        positions?.[w.wallet.toLowerCase()]?.[
+                          s.outcome.toLowerCase()
+                        ]
+                      }
+                      loading={loading}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -244,92 +345,7 @@ export function DisagreementSection({
                         background: "var(--n-50)",
                       }}
                     >
-                      {m.sides.map((s, i) => (
-                        <div key={s.outcome} style={{ margin: "var(--s-3) 0" }}>
-                          <div
-                            className="ds-hint"
-                            style={{ marginBottom: "var(--s-1)" }}
-                          >
-                            <span
-                              style={{
-                                display: "inline-block",
-                                width: 8,
-                                height: 8,
-                                borderRadius: 2,
-                                marginRight: 6,
-                                background: sideColor(i),
-                              }}
-                            />
-                            <strong>{s.outcome}</strong> · {s.walletCount}{" "}
-                            个钱包 · 净买 ${fmtUsd(s.netUsd)} · 质量加权 $
-                            {fmtUsd(s.weightedUsd)} · 建仓均价{" "}
-                            {s.avgBuyPrice.toFixed(3)}
-                            {s.currentPrice != null
-                              ? ` · 现价 ${s.currentPrice.toFixed(3)}`
-                              : ""}
-                          </div>
-                          <table
-                            className="ds-table--compact"
-                            style={{ maxWidth: 560 }}
-                          >
-                            <thead>
-                              <tr>
-                                <th>钱包</th>
-                                <th className="is-right">评分</th>
-                                <th className="is-right">胜率</th>
-                                <th className="is-right">净买入</th>
-                                <th className="is-right">建仓均价</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {s.wallets.map((w) => (
-                                <tr key={`${s.outcome}-${w.wallet}`}>
-                                  <td>
-                                    <a
-                                      className="mono"
-                                      href={`/wallet/${w.wallet}`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      title={`${w.wallet} · 新标签打开钱包档案`}
-                                    >
-                                      <Icon s="🏆" /> {shortWallet(w.wallet)}
-                                    </a>
-                                  </td>
-                                  <td
-                                    className="mono is-right"
-                                    data-label="评分"
-                                  >
-                                    {w.score != null
-                                      ? Math.round(w.score)
-                                      : "—"}
-                                  </td>
-                                  <td
-                                    className="mono is-right"
-                                    data-label="胜率"
-                                  >
-                                    {w.winRate != null
-                                      ? `${Math.round(w.winRate * 100)}%`
-                                      : "—"}
-                                  </td>
-                                  <td
-                                    className="mono is-right"
-                                    data-label="净买入"
-                                  >
-                                    ${fmtUsd(w.netUsd)}
-                                  </td>
-                                  <td
-                                    className="mono is-right"
-                                    data-label="建仓均价"
-                                    style={{ color: "var(--warn-700)" }}
-                                  >
-                                    {w.avgBuyPrice.toFixed(3)}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      ))}
+                      <MarketDetail market={m} />
                     </td>
                   </tr>
                 ) : null}

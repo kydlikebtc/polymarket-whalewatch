@@ -15,6 +15,7 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { formatAge, type AgeTone } from "./ageFormat";
 import { iconTip } from "./glossary";
+import type { MarketPos } from "./useMarketPositions";
 
 /* --------------------------------------------------------------- tip-pop */
 
@@ -560,5 +561,46 @@ export function Modal({
         <div style={{ overflow: "auto", minHeight: 0 }}>{children}</div>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------- HoldingCell */
+
+// Current-market-position reference (the "stock"): market value + unrealized %,
+// with shares / entry / cash PnL in the tooltip. `…` while loading, `—` when the
+// wallet holds none of this outcome now (bought in-window but since cleared).
+export function HoldingCell({
+  pos,
+  loading,
+}: {
+  pos?: MarketPos;
+  loading?: boolean;
+}) {
+  if (!pos) {
+    return loading ? (
+      <span className="mono muted">…</span>
+    ) : (
+      <span
+        className="muted"
+        title="当前在该结果无持仓（窗口内买过但已清仓/转向）"
+      >
+        —
+      </span>
+    );
+  }
+  const tone = pos.cashPnl >= 0 ? "up" : "down";
+  const title =
+    `${Math.round(pos.size).toLocaleString("en-US")} 股 · 现价 ${pos.curPrice.toFixed(3)} · ` +
+    `建仓 ${pos.avgPrice.toFixed(3)} · 浮盈 ${pos.cashPnl >= 0 ? "+" : ""}$${Math.round(
+      pos.cashPnl,
+    ).toLocaleString("en-US")}`;
+  return (
+    <span className="mono" title={title}>
+      ${Math.round(pos.currentValue).toLocaleString("en-US")}{" "}
+      <span className={tone}>
+        ({pos.percentPnl >= 0 ? "+" : ""}
+        {pos.percentPnl.toFixed(1)}%)
+      </span>
+    </span>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseHoldings } from "./holdings";
+import { parseHoldings, parseMarketPositions } from "./holdings";
 
 const row = (over: Record<string, unknown> = {}) => ({
   title: "Market",
@@ -94,5 +94,59 @@ describe("parseHoldings", () => {
   it("carries the truncated flag through", () => {
     expect(parseHoldings([], true).truncated).toBe(true);
     expect(parseHoldings([]).truncated).toBe(false);
+  });
+});
+
+describe("parseMarketPositions", () => {
+  const pos = (over: Record<string, unknown> = {}) => ({
+    outcome: "Under",
+    size: 350000,
+    avgPrice: 0.44,
+    curPrice: 0.415,
+    currentValue: 145250,
+    cashPnl: -8750,
+    percentPnl: -5.7,
+    ...over,
+  });
+
+  it("keys positions by lowercased outcome and maps fields", () => {
+    const m = parseMarketPositions([pos()]);
+    expect(Object.keys(m)).toEqual(["under"]);
+    expect(m.under).toMatchObject({
+      outcome: "Under",
+      size: 350000,
+      currentValue: 145250,
+      cashPnl: -8750,
+      percentPnl: -5.7,
+      curPrice: 0.415,
+      avgPrice: 0.44,
+    });
+  });
+
+  it("keeps BOTH sides for a hedger holding two outcomes", () => {
+    const m = parseMarketPositions([
+      pos({ outcome: "Under" }),
+      pos({ outcome: "Over", currentValue: 5000 }),
+    ]);
+    expect(Object.keys(m).sort()).toEqual(["over", "under"]);
+  });
+
+  it("drops dust (value < $1 and < 1 share) — reads as cleared", () => {
+    const m = parseMarketPositions([
+      pos({ outcome: "Yes", currentValue: 0.2, size: 0.3 }),
+    ]);
+    expect(m).toEqual({});
+  });
+
+  it("keeps a small-value position that still holds shares", () => {
+    const m = parseMarketPositions([
+      pos({ outcome: "Yes", currentValue: 0.5, size: 100 }),
+    ]);
+    expect(m.yes).toBeDefined();
+  });
+
+  it("skips malformed rows without throwing", () => {
+    const m = parseMarketPositions([pos(), { junk: 1 }, null]);
+    expect(Object.keys(m)).toEqual(["under"]);
   });
 });
