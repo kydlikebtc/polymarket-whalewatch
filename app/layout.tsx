@@ -7,6 +7,13 @@ export const metadata = {
   description: "只读监控面板：Polymarket 24h 大额成交扫描 + 实时告警",
 };
 
+// Mobile-first: render at device width so the responsive rules in globals.css
+// (stacked-card tables, etc.) actually engage instead of a zoomed-out desktop.
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+};
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="zh-CN">

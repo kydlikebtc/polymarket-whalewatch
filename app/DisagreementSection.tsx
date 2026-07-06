@@ -169,7 +169,7 @@ export function DisagreementSection({
                   title={isOpen ? "点击收起各侧明细" : "点击展开各侧明细"}
                 >
                   <td
-                    className="muted"
+                    className="muted col-expand"
                     style={{
                       padding: "var(--s-3) var(--s-1)",
                       textAlign: "center",
@@ -199,7 +199,11 @@ export function DisagreementSection({
                         : ""}
                     </div>
                   </td>
-                  <td style={{ minWidth: 180, maxWidth: 260 }}>
+                  <td
+                    className="col-block"
+                    data-label="质量加权天平"
+                    style={{ minWidth: 180, maxWidth: 260 }}
+                  >
                     <BalanceBar sides={m.sides} total={m.totalWeightedUsd} />
                     <div
                       className="kpi-sub"
@@ -210,7 +214,7 @@ export function DisagreementSection({
                       ))}
                     </div>
                   </td>
-                  <td className="is-right">
+                  <td className="is-right" data-label="倾斜">
                     {m.tilt === "lopsided" ? (
                       <Tag variant="brand">
                         {lead?.outcome} 倒向 {tiltPctLabel}%
@@ -219,10 +223,16 @@ export function DisagreementSection({
                       <Tag variant="warn">势均力敌 {tiltPctLabel}%</Tag>
                     )}
                   </td>
-                  <td className="mono is-right" style={{ fontWeight: 700 }}>
+                  <td
+                    className="mono is-right"
+                    data-label="合计加权"
+                    style={{ fontWeight: 700 }}
+                  >
                     ${fmtUsd(m.totalWeightedUsd)}
                   </td>
-                  <td className="mono muted is-right">{fmtTime(m.lastTs)}</td>
+                  <td className="mono muted is-right" data-label="最新时间">
+                    {fmtTime(m.lastTs)}
+                  </td>
                 </tr>
                 {isOpen ? (
                   <tr>
@@ -285,21 +295,31 @@ export function DisagreementSection({
                                       <Icon s="🏆" /> {shortWallet(w.wallet)}
                                     </a>
                                   </td>
-                                  <td className="mono is-right">
+                                  <td
+                                    className="mono is-right"
+                                    data-label="评分"
+                                  >
                                     {w.score != null
                                       ? Math.round(w.score)
                                       : "—"}
                                   </td>
-                                  <td className="mono is-right">
+                                  <td
+                                    className="mono is-right"
+                                    data-label="胜率"
+                                  >
                                     {w.winRate != null
                                       ? `${Math.round(w.winRate * 100)}%`
                                       : "—"}
                                   </td>
-                                  <td className="mono is-right">
+                                  <td
+                                    className="mono is-right"
+                                    data-label="净买入"
+                                  >
                                     ${fmtUsd(w.netUsd)}
                                   </td>
                                   <td
                                     className="mono is-right"
+                                    data-label="建仓均价"
                                     style={{ color: "var(--warn-700)" }}
                                   >
                                     {w.avgBuyPrice.toFixed(3)}

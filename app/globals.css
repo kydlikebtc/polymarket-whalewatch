@@ -692,3 +692,163 @@ tr:hover .copy-btn,
   opacity: 1;
   color: var(--up-500);
 }
+
+/* =====================================================================
+   Mobile (≤640px) — NO horizontal scroll anywhere.
+   Wide data tables reflow into stacked, labeled cards: the header is
+   hidden, each row becomes a bordered card, each cell a `label → value`
+   line (label pulled from the cell's data-label). Values wrap instead of
+   forcing table width, so the page never scrolls sideways.
+   ===================================================================== */
+@media (max-width: 640px) {
+  .ds-main {
+    padding: var(--s-4) var(--s-3) var(--s-10);
+  }
+
+  /* Top nav: wrap every tab onto its own row(s) UNDER the brand instead of
+     hiding the overflow behind a sideways scroll — all tabs stay visible. The
+     bar grows taller as needed (height auto) and keeps its sticky behaviour. */
+  .topbar {
+    height: auto;
+  }
+  .topbar__inner {
+    flex-wrap: wrap;
+    padding: var(--s-2) var(--s-3);
+    gap: var(--s-1) var(--s-2);
+    min-height: 52px;
+  }
+  .topbar__nav {
+    width: 100%;
+    overflow-x: visible;
+    flex-wrap: wrap;
+    gap: var(--s-1);
+  }
+
+  /* KPI strip: fixed 2-up. minmax(0,1fr) lets a long $ figure shrink the
+     track instead of forcing the grid (and the page) wider than the screen. */
+  .kpi {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--s-2);
+  }
+  .kpi-card {
+    padding: var(--s-3);
+    min-width: 0;
+  }
+  .kpi-value {
+    font-size: 18px;
+    overflow-wrap: anywhere;
+  }
+
+  /* Filter pills (segmented toggles) wrap to more rows instead of overflowing
+     the row into a page-level horizontal scroll. */
+  .ds-segmented {
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+
+  /* The wrapper stops being a horizontal scroller; the card borders below
+     replace its frame. */
+  .ds-table-wrap {
+    overflow-x: visible;
+    border: none;
+    background: transparent;
+    border-radius: 0;
+  }
+  .ds-table,
+  .ds-table--compact {
+    font-size: var(--t-sm);
+  }
+  /* Keep the header for screen readers, remove it visually. */
+  .ds-table thead,
+  .ds-table--compact thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .ds-table tbody tr,
+  .ds-table--compact tbody tr {
+    display: block;
+    background: var(--n-0);
+    border: 1px solid var(--n-150);
+    border-radius: var(--r-md);
+    padding: var(--s-2) var(--s-3);
+    margin-bottom: var(--s-2);
+  }
+  .ds-table tbody tr:hover,
+  .ds-table--compact tbody tr:hover {
+    background: var(--n-0);
+  }
+  .ds-table tbody tr:last-child,
+  .ds-table--compact tbody tr:last-child {
+    margin-bottom: 0;
+  }
+  .ds-table td,
+  .ds-table--compact td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--s-3);
+    max-width: none !important;
+    padding: 3px 0;
+    border-bottom: none;
+    white-space: normal; /* values wrap instead of forcing table width */
+    overflow-wrap: anywhere; /* long slugs / addresses never overflow */
+    text-align: right;
+  }
+  /* Per-cell label on the left of each value line. */
+  .ds-table td::before,
+  .ds-table--compact td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    text-align: left;
+    color: var(--n-500);
+    font-size: var(--t-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  /* Un-labeled cells (e.g. the market-title cell) become the full-width card
+     header — no label gutter, left-aligned. */
+  .ds-table td:not([data-label])::before,
+  .ds-table--compact td:not([data-label])::before {
+    content: none;
+  }
+  .ds-table td:not([data-label]),
+  .ds-table--compact td:not([data-label]) {
+    display: block;
+    text-align: left;
+  }
+  /* The row-expander arrow cell is redundant on mobile — the whole card is
+     tappable — so hide it. */
+  .ds-table td.col-expand {
+    display: none;
+  }
+  /* Cells with a full-width visual (e.g. the disagreement balance bar) stack
+     the label ABOVE the content — a side-by-side flex would squash the bar to
+     zero width. */
+  .ds-table td.col-block {
+    display: block;
+    text-align: left;
+  }
+  .ds-table td.col-block::before {
+    display: block;
+    margin-bottom: var(--s-1);
+  }
+
+  /* Touch has no hover: keep the ⧉ / ↗ glyphs legible. */
+  .copy-btn {
+    opacity: 0.65;
+  }
+
+  /* Filter control rows: labels sit above the controls, controls wrap. */
+  .ds-field {
+    align-items: flex-start;
+  }
+}

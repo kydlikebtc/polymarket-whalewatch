@@ -409,7 +409,7 @@ export default function ConsensusPage() {
                         title={isOpen ? "点击收起钱包明细" : "点击展开钱包明细"}
                       >
                         <td
-                          className="muted"
+                          className="muted col-expand"
                           style={{
                             padding: "var(--s-3) var(--s-1)",
                             textAlign: "center",
@@ -436,28 +436,29 @@ export default function ConsensusPage() {
                             {g.category ? ` · ${catLabel(g.category)}` : ""}
                           </div>
                         </td>
-                        <td className="mono is-right">
+                        <td className="mono is-right" data-label="钱包数">
                           <span style={{ fontWeight: 700 }}>
                             <Icon s="🔥" /> {g.walletCount}
                           </span>
                         </td>
-                        <td className="mono is-right">
+                        <td className="mono is-right" data-label="合计净买入">
                           <span className="up" style={{ fontWeight: 700 }}>
                             ${fmtUsd(g.totalNetUsd)}
                           </span>
                         </td>
                         <td
                           className="mono is-right"
+                          data-label="建仓均价"
                           style={{ color: "var(--warn-700)", fontWeight: 600 }}
                         >
                           {g.avgBuyPrice.toFixed(3)}
                         </td>
-                        <td className="mono is-right">
+                        <td className="mono is-right" data-label="现价">
                           {g.currentPrice != null
                             ? g.currentPrice.toFixed(3)
                             : "…"}
                         </td>
-                        <td>
+                        <td data-label="跟单空间">
                           {gap == null ? (
                             <span className="muted">—</span>
                           ) : settled ? (
@@ -479,7 +480,10 @@ export default function ConsensusPage() {
                             </Tag>
                           )}
                         </td>
-                        <td className="mono muted is-right">
+                        <td
+                          className="mono muted is-right"
+                          data-label="最新时间"
+                        >
                           {fmtTime(g.lastTs)}
                         </td>
                       </tr>
@@ -526,19 +530,29 @@ export default function ConsensusPage() {
                                         <Icon s="🏆" /> {shortWallet(w.wallet)}
                                       </a>
                                     </td>
-                                    <td className="mono is-right">
+                                    <td
+                                      className="mono is-right"
+                                      data-label="评分"
+                                    >
                                       {w.score != null
                                         ? Math.round(w.score)
                                         : "—"}
                                     </td>
-                                    <td className="mono is-right">
+                                    <td
+                                      className="mono is-right"
+                                      data-label="净买入"
+                                    >
                                       ${fmtUsd(w.netUsd)}
                                     </td>
-                                    <td className="mono is-right">
+                                    <td
+                                      className="mono is-right"
+                                      data-label="笔数"
+                                    >
                                       {w.buyCount}
                                     </td>
                                     <td
                                       className="mono is-right"
+                                      data-label="建仓均价"
                                       style={{ color: "var(--warn-700)" }}
                                     >
                                       {w.avgBuyPrice.toFixed(3)}

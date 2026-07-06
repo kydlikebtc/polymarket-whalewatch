@@ -161,7 +161,7 @@ const AccumRow = memo(function AccumRow({
         title={isOpen ? "点击收起明细" : "点击展开底层买单"}
       >
         <td
-          className="muted"
+          className="muted col-expand"
           style={{
             padding: "var(--s-3) var(--s-1)",
             textAlign: "center",
@@ -182,13 +182,16 @@ const AccumRow = memo(function AccumRow({
             {shortWallet(g.wallet)}
           </a>
         </td>
-        <td>
+        <td data-label="地址年龄">
           <AgeBadge ageDays={age} />
         </td>
-        <td onClick={(e) => e.stopPropagation()}>
+        <td data-label="战绩" onClick={(e) => e.stopPropagation()}>
           <WalletStatsBadge stats={stats} smart={smart} />
         </td>
-        <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
+        <td
+          data-label="市场 · 结果"
+          style={{ whiteSpace: "normal", maxWidth: 360 }}
+        >
           {g.eventSlug ? (
             <a
               href={`https://polymarket.com/event/${g.eventSlug}`}
@@ -203,7 +206,7 @@ const AccumRow = memo(function AccumRow({
           )}
           <div className="kpi-sub">{g.outcome}</div>
         </td>
-        <td>
+        <td data-label="标记">
           {g.hedgeSuspect || g.mmSuspect ? (
             <span
               style={{
@@ -245,6 +248,7 @@ const AccumRow = memo(function AccumRow({
         </td>
         <td
           className="mono is-right"
+          data-label="平均赔率"
           style={{ color: "var(--warn-700)", fontWeight: 600 }}
           title="按 size 加权的平均买入价（赔率）"
         >
@@ -252,22 +256,30 @@ const AccumRow = memo(function AccumRow({
         </td>
         <td
           className="mono muted is-right"
+          data-label="时间"
           title={`首笔 ${fmtTime(g.firstTs)} → 末笔 ${fmtTime(g.lastTs)}`}
         >
           {fmtTime(g.lastTs)}
         </td>
-        <td className="mono is-right">
+        <td className="mono is-right" data-label="净买入">
           <span className="up" style={{ fontWeight: 700 }}>
             <Icon s={whale ? "🐳" : "🧩"} /> ${fmtUsd(g.netUsd)}
           </span>
         </td>
-        <td className="mono is-right">{g.buyCount} 买</td>
-        <td className="mono is-right">${fmtUsd(g.maxSingleBuyUsd)}</td>
-        <td className="mono is-right">${fmtUsd(g.buyUsd)}</td>
+        <td className="mono is-right" data-label="笔数">
+          {g.buyCount} 买
+        </td>
+        <td className="mono is-right" data-label="单笔最大">
+          ${fmtUsd(g.maxSingleBuyUsd)}
+        </td>
+        <td className="mono is-right" data-label="毛买入">
+          ${fmtUsd(g.buyUsd)}
+        </td>
         <td
           className={
             g.sellUsd > 0 ? "mono is-right down" : "mono is-right muted"
           }
+          data-label="毛卖出(≥floor)"
         >
           ${fmtUsd(g.sellUsd)}
         </td>
@@ -299,10 +311,15 @@ const AccumRow = memo(function AccumRow({
               <tbody>
                 {g.buys.map((b, bi) => (
                   <tr key={`${rk}-buy-${bi}`}>
-                    <td className="mono">{fmtTime(b.ts)}</td>
-                    <td className="mono is-right">${fmtUsd(b.usd)}</td>
+                    <td className="mono" data-label="时间">
+                      {fmtTime(b.ts)}
+                    </td>
+                    <td className="mono is-right" data-label="金额">
+                      ${fmtUsd(b.usd)}
+                    </td>
                     <td
                       className="mono is-right"
+                      data-label="价格(赔率)"
                       style={{ color: "var(--warn-700)" }}
                     >
                       {b.price.toFixed(3)}

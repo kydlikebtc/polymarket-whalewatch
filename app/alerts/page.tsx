@@ -786,13 +786,17 @@ export default function Page() {
                         a.title
                       )}
                     </td>
-                    <td>{a.outcome}</td>
-                    <td>
+                    <td data-label="结果">{a.outcome}</td>
+                    <td data-label="方向">
                       <SideTag side={a.side} />
                     </td>
-                    <td className="mono is-right">${fmtUsd(a.usd)}</td>
-                    <td className="mono is-right">{a.price.toFixed(4)}</td>
-                    <td>
+                    <td className="mono is-right" data-label="金额">
+                      ${fmtUsd(a.usd)}
+                    </td>
+                    <td className="mono is-right" data-label="价格">
+                      {a.price.toFixed(4)}
+                    </td>
+                    <td data-label="钱包">
                       {a.wallet ? (
                         <a
                           className="mono"
@@ -807,7 +811,7 @@ export default function Page() {
                         <span className="mono">—</span>
                       )}
                     </td>
-                    <td>
+                    <td data-label="验证">
                       {/* Consensus rows validate too: entry = the group's
                           avgBuyPrice, timed at the last member fill. */}
                       <span
@@ -846,7 +850,9 @@ export default function Page() {
                         ) : null}
                       </span>
                     </td>
-                    <td className="mono muted">{fmtTime(a.createdAt)}</td>
+                    <td className="mono muted" data-label="时间">
+                      {fmtTime(a.createdAt)}
+                    </td>
                   </tr>
                 );
               })}

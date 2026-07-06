@@ -340,23 +340,27 @@ export default function WalletPage() {
                             ) : null}
                           </div>
                         </td>
-                        <td className="mono is-right">{fmtUsd(h.size)}</td>
+                        <td className="mono is-right" data-label="份额">
+                          {fmtUsd(h.size)}
+                        </td>
                         <td
                           className="mono is-right"
+                          data-label="建仓均价"
                           style={{ color: "var(--warn-700)" }}
                         >
                           {h.avgPrice.toFixed(3)}
                         </td>
-                        <td className="mono is-right">
+                        <td className="mono is-right" data-label="现价">
                           {h.curPrice.toFixed(3)}
                         </td>
-                        <td className="mono is-right">
+                        <td className="mono is-right" data-label="市值">
                           ${fmtUsd(h.currentValue)}
                         </td>
                         <td
                           className={`mono is-right ${
                             h.cashPnl >= 0 ? "up" : "down"
                           }`}
+                          data-label="浮动盈亏"
                         >
                           {fmtSignedUsdCompact(h.cashPnl)} (
                           {h.percentPnl >= 0 ? "+" : ""}
@@ -496,15 +500,21 @@ export default function WalletPage() {
                           m.title
                         )}
                       </td>
-                      <td className="muted">
+                      <td className="muted" data-label="类别">
                         {m.category ? catLabel(m.category) : "—"}
                       </td>
-                      <td className="mono is-right up">${fmtUsd(m.buyUsd)}</td>
-                      <td className="mono is-right down">
+                      <td className="mono is-right up" data-label="买入">
+                        ${fmtUsd(m.buyUsd)}
+                      </td>
+                      <td className="mono is-right down" data-label="卖出">
                         ${fmtUsd(m.sellUsd)}
                       </td>
-                      <td className="mono is-right">${fmtUsd(m.netUsd)}</td>
-                      <td className="mono is-right">{m.trades}</td>
+                      <td className="mono is-right" data-label="净买入">
+                        ${fmtUsd(m.netUsd)}
+                      </td>
+                      <td className="mono is-right" data-label="笔数">
+                        {m.trades}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -538,7 +548,9 @@ export default function WalletPage() {
                   <tbody>
                     {data.alertHits.map((h, i) => (
                       <tr key={`${h.createdAt}-${i}`}>
-                        <td>{ALERT_TYPE_LABEL[h.type] ?? h.type}</td>
+                        <td data-label="类型">
+                          {ALERT_TYPE_LABEL[h.type] ?? h.type}
+                        </td>
                         <td style={{ whiteSpace: "normal", maxWidth: 320 }}>
                           {h.eventSlug ? (
                             <a
@@ -553,14 +565,16 @@ export default function WalletPage() {
                           )}
                           <div className="kpi-sub">{h.outcome}</div>
                         </td>
-                        <td>
+                        <td data-label="方向">
                           <SideTag side={h.side} />
                         </td>
-                        <td className="mono is-right">${fmtUsd(h.usd)}</td>
-                        <td className="mono is-right">
+                        <td className="mono is-right" data-label="金额">
+                          ${fmtUsd(h.usd)}
+                        </td>
+                        <td className="mono is-right" data-label="价格">
                           {h.price != null ? h.price.toFixed(3) : "—"}
                         </td>
-                        <td className="mono muted">
+                        <td className="mono muted" data-label="时间">
                           {fmtDateTime(h.createdAt)}
                         </td>
                       </tr>
@@ -590,7 +604,9 @@ export default function WalletPage() {
                 <tbody>
                   {data.recent.map((t, i) => (
                     <tr key={`${t.timestamp}-${i}`}>
-                      <td className="mono muted">{fmtDateTime(t.timestamp)}</td>
+                      <td className="mono muted" data-label="时间">
+                        {fmtDateTime(t.timestamp)}
+                      </td>
                       <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
                         {t.eventSlug ? (
                           <a
@@ -605,11 +621,15 @@ export default function WalletPage() {
                         )}
                         <div className="kpi-sub">{t.outcome}</div>
                       </td>
-                      <td>
+                      <td data-label="方向">
                         <SideTag side={t.side} />
                       </td>
-                      <td className="mono is-right">${fmtUsd(t.usdcSize)}</td>
-                      <td className="mono is-right">{t.price.toFixed(3)}</td>
+                      <td className="mono is-right" data-label="金额">
+                        ${fmtUsd(t.usdcSize)}
+                      </td>
+                      <td className="mono is-right" data-label="价格">
+                        {t.price.toFixed(3)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

@@ -111,10 +111,10 @@ export function WhitelistDialog({
                       <span className="muted"> · 手动</span>
                     ) : null}
                   </td>
-                  <td className="mono is-right">
+                  <td className="mono is-right" data-label="评分">
                     {r.score != null ? Math.round(r.score) : "—"}
                   </td>
-                  <td className="mono is-right">
+                  <td className="mono is-right" data-label="胜率">
                     {r.winRate != null
                       ? `${Math.round(r.winRate * 100)}%`
                       : "—"}
@@ -123,6 +123,7 @@ export function WhitelistDialog({
                     className={`mono is-right ${
                       (r.realizedPnl ?? 0) >= 0 ? "up" : "down"
                     }`}
+                    data-label="已实现盈亏"
                   >
                     {r.realizedPnl != null
                       ? fmtSignedUsdCompact(r.realizedPnl)

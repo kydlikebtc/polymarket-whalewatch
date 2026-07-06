@@ -117,7 +117,9 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
   const whale = t.usd >= 50000;
   return (
     <tr>
-      <td className="mono muted">{fmtClock(t.ts)}</td>
+      <td className="mono muted" data-label="时间">
+        {fmtClock(t.ts)}
+      </td>
       <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
         {t.eventSlug ? (
           <a
@@ -148,14 +150,16 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
           ) : null}
         </div>
       </td>
-      <td>
+      <td data-label="方向">
         <SideTag side={t.side} />
       </td>
-      <td className="mono is-right">
+      <td className="mono is-right" data-label="金额">
         <Icon s={whale ? "🐳" : "💰"} /> ${fmtUsd(t.usd)}
       </td>
-      <td className="mono is-right">{t.price.toFixed(3)}</td>
-      <td>
+      <td className="mono is-right" data-label="价格">
+        {t.price.toFixed(3)}
+      </td>
+      <td data-label="钱包">
         <a
           className="mono"
           href={`/wallet/${t.wallet?.toLowerCase()}`}
@@ -166,13 +170,13 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
           {shortWallet(t.wallet)}
         </a>
       </td>
-      <td>
+      <td data-label="地址年龄">
         <AgeBadge ageDays={age} />
       </td>
-      <td>
+      <td data-label="战绩">
         <WalletStatsBadge stats={stats} smart={smart} />
       </td>
-      <td>
+      <td data-label="tx">
         {t.txHash ? (
           <a
             href={`https://polygonscan.com/tx/${t.txHash}`}
