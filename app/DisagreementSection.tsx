@@ -278,7 +278,9 @@ export function DisagreementSection({
                                     <a
                                       className="mono"
                                       href={`/wallet/${w.wallet}`}
-                                      title={`${w.wallet} · 点击查看钱包档案`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      title={`${w.wallet} · 新标签打开钱包档案`}
                                     >
                                       <Icon s="🏆" /> {shortWallet(w.wallet)}
                                     </a>

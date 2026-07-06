@@ -159,7 +159,9 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
         <a
           className="mono"
           href={`/wallet/${t.wallet?.toLowerCase()}`}
-          title={`${t.wallet} · 点击查看钱包档案`}
+          target="_blank"
+          rel="noreferrer"
+          title={`${t.wallet} · 新标签打开钱包档案`}
         >
           {shortWallet(t.wallet)}
         </a>

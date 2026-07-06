@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   AgeBadge,
+  CopyButton,
+  QuietLink,
   SideTag,
   StatCard,
   Tag,
@@ -12,6 +14,10 @@ import {
   type SmartInfoLite,
   type WalletStatsLite,
 } from "../../ui";
+
+// External trade page for a market slug (wired.fund) — same as the 24h scanner.
+const TRADE_LINK_BASE =
+  "https://onchain-dev.wired.fund/polymarket/trade-slug?slug=";
 
 type PriceBand = { from: number; to: number; buyUsd: number; buyCount: number };
 type MarketFocus = {
@@ -56,6 +62,26 @@ type RecentTrade = {
   outcome: string;
   eventSlug: string;
 };
+type Holding = {
+  title: string;
+  slug: string;
+  eventSlug: string;
+  outcome: string;
+  size: number;
+  avgPrice: number;
+  curPrice: number;
+  currentValue: number;
+  cashPnl: number;
+  percentPnl: number;
+  endDate: string | null;
+};
+type HoldingsSummary = {
+  holdings: Holding[];
+  totalValue: number;
+  totalCashPnl: number;
+  count: number;
+  truncated: boolean;
+};
 type WalletResponse = {
   address: string;
   firstTs: number | null;
@@ -65,6 +91,8 @@ type WalletResponse = {
   // Live PUSD (Polymarket cash) balance in USD; null = RPC unavailable.
   pusdBalance: number | null;
   profile: Profile;
+  // Current live (unresolved) positions — the wallet's active book.
+  holdings: HoldingsSummary;
   categories: { category: string; usd: number; share: number }[];
   alertHits: AlertHit[];
   // Coverage window of alertHits in days (the API bounds the LIKE scan).
@@ -243,6 +271,113 @@ export default function WalletPage() {
               <div className="kpi-sub">买单中 &lt;$1k 的占比</div>
             </StatCard>
           </section>
+
+          {/* Current holdings (live positions) */}
+          {data.holdings && data.holdings.count > 0 ? (
+            <section style={{ marginBottom: "var(--s-5)" }}>
+              <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+                当前持仓（{data.holdings.count} 个活仓 · 总市值 $
+                {fmtUsd(data.holdings.totalValue)} · 浮动盈亏{" "}
+                <span
+                  className={data.holdings.totalCashPnl >= 0 ? "up" : "down"}
+                >
+                  {fmtSignedUsdCompact(data.holdings.totalCashPnl)}
+                </span>
+                {data.holdings.truncated ? " · 仅前若干页" : ""}）
+              </div>
+              <div className="ds-table-wrap">
+                <table className="ds-table">
+                  <thead>
+                    <tr>
+                      <th>市场 / 结果</th>
+                      <th className="is-right">份额</th>
+                      <th className="is-right" title="按金额加权的建仓均价">
+                        建仓均价
+                      </th>
+                      <th className="is-right">现价</th>
+                      <th className="is-right">市值</th>
+                      <th className="is-right">浮动盈亏</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.holdings.holdings.map((h, i) => (
+                      <tr key={`${h.eventSlug}-${h.outcome}-${i}`}>
+                        <td style={{ whiteSpace: "normal", maxWidth: 340 }}>
+                          {h.eventSlug ? (
+                            <a
+                              href={`https://polymarket.com/event/${h.eventSlug}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {h.title}
+                            </a>
+                          ) : (
+                            h.title
+                          )}
+                          {/* Copy/jump on the subtitle row (same as the 24h
+                              scanner): ⧉ copies the MARKET slug, ↗ opens the
+                              wired.fund trade page. */}
+                          <div
+                            className="kpi-sub"
+                            style={{ whiteSpace: "nowrap" }}
+                          >
+                            {h.outcome}
+                            <CopyButton
+                              text={h.slug || h.eventSlug}
+                              label="复制 market slug"
+                            />
+                            {h.slug || h.eventSlug ? (
+                              <QuietLink
+                                href={`${TRADE_LINK_BASE}${encodeURIComponent(
+                                  h.slug || h.eventSlug,
+                                )}`}
+                                title={`在 wired.fund 打开交易页：${
+                                  h.slug || h.eventSlug
+                                }`}
+                              >
+                                ↗
+                              </QuietLink>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="mono is-right">{fmtUsd(h.size)}</td>
+                        <td
+                          className="mono is-right"
+                          style={{ color: "var(--warn-700)" }}
+                        >
+                          {h.avgPrice.toFixed(3)}
+                        </td>
+                        <td className="mono is-right">
+                          {h.curPrice.toFixed(3)}
+                        </td>
+                        <td className="mono is-right">
+                          ${fmtUsd(h.currentValue)}
+                        </td>
+                        <td
+                          className={`mono is-right ${
+                            h.cashPnl >= 0 ? "up" : "down"
+                          }`}
+                        >
+                          {fmtSignedUsdCompact(h.cashPnl)} (
+                          {h.percentPnl >= 0 ? "+" : ""}
+                          {h.percentPnl.toFixed(1)}%)
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : data.holdings ? (
+            <section style={{ marginBottom: "var(--s-5)" }}>
+              <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+                当前持仓
+              </div>
+              <div className="ds-empty">
+                该钱包当前没有活跃持仓（或未查询到）
+              </div>
+            </section>
+          ) : null}
 
           {/* Category focus */}
           {data.categories.length > 0 ? (

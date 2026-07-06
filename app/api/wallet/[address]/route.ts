@@ -16,6 +16,10 @@ import {
   type ActivityTrade,
   type WalletProfile,
 } from "../../../../lib/walletProfile";
+import {
+  fetchCurrentHoldings,
+  type HoldingsSummary,
+} from "../../../../lib/holdings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,12 +34,22 @@ const PROFILE_TTL_MS = 10 * 60_000;
 const PROFILE_CACHE_MAX = 500;
 const profileCache = new Map<
   string,
-  { at: number; profile: WalletProfile; recent: ActivityTrade[] }
+  {
+    at: number;
+    profile: WalletProfile;
+    recent: ActivityTrade[];
+    holdings: HoldingsSummary;
+  }
 >();
 
 function cacheProfile(
   address: string,
-  entry: { at: number; profile: WalletProfile; recent: ActivityTrade[] },
+  entry: {
+    at: number;
+    profile: WalletProfile;
+    recent: ActivityTrade[];
+    holdings: HoldingsSummary;
+  },
 ) {
   while (profileCache.size >= PROFILE_CACHE_MAX) {
     const oldest = profileCache.keys().next().value;
@@ -59,15 +73,30 @@ export async function GET(
     try {
       let cached = profileCache.get(address);
       if (!cached || Date.now() - cached.at >= PROFILE_TTL_MS) {
-        const trades = await fetchRecentTrades(address);
+        // Recent trades + current holdings fetched together; a holdings failure
+        // degrades to an empty book so the rest of the dossier still renders.
+        const [trades, holdings] = await Promise.all([
+          fetchRecentTrades(address),
+          fetchCurrentHoldings(address).catch((e) => {
+            console.warn("[/api/wallet] holdings fetch failed:", e);
+            return {
+              holdings: [],
+              totalValue: 0,
+              totalCashPnl: 0,
+              count: 0,
+              truncated: false,
+            } satisfies HoldingsSummary;
+          }),
+        ]);
         cached = {
           at: Date.now(),
           profile: analyzeTrades(trades),
           recent: trades.slice(0, 20),
+          holdings,
         };
         cacheProfile(address, cached);
       }
-      const { profile, recent } = cached;
+      const { profile, recent, holdings } = cached;
 
       // Age + settled record + live PUSD cash (all fetched concurrently; the
       // balance is a single RPC eth_call and degrades to null on failure).
@@ -119,6 +148,7 @@ export async function GET(
         smart,
         pusdBalance,
         profile: { ...profile, topMarkets },
+        holdings,
         categories,
         alertHits,
         // Surfaced so the page can label the coverage window it's showing.

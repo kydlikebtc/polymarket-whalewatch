@@ -5,6 +5,7 @@
 // Visuals live in app/globals.css; these components only wire props → classes.
 
 import {
+  useEffect,
   useState,
   type FocusEvent as ReactFocusEvent,
   type MouseEvent as ReactMouseEvent,
@@ -479,5 +480,85 @@ export function SoundToggle({
     >
       {on ? "🔔 提示音 开" : "🔕 提示音 关"}
     </button>
+  );
+}
+
+/* ------------------------------------------------------------------ Modal */
+
+// Lightweight centered modal: backdrop-click + Esc close, scroll-locked card.
+// Reuses .ds-card for a surface consistent with the rest of the dashboard.
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  width = 560,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: ReactNode;
+  children: ReactNode;
+  width?: number;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+  if (!open) return null;
+  return (
+    <div
+      onClick={onClose}
+      role="presentation"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.45)",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        padding: "var(--s-6, 24px)",
+        zIndex: 1000,
+        overflow: "auto",
+      }}
+    >
+      <div
+        className="ds-card"
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%",
+          maxWidth: width,
+          maxHeight: "85vh",
+          display: "flex",
+          flexDirection: "column",
+          padding: "var(--s-4, 16px)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "var(--s-2)",
+            marginBottom: "var(--s-3)",
+          }}
+        >
+          <strong>{title}</strong>
+          <button
+            className="ds-btn ds-btn--ghost"
+            onClick={onClose}
+            aria-label="关闭"
+          >
+            ✕
+          </button>
+        </div>
+        <div style={{ overflow: "auto", minHeight: 0 }}>{children}</div>
+      </div>
+    </div>
   );
 }

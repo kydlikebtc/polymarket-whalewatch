@@ -174,7 +174,9 @@ const AccumRow = memo(function AccumRow({
           <a
             className="mono"
             href={`/wallet/${g.wallet?.toLowerCase()}`}
-            title={`${g.wallet} · 点击查看钱包档案`}
+            target="_blank"
+            rel="noreferrer"
+            title={`${g.wallet} · 新标签打开钱包档案`}
             onClick={(e) => e.stopPropagation()}
           >
             {shortWallet(g.wallet)}

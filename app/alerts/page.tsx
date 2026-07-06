@@ -707,8 +707,8 @@ export default function Page() {
           {data.telegramHealth.lastErrorAt
             ? `（最近失败 ${fmtTime(data.telegramHealth.lastErrorAt)}）`
             : ""}
-          。新告警仍正常入库并显示在下方列表，仅推送受影响 — 请检查 bot token
-          / 频道权限 / 限流。
+          。新告警仍正常入库并显示在下方列表，仅推送受影响 — 请检查 bot token /
+          频道权限 / 限流。
           {data.telegramHealth.lastErrorMessage ? (
             <div
               className="muted mono"
@@ -797,7 +797,9 @@ export default function Page() {
                         <a
                           className="mono"
                           href={`/wallet/${a.wallet.toLowerCase()}`}
-                          title={`${a.wallet} · 点击查看钱包档案`}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={`${a.wallet} · 新标签打开钱包档案`}
                         >
                           {shortWallet(a.wallet)}
                         </a>

@@ -12,6 +12,7 @@ import {
   DisagreementSection,
   type DisagreementMarket,
 } from "../DisagreementSection";
+import { WhitelistDialog } from "../WhitelistDialog";
 
 type ConsensusWallet = {
   wallet: string;
@@ -97,6 +98,7 @@ export default function ConsensusPage() {
   // Which section is visible — a tab toggle so a long list of one signal never
   // buries the other (both are fetched together; this only switches display).
   const [view, setView] = useState<View>("consensus");
+  const [whitelistOpen, setWhitelistOpen] = useState(false);
   // Flips true once the URL params have been read into state — the first fetch
   // and the URL write-back both wait for it.
   const [urlReady, setUrlReady] = useState<boolean>(false);
@@ -293,7 +295,27 @@ export default function ConsensusPage() {
             <div className="kpi-value">${fmtUsd(totalNet)}</div>
           </StatCard>
           <StatCard label="白名单钱包">
-            <div className="kpi-value">{data.smartCount}</div>
+            <div
+              className="kpi-value"
+              onClick={() => setWhitelistOpen(true)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") setWhitelistOpen(true);
+              }}
+              title="点击查看全部白名单地址（支持搜索）"
+              style={{
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              {data.smartCount}
+              <span style={{ fontSize: 13, color: "var(--primary, #6366f1)" }}>
+                ▸
+              </span>
+            </div>
           </StatCard>
         </section>
       ) : null}
@@ -497,7 +519,9 @@ export default function ConsensusPage() {
                                       <a
                                         className="mono"
                                         href={`/wallet/${w.wallet}`}
-                                        title={`${w.wallet} · 点击查看钱包档案`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        title={`${w.wallet} · 新标签打开钱包档案`}
                                       >
                                         <Icon s="🏆" /> {shortWallet(w.wallet)}
                                       </a>
@@ -540,6 +564,11 @@ export default function ConsensusPage() {
           <DisagreementSection markets={data.disagreement ?? []} />
         ) : null}
       </div>
+
+      <WhitelistDialog
+        open={whitelistOpen}
+        onClose={() => setWhitelistOpen(false)}
+      />
     </main>
   );
 }
