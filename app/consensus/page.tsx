@@ -8,6 +8,10 @@ import {
   parseNumParam,
   replaceUrlQuery,
 } from "../urlQuery";
+import {
+  DisagreementSection,
+  type DisagreementMarket,
+} from "../DisagreementSection";
 
 type ConsensusWallet = {
   wallet: string;
@@ -40,6 +44,9 @@ type ConsensusResponse = {
   // Start of the COMPLETE window actually covered (API depth is finite).
   effectiveSinceSec: number | null;
   groups: ConsensusGroup[];
+  // Contested markets (smart money on opposing sides) — mutually exclusive
+  // with `groups`, which the API already filters to one-sided consensus only.
+  disagreement: DisagreementMarket[];
   error?: string;
 };
 
@@ -48,6 +55,7 @@ type Hours = 2 | 6 | 12;
 const PER_WALLET_PRESETS = [5000, 10000, 25000];
 const HOURS_CHOICES = [2, 6, 12] as const;
 const MIN_WALLETS_CHOICES = [2, 3, 4] as const;
+type View = "consensus" | "disagreement";
 // Page defaults — doubling as the "omit from URL" baseline so the default
 // view serializes to a bare pathname.
 const DEFAULTS = { hours: 6 as Hours, minWallets: 2, minPerWalletUsd: 5000 };
@@ -86,6 +94,9 @@ export default function ConsensusPage() {
   const [loading, setLoading] = useState<boolean>(false);
   const [lastRefreshed, setLastRefreshed] = useState<string>("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Which section is visible — a tab toggle so a long list of one signal never
+  // buries the other (both are fetched together; this only switches display).
+  const [view, setView] = useState<View>("consensus");
   // Flips true once the URL params have been read into state — the first fetch
   // and the URL write-back both wait for it.
   const [urlReady, setUrlReady] = useState<boolean>(false);
@@ -110,6 +121,8 @@ export default function ConsensusPage() {
       int: true,
     });
     if (qMinPer != null) setMinPerWalletUsd(qMinPer);
+    const qView = p.get("view");
+    if (qView === "disagreement" || qView === "consensus") setView(qView);
     setUrlReady(true);
   }, []);
 
@@ -130,9 +143,10 @@ export default function ConsensusPage() {
             ? String(minPerWalletUsd)
             : null,
         ],
+        ["view", view !== "consensus" ? view : null],
       ]),
     );
-  }, [urlReady, hours, minWallets, minPerWalletUsd]);
+  }, [urlReady, hours, minWallets, minPerWalletUsd, view]);
 
   const load = useCallback(async () => {
     const reqId = ++activeReq.current;
@@ -160,6 +174,7 @@ export default function ConsensusPage() {
         truncated: false,
         effectiveSinceSec: null,
         groups: [],
+        disagreement: [],
         error: e instanceof Error ? e.message : String(e),
       });
     } finally {
@@ -184,16 +199,18 @@ export default function ConsensusPage() {
   }
 
   const groups = data?.groups ?? [];
+  const disCount = data?.disagreement?.length ?? 0;
   const totalNet = groups.reduce((s, g) => s + g.totalNetUsd, 0);
 
   return (
     <main className="ds-main">
       <header style={{ marginBottom: "var(--s-4)" }}>
         <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-          🔥 聪明钱共识
+          🔥 共识 · ⚖️ 分歧
         </h1>
         <div className="ds-hint">
-          ≥N 个白名单钱包在窗口内同向买入同一结果 — 比任何单笔大单都强的信号
+          白名单钱包在同一市场：同向买同一结果 = 共识，对立结果各自建仓 =
+          分歧（两者互斥）— 都比单笔大单更有说服力
           {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
           {loading ? (
             <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>
@@ -289,197 +306,240 @@ export default function ConsensusPage() {
         </div>
       ) : null}
 
-      {data && groups.length === 0 && !loading ? (
-        <div className="ds-empty">
-          窗口内暂无聪明钱共识 — 出现时也会推送到实时告警
-        </div>
-      ) : groups.length > 0 ? (
-        <div className="ds-table-wrap">
-          <table className="ds-table">
-            <thead>
-              <tr>
-                <th style={{ width: 28, padding: "var(--s-2) var(--s-1)" }} />
-                <th>市场 · 结果</th>
-                <th className="is-right">钱包数</th>
-                <th className="is-right">合计净买入</th>
-                <th className="is-right" title="按金额加权的聪明钱建仓均价">
-                  建仓均价
-                </th>
-                <th className="is-right" title="Gamma 最新赔率">
-                  现价
-                </th>
-                <th>跟单空间</th>
-                <th className="is-right">最新时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              {groups.map((g) => {
-                const key = `${g.conditionId}:${g.outcome}`;
-                const isOpen = expanded.has(key);
-                const gap =
-                  g.currentPrice != null
-                    ? g.currentPrice - g.avgBuyPrice
-                    : null;
-                // A price pinned at 0/1 means the event is decided even when
-                // gamma's `closed` flag lags — either way "following" is moot.
-                const settled =
-                  g.closed ||
-                  (g.currentPrice != null &&
-                    (g.currentPrice >= 0.999 || g.currentPrice <= 0.001));
-                return (
-                  <Fragment key={key}>
-                    <tr
-                      onClick={() => toggleExpand(key)}
-                      style={{ cursor: "pointer" }}
-                      title={isOpen ? "点击收起钱包明细" : "点击展开钱包明细"}
-                    >
-                      <td
-                        className="muted"
-                        style={{
-                          padding: "var(--s-3) var(--s-1)",
-                          textAlign: "center",
-                          userSelect: "none",
-                        }}
-                      >
-                        {isOpen ? "▾" : "▸"}
-                      </td>
-                      <td style={{ whiteSpace: "normal", maxWidth: 380 }}>
-                        {g.eventSlug ? (
-                          <a
-                            href={`https://polymarket.com/event/${g.eventSlug}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {g.title}
-                          </a>
-                        ) : (
-                          g.title
-                        )}
-                        <div className="kpi-sub">
-                          {g.outcome}
-                          {g.category ? ` · ${catLabel(g.category)}` : ""}
-                        </div>
-                      </td>
-                      <td className="mono is-right">
-                        <span style={{ fontWeight: 700 }}>
-                          <Icon s="🔥" /> {g.walletCount}
-                        </span>
-                      </td>
-                      <td className="mono is-right">
-                        <span className="up" style={{ fontWeight: 700 }}>
-                          ${fmtUsd(g.totalNetUsd)}
-                        </span>
-                      </td>
-                      <td
-                        className="mono is-right"
-                        style={{ color: "var(--warn-700)", fontWeight: 600 }}
-                      >
-                        {g.avgBuyPrice.toFixed(3)}
-                      </td>
-                      <td className="mono is-right">
-                        {g.currentPrice != null
-                          ? g.currentPrice.toFixed(3)
-                          : "…"}
-                      </td>
-                      <td>
-                        {gap == null ? (
-                          <span className="muted">—</span>
-                        ) : settled ? (
-                          // Settled market: following is moot — show whether
-                          // the smart-money consensus was RIGHT instead.
-                          g.currentPrice != null && g.currentPrice > 0.5 ? (
-                            <Tag variant="up">已结算 ✓ 命中</Tag>
-                          ) : (
-                            <Tag variant="down">已结算 ✗ 落空</Tag>
-                          )
-                        ) : gap <= FOLLOWABLE_GAP ? (
-                          <Tag variant="up">
-                            仍可跟 {gap >= 0 ? "+" : ""}
-                            {(gap * 100).toFixed(1)}¢
-                          </Tag>
-                        ) : (
-                          <Tag variant="warn">
-                            已跑 +{(gap * 100).toFixed(1)}¢
-                          </Tag>
-                        )}
-                      </td>
-                      <td className="mono muted is-right">
-                        {fmtTime(g.lastTs)}
-                      </td>
-                    </tr>
-                    {isOpen ? (
-                      <tr>
-                        <td
-                          colSpan={8}
-                          style={{
-                            padding: "0 var(--s-3) var(--s-3) var(--s-10)",
-                            borderBottom: "1px solid var(--n-150)",
-                            background: "var(--n-50)",
-                          }}
-                        >
-                          <div
-                            className="ds-hint"
-                            style={{ margin: "var(--s-2) 0 var(--s-1)" }}
-                          >
-                            共识钱包（按净买入排序）
-                          </div>
-                          <table
-                            className="ds-table--compact"
-                            style={{ maxWidth: 560 }}
-                          >
-                            <thead>
-                              <tr>
-                                <th>钱包</th>
-                                <th className="is-right">评分</th>
-                                <th className="is-right">净买入</th>
-                                <th className="is-right">笔数</th>
-                                <th className="is-right">建仓均价</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {g.wallets.map((w) => (
-                                <tr key={`${key}-${w.wallet}`}>
-                                  <td>
-                                    <a
-                                      className="mono"
-                                      href={`/wallet/${w.wallet}`}
-                                      title={`${w.wallet} · 点击查看钱包档案`}
-                                    >
-                                      <Icon s="🏆" /> {shortWallet(w.wallet)}
-                                    </a>
-                                  </td>
-                                  <td className="mono is-right">
-                                    {w.score != null
-                                      ? Math.round(w.score)
-                                      : "—"}
-                                  </td>
-                                  <td className="mono is-right">
-                                    ${fmtUsd(w.netUsd)}
-                                  </td>
-                                  <td className="mono is-right">
-                                    {w.buyCount}
-                                  </td>
-                                  <td
-                                    className="mono is-right"
-                                    style={{ color: "var(--warn-700)" }}
-                                  >
-                                    {w.avgBuyPrice.toFixed(3)}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </td>
-                      </tr>
-                    ) : null}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
+      {/* Tab toggle — one section at a time so a long list never buries the
+          other. Both are already fetched; this only switches which is shown. */}
+      {data ? (
+        <div style={{ marginBottom: "var(--s-4)" }}>
+          <Segmented<View>
+            ariaLabel="共识或分歧"
+            value={view}
+            onChange={setView}
+            options={[
+              {
+                label: (
+                  <span>
+                    <Icon s="🔥" /> 共识 {groups.length}
+                  </span>
+                ),
+                value: "consensus",
+              },
+              {
+                label: (
+                  <span>
+                    <Icon s="⚖️" /> 分歧 {disCount}
+                  </span>
+                ),
+                value: "disagreement",
+              },
+            ]}
+          />
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            {view === "consensus"
+              ? `一边倒 · ≥${minWallets} 个白名单钱包同向买入同一结果`
+              : "同一市场对立结果都有聪明钱 · 按质量加权称天平（与共识互斥）"}
+          </div>
         </div>
       ) : null}
+
+      <div style={{ display: view === "consensus" ? "block" : "none" }}>
+        {data && groups.length === 0 && !loading ? (
+          <div className="ds-empty">
+            窗口内暂无聪明钱共识 — 出现时也会推送到实时告警
+          </div>
+        ) : groups.length > 0 ? (
+          <div className="ds-table-wrap">
+            <table className="ds-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 28, padding: "var(--s-2) var(--s-1)" }} />
+                  <th>市场 · 结果</th>
+                  <th className="is-right">钱包数</th>
+                  <th className="is-right">合计净买入</th>
+                  <th className="is-right" title="按金额加权的聪明钱建仓均价">
+                    建仓均价
+                  </th>
+                  <th className="is-right" title="Gamma 最新赔率">
+                    现价
+                  </th>
+                  <th>跟单空间</th>
+                  <th className="is-right">最新时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map((g) => {
+                  const key = `${g.conditionId}:${g.outcome}`;
+                  const isOpen = expanded.has(key);
+                  const gap =
+                    g.currentPrice != null
+                      ? g.currentPrice - g.avgBuyPrice
+                      : null;
+                  // A price pinned at 0/1 means the event is decided even when
+                  // gamma's `closed` flag lags — either way "following" is moot.
+                  const settled =
+                    g.closed ||
+                    (g.currentPrice != null &&
+                      (g.currentPrice >= 0.999 || g.currentPrice <= 0.001));
+                  return (
+                    <Fragment key={key}>
+                      <tr
+                        onClick={() => toggleExpand(key)}
+                        style={{ cursor: "pointer" }}
+                        title={isOpen ? "点击收起钱包明细" : "点击展开钱包明细"}
+                      >
+                        <td
+                          className="muted"
+                          style={{
+                            padding: "var(--s-3) var(--s-1)",
+                            textAlign: "center",
+                            userSelect: "none",
+                          }}
+                        >
+                          {isOpen ? "▾" : "▸"}
+                        </td>
+                        <td style={{ whiteSpace: "normal", maxWidth: 380 }}>
+                          {g.eventSlug ? (
+                            <a
+                              href={`https://polymarket.com/event/${g.eventSlug}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {g.title}
+                            </a>
+                          ) : (
+                            g.title
+                          )}
+                          <div className="kpi-sub">
+                            {g.outcome}
+                            {g.category ? ` · ${catLabel(g.category)}` : ""}
+                          </div>
+                        </td>
+                        <td className="mono is-right">
+                          <span style={{ fontWeight: 700 }}>
+                            <Icon s="🔥" /> {g.walletCount}
+                          </span>
+                        </td>
+                        <td className="mono is-right">
+                          <span className="up" style={{ fontWeight: 700 }}>
+                            ${fmtUsd(g.totalNetUsd)}
+                          </span>
+                        </td>
+                        <td
+                          className="mono is-right"
+                          style={{ color: "var(--warn-700)", fontWeight: 600 }}
+                        >
+                          {g.avgBuyPrice.toFixed(3)}
+                        </td>
+                        <td className="mono is-right">
+                          {g.currentPrice != null
+                            ? g.currentPrice.toFixed(3)
+                            : "…"}
+                        </td>
+                        <td>
+                          {gap == null ? (
+                            <span className="muted">—</span>
+                          ) : settled ? (
+                            // Settled market: following is moot — show whether
+                            // the smart-money consensus was RIGHT instead.
+                            g.currentPrice != null && g.currentPrice > 0.5 ? (
+                              <Tag variant="up">已结算 ✓ 命中</Tag>
+                            ) : (
+                              <Tag variant="down">已结算 ✗ 落空</Tag>
+                            )
+                          ) : gap <= FOLLOWABLE_GAP ? (
+                            <Tag variant="up">
+                              仍可跟 {gap >= 0 ? "+" : ""}
+                              {(gap * 100).toFixed(1)}¢
+                            </Tag>
+                          ) : (
+                            <Tag variant="warn">
+                              已跑 +{(gap * 100).toFixed(1)}¢
+                            </Tag>
+                          )}
+                        </td>
+                        <td className="mono muted is-right">
+                          {fmtTime(g.lastTs)}
+                        </td>
+                      </tr>
+                      {isOpen ? (
+                        <tr>
+                          <td
+                            colSpan={8}
+                            style={{
+                              padding: "0 var(--s-3) var(--s-3) var(--s-10)",
+                              borderBottom: "1px solid var(--n-150)",
+                              background: "var(--n-50)",
+                            }}
+                          >
+                            <div
+                              className="ds-hint"
+                              style={{ margin: "var(--s-2) 0 var(--s-1)" }}
+                            >
+                              共识钱包（按净买入排序）
+                            </div>
+                            <table
+                              className="ds-table--compact"
+                              style={{ maxWidth: 560 }}
+                            >
+                              <thead>
+                                <tr>
+                                  <th>钱包</th>
+                                  <th className="is-right">评分</th>
+                                  <th className="is-right">净买入</th>
+                                  <th className="is-right">笔数</th>
+                                  <th className="is-right">建仓均价</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {g.wallets.map((w) => (
+                                  <tr key={`${key}-${w.wallet}`}>
+                                    <td>
+                                      <a
+                                        className="mono"
+                                        href={`/wallet/${w.wallet}`}
+                                        title={`${w.wallet} · 点击查看钱包档案`}
+                                      >
+                                        <Icon s="🏆" /> {shortWallet(w.wallet)}
+                                      </a>
+                                    </td>
+                                    <td className="mono is-right">
+                                      {w.score != null
+                                        ? Math.round(w.score)
+                                        : "—"}
+                                    </td>
+                                    <td className="mono is-right">
+                                      ${fmtUsd(w.netUsd)}
+                                    </td>
+                                    <td className="mono is-right">
+                                      {w.buyCount}
+                                    </td>
+                                    <td
+                                      className="mono is-right"
+                                      style={{ color: "var(--warn-700)" }}
+                                    >
+                                      {w.avgBuyPrice.toFixed(3)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ display: view === "disagreement" ? "block" : "none" }}>
+        {data ? (
+          <DisagreementSection markets={data.disagreement ?? []} />
+        ) : null}
+      </div>
     </main>
   );
 }

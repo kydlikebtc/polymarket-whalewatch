@@ -59,7 +59,7 @@ const NAV = [
   { href: "/", label: "24h 扫描" },
   { href: "/alerts", label: "实时告警" },
   { href: "/accumulation", label: "拆单累计" },
-  { href: "/consensus", label: "聪明钱共识" },
+  { href: "/consensus", label: "共识 / 分歧" },
   { href: "/glossary", label: "说明" },
 ] as const;
 

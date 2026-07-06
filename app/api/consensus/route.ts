@@ -3,6 +3,12 @@ import { createPromiseCache } from "../../../lib/promiseCache";
 import { getTradesWindowDeep } from "../../../lib/polymarket";
 import { getAllSmartTags } from "../../../lib/smartWallets";
 import { detectConsensus, type ConsensusGroup } from "../../../lib/consensus";
+import {
+  DEFAULT_DISAGREEMENT,
+  detectDisagreement,
+  type DisagreementMarket,
+} from "../../../lib/disagreement";
+import { excludeContestedFromConsensus } from "../../../lib/marketSignals";
 import { getEventCategories, getMarketMeta } from "../../../lib/gamma";
 import type { Trade } from "../../../lib/types";
 
@@ -47,6 +53,16 @@ type ConsensusView = ConsensusGroup & {
   closed: boolean;
 };
 
+// A disagreement side enriched with the outcome's CURRENT price.
+type SideView = DisagreementMarket["sides"][number] & {
+  currentPrice: number | null;
+};
+type DisagreementView = Omit<DisagreementMarket, "sides"> & {
+  sides: SideView[];
+  category: string | null;
+  closed: boolean;
+};
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const hours = ALLOWED_HOURS.has(Number(url.searchParams.get("hours")))
@@ -70,42 +86,68 @@ export async function GET(req: Request) {
       const { trades, truncated, effectiveSinceSec } =
         await getWindowShared(hours);
 
-      const groups = detectConsensus(trades, smartTags, {
+      // Detect both signals over the same window/pool, then make them mutually
+      // exclusive: a market with smart money on opposing outcomes is a
+      // DISAGREEMENT, not two one-sided "consensuses". The per-side floor reuses
+      // the same minPerWalletUsd control so both views tune together.
+      const rawGroups = detectConsensus(trades, smartTags, {
         minWallets,
         minPerWalletUsd,
       });
+      const disagreements = detectDisagreement(trades, smartTags, {
+        ...DEFAULT_DISAGREEMENT,
+        minPerSideUsd: minPerWalletUsd,
+      });
+      const groups = excludeContestedFromConsensus(rawGroups, disagreements);
 
-      // Current outcome prices via gamma (cached; failures degrade to null).
-      // Categories come from EVENT TAGS — the market-level category field is
-      // null for most modern markets.
+      // Current outcome prices via gamma (cached; failures degrade to null) for
+      // the UNION of both lists. Categories come from EVENT TAGS — the
+      // market-level category field is null for most modern markets.
+      const conditionIds = [
+        ...new Set([
+          ...groups.map((g) => g.conditionId),
+          ...disagreements.map((d) => d.conditionId),
+        ]),
+      ];
+      const eventSlugs = [
+        ...new Set([
+          ...groups.map((g) => g.eventSlug),
+          ...disagreements.map((d) => d.eventSlug),
+        ]),
+      ];
       const [meta, categories] = await Promise.all([
-        getMarketMeta(
-          db,
-          groups.map((g) => g.conditionId),
-          {
-            ttlSec: CURRENT_PRICE_TTL_SEC,
-          },
-        ),
-        getEventCategories(
-          db,
-          groups.map((g) => g.eventSlug),
-        ),
+        getMarketMeta(db, conditionIds, { ttlSec: CURRENT_PRICE_TTL_SEC }),
+        getEventCategories(db, eventSlugs),
       ]);
-      const views: ConsensusView[] = groups.map((g) => {
-        const m = meta[g.conditionId];
+
+      const priceOf = (conditionId: string, outcome: string): number | null => {
+        const m = meta[conditionId];
         const idx = m?.outcomes.findIndex(
-          (o) => o.toLowerCase() === g.outcome.toLowerCase(),
+          (o) => o.toLowerCase() === outcome.toLowerCase(),
         );
         const price =
           m && idx != null && idx >= 0 ? m.outcomePrices[idx] : undefined;
-        return {
-          ...g,
-          currentPrice:
-            typeof price === "number" && Number.isFinite(price) ? price : null,
-          category: categories[g.eventSlug] ?? null,
-          closed: m?.closed ?? false,
-        };
-      });
+        return typeof price === "number" && Number.isFinite(price)
+          ? price
+          : null;
+      };
+
+      const views: ConsensusView[] = groups.map((g) => ({
+        ...g,
+        currentPrice: priceOf(g.conditionId, g.outcome),
+        category: categories[g.eventSlug] ?? null,
+        closed: meta[g.conditionId]?.closed ?? false,
+      }));
+
+      const disagreement: DisagreementView[] = disagreements.map((d) => ({
+        ...d,
+        sides: d.sides.map((s) => ({
+          ...s,
+          currentPrice: priceOf(d.conditionId, s.outcome),
+        })),
+        category: categories[d.eventSlug] ?? null,
+        closed: meta[d.conditionId]?.closed ?? false,
+      }));
 
       return Response.json({
         filters,
@@ -113,6 +155,7 @@ export async function GET(req: Request) {
         truncated,
         effectiveSinceSec,
         groups: views,
+        disagreement,
       });
     } finally {
       db.close();
@@ -126,6 +169,7 @@ export async function GET(req: Request) {
       truncated: false,
       effectiveSinceSec: null,
       groups: [],
+      disagreement: [],
       error: message,
     });
   }
