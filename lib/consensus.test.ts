@@ -60,6 +60,53 @@ describe("detectConsensus", () => {
     expect(groups[0].outcomeIndex).toBe(0);
   });
 
+  it("drops hedgers that net-buy BOTH outcomes, so a hedger-only side is not a fake consensus", () => {
+    // Live-bug repro: an O/U 2.5 market whose Under side was ENTIRELY the two
+    // wallets that also bought Over. detectConsensus used to surface Under+Over
+    // as two consensuses while detectDisagreement (which drops hedgers) never
+    // flagged it contested — leaking a fake double-consensus onto the page.
+    const trades = [
+      // Two hedgers: each net-buys BOTH sides.
+      mk({ proxyWallet: "0xH1", outcome: "Under", transactionHash: "0x1" }),
+      mk({ proxyWallet: "0xH1", outcome: "Over", transactionHash: "0x2" }),
+      mk({ proxyWallet: "0xH2", outcome: "Under", transactionHash: "0x3" }),
+      mk({ proxyWallet: "0xH2", outcome: "Over", transactionHash: "0x4" }),
+      // Two clean directional buyers on Over only.
+      mk({ proxyWallet: "0xO1", outcome: "Over", transactionHash: "0x5" }),
+      mk({ proxyWallet: "0xO2", outcome: "Over", transactionHash: "0x6" }),
+    ];
+    const groups = detectConsensus(
+      trades,
+      smartSet("0xH1", "0xH2", "0xO1", "0xO2"),
+      { minWallets: 2, minPerWalletUsd: 5000 },
+    );
+    // Under (hedgers only) collapses; Over keeps only the 2 clean buyers.
+    expect(groups).toHaveLength(1);
+    expect(groups[0].outcome).toBe("Over");
+    expect(groups[0].wallets.map((w) => w.wallet).sort()).toEqual([
+      "0xo1",
+      "0xo2",
+    ]);
+    expect(groups[0].totalNetUsd).toBe(20000); // hedger money excluded, not $40k
+  });
+
+  it("keeps BOTH sides when they are distinct clean buyers (genuine split — the mutual-exclusion layer, not detectConsensus, routes it to disagreement)", () => {
+    const trades = [
+      mk({ proxyWallet: "0xU1", outcome: "Under", transactionHash: "0x1" }),
+      mk({ proxyWallet: "0xU2", outcome: "Under", transactionHash: "0x2" }),
+      mk({ proxyWallet: "0xO1", outcome: "Over", transactionHash: "0x3" }),
+      mk({ proxyWallet: "0xO2", outcome: "Over", transactionHash: "0x4" }),
+    ];
+    const groups = detectConsensus(
+      trades,
+      smartSet("0xU1", "0xU2", "0xO1", "0xO2"),
+      { minWallets: 2, minPerWalletUsd: 5000 },
+    );
+    // No hedgers → both one-sided groups stand; excludeContestedFromConsensus
+    // (a separate layer, driven by detectDisagreement) reclassifies the market.
+    expect(groups.map((g) => g.outcome).sort()).toEqual(["Over", "Under"]);
+  });
+
   it("nets sells against buys per wallet (a flip-flopper doesn't qualify)", () => {
     const trades = [
       mk({ proxyWallet: "0xA", transactionHash: "0x1" }), // +$10k

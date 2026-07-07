@@ -118,10 +118,43 @@ export function detectConsensus(
     }
   }
 
+  // Fake-opposition guard, consistent with detectDisagreement: a wallet
+  // NET-BUYING >= 2 outcomes of the SAME market is a hedger/market-maker, not a
+  // directional opinion. Without dropping it, a hedger inflates BOTH one-sided
+  // groups, so a market with hedgers on both sides reads as two separate
+  // "consensuses" that detectDisagreement (which DOES exclude hedgers, then
+  // needs >=2 surviving sides) never flags as contested — leaking a fake
+  // Under+Over double-consensus onto the page (verified live: an O/U 2.5 market
+  // whose Under side was ENTIRELY the two wallets that also bought Over).
+  // Excluding hedgers from each outcome collapses that to the one genuine side.
+  const hedgersByMarket = new Map<string, Set<string>>();
+  {
+    const perMarket = new Map<string, Map<string, number>>(); // cid -> wallet -> #net-bought outcomes
+    for (const g of groups.values()) {
+      let perWallet = perMarket.get(g.conditionId);
+      if (!perWallet) {
+        perWallet = new Map();
+        perMarket.set(g.conditionId, perWallet);
+      }
+      for (const [wallet, acc] of g.byWallet) {
+        if (acc.buyUsd - acc.sellUsd > 0) {
+          perWallet.set(wallet, (perWallet.get(wallet) ?? 0) + 1);
+        }
+      }
+    }
+    for (const [cid, perWallet] of perMarket) {
+      const hedgers = new Set<string>();
+      for (const [wallet, n] of perWallet) if (n >= 2) hedgers.add(wallet);
+      if (hedgers.size > 0) hedgersByMarket.set(cid, hedgers);
+    }
+  }
+
   const out: ConsensusGroup[] = [];
   for (const g of groups.values()) {
+    const hedgers = hedgersByMarket.get(g.conditionId);
     const qualified: ConsensusWallet[] = [];
     for (const [wallet, acc] of g.byWallet) {
+      if (hedgers?.has(wallet)) continue; // plays both sides — not a directional vote
       const netUsd = acc.buyUsd - acc.sellUsd;
       if (netUsd < opts.minPerWalletUsd) continue;
       const tag = smartTags.get(wallet);
