@@ -15,6 +15,8 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS event_category (event_slug TEXT PRIMARY KEY, category TEXT, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS consensus_state (condition_id TEXT, outcome TEXT, wallet_count INTEGER, total_usd REAL, last_alert_ts INTEGER, PRIMARY KEY (condition_id, outcome));
     CREATE TABLE IF NOT EXISTS alert_outcomes (alert_id INTEGER PRIMARY KEY, price_1h REAL, price_24h REAL, resolved INTEGER DEFAULT 0, resolution_price REAL, won INTEGER, checked_at INTEGER);
+    CREATE TABLE IF NOT EXISTS follow_strategies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, enabled INTEGER DEFAULT 1, params_json TEXT, created_at INTEGER);
+    CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, UNIQUE(strategy_id, condition_id, outcome));
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
   `);
   // wallet_stats gained markets_traded (the high-frequency market-maker
@@ -161,6 +163,43 @@ export function openDb(path = "data.sqlite") {
     db.prepare("DELETE FROM config WHERE key = 'smart_seed_last_day'").run();
     db.prepare(
       "INSERT OR REPLACE INTO config (key, value) VALUES ('wallet_stats_v', '5')",
+    ).run();
+  }
+  // follow_strategies seed v1: paper follow-the-consensus simulation ships with
+  // two built-in strategies (保守/激进). Version-gated like wallet_stats_v above
+  // so the seed INSERT runs once per DB — dashboard routes open a fresh
+  // connection per request, and INSERT OR IGNORE alone would keep probing the
+  // unique index on every open for zero benefit after the first pass.
+  const followVer = db
+    .prepare("SELECT value FROM config WHERE key = 'follow_seed_v'")
+    .get() as { value: string | null } | undefined;
+  if (followVer?.value !== "1") {
+    const ins = db.prepare(
+      "INSERT OR IGNORE INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
+    );
+    const now = Math.floor(Date.now() / 1000);
+    ins.run(
+      "保守",
+      JSON.stringify({
+        minWallets: 3,
+        minPerWalletUsd: 10000,
+        sizeUsd: 500,
+        exitRule: "settlement",
+      }),
+      now,
+    );
+    ins.run(
+      "激进",
+      JSON.stringify({
+        minWallets: 2,
+        minPerWalletUsd: 5000,
+        sizeUsd: 500,
+        exitRule: "settlement",
+      }),
+      now,
+    );
+    db.prepare(
+      "INSERT OR REPLACE INTO config (key, value) VALUES ('follow_seed_v', '1')",
     ).run();
   }
   return db;
