@@ -4,10 +4,28 @@ import { fetchWithRetry } from "./fetchWithRetry";
 import { mapLimit } from "./mapLimit";
 
 const DATA_API = "https://data-api.polymarket.com";
+// Authoritative per-wallet net P/L — the exact figure Polymarket shows on a
+// profile ("Profit/loss"). Verified live: the LAST point of the returned curve
+// equals the data-api leaderboard PNL for the wallet and correctly NETS the
+// held-to-zero losers that /closed-positions omits. One request, no offset cap.
+const PNL_API = "https://user-pnl-api.polymarket.com";
 
 // data-api /closed-positions caps limit at 50 per page (verified live: limit=500
 // still returns 50 rows), so completeness comes from offset pagination.
 const PAGE_SIZE = 50;
+
+// Closed/open pagination cap. CRITICAL (verified live 2026-07): /closed-positions
+// is sorted by realizedPnl DESCENDING, so the first pages hold a wallet's most
+// PROFITABLE settled positions while its losses sit in the deep tail (e.g.
+// offset 0 → +$2.07m, offset 4000 → −$1.3k). The old 8-page (400-row) cap
+// therefore fed winRate/roi a winners-only slice for any high-volume wallet —
+// inflating both — which is exactly the smart money we track. netPnl no longer
+// depends on this (it comes from PNL_API); winRate/roi still do, so the cap is
+// raised to cover realistic wallets and the record is honestly flagged
+// `truncated` beyond it. /closed-positions offset is NOT capped at 3000 (unlike
+// /activity & /trades — verified offset=4000 returns rows), so deeper pagination
+// is possible; the cap trades tail-completeness for per-wallet latency.
+const DEFAULT_MAX_PAGES = 40; // ~2000 settled positions
 
 // IMPORTANT unit note (verified live): `totalBought` is SHARES, not USD —
 // realizedPnl === totalBought * (curPrice - avgPrice) holds exactly on real
@@ -19,20 +37,22 @@ const ClosedPositionSchema = z.object({
 });
 export type ClosedPosition = z.infer<typeof ClosedPositionSchema>;
 
-// Settled-market track record for a wallet, derived from /closed-positions.
+// Settled-market track record for a wallet. winRate/roi are derived from
+// /closed-positions (+ the survivorship patch); netPnl is the authoritative
+// Polymarket net P/L from PNL_API (see fetchUserPnl), independent of the page cap.
 export interface WalletStats {
   winRate: number | null; // wins / settledCount, null when nothing settled
-  realizedPnl: number; // USD, sum over settled positions
-  roi: number | null; // realizedPnl / costBasis, null when costBasis is 0
+  netPnl: number | null; // USD net P/L (realized + unrealized), Polymarket-profile figure; null when unknowable (see computeWalletStats)
+  roi: number | null; // settled realizedPnl / settled cost basis, null when basis is 0
   settledCount: number;
-  truncated: boolean; // hit the page cap — stats cover the newest positions only
+  truncated: boolean; // hit the page cap — winRate/roi cover the top-PnL slice only
 }
 
 export async function fetchClosedPositions(
   wallet: string,
   opts: { maxPages?: number } = {},
 ): Promise<{ positions: ClosedPosition[]; truncated: boolean }> {
-  const { maxPages = 8 } = opts;
+  const { maxPages = DEFAULT_MAX_PAGES } = opts;
   const positions: ClosedPosition[] = [];
   // Duplicate-page guard, same defensive posture as fetchLeaderboard's
   // wallet-level dedup: if the API ever re-serves rows we already collected
@@ -112,7 +132,7 @@ export async function fetchResolvedOpenPositions(
   wallet: string,
   opts: { maxPages?: number } = {},
 ): Promise<{ positions: ResolvedOpenPosition[]; truncated: boolean }> {
-  const { maxPages = 8 } = opts;
+  const { maxPages = DEFAULT_MAX_PAGES } = opts;
   const positions: ResolvedOpenPosition[] = [];
   for (let page = 0; page < maxPages; page++) {
     const url = `${DATA_API}/positions?user=${encodeURIComponent(wallet)}&limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`;
@@ -142,7 +162,36 @@ export async function fetchResolvedOpenPositions(
   return { positions, truncated: true };
 }
 
-// Pure aggregation over BOTH settled sources:
+// Authoritative net P/L from Polymarket's own PnL-curve API — the number shown
+// on a profile page. The endpoint returns the CUMULATIVE running P/L as a
+// [{ t, p }] series; the last point's `p` is the current net P/L (realized +
+// unrealized). A 1-month window (fidelity=1d) is a tiny payload whose final
+// point still carries the full-history cumulative total (verified live: its `p`
+// matches the interval=max series' last point and the ALL leaderboard PNL).
+// Returns null when the series is empty or malformed so the caller can fall back
+// to the settled realized sum. Throws only on a non-transient HTTP failure
+// (fetchWithRetry already retries transient 5xx); the caller catches that.
+export async function fetchUserPnl(wallet: string): Promise<number | null> {
+  const url =
+    `${PNL_API}/user-pnl?user_address=${encodeURIComponent(wallet)}` +
+    `&interval=1m&fidelity=1d`;
+  const res = await fetchWithRetry(url, {
+    timeoutMs: 8000,
+    headers: { "User-Agent": "polymarket-monitor" },
+    label: "fetchUserPnl",
+  });
+  if (!res.ok) throw new Error(`fetchUserPnl ${res.status}`);
+  const raw = await res.json();
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const last = raw[raw.length - 1] as { p?: unknown } | null;
+  const p = last?.p;
+  return typeof p === "number" && Number.isFinite(p) ? p : null;
+}
+
+// Pure aggregation. winRate/roi come from the settled positions; `netPnl` is the
+// authoritative Polymarket net P/L (from fetchUserPnl), falling back to the
+// settled realized sum only when the PnL API is unavailable AND the closed set
+// is complete (see the return site — a truncated fallback would be inflated).
 //  - closed positions (sold or redeemed): win = realizedPnl > 0
 //  - resolved-but-unclosed positions: win = curPrice > 0.5 (1 = unredeemed win,
 //    0 = held-to-zero loss); their cashPnl is final at resolution.
@@ -150,39 +199,53 @@ export function computeWalletStats(
   positions: ClosedPosition[],
   truncated: boolean,
   resolvedOpen: ResolvedOpenPosition[] = [],
+  netPnl?: number | null,
 ): WalletStats {
   let wins = 0;
-  let realizedPnl = 0;
+  let settledRealized = 0; // realized gains over settled positions (roi numerator)
   let costBasis = 0;
   for (const p of positions) {
     if (p.realizedPnl > 0) wins++;
-    realizedPnl += p.realizedPnl;
+    settledRealized += p.realizedPnl;
     costBasis += p.totalBought * p.avgPrice;
   }
   for (const p of resolvedOpen) {
     if (p.curPrice > 0.5) wins++;
-    realizedPnl += p.cashPnl;
+    settledRealized += p.cashPnl;
     costBasis += p.initialValue;
   }
   const settledCount = positions.length + resolvedOpen.length;
   return {
     winRate: settledCount > 0 ? wins / settledCount : null,
-    realizedPnl,
-    roi: costBasis > 0 ? realizedPnl / costBasis : null,
+    // The Polymarket-profile figure. When the authoritative PnL is unavailable
+    // we fall back to the settled realized sum ONLY if the closed set is
+    // COMPLETE. A TRUNCATED closed set is sorted by realizedPnl DESC and holds a
+    // winners-only slice (see DEFAULT_MAX_PAGES), so its sum is the very
+    // inflation this fix removes — return null there (rendered "—") rather than
+    // resurrect a wrong headline. Callers must treat null as "unknown".
+    netPnl: netPnl ?? (truncated ? null : settledRealized),
+    roi: costBasis > 0 ? settledRealized / costBasis : null,
     settledCount,
     truncated,
   };
 }
 
 async function fetchWalletStats(wallet: string): Promise<WalletStats> {
-  const [closed, open] = await Promise.all([
+  const [closed, open, netPnl] = await Promise.all([
     fetchClosedPositions(wallet),
     fetchResolvedOpenPositions(wallet),
+    // Authoritative net P/L; a PnL-API failure degrades to the settled realized
+    // sum (in computeWalletStats) rather than failing the whole record.
+    fetchUserPnl(wallet).catch((e) => {
+      console.warn(`[walletStats] user-pnl fetch failed for ${wallet}:`, e);
+      return null;
+    }),
   ]);
   return computeWalletStats(
     closed.positions,
     closed.truncated || open.truncated,
     open.positions,
+    netPnl,
   );
 }
 
@@ -233,7 +296,7 @@ export async function getWalletStats(
     const row = sel.get(w) as
       | {
           win_rate: number | null;
-          realized_pnl: number;
+          realized_pnl: number | null; // stores netPnl, which can be null
           roi: number | null;
           settled_count: number;
           truncated: number;
@@ -243,7 +306,8 @@ export async function getWalletStats(
     if (row && nowSec - row.fetched_at < ttlSec) {
       result[w] = {
         winRate: row.win_rate,
-        realizedPnl: row.realized_pnl,
+        // Physical column stays `realized_pnl`; it now stores the net P/L.
+        netPnl: row.realized_pnl,
         roi: row.roi,
         settledCount: row.settled_count,
         truncated: !!row.truncated,
@@ -274,7 +338,7 @@ export async function getWalletStats(
       ins.run(
         w,
         s.winRate,
-        s.realizedPnl,
+        s.netPnl, // → realized_pnl column
         s.roi,
         s.settledCount,
         s.truncated ? 1 : 0,

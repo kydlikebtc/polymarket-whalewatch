@@ -121,20 +121,29 @@ export function openDb(path = "data.sqlite") {
       );
     }
   }
-  // wallet_stats v2: earlier stats were survivorship-biased — positions held
-  // to ZERO never enter /closed-positions (nothing to redeem), so pure-closed
-  // win rates read 100% for wallets that ride losers into the ground. v2 also
-  // counts resolved-but-unclosed positions from /positions. Purge the biased
-  // cache and clear the seed-day marker so the smart-wallet whitelist re-scores
-  // with honest win rates on the engine's next cycle.
+  // wallet_stats versioning — bump to purge the cached stats and re-seed the
+  // whitelist whenever the stat SEMANTICS change:
+  //  v2: added the survivorship patch (held-to-zero losers from /positions) so
+  //      pure-closed win rates stop reading a fake 100%.
+  //  v3: the displayed pnl is now the AUTHORITATIVE net P/L from user-pnl-api
+  //      (the realized_pnl column stores it), not the /closed-positions sum —
+  //      which was sorted by realizedPnl DESC and truncated at 400 rows, feeding
+  //      a winners-only slice that inflated pnl AND win rate. The page cap was
+  //      also raised. Purge so every wallet re-fetches under the new pipeline.
   const statsVer = db
     .prepare("SELECT value FROM config WHERE key = 'wallet_stats_v'")
     .get() as { value: string | null } | undefined;
-  if (statsVer?.value !== "2") {
+  if (statsVer?.value !== "3") {
     db.prepare("DELETE FROM wallet_stats").run();
+    // smart_wallets.realized_pnl now means netPnl, but existing rows hold the old
+    // biased closed-sum. NULL it (can't DELETE the rows — that would drop manual
+    // is_whitelist flags): board-present wallets get a correct netPnl on the next
+    // re-seed, off-board rows (incl. manual whitelist that may never re-appear on
+    // a board) show "—" instead of a wrong value mislabeled "净盈亏".
+    db.prepare("UPDATE smart_wallets SET realized_pnl = NULL").run();
     db.prepare("DELETE FROM config WHERE key = 'smart_seed_last_day'").run();
     db.prepare(
-      "INSERT OR REPLACE INTO config (key, value) VALUES ('wallet_stats_v', '2')",
+      "INSERT OR REPLACE INTO config (key, value) VALUES ('wallet_stats_v', '3')",
     ).run();
   }
   return db;

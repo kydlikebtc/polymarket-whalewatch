@@ -290,7 +290,7 @@ describe("runAlertCycle", () => {
     const plainTrade = mk({ transactionHash: "0xp", proxyWallet: "0xPLAIN" });
     const send = vi.fn().mockResolvedValue(undefined);
     const getSmart = vi.fn((_wallets: string[]) => ({
-      "0xsmart": { score: 82, winRate: 0.68, realizedPnl: 1_200_000 },
+      "0xsmart": { score: 82, winRate: 0.68, netPnl: 1_200_000 },
     }));
 
     const fired = await runAlertCycle({

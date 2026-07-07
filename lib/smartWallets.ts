@@ -10,7 +10,7 @@ import { getWalletStats, type WalletStats } from "./walletStats";
 export interface SmartTag {
   score: number | null;
   winRate: number | null;
-  realizedPnl: number | null;
+  netPnl: number | null; // net P/L (realized + unrealized), Polymarket-profile figure
   isWhitelist: boolean;
 }
 
@@ -64,11 +64,14 @@ export interface SeedResult {
  * make the efficiency ratio meaningless). vol=0 rows are dropped (pure
  * holding/redeem accounts — verified these appear on DAY/WEEK boards).
  * By default EVERY merged wallet gets a settled track-record enrichment via
- * /closed-positions (walletStats, cached 24h, concurrency-capped) — an
- * un-enriched wallet scores with a neutral 0.5 win rate on mark-to-market pnl
- * alone, which let unrealized-gain whales into the pool at 85+; `enrichTop`
- * can still bound the enrichment for tests. Manual whitelist flags
- * (is_whitelist=1) survive re-seeding.
+ * walletStats (cached 24h, concurrency-capped): it supplies the settled winRate
+ * and roi axes (an un-enriched wallet scores those on a neutral 0.5 win rate and
+ * the pnl/vol ratio alone). The PROFIT axis uses the authoritative net P/L for
+ * everyone now — since "净盈亏" is net (realized + unrealized), a wallet on a big
+ * unrealized paper gain scores on it (the same figure Polymarket's profile
+ * shows); the old settled-realized profit axis that excluded unrealized was
+ * dropped with the netPnl switch. `enrichTop` can still bound the enrichment for
+ * tests. Manual whitelist flags (is_whitelist=1) survive re-seeding.
  */
 export async function seedSmartWallets(
   db: DB,
@@ -147,9 +150,15 @@ export async function seedSmartWallets(
     for (const [wallet, lb] of merged) {
       const s = stats[wallet] ?? null;
       if (s) enriched++;
-      // Prefer the settled realizedPnl when we have it; the leaderboard's
-      // mark-to-market pnl is only the fallback.
-      const pnl = s ? s.realizedPnl : lb.pnl;
+      // Prefer the wallet's authoritative net P/L (user-pnl-api, all-time) when
+      // enriched; fall back to the merged leaderboard row's pnl when the wallet
+      // is un-enriched OR its netPnl is null (PnL API failed on a truncated
+      // record — see computeWalletStats). Both are net figures, so the profit
+      // axis is consistent and never the truncation-inflated closed sum. NOTE:
+      // "net" includes UNREALIZED, so a wallet riding a large paper gain now
+      // scores on it (matches Polymarket's profile figure) — a deliberate shift
+      // from the old settled-only enrichment, per the "净盈亏" product decision.
+      const pnl = s?.netPnl ?? lb.pnl;
       const score = computeScore({
         pnl,
         vol: lb.vol,
@@ -331,7 +340,7 @@ export function getSmartTags(
     out[r.address] = {
       score: r.score,
       winRate: r.win_rate,
-      realizedPnl: r.realized_pnl,
+      netPnl: r.realized_pnl,
       isWhitelist: !!r.is_whitelist,
     };
   }
@@ -395,7 +404,7 @@ export function getAllSmartTags(db: DB): Map<string, SmartTag> {
     out.set(r.address, {
       score: r.score,
       winRate: r.win_rate,
-      realizedPnl: r.realized_pnl,
+      netPnl: r.realized_pnl,
       isWhitelist: !!r.is_whitelist,
     });
   }

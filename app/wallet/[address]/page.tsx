@@ -226,19 +226,25 @@ export default function WalletPage() {
                   : "无数据"}
               </div>
             </StatCard>
-            <StatCard label="已实现盈亏">
+            <StatCard label="净盈亏">
               <div
                 className={`kpi-value ${
-                  (data.stats?.realizedPnl ?? 0) >= 0 ? "up" : "down"
+                  data.stats?.netPnl != null && data.stats.netPnl < 0
+                    ? "down"
+                    : "up"
                 }`}
+                title="Polymarket 口径净盈亏（已实现 + 当前持仓浮动盈亏），取自官方 user-pnl 曲线，与主页 Profit/loss 一致"
               >
-                {data.stats ? fmtSignedUsdCompact(data.stats.realizedPnl) : "—"}
+                {data.stats?.netPnl != null
+                  ? fmtSignedUsdCompact(data.stats.netPnl)
+                  : "—"}
               </div>
               <div className="kpi-sub">
-                ROI{" "}
+                已结算 ROI{" "}
                 {data.stats?.roi != null
                   ? `${(data.stats.roi * 100).toFixed(1)}%`
                   : "—"}
+                {data.stats?.truncated ? " · 战绩截断" : ""}
               </div>
             </StatCard>
             <StatCard label="PUSD 现金余额">

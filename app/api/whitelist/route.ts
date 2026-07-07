@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // The full smart-money whitelist for the clickable dialog: address + the same
-// score/winRate/realizedPnl the tags carry, sorted best-score first. Small
+// score/winRate/netPnl the tags carry, sorted best-score first. Small
 // table (hundreds of rows), so serving it whole is cheap.
 export async function GET() {
   try {
@@ -17,7 +17,7 @@ export async function GET() {
           address,
           score: t.score,
           winRate: t.winRate,
-          realizedPnl: t.realizedPnl,
+          netPnl: t.netPnl,
           isWhitelist: t.isWhitelist,
         }))
         .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));

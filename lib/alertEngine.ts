@@ -50,7 +50,7 @@ export interface EngineDeps {
   // Smart-wallet tags by lowercased wallet (sync SQLite lookup). Absent entries
   // mean "not smart". When the dep itself is undefined, no tagging happens and
   // smartOnly matches nothing (there is no whitelist to match against).
-  // SmartTagLabel is the label-facing slice (score/winRate/realizedPnl) —
+  // SmartTagLabel is the label-facing slice (score/winRate/netPnl) —
   // smartWallets.getSmartTags already returns a superset, zero extra queries.
   getSmart?: (wallets: string[]) => Record<string, SmartTagLabel | undefined>;
   // Batched, cached market metadata by conditionId (gamma). Powers the

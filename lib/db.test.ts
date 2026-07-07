@@ -53,6 +53,88 @@ describe("openDb", () => {
     }
   });
 
+  it("purges wallet_stats + the seed marker on the v2→v3 migration, exactly once", () => {
+    const dir = mkdtempSync(join(tmpdir(), "whaledb-"));
+    const path = join(dir, "t.sqlite");
+    try {
+      // Simulate a pre-v3 database: a cached (survivorship/truncation-biased)
+      // wallet_stats row, a claimed seed-day marker, and the v2 version marker.
+      const db1 = openDb(path);
+      db1
+        .prepare(
+          "INSERT INTO wallet_stats (wallet, win_rate, realized_pnl, roi, settled_count, truncated, fetched_at) VALUES ('0xa', 1, 22960000, 2, 400, 1, 1)",
+        )
+        .run();
+      // A manually-whitelisted smart_wallets row carrying the old biased
+      // closed-sum in realized_pnl (now mislabeled as netPnl).
+      db1
+        .prepare(
+          "INSERT INTO smart_wallets (address, score, realized_pnl, win_rate, is_whitelist, updated_at) VALUES ('0xw', 80, 22960000, 1, 1, 1)",
+        )
+        .run();
+      db1
+        .prepare(
+          "INSERT OR REPLACE INTO config (key, value) VALUES ('smart_seed_last_day', '2026-07-01')",
+        )
+        .run();
+      db1
+        .prepare(
+          "INSERT OR REPLACE INTO config (key, value) VALUES ('wallet_stats_v', '2')",
+        )
+        .run();
+      db1.close();
+
+      // Reopen: v2 marker → purge the biased cache and clear the seed marker so
+      // the whitelist re-scores on the next engine cycle.
+      const db2 = openDb(path);
+      expect(
+        (
+          db2.prepare("SELECT COUNT(*) AS c FROM wallet_stats").get() as {
+            c: number;
+          }
+        ).c,
+      ).toBe(0);
+      // smart_wallets: stale net value nulled, but the manual whitelist flag kept.
+      const w = db2
+        .prepare(
+          "SELECT realized_pnl, is_whitelist FROM smart_wallets WHERE address = '0xw'",
+        )
+        .get() as { realized_pnl: number | null; is_whitelist: number };
+      expect(w.realized_pnl).toBeNull();
+      expect(w.is_whitelist).toBe(1);
+      expect(
+        db2
+          .prepare("SELECT value FROM config WHERE key = 'smart_seed_last_day'")
+          .get(),
+      ).toBeUndefined();
+      expect(
+        (
+          db2
+            .prepare("SELECT value FROM config WHERE key = 'wallet_stats_v'")
+            .get() as { value: string }
+        ).value,
+      ).toBe("3");
+      // Re-cache a row, reopen: marker present → cache preserved (runs once).
+      db2
+        .prepare(
+          "INSERT INTO wallet_stats (wallet, win_rate, realized_pnl, roi, settled_count, truncated, fetched_at) VALUES ('0xb', 1, 5, 1, 3, 0, 1)",
+        )
+        .run();
+      db2.close();
+      const db3 = openDb(path);
+      expect(
+        (
+          db3.prepare("SELECT COUNT(*) AS c FROM wallet_stats").get() as {
+            c: number;
+          }
+        ).c,
+      ).toBe(1);
+      db3.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("runs the alerts dedup sweep exactly once via the version marker", () => {
     const dir = mkdtempSync(join(tmpdir(), "whaledb-"));
     const path = join(dir, "t.sqlite");

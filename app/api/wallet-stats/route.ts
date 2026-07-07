@@ -4,8 +4,10 @@ import { getWalletStats, type WalletStats } from "../../../lib/walletStats";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Stats are heavier than age lookups (up to 8 upstream pages per cold wallet),
-// so the per-request cap is lower; the client chunks larger sets.
+// Stats are much heavier than age lookups: a cold wallet fans out to up to
+// ~81 upstream requests (closed + open paginate to DEFAULT_MAX_PAGES=40 each,
+// plus one user-pnl call), so the per-request cap is lower and the client
+// chunks larger sets. 24h SQLite cache keeps warm wallets ~free.
 const MAX = 60;
 
 // Reject anything that isn't a proxy-wallet address before it reaches an

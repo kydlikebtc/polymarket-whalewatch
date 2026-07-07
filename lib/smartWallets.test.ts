@@ -21,7 +21,7 @@ const lbRow = (wallet: string, pnl: number, vol: number): LeaderboardRow => ({
 
 const stats = (over: Partial<WalletStats> = {}): WalletStats => ({
   winRate: 0.7,
-  realizedPnl: 500_000,
+  netPnl: 500_000,
   roi: 0.2,
   settledCount: 40,
   truncated: false,
@@ -101,8 +101,8 @@ describe("seedSmartWallets", () => {
     expect(r.enriched).toBe(2);
     const tags = getSmartTags(db, ["0xAAA", "0xBBB", "0xHOLD"]);
     expect(tags["0xaaa"]).toBeDefined();
-    // Settled realizedPnl (from stats) wins over the mark-to-market board pnl.
-    expect(tags["0xaaa"]?.realizedPnl).toBe(500_000);
+    // Authoritative netPnl (from stats) wins over the leaderboard board pnl.
+    expect(tags["0xaaa"]?.netPnl).toBe(500_000);
     expect(tags["0xaaa"]?.winRate).toBe(0.7);
     expect(tags["0xbbb"]).toBeDefined();
     expect(tags["0xhold"]).toBeUndefined();

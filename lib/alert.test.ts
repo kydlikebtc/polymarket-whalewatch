@@ -68,22 +68,22 @@ describe("second line: direction + bold amount + ¢ price", () => {
 describe("formatSmartTag", () => {
   it("renders score · win rate · realized pnl when all present", () => {
     expect(
-      formatSmartTag({ score: 72, winRate: 0.68, realizedPnl: 1_200_000 }),
+      formatSmartTag({ score: 72, winRate: 0.68, netPnl: 1_200_000 }),
     ).toBe("🏆 聪明钱 72分·胜率68%·盈$1.2M ");
   });
   it("omits null segments individually", () => {
-    expect(
-      formatSmartTag({ score: null, winRate: 0.68, realizedPnl: null }),
-    ).toBe("🏆 聪明钱 胜率68% ");
+    expect(formatSmartTag({ score: null, winRate: 0.68, netPnl: null })).toBe(
+      "🏆 聪明钱 胜率68% ",
+    );
     expect(formatSmartTag({ score: 82 })).toBe("🏆 聪明钱 82分 ");
   });
   it("degrades to the bare label when every segment is null", () => {
-    expect(
-      formatSmartTag({ score: null, winRate: null, realizedPnl: null }),
-    ).toBe("🏆 聪明钱 ");
+    expect(formatSmartTag({ score: null, winRate: null, netPnl: null })).toBe(
+      "🏆 聪明钱 ",
+    );
   });
   it("a negative realized pnl reads 亏, not 盈", () => {
-    expect(formatSmartTag({ score: null, realizedPnl: -250_000 })).toBe(
+    expect(formatSmartTag({ score: null, netPnl: -250_000 })).toBe(
       "🏆 聪明钱 亏$250K ",
     );
   });
@@ -95,7 +95,7 @@ describe("formatSmartTag", () => {
     const html = formatLargeTradeAlert(t, {
       score: 72,
       winRate: 0.68,
-      realizedPnl: 1_200_000,
+      netPnl: 1_200_000,
     });
     expect(html.split("\n")[0]).toContain(
       "🏆 聪明钱 72分·胜率68%·盈$1.2M <b>Trump",

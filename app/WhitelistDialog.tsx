@@ -7,7 +7,7 @@ type Row = {
   address: string;
   score: number | null;
   winRate: number | null;
-  realizedPnl: number | null;
+  netPnl: number | null;
   isWhitelist: boolean;
 };
 
@@ -91,7 +91,7 @@ export function WhitelistDialog({
                 <th>地址</th>
                 <th className="is-right">评分</th>
                 <th className="is-right">胜率</th>
-                <th className="is-right">已实现盈亏</th>
+                <th className="is-right">净盈亏</th>
               </tr>
             </thead>
             <tbody>
@@ -121,13 +121,11 @@ export function WhitelistDialog({
                   </td>
                   <td
                     className={`mono is-right ${
-                      (r.realizedPnl ?? 0) >= 0 ? "up" : "down"
+                      (r.netPnl ?? 0) >= 0 ? "up" : "down"
                     }`}
-                    data-label="已实现盈亏"
+                    data-label="净盈亏"
                   >
-                    {r.realizedPnl != null
-                      ? fmtSignedUsdCompact(r.realizedPnl)
-                      : "—"}
+                    {r.netPnl != null ? fmtSignedUsdCompact(r.netPnl) : "—"}
                   </td>
                 </tr>
               ))}

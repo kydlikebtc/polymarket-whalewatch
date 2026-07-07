@@ -363,7 +363,7 @@ export function AgeBadge({ ageDays }: { ageDays: number | null | undefined }) {
 // itself imports better-sqlite3 and must stay server-only).
 export type WalletStatsLite = {
   winRate: number | null;
-  realizedPnl: number;
+  netPnl: number | null; // net P/L (realized + unrealized), Polymarket-profile figure; null = unknown
   roi: number | null;
   settledCount: number;
   truncated: boolean;
@@ -433,7 +433,10 @@ export function WalletStatsBadge({
     );
   }
   const pct = Math.round((stats.winRate ?? 0) * 100);
-  const tone = stats.realizedPnl >= 0 ? "up" : "down";
+  // netPnl is the Polymarket-profile net figure (realized + unrealized), NOT the
+  // settled-only sum the rest of this badge (胜率/ROI) reflects — hence the
+  // tooltip spells it out. null = the authoritative value was unavailable.
+  const tone = stats.netPnl != null && stats.netPnl < 0 ? "down" : "up";
   // Caveat mirrors computeScore's haircut case: held-to-zero losers are now
   // merged in from /positions (survivorship fixed upstream), so the doubt
   // only remains when the record is TRUNCATED — the unfetched pages skew
@@ -444,6 +447,7 @@ export function WalletStatsBadge({
   const title =
     `已结算 ${stats.settledCount}${stats.truncated ? "+" : ""} 市场 · 胜率 ${pct}%` +
     (stats.roi != null ? ` · ROI ${(stats.roi * 100).toFixed(1)}%` : "") +
+    "\n盈亏数字为净盈亏（已实现+浮动，官方 user-pnl 口径），非上面的已结算口径" +
     survivorship;
   return (
     <span className="mono" style={{ whiteSpace: "nowrap" }}>
@@ -451,7 +455,9 @@ export function WalletStatsBadge({
       {trophy ? " " : ""}
       <span className="tip-pop" title={title} {...tipPopProps(title)}>
         {pct}% ·{" "}
-        <span className={tone}>{fmtSignedUsdCompact(stats.realizedPnl)}</span>
+        <span className={tone}>
+          {stats.netPnl != null ? fmtSignedUsdCompact(stats.netPnl) : "—"}
+        </span>
       </span>
     </span>
   );

@@ -24,7 +24,7 @@ const mk = (over: Partial<Trade> = {}): Trade =>
 const tag = (score: number | null = 80): SmartTag => ({
   score,
   winRate: 0.7,
-  realizedPnl: 100_000,
+  netPnl: 100_000,
   isWhitelist: false,
 });
 

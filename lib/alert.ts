@@ -11,13 +11,13 @@ import { cents, esc, short, urlSeg, usd, usdCompact } from "./tgFormat";
 export const WHALE_TIER_USD = 50_000;
 
 // The slice of a smart-wallet tag the alert label renders. Structurally
-// satisfied by smartWallets.SmartTag; winRate/realizedPnl optional so legacy
+// satisfied by smartWallets.SmartTag; winRate/netPnl optional so legacy
 // score-only callers/tests still typecheck. Values may be null — each null
 // segment is simply omitted from the label.
 export interface SmartTagLabel {
   score: number | null;
   winRate?: number | null;
-  realizedPnl?: number | null;
+  netPnl?: number | null; // net P/L (realized + unrealized)
 }
 
 // "🏆 聪明钱 72分·胜率68%·盈$1.2M " (trailing space; null segments omitted —
@@ -30,11 +30,11 @@ export function formatSmartTag(
   if (smart.score != null) parts.push(`${Math.round(smart.score)}分`);
   if (smart.winRate != null)
     parts.push(`胜率${Math.round(smart.winRate * 100)}%`);
-  if (smart.realizedPnl != null) {
+  if (smart.netPnl != null) {
     parts.push(
-      smart.realizedPnl < 0
-        ? `亏${usdCompact(-smart.realizedPnl)}`
-        : `盈${usdCompact(smart.realizedPnl)}`,
+      smart.netPnl < 0
+        ? `亏${usdCompact(-smart.netPnl)}`
+        : `盈${usdCompact(smart.netPnl)}`,
     );
   }
   return parts.length > 0 ? `🏆 聪明钱 ${parts.join("·")} ` : "🏆 聪明钱 ";
