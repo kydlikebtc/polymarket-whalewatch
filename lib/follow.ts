@@ -1,4 +1,8 @@
 import type { ConsensusGroup, ConsensusOptions } from "./consensus";
+import { detectConsensus } from "./consensus";
+import type { DB } from "./db";
+import type { MarketMeta } from "./gamma";
+import type { SmartTag } from "./smartWallets";
 import type { Trade } from "./types";
 
 // 纸面跟单的单仓 / 策略 / 价格纯函数。全部无副作用,便于 TDD 与复用。
@@ -75,4 +79,216 @@ export function latestPriceByAsset(trades: Trade[]): Map<string, number> {
     }
   }
   return price;
+}
+
+// ---------------------------------------------------------------------------
+// Task 5: runFollowCycle —— 纸面「共识跟单」一轮。开仓 + 结算,注入式依赖(同
+// runConsensusCycle 的写法),便于测试与复用。副作用仅落在 follow_positions 表。
+// ---------------------------------------------------------------------------
+
+// 一条启用中的跟单策略(params_json 解析结果 + 行 id)。exitRule 目前只支持
+// "settlement"(市场结算即平仓),保留字段以便后续扩展。
+interface FollowStrategy {
+  id: number;
+  minWallets: number;
+  minPerWalletUsd: number;
+  sizeUsd: number;
+  exitRule: string;
+}
+
+export interface FollowCycleDeps {
+  db: DB;
+  fetchWindow: () => Promise<{ trades: Trade[] }>;
+  getSmart: () => Map<string, SmartTag>;
+  // 现价来源:开仓时传入 now(第二个参数保留时间语义,便于将来做历史回填)。
+  fetchPrice: (asset: string, tsSec: number) => Promise<number | null>;
+  getMeta: (cids: string[]) => Promise<Record<string, MarketMeta>>;
+  nowSec?: number;
+}
+
+// params_json 是 seed/后台写入的可信来源,但 JSON.parse 后仍做一次形状校验:
+// 阈值字段缺失/非有限数会污染下游 Math.min 与 positionShares(NaN 扩散),宁可
+// 跳过该策略并留日志,也不静默开出脏仓。
+function parseStrategy(
+  id: number,
+  paramsJson: string | null,
+): FollowStrategy | null {
+  if (!paramsJson) return null;
+  let p: Record<string, unknown>;
+  try {
+    p = JSON.parse(paramsJson) as Record<string, unknown>;
+  } catch (e) {
+    console.warn(`[follow] strategy ${id}: params_json 解析失败,跳过:`, e);
+    return null;
+  }
+  const numOr = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  const minWallets = numOr(p.minWallets);
+  const minPerWalletUsd = numOr(p.minPerWalletUsd);
+  const sizeUsd = numOr(p.sizeUsd);
+  if (
+    minWallets == null ||
+    minPerWalletUsd == null ||
+    sizeUsd == null ||
+    sizeUsd <= 0
+  ) {
+    console.warn(
+      `[follow] strategy ${id}: 阈值字段无效(minWallets/minPerWalletUsd/sizeUsd),跳过`,
+    );
+    return null;
+  }
+  return {
+    id,
+    minWallets,
+    minPerWalletUsd,
+    sizeUsd,
+    exitRule: typeof p.exitRule === "string" ? p.exitRule : "settlement",
+  };
+}
+
+/**
+ * 一轮跟单模拟:
+ *  1. 空白名单(getSmart().size===0)→ 直接 no-op,与 consensus 一致(种子未跑/失败
+ *     时不应假装无信号)。
+ *  2. 读启用策略;用「所有启用策略里最松的 minWallets/minPerWalletUsd」跑一次
+ *     detectConsensus 产出候选组,再对每条策略用 qualifyingGroups 二次复筛。
+ *  3. 每个(策略 × 合格组)开一仓:先查重(UNIQUE(strategy_id,condition_id,outcome)),
+ *     再取现价(fetchPrice→窗口最近价回退),缺价/非正价则跳过等下轮;entry 用现价
+ *     而非聪明钱均价(诚实反映「我们跟进时的成本」)。INSERT OR IGNORE,changes===1
+ *     才计入 opened。
+ *  4. 结算:所有 status='open' 仓位,市场 closed 且对应 outcomePrices 有限 → 按
+ *     positionRealizedPnl 回填并标 settled。
+ */
+export async function runFollowCycle(
+  deps: FollowCycleDeps,
+): Promise<{ opened: number; settled: number }> {
+  const {
+    db,
+    fetchWindow,
+    getSmart,
+    fetchPrice,
+    getMeta,
+    nowSec = Math.floor(Date.now() / 1000),
+  } = deps;
+
+  const smart = getSmart();
+  if (smart.size === 0) {
+    // 空白名单短路:同 runConsensusCycle —— 没有可信钱包就没有可跟的共识。
+    console.warn("[follow] 白名单为空,本轮不开仓/结算(等待聪明钱种子完成)");
+    return { opened: 0, settled: 0 };
+  }
+
+  const stratRows = db
+    .prepare("SELECT id, params_json FROM follow_strategies WHERE enabled = 1")
+    .all() as { id: number; params_json: string | null }[];
+  const strategies = stratRows
+    .map((r) => parseStrategy(r.id, r.params_json))
+    .filter((s): s is FollowStrategy => s !== null);
+
+  let opened = 0;
+  const { trades } = await fetchWindow();
+  if (strategies.length > 0 && trades.length > 0) {
+    // 最松阈值 = 各启用策略的下确界,让 detectConsensus 一次产出所有策略可能命中的
+    // 候选组;再由 qualifyingGroups 对每条策略按其自身阈值复筛。
+    const loosest: ConsensusOptions = {
+      minWallets: Math.min(...strategies.map((s) => s.minWallets)),
+      minPerWalletUsd: Math.min(...strategies.map((s) => s.minPerWalletUsd)),
+    };
+    const groups = detectConsensus(trades, smart, loosest);
+    const latest = latestPriceByAsset(trades);
+    const exists = db.prepare(
+      "SELECT 1 FROM follow_positions WHERE strategy_id = ? AND condition_id = ? AND outcome = ?",
+    );
+    const ins = db.prepare(
+      `INSERT OR IGNORE INTO follow_positions
+         (strategy_id, condition_id, outcome, asset, outcome_index, title, event_slug,
+          entry_ts, entry_price, smart_avg_price, size_usd, shares, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')`,
+    );
+    for (const s of strategies) {
+      for (const g of qualifyingGroups(groups, s)) {
+        // 先查重再取价:已持仓则跳过,避免对已开仓组做无谓的现价请求。
+        if (exists.get(s.id, g.conditionId, g.outcome)) continue;
+        // 真实注入的 fetchPriceAt 在 CLOB 非 ok 时 throw —— 必须兜住,否则一次 5xx
+        // 会 reject 整轮,连带跳过后面独立的结算阶段(参考 computeAlertOutcomes)。
+        // 价格抖动只该影响这一仓的开仓,杀不死结算与其它组。
+        let priced: number | null = null;
+        try {
+          priced = await fetchPrice(g.asset, nowSec);
+        } catch (e) {
+          console.warn(`[follow] fetchPrice failed for ${g.asset}:`, e);
+        }
+        const entry = priced ?? latest.get(g.asset) ?? null;
+        if (entry == null || entry <= 0) {
+          // 缺价/异常价:不开这一仓,下轮重试(不写脏 entry_price)。
+          console.warn(
+            `[follow] strategy ${s.id} 组 ${g.conditionId}/${g.outcome}: 无有效现价(${String(
+              entry,
+            )}),跳过本轮开仓`,
+          );
+          continue;
+        }
+        const shares = positionShares(entry, s.sizeUsd);
+        const res = ins.run(
+          s.id,
+          g.conditionId,
+          g.outcome,
+          g.asset,
+          g.outcomeIndex,
+          g.title,
+          g.eventSlug,
+          nowSec,
+          entry,
+          g.avgBuyPrice,
+          s.sizeUsd,
+          shares,
+        );
+        // changes===0 说明 UNIQUE 命中(并发/竞态下已被开出),不重复计数。
+        if (res.changes === 1) opened++;
+      }
+    }
+  }
+
+  // 结算:市场 closed 即按 outcomePrices 平仓。查所有 open 仓一次性拉 meta。
+  let settled = 0;
+  const openRows = db
+    .prepare(
+      "SELECT id, condition_id, outcome_index, entry_price, size_usd FROM follow_positions WHERE status = 'open'",
+    )
+    .all() as {
+    id: number;
+    condition_id: string;
+    outcome_index: number;
+    entry_price: number;
+    size_usd: number;
+  }[];
+  if (openRows.length > 0) {
+    const cids = [...new Set(openRows.map((r) => r.condition_id))];
+    // getMeta 抛错(真实 getMarketMeta 内部已降级,但注入类型允许裸 fetcher)时
+    // 降级为空 meta:本轮不结算任何仓,而不是 reject 整轮(对齐 computeAlertOutcomes)。
+    let meta: Record<string, MarketMeta> = {};
+    try {
+      meta = await getMeta(cids);
+    } catch (e) {
+      console.warn("[follow] getMeta failed, 本轮跳过结算:", e);
+    }
+    const upd = db.prepare(
+      "UPDATE follow_positions SET status = 'settled', exit_ts = ?, exit_price = ?, realized_pnl = ? WHERE id = ?",
+    );
+    for (const row of openRows) {
+      const m = meta[row.condition_id];
+      if (!m || !m.closed) continue;
+      const exit = m.outcomePrices[row.outcome_index];
+      // outcomePrices 缺项/NaN(gamma 归一化对坏值填 NaN)→ 保持 open,下轮再试。
+      if (exit == null || !Number.isFinite(exit)) continue;
+      const realized = positionRealizedPnl(row.entry_price, exit, row.size_usd);
+      upd.run(nowSec, exit, realized, row.id);
+      settled++;
+    }
+  }
+
+  console.log(
+    `[follow] cycle done · strategies=${strategies.length} · opened=${opened} · settled=${settled}`,
+  );
+  return { opened, settled };
 }
