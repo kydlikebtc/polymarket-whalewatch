@@ -3,6 +3,38 @@
 import { useEffect, useRef, useState } from "react";
 import type { SmartInfoLite, WalletStatsLite } from "./ui";
 
+// Pure split of a /api/wallet-stats response for one batch (extracted for unit
+// tests, same pattern as useWalletAges.mergeAgeBatch). Distinguishes the two
+// null-ish outcomes the server can return per wallet:
+//  - a WalletStats object (incl. settledCount:0 = genuinely no settled history)
+//    → resolved, merge into state, keep it `requested`.
+//  - null / missing = the settled-record fetch FAILED (transient, e.g. data-api
+//    429 under a cold burst; the server did NOT cache it) → `retry`, so the
+//    caller releases it and a later refresh re-requests it instead of pinning a
+//    sticky "—". smart flags come from the local table and always resolve.
+export function mergeStatsBatch(
+  batch: string[],
+  json: {
+    stats?: Record<string, WalletStatsLite | null>;
+    smart?: Record<string, SmartInfoLite>;
+  },
+): {
+  stats: Record<string, WalletStatsLite>;
+  smart: Record<string, SmartInfoLite | null>;
+  retry: string[];
+} {
+  const stats: Record<string, WalletStatsLite> = {};
+  const smart: Record<string, SmartInfoLite | null> = {};
+  const retry: string[] = [];
+  for (const w of batch) {
+    smart[w] = json.smart?.[w] ?? null;
+    const st = json.stats?.[w];
+    if (st == null) retry.push(w);
+    else stats[w] = st;
+  }
+  return { stats, smart, retry };
+}
+
 // Lazily enrich wallet addresses with settled-market stats + smart-wallet flags
 // via /api/wallet-stats.
 //
@@ -57,12 +89,14 @@ export function useWalletIntel(wallets: (string | undefined)[]) {
             stats?: Record<string, WalletStatsLite | null>;
             smart?: Record<string, SmartInfoLite>;
           };
-          const nextStats: Record<string, WalletStatsLite | null> = {};
-          const nextSmart: Record<string, SmartInfoLite | null> = {};
-          for (const w of batch) {
-            nextStats[w] = json.stats?.[w] ?? null;
-            nextSmart[w] = json.smart?.[w] ?? null;
-          }
+          const {
+            stats: nextStats,
+            smart: nextSmart,
+            retry,
+          } = mergeStatsBatch(batch, json);
+          // Release failed wallets so a later refresh re-requests them (badge
+          // shows the loading "…" until the retry lands) instead of a sticky "—".
+          for (const w of retry) requested.current.delete(w);
           // Never discard a completed response — merging is idempotent.
           setStats((prev) => ({ ...prev, ...nextStats }));
           setSmart((prev) => ({ ...prev, ...nextSmart }));

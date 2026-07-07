@@ -17,15 +17,17 @@ const PAGE_SIZE = 50;
 // Closed/open pagination cap. CRITICAL (verified live 2026-07): /closed-positions
 // is sorted by realizedPnl DESCENDING, so the first pages hold a wallet's most
 // PROFITABLE settled positions while its losses sit in the deep tail (e.g.
-// offset 0 → +$2.07m, offset 4000 → −$1.3k). The old 8-page (400-row) cap
-// therefore fed winRate/roi a winners-only slice for any high-volume wallet —
-// inflating both — which is exactly the smart money we track. netPnl no longer
-// depends on this (it comes from PNL_API); winRate/roi still do, so the cap is
-// raised to cover realistic wallets and the record is honestly flagged
-// `truncated` beyond it. /closed-positions offset is NOT capped at 3000 (unlike
-// /activity & /trades — verified offset=4000 returns rows), so deeper pagination
-// is possible; the cap trades tail-completeness for per-wallet latency.
-const DEFAULT_MAX_PAGES = 40; // ~2000 settled positions
+// offset 0 → +$2.07m, offset 4000 → −$1.3k). The old 8-page (400-row) cap fed
+// winRate/roi a winners-only slice for any high-volume wallet — inflating both.
+// netPnl no longer depends on this (it comes from PNL_API, one request on a
+// SEPARATE host); winRate/roi still do. The cap balances two failure modes:
+// too low re-inflates winRate on high-volume wallets; too high multiplies the
+// per-wallet upstream fan-out (each page is one data-api request) and, when the
+// dashboard cold-loads dozens of wallets at once, storms data-api's ~150req/10s
+// limit into 429s. 20 pages (~1000 settled positions) covers the vast majority;
+// beyond it the record is honestly flagged `truncated`. offset is NOT capped at
+// 3000 here (unlike /activity & /trades — verified offset=4000 returns rows).
+const DEFAULT_MAX_PAGES = 20; // ~1000 settled positions
 
 // IMPORTANT unit note (verified live): `totalBought` is SHARES, not USD —
 // realizedPnl === totalBought * (curPrice - avgPrice) holds exactly on real
@@ -275,7 +277,10 @@ export async function getWalletStats(
   } = {},
 ): Promise<Record<string, WalletStats | null>> {
   const {
-    concurrency = 4,
+    // 3 (not 4): each cold wallet now fans out to closed+open pagination + the
+    // user-pnl call, so 4-wide over a dashboard's worth of cold wallets storms
+    // data-api's ~150req/10s limit (429s → exhausted retries → null → "—").
+    concurrency = 3,
     ttlSec = DEFAULT_TTL_SEC,
     fetcher = fetchWalletStats,
     nowSec = Math.floor(Date.now() / 1000),
