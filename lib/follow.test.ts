@@ -6,6 +6,7 @@ import {
   qualifyingGroups,
   latestPriceByAsset,
   computeStrategyMetrics,
+  buildFollowView,
 } from "./follow";
 import type { FollowPositionRow } from "./follow";
 import type { ConsensusGroup, ConsensusWallet } from "./consensus";
@@ -207,5 +208,138 @@ describe("computeStrategyMetrics", () => {
     );
     expect(m.byCategory["Crypto"]).toEqual({ realized: 100, settledCount: 1 });
     expect(m.byCategory["未分类"]).toEqual({ realized: -50, settledCount: 1 });
+  });
+});
+
+// --- Task 8: buildFollowView(策略行 + 全部仓位 + 分类 → 每策略视图) ---
+// 复用真实入参形状(follow_strategies 行:enabled 为 0/1,params_json 可空)的桩工厂。
+type StratRow = Parameters<typeof buildFollowView>[0][number];
+const strat = (o: Partial<StratRow>): StratRow => ({
+  id: 1,
+  name: "保守",
+  enabled: 1,
+  params_json: JSON.stringify({
+    minWallets: 3,
+    minPerWalletUsd: 10000,
+    sizeUsd: 500,
+    exitRule: "settlement",
+  }),
+  ...o,
+});
+
+describe("buildFollowView", () => {
+  it("按 strategy_id 分组:各策略只见到自己的仓位,顺序沿用入参(id 升序)", () => {
+    const { strategies } = buildFollowView(
+      [strat({ id: 1 }), strat({ id: 2, name: "激进" })],
+      [
+        pos({ strategy_id: 1, condition_id: "a" }),
+        pos({ strategy_id: 1, condition_id: "b" }),
+        pos({ strategy_id: 2, condition_id: "c" }),
+      ],
+      {},
+    );
+    expect(strategies.map((v) => v.id)).toEqual([1, 2]);
+    expect(strategies[0].metrics.settledCount).toBe(2);
+    expect(strategies[1].metrics.settledCount).toBe(1);
+    expect(strategies[0].settled.every((p) => p.strategy_id === 1)).toBe(true);
+    expect(strategies[1].settled.every((p) => p.strategy_id === 2)).toBe(true);
+  });
+
+  it("open/settled 分列,settled 按 exit_ts 降序(最新在前)", () => {
+    const { strategies } = buildFollowView(
+      [strat({ id: 1 })],
+      [
+        pos({ strategy_id: 1, condition_id: "s1", exit_ts: 100 }),
+        pos({ strategy_id: 1, condition_id: "s2", exit_ts: 300 }),
+        pos({ strategy_id: 1, condition_id: "s3", exit_ts: 200 }),
+        pos({
+          strategy_id: 1,
+          condition_id: "o1",
+          status: "open",
+          exit_ts: null,
+          exit_price: null,
+          realized_pnl: null,
+        }),
+      ],
+      {},
+    );
+    const v = strategies[0];
+    expect(v.open.map((p) => p.condition_id)).toEqual(["o1"]);
+    expect(v.settled.map((p) => p.exit_ts)).toEqual([300, 200, 100]);
+  });
+
+  it("params_json 正常解析,enabled=1 → true", () => {
+    const { strategies } = buildFollowView(
+      [
+        strat({
+          id: 1,
+          params_json: JSON.stringify({
+            minWallets: 2,
+            minPerWalletUsd: 5000,
+            sizeUsd: 500,
+            exitRule: "settlement",
+          }),
+        }),
+      ],
+      [],
+      {},
+    );
+    expect(strategies[0].params).toEqual({
+      minWallets: 2,
+      minPerWalletUsd: 5000,
+      sizeUsd: 500,
+      exitRule: "settlement",
+    });
+    expect(strategies[0].enabled).toBe(true);
+  });
+
+  it("params_json 损坏/为空/缺字段 → 安全默认,不抛", () => {
+    const { strategies } = buildFollowView(
+      [
+        strat({ id: 1, params_json: "{不是合法json" }),
+        strat({ id: 2, params_json: null }),
+        strat({ id: 3, params_json: JSON.stringify({ minWallets: 4 }) }),
+      ],
+      [],
+      {},
+    );
+    const dflt = {
+      minWallets: 0,
+      minPerWalletUsd: 0,
+      sizeUsd: 0,
+      exitRule: "settlement",
+    };
+    expect(strategies[0].params).toEqual(dflt);
+    expect(strategies[1].params).toEqual(dflt);
+    // 缺字段:已有的 minWallets 保留,其余退默认。
+    expect(strategies[2].params).toEqual({ ...dflt, minWallets: 4 });
+  });
+
+  it("enabled=0 → false", () => {
+    const { strategies } = buildFollowView(
+      [strat({ id: 1, enabled: 0 })],
+      [],
+      {},
+    );
+    expect(strategies[0].enabled).toBe(false);
+  });
+
+  it("categoryByCid 透传给 metrics.byCategory", () => {
+    const { strategies } = buildFollowView(
+      [strat({ id: 1 })],
+      [
+        pos({ strategy_id: 1, condition_id: "a", realized_pnl: 100 }),
+        pos({ strategy_id: 1, condition_id: "b", realized_pnl: -50 }),
+      ],
+      { a: "Crypto" },
+    );
+    expect(strategies[0].metrics.byCategory["Crypto"]).toEqual({
+      realized: 100,
+      settledCount: 1,
+    });
+    expect(strategies[0].metrics.byCategory["未分类"]).toEqual({
+      realized: -50,
+      settledCount: 1,
+    });
   });
 });

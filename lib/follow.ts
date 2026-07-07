@@ -432,3 +432,100 @@ export function computeStrategyMetrics(
     byCategory,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Task 8: buildFollowView —— /api/follow 只读接口的纯整形层。把「策略行 + 全部仓位
+// + 分类映射」组装成每策略一块的视图(参数、指标、open/settled 两列)。无副作用、
+// 不修改入参,便于单测与复用;route 层只负责开库、取行、抓分类,整形逻辑全在这里。
+// ---------------------------------------------------------------------------
+
+export interface FollowStrategyView {
+  id: number;
+  name: string;
+  enabled: boolean;
+  params: {
+    minWallets: number;
+    minPerWalletUsd: number;
+    sizeUsd: number;
+    exitRule: string;
+  };
+  metrics: StrategyMetrics;
+  open: FollowPositionRow[]; // status==='open'
+  settled: FollowPositionRow[]; // status==='settled',按 exit_ts 降序(最新在前)
+}
+
+/**
+ * params_json → 展示用参数。与 parseStrategy(开仓侧,失败即跳过整条策略)不同:
+ * 这里是只读展示,任何字段缺失/坏 JSON 都退到安全默认而非丢弃策略 —— 接口要始终
+ * 能把策略列出来(哪怕参数是占位默认),让前端可见其存在与仓位/战绩。每次返回全新
+ * 对象,避免共享可变默认值。
+ */
+function parseParamsView(
+  paramsJson: string | null,
+): FollowStrategyView["params"] {
+  const fallback = {
+    minWallets: 0,
+    minPerWalletUsd: 0,
+    sizeUsd: 0,
+    exitRule: "settlement",
+  };
+  if (!paramsJson) return fallback;
+  let p: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(paramsJson);
+    if (!parsed || typeof parsed !== "object") return fallback;
+    p = parsed as Record<string, unknown>;
+  } catch {
+    return fallback;
+  }
+  const numOr = (v: unknown, d: number): number =>
+    typeof v === "number" && Number.isFinite(v) ? v : d;
+  return {
+    minWallets: numOr(p.minWallets, 0),
+    minPerWalletUsd: numOr(p.minPerWalletUsd, 0),
+    sizeUsd: numOr(p.sizeUsd, 0),
+    exitRule: typeof p.exitRule === "string" ? p.exitRule : "settlement",
+  };
+}
+
+/**
+ * 组装 /api/follow 响应体。
+ *  - 按 strategy_id 把 positions 分组;每策略 metrics 用「该策略全部仓位」算。
+ *  - open/settled 分列;settled 按 exit_ts 降序(最新在前),exit_ts 缺失按 0 兜底
+ *    排到末尾。filter/sort 均作用于新数组,不修改入参 positions。
+ *  - 策略顺序沿用入参顺序(route 用 ORDER BY id,故稳定按 id 升序)。
+ */
+export function buildFollowView(
+  strategies: {
+    id: number;
+    name: string;
+    enabled: number;
+    params_json: string | null;
+  }[],
+  positions: FollowPositionRow[],
+  categoryByCid: Record<string, string | null>,
+): { strategies: FollowStrategyView[] } {
+  const byStrategy = new Map<number, FollowPositionRow[]>();
+  for (const p of positions) {
+    const arr = byStrategy.get(p.strategy_id);
+    if (arr) arr.push(p);
+    else byStrategy.set(p.strategy_id, [p]);
+  }
+
+  const views: FollowStrategyView[] = strategies.map((s) => {
+    const own = byStrategy.get(s.id) ?? [];
+    return {
+      id: s.id,
+      name: s.name,
+      enabled: !!s.enabled,
+      params: parseParamsView(s.params_json),
+      metrics: computeStrategyMetrics(own, categoryByCid),
+      open: own.filter((p) => p.status === "open"),
+      settled: own
+        .filter((p) => p.status === "settled")
+        .sort((a, b) => (b.exit_ts ?? 0) - (a.exit_ts ?? 0)),
+    };
+  });
+
+  return { strategies: views };
+}
