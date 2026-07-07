@@ -15,11 +15,12 @@ type StrategyRow = {
 };
 
 // follow_positions row read for the view: exactly the FollowPositionRow columns
-// PLUS event_slug — the route needs the slug to look up each position's event
-// category, but FollowPositionRow itself doesn't carry it. The extra field is
-// structurally harmless when passed to buildFollowView (which only reads the
-// FollowPositionRow fields).
-type PositionRow = FollowPositionRow & { event_slug: string };
+// PLUS event_slug + title — the route needs the slug to look up each position's
+// event category, and the /follow board wants the human market title next to the
+// outcome. Both are structurally harmless when passed to buildFollowView (which
+// only reads the FollowPositionRow fields) and flow through untouched into the
+// open/settled arrays, so the client can render title/slug without extra fetches.
+type PositionRow = FollowPositionRow & { event_slug: string; title: string };
 
 // Read-only: strategies + their paper positions + per-strategy metrics. No live
 // upstream fetch except the (cached, degradable) event-category enrichment.
@@ -35,7 +36,7 @@ export async function GET() {
 
       const positions = db
         .prepare(
-          `SELECT strategy_id, condition_id, outcome, event_slug, size_usd,
+          `SELECT strategy_id, condition_id, outcome, title, event_slug, size_usd,
                   entry_price, smart_avg_price, shares, status, entry_ts,
                   exit_ts, exit_price, realized_pnl
              FROM follow_positions`,
@@ -72,6 +73,9 @@ export async function GET() {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[/api/follow] failed:", message);
-    return Response.json({ strategies: [], error: message }, { status: 500 });
+    // Degrade to HTTP 200 + { strategies: [], error } like every other read-only
+    // route (consensus/accumulation): the page reads the body's error field and
+    // renders a graceful callout instead of a hard fetch rejection on a 500.
+    return Response.json({ strategies: [], error: message });
   }
 }
