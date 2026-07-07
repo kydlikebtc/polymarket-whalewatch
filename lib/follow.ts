@@ -104,6 +104,11 @@ export interface FollowCycleDeps {
   // 现价来源:开仓时传入 now(第二个参数保留时间语义,便于将来做历史回填)。
   fetchPrice: (asset: string, tsSec: number) => Promise<number | null>;
   getMeta: (cids: string[]) => Promise<Record<string, MarketMeta>>;
+  // 新鲜度闸门(秒):只对「最近一笔合格成交距 now <= freshSec」的共识组开仓。
+  // 默认 1800(30min)。滚动 6h 检测窗口会重复看见几小时前形成的共识 —— 无此闸门
+  // 时一启动就会把每个历史共识按当前价补开一遍(接飞刀:信号价 64¢、现价已崩到 13¢
+  // 且市场已结算)。生效后现价自然贴近信号价,无需额外的进场价偏离护栏。
+  freshSec?: number;
   nowSec?: number;
 }
 
@@ -152,13 +157,18 @@ function parseStrategy(
  *  1. 空白名单(getSmart().size===0)→ 直接 no-op,与 consensus 一致(种子未跑/失败
  *     时不应假装无信号)。
  *  2. 读启用策略;用「所有启用策略里最松的 minWallets/minPerWalletUsd」跑一次
- *     detectConsensus 产出候选组,再对每条策略用 qualifyingGroups 二次复筛。
- *  3. 每个(策略 × 合格组)开一仓:先查重(UNIQUE(strategy_id,condition_id,outcome)),
- *     再取现价(fetchPrice→窗口最近价回退),缺价/非正价则跳过等下轮;entry 用现价
- *     而非聪明钱均价(诚实反映「我们跟进时的成本」)。INSERT OR IGNORE,changes===1
- *     才计入 opened。
- *  4. 结算:所有 status='open' 仓位,市场 closed 且对应 outcomePrices 有限 → 按
- *     positionRealizedPnl 回填并标 settled。
+ *     detectConsensus 产出候选组,再用新鲜度闸门(nowSec - g.lastTs <= freshSec)
+ *     筛掉陈旧组 —— 只跟最近成交的共识,不补开历史/接飞刀。
+ *  3. 一次性取 meta:对「新鲜候选组的 distinct condition_id」∪「现有 open 仓的
+ *     condition_id」调用 getMeta(抛错则降级为空 meta,不 reject 整轮);开仓阶段
+ *     用它跳过已 closed 的市场,结算阶段复用同一份。
+ *  4. 每个(策略 × 合格新鲜组)开一仓:先查重(UNIQUE(strategy_id,condition_id,outcome)),
+ *     若市场 meta.closed===true 跳过(meta 缺失=未知≠已结算,仍照常开),再取现价
+ *     (fetchPrice→窗口最近价回退),缺价/非正价则跳过等下轮;entry 用现价而非聪明钱
+ *     均价(诚实反映「我们跟进时的成本」)。INSERT OR IGNORE,changes===1 才计入 opened。
+ *  5. 结算:开仓前已存在的 status='open' 仓位,市场 closed 且对应 outcomePrices 有限
+ *     → 按 positionRealizedPnl 回填并标 settled。本轮新开的仓必落在非 closed 市场
+ *     (上一步已跳过 closed),故同轮不会被结算,不必纳入结算集。
  */
 export async function runFollowCycle(
   deps: FollowCycleDeps,
@@ -169,6 +179,7 @@ export async function runFollowCycle(
     getSmart,
     fetchPrice,
     getMeta,
+    freshSec = 1800,
     nowSec = Math.floor(Date.now() / 1000),
   } = deps;
 
@@ -186,8 +197,12 @@ export async function runFollowCycle(
     .map((r) => parseStrategy(r.id, r.params_json))
     .filter((s): s is FollowStrategy => s !== null);
 
-  let opened = 0;
   const { trades } = await fetchWindow();
+
+  // 新鲜候选组:先跑 detectConsensus,再用新鲜度闸门筛掉陈旧组。滚动窗口会反复看见
+  // 几小时前形成的共识 —— 只有「最近一笔合格成交(g.lastTs)距 now <= freshSec」的组
+  // 才够新鲜,值得按当前价开仓;陈旧组一律不开(否则接飞刀:信号价与现价早已脱节)。
+  let freshGroups: ConsensusGroup[] = [];
   if (strategies.length > 0 && trades.length > 0) {
     // 最松阈值 = 各启用策略的下确界,让 detectConsensus 一次产出所有策略可能命中的
     // 候选组;再由 qualifyingGroups 对每条策略按其自身阈值复筛。
@@ -196,6 +211,49 @@ export async function runFollowCycle(
       minPerWalletUsd: Math.min(...strategies.map((s) => s.minPerWalletUsd)),
     };
     const groups = detectConsensus(trades, smart, loosest);
+    freshGroups = groups.filter((g) => nowSec - g.lastTs <= freshSec);
+    const stale = groups.length - freshGroups.length;
+    if (stale > 0) {
+      console.log(
+        `[follow] 新鲜度闸门:跳过 ${stale} 个陈旧共识组(最近成交距 now > ${freshSec}s),不补开历史`,
+      );
+    }
+  }
+
+  // 开仓前已存在的 open 仓 —— 结算集(本轮新开的仓必落在非 closed 市场,不必纳入)。
+  const openRows = db
+    .prepare(
+      "SELECT id, condition_id, outcome_index, entry_price, size_usd FROM follow_positions WHERE status = 'open'",
+    )
+    .all() as {
+    id: number;
+    condition_id: string;
+    outcome_index: number;
+    entry_price: number;
+    size_usd: number;
+  }[];
+
+  // 一次性取 meta:新鲜候选组 ∪ 现有 open 仓的 distinct condition_id。开仓阶段判 closed、
+  // 结算阶段复用同一份。getMeta 抛错(真实 getMarketMeta 内部已降级,但注入类型允许裸
+  // fetcher)降级为空 meta —— 不 reject 整轮(对齐 computeAlertOutcomes);此时开仓侧
+  // 视为「市场状态未知」照常开(缺失≠已结算),结算侧本轮不平任何仓。
+  const metaCids = [
+    ...new Set([
+      ...freshGroups.map((g) => g.conditionId),
+      ...openRows.map((r) => r.condition_id),
+    ]),
+  ];
+  let meta: Record<string, MarketMeta> = {};
+  if (metaCids.length > 0) {
+    try {
+      meta = await getMeta(metaCids);
+    } catch (e) {
+      console.warn("[follow] getMeta failed, 本轮跳过 closed 判定与结算:", e);
+    }
+  }
+
+  let opened = 0;
+  if (freshGroups.length > 0) {
     const latest = latestPriceByAsset(trades);
     const exists = db.prepare(
       "SELECT 1 FROM follow_positions WHERE strategy_id = ? AND condition_id = ? AND outcome = ?",
@@ -207,9 +265,17 @@ export async function runFollowCycle(
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')`,
     );
     for (const s of strategies) {
-      for (const g of qualifyingGroups(groups, s)) {
+      for (const g of qualifyingGroups(freshGroups, s)) {
         // 先查重再取价:已持仓则跳过,避免对已开仓组做无谓的现价请求。
         if (exists.get(s.id, g.conditionId, g.outcome)) continue;
+        // 已结算市场不开仓:meta.closed===true 才跳过;meta 缺失(未知)≠已结算,仍照常
+        // 开(严格 ===true,别把 undefined/false 误判成 closed)。
+        if (meta[g.conditionId]?.closed === true) {
+          console.warn(
+            `[follow] strategy ${s.id} 组 ${g.conditionId}/${g.outcome}: 市场已结算(closed),跳过开仓`,
+          );
+          continue;
+        }
         // 真实注入的 fetchPriceAt 在 CLOB 非 ok 时 throw —— 必须兜住,否则一次 5xx
         // 会 reject 整轮,连带跳过后面独立的结算阶段(参考 computeAlertOutcomes)。
         // 价格抖动只该影响这一仓的开仓,杀不死结算与其它组。
@@ -250,29 +316,9 @@ export async function runFollowCycle(
     }
   }
 
-  // 结算:市场 closed 即按 outcomePrices 平仓。查所有 open 仓一次性拉 meta。
+  // 结算:开仓前已存在的 open 仓,市场 closed 即按 outcomePrices 平仓(复用上面同一份 meta)。
   let settled = 0;
-  const openRows = db
-    .prepare(
-      "SELECT id, condition_id, outcome_index, entry_price, size_usd FROM follow_positions WHERE status = 'open'",
-    )
-    .all() as {
-    id: number;
-    condition_id: string;
-    outcome_index: number;
-    entry_price: number;
-    size_usd: number;
-  }[];
   if (openRows.length > 0) {
-    const cids = [...new Set(openRows.map((r) => r.condition_id))];
-    // getMeta 抛错(真实 getMarketMeta 内部已降级,但注入类型允许裸 fetcher)时
-    // 降级为空 meta:本轮不结算任何仓,而不是 reject 整轮(对齐 computeAlertOutcomes)。
-    let meta: Record<string, MarketMeta> = {};
-    try {
-      meta = await getMeta(cids);
-    } catch (e) {
-      console.warn("[follow] getMeta failed, 本轮跳过结算:", e);
-    }
     const upd = db.prepare(
       "UPDATE follow_positions SET status = 'settled', exit_ts = ?, exit_price = ?, realized_pnl = ? WHERE id = ?",
     );

@@ -168,9 +168,21 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
     db.prepare(
       "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status) VALUES (1,'c2','Yes','tok2',0,0.5,500,1000,'open')",
     ).run();
+    // 成交需落在新鲜度窗口内(nowSec=3000、ts=2000 → age 1000s<1800),否则新鲜度闸门
+    // 会拦下开仓,本用例考察的是「fetchPrice 抛错不掀翻整轮」而非陈旧组过滤。
     const trades = [
-      trade({ proxyWallet: "w1", transactionHash: "h1", size: 10000 }),
-      trade({ proxyWallet: "w2", transactionHash: "h2", size: 10000 }),
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "h1",
+        size: 10000,
+        timestamp: 2000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "h2",
+        size: 10000,
+        timestamp: 2000,
+      }),
     ];
     const closed: MarketMeta = {
       conditionId: "c2",
@@ -229,6 +241,103 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
       .prepare("SELECT status FROM follow_positions WHERE condition_id='c1'")
       .get() as { status: string };
     expect(pos.status).toBe("open");
+    db.close();
+  });
+});
+
+// 新鲜度闸门 + 跳过已结算市场:消除「一启动就把过去 6h 里形成过的每个共识按当前价
+// 补开一遍仓」的接飞刀 —— 只跟 freshSec(默认 1800s)内最近成交的共识,且不给已 closed
+// 的市场开仓。两笔各净买 $6k(size=10000@0.6),满足默认策略阈值。
+describe("runFollowCycle 新鲜度闸门 + 跳过已结算市场", () => {
+  const bigTrades = (ts: number): Trade[] => [
+    trade({
+      proxyWallet: "w1",
+      transactionHash: "h1",
+      size: 10000,
+      timestamp: ts,
+    }),
+    trade({
+      proxyWallet: "w2",
+      transactionHash: "h2",
+      size: 10000,
+      timestamp: ts,
+    }),
+  ];
+
+  it("陈旧共识(lastTs 距 now 超过 30min)一律不开仓", async () => {
+    const db = openDb(":memory:");
+    // ts=1000、nowSec=3000 → age=2000s>1800 → 陈旧,不该补开历史/接飞刀。
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: bigTrades(1000) }),
+      getSmart: smart,
+      fetchPrice: async () => 0.63,
+      getMeta: async () => ({}),
+      nowSec: 3000,
+    });
+    expect(r.opened).toBe(0);
+    const cnt = db
+      .prepare("SELECT COUNT(*) AS n FROM follow_positions")
+      .get() as { n: number };
+    expect(cnt.n).toBe(0);
+    db.close();
+  });
+
+  it("新鲜共识(lastTs 距 now 在 30min 内)照常开仓", async () => {
+    const db = openDb(":memory:");
+    // ts=1000、nowSec=2000 → age=1000s<1800 → 新鲜,开仓。
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: bigTrades(1000) }),
+      getSmart: smart,
+      fetchPrice: async () => 0.63,
+      getMeta: async () => ({}),
+      nowSec: 2000,
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    db.close();
+  });
+
+  it("新鲜但市场已 closed → 不开仓(不该开一个已结算的仓)", async () => {
+    const db = openDb(":memory:");
+    const closed: MarketMeta = {
+      conditionId: "c1",
+      closed: true,
+      outcomePrices: [1, 0],
+      outcomes: ["Yes", "No"],
+      volume24hr: null,
+      liquidity: null,
+      endDate: null,
+      category: null,
+    };
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: bigTrades(1000) }),
+      getSmart: smart,
+      fetchPrice: async () => 0.63,
+      getMeta: async () => ({ c1: closed }),
+      nowSec: 2000,
+    });
+    expect(r.opened).toBe(0);
+    const cnt = db
+      .prepare("SELECT COUNT(*) AS n FROM follow_positions")
+      .get() as { n: number };
+    expect(cnt.n).toBe(0);
+    db.close();
+  });
+
+  it("新鲜且 meta 缺失(未知≠已结算)→ 照常开仓", async () => {
+    const db = openDb(":memory:");
+    // getMeta 对该 cid 返回空对象:市场状态未知,不能当成已结算而拒开。
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: bigTrades(1000) }),
+      getSmart: smart,
+      fetchPrice: async () => 0.63,
+      getMeta: async () => ({}),
+      nowSec: 2000,
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
     db.close();
   });
 });
