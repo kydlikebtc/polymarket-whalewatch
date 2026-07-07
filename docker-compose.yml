@@ -1,0 +1,24 @@
+services:
+    whalewatch:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        image: polymarket-whalewatch:latest
+        container_name: polymarket-whalewatch
+        restart: unless-stopped
+        # Loads TELEGRAM_*, LARGE_THRESHOLDS, POLL_INTERVAL_MS from .env.
+        env_file:
+            - .env
+        environment:
+            # Fixed in-container values; override the host PORT and DB path so the
+            # dashboard + embedded engine agree on the volume-backed SQLite file.
+            PORT: '3000'
+            DASH_DB: /app/data/data.sqlite
+        ports:
+            # host:container — change the left side to expose a different host port.
+            - '61001:3000'
+        volumes:
+            - whalewatch-data:/app/data
+
+volumes:
+    whalewatch-data:
