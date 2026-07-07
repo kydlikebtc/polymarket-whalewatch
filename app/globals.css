@@ -546,6 +546,15 @@ h3 {
 .is-right {
   text-align: right;
 }
+/* `.is-right` (0,1,0) alone loses to `.ds-table th { text-align:left }` (0,1,1),
+   which left the HEADER of a right-aligned column stuck at the left while its
+   cells sat right — a visible header/content misalignment. This higher-
+   specificity rule makes a right-aligned column's header line up with its
+   cells, across every table. */
+.ds-table th.is-right,
+.ds-table--compact th.is-right {
+  text-align: right;
+}
 
 /* compact nested table (e.g. expandable detail rows) — non-sticky, denser */
 .ds-table--compact {
