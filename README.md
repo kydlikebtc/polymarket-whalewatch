@@ -212,6 +212,7 @@ docs/plans/ design + implementation docs
 - [x] Wallet track-record badges + full dossier page
 - [x] Market-context enrichment (impact ratio · liquidity · pre-settlement rush condition)
 - [x] Validation loop: 1h/24h follow-through + settlement backfill on every alert
+- [x] Consensus-follow **paper simulation** (`/follow` board — forward paper P&L, settlement-only equity curve, slippage vs smart-money entry, per-strategy A/B; zero real capital)
 - [ ] Accumulation → Telegram alerts (stateful, tier-crossing dedup)
 - [ ] Event-level accumulation (across correlated sub-markets)
 - [ ] Threshold calibration via backtesting (needs an opt-in trade archive — everything above is query-only)
