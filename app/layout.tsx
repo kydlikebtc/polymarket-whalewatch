@@ -21,6 +21,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         {/* Fonts via <link> (not next/font) so the build never blocks on a
             network fetch and degrades gracefully to system fonts offline. */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="icon" href="/favicon.ico" />
         <link
           rel="preconnect"
           href="https://fonts.gstatic.com"
