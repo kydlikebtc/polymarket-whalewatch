@@ -262,6 +262,30 @@ export function DisagreementSection({
             const isOpen = expanded.has(key);
             const tiltPctLabel = Math.round(m.tiltPct * 100);
             const lead = m.sides[0];
+            // A settled market's tilt is moot — show the resolved winner instead
+            // (mirrors the consensus board's 已结算 badge). Settled = gamma's
+            // `closed` flag OR a side price pinned to 0/1; winner = the side that
+            // resolved toward 1 (null if a third outcome won — both sides at ~0).
+            const settled =
+              m.closed ||
+              m.sides.some(
+                (s) =>
+                  s.currentPrice != null &&
+                  (s.currentPrice >= 0.999 || s.currentPrice <= 0.001),
+              );
+            const topSide = settled
+              ? [...m.sides]
+                  .filter((s) => s.currentPrice != null)
+                  .sort(
+                    (a, b) => (b.currentPrice ?? 0) - (a.currentPrice ?? 0),
+                  )[0]
+              : null;
+            const winnerOutcome =
+              topSide &&
+              topSide.currentPrice != null &&
+              topSide.currentPrice > 0.5
+                ? topSide.outcome
+                : null;
             return (
               <Fragment key={key}>
                 <tr
@@ -316,7 +340,11 @@ export function DisagreementSection({
                     </div>
                   </td>
                   <td className="is-right" data-label="倾斜">
-                    {m.tilt === "lopsided" ? (
+                    {settled ? (
+                      <Tag variant="default">
+                        已结算{winnerOutcome ? ` · ${winnerOutcome} 胜` : ""}
+                      </Tag>
+                    ) : m.tilt === "lopsided" ? (
                       <Tag variant="brand">
                         {lead?.outcome} 倒向 {tiltPctLabel}%
                       </Tag>
