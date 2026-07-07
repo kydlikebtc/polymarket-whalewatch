@@ -14,12 +14,15 @@ import {
   Field,
   Icon,
   Segmented,
+  SoundToggle,
   StatCard,
   Tag,
   WalletStatsBadge,
   type SmartInfoLite,
   type WalletStatsLite,
 } from "../ui";
+import { useSoundToggle } from "../useSound";
+import { useNewRecordChime } from "../useNewRecordChime";
 import { useWalletIntel } from "../useWalletIntel";
 import { useWalletAges } from "../useWalletAges";
 import { useAutoRetryOnError } from "../autoRetry";
@@ -342,6 +345,7 @@ export default function AccumulationPage() {
   const [data, setData] = useState<AccumResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [lastRefreshed, setLastRefreshed] = useState<string>("");
+  const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
   // Local text state for the custom net input so typing intermediate values
   // doesn't immediately refetch with garbage.
   const [customText, setCustomText] = useState<string>("");
@@ -436,6 +440,24 @@ export default function AccumulationPage() {
     load();
   }, [urlReady, load]);
 
+  // Optional 30s auto-refresh.
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
+  }, [autoRefresh, load]);
+
+  // New-record chime: ring when a same-filter refresh surfaces a new
+  // (wallet·market·outcome) accumulation group (a filter change reseeds silently).
+  const { soundOn, toggle } = useSoundToggle();
+  useNewRecordChime(
+    data
+      ? `${data.filters.floor}|${data.filters.hours}|${data.filters.minNetUsd}`
+      : null,
+    (data?.groups ?? []).map(rowKey),
+    soundOn,
+  );
+
   // One-shot auto retry: a cold upstream cache 408s the deep pull (first load
   // AND filter switches — a new floor:hours baseKey is a new cold query); our
   // failed attempts warm it, so a single delayed retry usually succeeds.
@@ -525,17 +547,28 @@ export default function AccumulationPage() {
 
   return (
     <main className="ds-main">
-      <header style={{ marginBottom: "var(--s-4)" }}>
-        <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-          🧩 拆单 / 累计买入榜
-        </h1>
-        <div className="ds-hint">
-          按 (钱包·市场·结果) 聚合多笔小额买入，揪出绕过单笔监控的累积建仓
-          {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
-          {loading ? (
-            <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>
-          ) : null}
+      <header
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "var(--s-4)",
+          marginBottom: "var(--s-4)",
+        }}
+      >
+        <div>
+          <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
+            🧩 拆单 / 累计买入榜
+          </h1>
+          <div className="ds-hint">
+            按 (钱包·市场·结果) 聚合多笔小额买入，揪出绕过单笔监控的累积建仓
+            {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
+            {loading ? (
+              <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>
+            ) : null}
+          </div>
         </div>
+        <SoundToggle on={soundOn} onToggle={toggle} />
       </header>
 
       {/* Controls */}
@@ -614,6 +647,22 @@ export default function AccumulationPage() {
           >
             刷新
           </button>
+          <label
+            className="ds-hint"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--s-1)",
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+            />
+            自动刷新 30s
+          </label>
         </Field>
 
         <div className="ds-hint">

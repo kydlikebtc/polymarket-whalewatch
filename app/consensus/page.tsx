@@ -6,11 +6,14 @@ import {
   HoldingCell,
   Icon,
   Segmented,
+  SoundToggle,
   StatCard,
   Tag,
   catLabel,
 } from "../ui";
 import { useMarketPositions } from "../useMarketPositions";
+import { useSoundToggle } from "../useSound";
+import { useNewRecordChime } from "../useNewRecordChime";
 import {
   buildQueryString,
   parseChoiceParam,
@@ -182,6 +185,7 @@ export default function ConsensusPage() {
   const [data, setData] = useState<ConsensusResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [lastRefreshed, setLastRefreshed] = useState<string>("");
+  const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // Which section is visible — a tab toggle so a long list of one signal never
   // buries the other (both are fetched together; this only switches display).
@@ -279,6 +283,29 @@ export default function ConsensusPage() {
     load();
   }, [urlReady, load]);
 
+  // Optional 30s auto-refresh.
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const id = setInterval(load, 30000);
+    return () => clearInterval(id);
+  }, [autoRefresh, load]);
+
+  // New-record chime: ring when a same-filter refresh surfaces a new consensus
+  // group OR a new disagreement market (a filter change reseeds silently).
+  const { soundOn, toggle } = useSoundToggle();
+  useNewRecordChime(
+    data
+      ? `${data.filters.hours}|${data.filters.minWallets}|${data.filters.minPerWalletUsd}`
+      : null,
+    data
+      ? [
+          ...data.groups.map((g) => `c:${g.conditionId}:${g.outcome}`),
+          ...(data.disagreement ?? []).map((m) => `d:${m.conditionId}`),
+        ]
+      : [],
+    soundOn,
+  );
+
   function toggleExpand(key: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -294,18 +321,29 @@ export default function ConsensusPage() {
 
   return (
     <main className="ds-main">
-      <header style={{ marginBottom: "var(--s-4)" }}>
-        <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-          🔥 共识 · ⚖️ 分歧
-        </h1>
-        <div className="ds-hint">
-          白名单钱包在同一市场：同向买同一结果 = 共识，对立结果各自建仓 =
-          分歧（两者互斥）— 都比单笔大单更有说服力
-          {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
-          {loading ? (
-            <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>
-          ) : null}
+      <header
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "var(--s-4)",
+          marginBottom: "var(--s-4)",
+        }}
+      >
+        <div>
+          <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
+            🔥 共识 · ⚖️ 分歧
+          </h1>
+          <div className="ds-hint">
+            白名单钱包在同一市场：同向买同一结果 = 共识，对立结果各自建仓 =
+            分歧（两者互斥）— 都比单笔大单更有说服力
+            {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
+            {loading ? (
+              <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>
+            ) : null}
+          </div>
         </div>
+        <SoundToggle on={soundOn} onToggle={toggle} />
       </header>
 
       {/* Controls */}
@@ -352,6 +390,22 @@ export default function ConsensusPage() {
           <button className="ds-btn ds-btn--ghost" onClick={() => load()}>
             刷新
           </button>
+          <label
+            className="ds-hint"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--s-1)",
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+            />
+            自动刷新 30s
+          </label>
         </Field>
       </section>
 

@@ -16,8 +16,8 @@ import {
   type SmartInfoLite,
   type WalletStatsLite,
 } from "./ui";
-import { playBubble } from "./sound";
 import { useSoundToggle } from "./useSound";
+import { useNewRecordChime } from "./useNewRecordChime";
 import { useAutoRetryOnError } from "./autoRetry";
 import { useWalletIntel } from "./useWalletIntel";
 import { useWalletAges } from "./useWalletAges";
@@ -343,32 +343,16 @@ export default function Page() {
   const ages = useWalletAges((data?.trades ?? []).map((t) => t.wallet));
 
   // --- New-trade sound notification --------------------------------------
-  // Chime when a refresh (auto/manual) brings genuinely new trades. A change of
-  // the server filters (amount/side/hours) reseeds the baseline SILENTLY — that
-  // is a new query, not a record arriving — so only same-filter refreshes ring.
+  // Ring when a same-filter refresh brings genuinely new trades (a change of the
+  // server filters reseeds the baseline silently). See useNewRecordChime.
   const { soundOn, toggle } = useSoundToggle();
-  const seenTradeKeys = useRef<Set<string>>(new Set());
-  const lastFilterSig = useRef<string>("");
-
-  useEffect(() => {
-    if (!data?.trades) return;
-    const f = data.filters;
-    const sig = `${f.minUsd}|${f.side}|${f.hours}`;
-    const keys = data.trades.map((t) => t.txHash || `${t.wallet}-${t.ts}`);
-    if (sig !== lastFilterSig.current) {
-      lastFilterSig.current = sig;
-      seenTradeKeys.current = new Set(keys);
-      return;
-    }
-    let hasNew = false;
-    for (const k of keys) {
-      if (!seenTradeKeys.current.has(k)) {
-        seenTradeKeys.current.add(k);
-        hasNew = true;
-      }
-    }
-    if (hasNew && soundOn) playBubble();
-  }, [data, soundOn]);
+  useNewRecordChime(
+    data
+      ? `${data.filters.minUsd}|${data.filters.side}|${data.filters.hours}`
+      : null,
+    (data?.trades ?? []).map((t) => t.txHash || `${t.wallet}-${t.ts}`),
+    soundOn,
+  );
 
   function applyCustom() {
     const n = Number(customText);
