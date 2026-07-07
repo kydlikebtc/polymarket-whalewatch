@@ -25,6 +25,8 @@ const stats = (over: Partial<WalletStats> = {}): WalletStats => ({
   roi: 0.2,
   settledCount: 40,
   truncated: false,
+  marketsTraded: 30,
+  isMarketMaker: false,
   ...over,
 });
 

@@ -10,13 +10,23 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, dedup_key TEXT, payload TEXT, created_at INTEGER);
     CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS wallet_age (wallet TEXT PRIMARY KEY, first_ts INTEGER, fetched_at INTEGER);
-    CREATE TABLE IF NOT EXISTS wallet_stats (wallet TEXT PRIMARY KEY, win_rate REAL, realized_pnl REAL, roi REAL, settled_count INTEGER, truncated INTEGER, fetched_at INTEGER);
+    CREATE TABLE IF NOT EXISTS wallet_stats (wallet TEXT PRIMARY KEY, win_rate REAL, realized_pnl REAL, roi REAL, settled_count INTEGER, truncated INTEGER, markets_traded INTEGER, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS market_meta (condition_id TEXT PRIMARY KEY, meta_json TEXT, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS event_category (event_slug TEXT PRIMARY KEY, category TEXT, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS consensus_state (condition_id TEXT, outcome TEXT, wallet_count INTEGER, total_usd REAL, last_alert_ts INTEGER, PRIMARY KEY (condition_id, outcome));
     CREATE TABLE IF NOT EXISTS alert_outcomes (alert_id INTEGER PRIMARY KEY, price_1h REAL, price_24h REAL, resolved INTEGER DEFAULT 0, resolution_price REAL, won INTEGER, checked_at INTEGER);
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
   `);
+  // wallet_stats gained markets_traded (the high-frequency market-maker
+  // classifier) after the table already shipped; add it to pre-existing DBs.
+  // Harmless "duplicate column" on fresh DBs where CREATE TABLE already has it.
+  try {
+    db.prepare(
+      "ALTER TABLE wallet_stats ADD COLUMN markets_traded INTEGER",
+    ).run();
+  } catch {
+    // column already present
+  }
   // One alert row per (type, dedup_key): running the embedded engine and the
   // standalone worker against the same db is a documented deployment, and their
   // check-then-act race could double-insert. The one-time cleanup removes any
@@ -130,10 +140,17 @@ export function openDb(path = "data.sqlite") {
   //      which was sorted by realizedPnl DESC and truncated at 400 rows, feeding
   //      a winners-only slice that inflated pnl AND win rate. The page cap was
   //      also raised. Purge so every wallet re-fetches under the new pipeline.
+  //  v4: winRate/roi are now NULL for a TRUNCATED record (the fetched top slice
+  //      is winner-biased, so a high-frequency wallet read a fake ~100% win rate
+  //      and inflated roi that are unrecoverable). Purge so cached truncated rows
+  //      recompute to null instead of serving the old fake numbers for 24h.
+  //  v5: high-frequency market makers (>=1000 distinct markets traded) are now
+  //      classified up front and skip win-rate entirely (markets_traded column).
+  //      Purge so cached rows re-fetch and populate markets_traded / the label.
   const statsVer = db
     .prepare("SELECT value FROM config WHERE key = 'wallet_stats_v'")
     .get() as { value: string | null } | undefined;
-  if (statsVer?.value !== "3") {
+  if (statsVer?.value !== "5") {
     db.prepare("DELETE FROM wallet_stats").run();
     // smart_wallets.realized_pnl now means netPnl, but existing rows hold the old
     // biased closed-sum. NULL it (can't DELETE the rows — that would drop manual
@@ -143,7 +160,7 @@ export function openDb(path = "data.sqlite") {
     db.prepare("UPDATE smart_wallets SET realized_pnl = NULL").run();
     db.prepare("DELETE FROM config WHERE key = 'smart_seed_last_day'").run();
     db.prepare(
-      "INSERT OR REPLACE INTO config (key, value) VALUES ('wallet_stats_v', '3')",
+      "INSERT OR REPLACE INTO config (key, value) VALUES ('wallet_stats_v', '5')",
     ).run();
   }
   return db;

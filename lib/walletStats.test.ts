@@ -3,6 +3,7 @@ import { openDb } from "./db";
 import {
   computeWalletStats,
   fetchClosedPositions,
+  fetchMarketsTraded,
   fetchResolvedOpenPositions,
   fetchUserPnl,
   getWalletStats,
@@ -16,6 +17,8 @@ const stats = (over: Partial<WalletStats> = {}): WalletStats => ({
   roi: 0.2,
   settledCount: 10,
   truncated: false,
+  marketsTraded: 20,
+  isMarketMaker: false,
   ...over,
 });
 
@@ -28,6 +31,8 @@ describe("computeWalletStats", () => {
       roi: null,
       settledCount: 0,
       truncated: false,
+      marketsTraded: null,
+      isMarketMaker: false,
     });
   });
 
@@ -50,11 +55,11 @@ describe("computeWalletStats", () => {
     expect(s.truncated).toBe(false);
   });
 
-  it("a TRUNCATED record with no authoritative netPnl yields null netPnl (never the winners-only slice)", () => {
+  it("a TRUNCATED record nulls winRate/roi (winner-biased slice) AND netPnl when unauthoritative", () => {
     // /closed-positions is sorted by realizedPnl DESC, so a truncated fetch is a
-    // winners-only slice (+300 here). Without the authoritative PnL we must NOT
-    // display that inflated sum — netPnl is null. roi/winRate still compute (and
-    // carry the truncated caveat).
+    // winners-only slice (+300 here) → a fake 100% win rate and an inflated roi.
+    // All three closed-derived metrics are null; only settledCount (with "+")
+    // survives. netPnl would be authoritative if the PnL API succeeded.
     const s = computeWalletStats(
       [
         { realizedPnl: 200, totalBought: 1000, avgPrice: 0.5 },
@@ -62,16 +67,16 @@ describe("computeWalletStats", () => {
       ],
       true, // truncated
     );
+    expect(s.winRate).toBeNull();
+    expect(s.roi).toBeNull();
     expect(s.netPnl).toBeNull();
-    expect(s.winRate).toBe(1);
-    expect(s.roi).toBeCloseTo(300 / 750);
+    expect(s.settledCount).toBe(2);
     expect(s.truncated).toBe(true);
   });
 
-  it("uses the authoritative netPnl over the settled sum, even when truncated", () => {
-    // The settled closed sum is +200 (win) −100 (loss) = +100 over cost 800,
-    // but the wallet also holds a big unrealized loss: the PnL API says −5000.
-    // The authoritative value wins regardless of truncation.
+  it("keeps the authoritative netPnl even when truncated, but still nulls roi/winRate", () => {
+    // netPnl comes from the PnL API (−5000 here) so it survives truncation, but
+    // roi/winRate are derived from the winner-biased closed slice → null.
     const s = computeWalletStats(
       [
         { realizedPnl: 200, totalBought: 1000, avgPrice: 0.5 }, // cost 500
@@ -82,7 +87,17 @@ describe("computeWalletStats", () => {
       -5000, // authoritative net P/L (realized + unrealized)
     );
     expect(s.netPnl).toBe(-5000); // displayed figure = the API value, NOT the +100 sum
-    expect(s.roi).toBeCloseTo(100 / 800); // roi stays settled-realized / settled-cost
+    expect(s.roi).toBeNull(); // truncated → winner-biased → suppressed
+    expect(s.winRate).toBeNull();
+  });
+
+  it("flags a market maker once marketsTraded crosses the threshold", () => {
+    const bot = computeWalletStats([], false, [], null, 5000);
+    expect(bot.isMarketMaker).toBe(true);
+    expect(bot.marketsTraded).toBe(5000);
+    const human = computeWalletStats([], false, [], null, 200);
+    expect(human.isMarketMaker).toBe(false);
+    expect(human.marketsTraded).toBe(200);
   });
 });
 
@@ -155,6 +170,8 @@ describe("fetchWalletStats orchestration (real fetcher, P0 fallback wiring)", ()
       avgPrice: 0.5,
     }));
     const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/traded?"))
+        return { ok: true, json: async () => ({ traded: 50 }) }; // not a market maker
       if (url.includes("user-pnl")) return { ok: false, status: 404 };
       if (url.includes("/closed-positions"))
         return { ok: true, json: async () => winnerPage };
@@ -167,10 +184,69 @@ describe("fetchWalletStats orchestration (real fetcher, P0 fallback wiring)", ()
     const result = await getWalletStats(db, ["0xWHALE"]);
     const s = result["0xwhale"];
     expect(s).not.toBeNull();
+    expect(s?.isMarketMaker).toBe(false);
+    expect(s?.marketsTraded).toBe(50);
     expect(s?.truncated).toBe(true);
-    expect(s?.winRate).toBe(1); // winners-only slice
+    expect(s?.winRate).toBeNull(); // truncated → winner-biased slice suppressed
+    expect(s?.roi).toBeNull();
     expect(s?.netPnl).toBeNull(); // the P0 guard: inflated sum suppressed
     warnSpy.mockRestore();
+  });
+
+  it("classifies a market maker from /traded and SKIPS the /closed-positions pagination", async () => {
+    // The whole point: a 136k-market bot must NOT trigger the (thousands-of-pages)
+    // pagination — classification happens on one cheap /traded request.
+    const paginationSpy = vi.fn();
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/traded?"))
+        return { ok: true, json: async () => ({ traded: 136089 }) };
+      if (url.includes("user-pnl"))
+        return { ok: true, json: async () => [{ t: 1, p: 16_800_000 }] };
+      if (url.includes("/closed-positions") || url.includes("/positions")) {
+        paginationSpy();
+        return { ok: true, json: async () => [] };
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const db = openDb(":memory:");
+    const result = await getWalletStats(db, ["0xBOT"]);
+    const s = result["0xbot"];
+    expect(s?.isMarketMaker).toBe(true);
+    expect(s?.marketsTraded).toBe(136089);
+    expect(s?.winRate).toBeNull();
+    expect(s?.roi).toBeNull();
+    expect(s?.netPnl).toBe(16_800_000); // authoritative netPnl still populated
+    expect(paginationSpy).not.toHaveBeenCalled(); // pagination skipped — 20x saving
+  });
+});
+
+describe("fetchMarketsTraded", () => {
+  it("returns the traded (distinct markets) count", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ user: "0xabc", traded: 136089 }),
+      }),
+    );
+    expect(await fetchMarketsTraded("0xabc")).toBe(136089);
+  });
+
+  it("returns null when the payload has no numeric traded", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }),
+    );
+    expect(await fetchMarketsTraded("0xabc")).toBeNull();
+  });
+
+  it("throws on a non-ok response (caller catches → normal path)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 404 }),
+    );
+    await expect(fetchMarketsTraded("0xabc")).rejects.toThrow("404");
   });
 });
 

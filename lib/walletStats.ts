@@ -29,6 +29,22 @@ const PAGE_SIZE = 50;
 // 3000 here (unlike /activity & /trades — verified offset=4000 returns rows).
 const DEFAULT_MAX_PAGES = 20; // ~1000 settled positions
 
+// A wallet that has traded at least this many DISTINCT markets (data-api
+// /traded) is a high-frequency market-maker / bot, not a directional bettor.
+// Calibrated live (2026-07): the top-PnL population splits cleanly — directional
+// traders sit at 2..192 distinct markets, then a wide empty gap, then bots at
+// 1077..136094. A win rate is both uncomputable (thousands of settled positions)
+// and meaningless (they capture spread, not directional bets) for these, so we
+// SKIP the expensive /closed-positions pagination and label them instead. The
+// wide gap makes false positives (a human at 1000+ markets) practically impossible.
+const MARKET_MAKER_MIN_MARKETS = 1000;
+
+// Single source of truth for the classification, used at compute time, on the
+// PnL-API-only bot fast path, and on the SQLite cache read.
+function isMarketMaker(marketsTraded: number | null): boolean {
+  return marketsTraded != null && marketsTraded >= MARKET_MAKER_MIN_MARKETS;
+}
+
 // IMPORTANT unit note (verified live): `totalBought` is SHARES, not USD —
 // realizedPnl === totalBought * (curPrice - avgPrice) holds exactly on real
 // rows. Cost basis in USD is therefore totalBought * avgPrice.
@@ -43,11 +59,13 @@ export type ClosedPosition = z.infer<typeof ClosedPositionSchema>;
 // /closed-positions (+ the survivorship patch); netPnl is the authoritative
 // Polymarket net P/L from PNL_API (see fetchUserPnl), independent of the page cap.
 export interface WalletStats {
-  winRate: number | null; // wins / settledCount, null when nothing settled
+  winRate: number | null; // wins / settledCount; null when nothing settled, truncated, or a market maker
   netPnl: number | null; // USD net P/L (realized + unrealized), Polymarket-profile figure; null when unknowable (see computeWalletStats)
-  roi: number | null; // settled realizedPnl / settled cost basis, null when basis is 0
+  roi: number | null; // settled realizedPnl / settled cost basis; null when basis is 0, truncated, or a market maker
   settledCount: number;
-  truncated: boolean; // hit the page cap — winRate/roi cover the top-PnL slice only
+  truncated: boolean; // hit the page cap — the record is incomplete, so winRate/roi are null (unreliable)
+  marketsTraded: number | null; // distinct markets ever traded (data-api /traded); high = automated operator
+  isMarketMaker: boolean; // marketsTraded >= MARKET_MAKER_MIN_MARKETS — win rate skipped, wallet labeled
 }
 
 export async function fetchClosedPositions(
@@ -190,6 +208,26 @@ export async function fetchUserPnl(wallet: string): Promise<number | null> {
   return typeof p === "number" && Number.isFinite(p) ? p : null;
 }
 
+// Distinct markets the wallet has EVER traded (verified live: this is the value
+// behind data-api /v1/user-stats.trades and the profile "预测" count). One cheap
+// request — used to classify high-frequency market makers (see MARKET_MAKER_MIN_
+// MARKETS) BEFORE committing to the expensive /closed-positions pagination.
+// Returns null on any failure so the caller degrades to the normal path.
+export async function fetchMarketsTraded(
+  wallet: string,
+): Promise<number | null> {
+  const url = `${DATA_API}/traded?user=${encodeURIComponent(wallet)}`;
+  const res = await fetchWithRetry(url, {
+    timeoutMs: 8000,
+    headers: { "User-Agent": "polymarket-monitor" },
+    label: "fetchMarketsTraded",
+  });
+  if (!res.ok) throw new Error(`fetchMarketsTraded ${res.status}`);
+  const raw = (await res.json()) as { traded?: unknown } | null;
+  const n = raw?.traded;
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
+
 // Pure aggregation. winRate/roi come from the settled positions; `netPnl` is the
 // authoritative Polymarket net P/L (from fetchUserPnl), falling back to the
 // settled realized sum only when the PnL API is unavailable AND the closed set
@@ -202,6 +240,7 @@ export function computeWalletStats(
   truncated: boolean,
   resolvedOpen: ResolvedOpenPosition[] = [],
   netPnl?: number | null,
+  marketsTraded: number | null = null,
 ): WalletStats {
   let wins = 0;
   let settledRealized = 0; // realized gains over settled positions (roi numerator)
@@ -217,37 +256,68 @@ export function computeWalletStats(
     costBasis += p.initialValue;
   }
   const settledCount = positions.length + resolvedOpen.length;
+  // A TRUNCATED record is the top slice of /closed-positions, which is sorted by
+  // realizedPnl DESC — a systematically WINNER-biased sample. Its winRate reads a
+  // fake ~100% and its roi/settled-sum are inflated (verified live: a 15-day
+  // market-maker with 6000+ settled positions, every fetched row profitable).
+  // The true values are unrecoverable (the loss tail is unreachable and the
+  // record can run to thousands of positions), so winRate/roi are null — an
+  // honest "unknown" beats a wrong number. netPnl stays authoritative: it comes
+  // from PNL_API and only falls back to the (inflated) settled sum when COMPLETE.
   return {
-    winRate: settledCount > 0 ? wins / settledCount : null,
-    // The Polymarket-profile figure. When the authoritative PnL is unavailable
-    // we fall back to the settled realized sum ONLY if the closed set is
-    // COMPLETE. A TRUNCATED closed set is sorted by realizedPnl DESC and holds a
-    // winners-only slice (see DEFAULT_MAX_PAGES), so its sum is the very
-    // inflation this fix removes — return null there (rendered "—") rather than
-    // resurrect a wrong headline. Callers must treat null as "unknown".
+    winRate: truncated ? null : settledCount > 0 ? wins / settledCount : null,
     netPnl: netPnl ?? (truncated ? null : settledRealized),
-    roi: costBasis > 0 ? settledRealized / costBasis : null,
+    roi: truncated ? null : costBasis > 0 ? settledRealized / costBasis : null,
     settledCount,
     truncated,
+    marketsTraded,
+    isMarketMaker: isMarketMaker(marketsTraded),
   };
 }
 
 async function fetchWalletStats(wallet: string): Promise<WalletStats> {
-  const [closed, open, netPnl] = await Promise.all([
-    fetchClosedPositions(wallet),
-    fetchResolvedOpenPositions(wallet),
-    // Authoritative net P/L; a PnL-API failure degrades to the settled realized
-    // sum (in computeWalletStats) rather than failing the whole record.
+  // Two cheap probes first: distinct markets (data-api /traded) to classify
+  // market makers, and the authoritative net P/L (user-pnl-api, separate host).
+  const [marketsTraded, netPnl] = await Promise.all([
+    fetchMarketsTraded(wallet).catch((e) => {
+      console.warn(`[walletStats] /traded fetch failed for ${wallet}:`, e);
+      return null;
+    }),
+    // A PnL-API failure degrades to the settled realized sum (in
+    // computeWalletStats) rather than failing the whole record.
     fetchUserPnl(wallet).catch((e) => {
       console.warn(`[walletStats] user-pnl fetch failed for ${wallet}:`, e);
       return null;
     }),
+  ]);
+
+  // Market maker → its win rate is meaningless AND its /closed-positions run to
+  // thousands of pages; skip that pagination entirely (a ~20x request saving on
+  // exactly the wallets that stress data-api's rate limit) and return a labeled,
+  // win-rate-less record. netPnl stays authoritative.
+  if (isMarketMaker(marketsTraded)) {
+    return {
+      winRate: null,
+      netPnl,
+      roi: null,
+      settledCount: 0,
+      truncated: false,
+      marketsTraded,
+      isMarketMaker: true,
+    };
+  }
+
+  // Normal wallet: derive the settled win rate / roi from its (small) position set.
+  const [closed, open] = await Promise.all([
+    fetchClosedPositions(wallet),
+    fetchResolvedOpenPositions(wallet),
   ]);
   return computeWalletStats(
     closed.positions,
     closed.truncated || open.truncated,
     open.positions,
     netPnl,
+    marketsTraded,
   );
 }
 
@@ -288,12 +358,12 @@ export async function getWalletStats(
   } = opts;
   const distinct = [...new Set(wallets.map((w) => w.toLowerCase()))];
   const sel = db.prepare(
-    "SELECT win_rate, realized_pnl, roi, settled_count, truncated, fetched_at FROM wallet_stats WHERE wallet = ?",
+    "SELECT win_rate, realized_pnl, roi, settled_count, truncated, markets_traded, fetched_at FROM wallet_stats WHERE wallet = ?",
   );
   const ins = db.prepare(
     `INSERT OR REPLACE INTO wallet_stats
-       (wallet, win_rate, realized_pnl, roi, settled_count, truncated, fetched_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (wallet, win_rate, realized_pnl, roi, settled_count, truncated, markets_traded, fetched_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const result: Record<string, WalletStats | null> = {};
   const misses: string[] = [];
@@ -305,6 +375,7 @@ export async function getWalletStats(
           roi: number | null;
           settled_count: number;
           truncated: number;
+          markets_traded: number | null;
           fetched_at: number;
         }
       | undefined;
@@ -316,6 +387,8 @@ export async function getWalletStats(
         roi: row.roi,
         settledCount: row.settled_count,
         truncated: !!row.truncated,
+        marketsTraded: row.markets_traded,
+        isMarketMaker: isMarketMaker(row.markets_traded),
       };
     } else {
       misses.push(w);
@@ -347,6 +420,7 @@ export async function getWalletStats(
         s.roi,
         s.settledCount,
         s.truncated ? 1 : 0,
+        s.marketsTraded,
         nowSec,
       );
     }

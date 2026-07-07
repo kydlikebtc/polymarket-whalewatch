@@ -53,7 +53,7 @@ describe("openDb", () => {
     }
   });
 
-  it("purges wallet_stats + the seed marker on the v2→v3 migration, exactly once", () => {
+  it("purges wallet_stats + the seed marker on the wallet_stats_v bump, exactly once", () => {
     const dir = mkdtempSync(join(tmpdir(), "whaledb-"));
     const path = join(dir, "t.sqlite");
     try {
@@ -113,7 +113,7 @@ describe("openDb", () => {
             .prepare("SELECT value FROM config WHERE key = 'wallet_stats_v'")
             .get() as { value: string }
         ).value,
-      ).toBe("3");
+      ).toBe("5");
       // Re-cache a row, reopen: marker present → cache preserved (runs once).
       db2
         .prepare(

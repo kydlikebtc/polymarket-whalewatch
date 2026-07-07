@@ -367,6 +367,8 @@ export type WalletStatsLite = {
   roi: number | null;
   settledCount: number;
   truncated: boolean;
+  marketsTraded: number | null; // distinct markets traded; high = automated operator
+  isMarketMaker: boolean; // high-frequency market maker/bot — win rate skipped, labeled instead
 };
 
 export type SmartInfoLite = { score: number | null; isWhitelist: boolean };
@@ -417,6 +419,27 @@ export function WalletStatsBadge({
       </span>
     );
   }
+  // High-frequency market maker / bot: win rate is meaningless and uncomputable,
+  // so we skip it entirely and label the wallet (see lib/walletStats). Must come
+  // BEFORE the settledCount===0 branch (a market maker has no fetched positions).
+  if (stats && stats.isMarketMaker) {
+    const mmTitle =
+      `🤖 高频做市 / 机器人：交易过 ${stats.marketsTraded?.toLocaleString() ?? "海量"} 个不同市场，` +
+      "胜率不适用（做市赚点差、非定向下注）\n盈亏为净盈亏（官方 user-pnl 口径）";
+    const mmTone = stats.netPnl != null && stats.netPnl < 0 ? "down" : "up";
+    return (
+      <span className="mono" style={{ whiteSpace: "nowrap" }}>
+        {trophy}
+        {trophy ? " " : ""}
+        <span className="tip-pop" title={mmTitle} {...tipPopProps(mmTitle)}>
+          🤖{" "}
+          <span className={mmTone}>
+            {stats.netPnl != null ? fmtSignedUsdCompact(stats.netPnl) : "—"}
+          </span>
+        </span>
+      </span>
+    );
+  }
   if (stats === null || stats.settledCount === 0) {
     return (
       <span className="mono muted">
@@ -432,29 +455,26 @@ export function WalletStatsBadge({
       </span>
     );
   }
-  const pct = Math.round((stats.winRate ?? 0) * 100);
-  // netPnl is the Polymarket-profile net figure (realized + unrealized), NOT the
-  // settled-only sum the rest of this badge (胜率/ROI) reflects — hence the
-  // tooltip spells it out. null = the authoritative value was unavailable.
+  // winRate is null for a TRUNCATED record (the fetched slice is the top of a
+  // profit-sorted list — winner-biased, so a real ~100% is a lie). Then the badge
+  // shows ONLY the authoritative netPnl, no fake "0%"/"100%". netPnl is the
+  // Polymarket-profile net figure (realized + unrealized), NOT the settled-only
+  // sum — the tooltip spells that out. null netPnl = value was unavailable.
+  const pct = stats.winRate != null ? Math.round(stats.winRate * 100) : null;
   const tone = stats.netPnl != null && stats.netPnl < 0 ? "down" : "up";
-  // Caveat mirrors computeScore's haircut case: held-to-zero losers are now
-  // merged in from /positions (survivorship fixed upstream), so the doubt
-  // only remains when the record is TRUNCATED — the unfetched pages skew
-  // toward exactly those parked losers.
-  const survivorship = stats.truncated
-    ? "\n记录不完整（分页截断）：未拉取的仓位偏向持有到归零的亏损单，胜率应视为上界"
-    : "";
-  const title =
-    `已结算 ${stats.settledCount}${stats.truncated ? "+" : ""} 市场 · 胜率 ${pct}%` +
-    (stats.roi != null ? ` · ROI ${(stats.roi * 100).toFixed(1)}%` : "") +
-    "\n盈亏数字为净盈亏（已实现+浮动，官方 user-pnl 口径），非上面的已结算口径" +
-    survivorship;
+  const title = stats.truncated
+    ? `已结算 ${stats.settledCount}+ 市场 · 胜率/ROI 无法可靠统计（结算过多，只取到按盈亏排序的最赚一部分）` +
+      "\n盈亏为净盈亏（官方 user-pnl 口径，不受截断影响）"
+    : `已结算 ${stats.settledCount} 市场` +
+      (pct != null ? ` · 胜率 ${pct}%` : "") +
+      (stats.roi != null ? ` · ROI ${(stats.roi * 100).toFixed(1)}%` : "") +
+      "\n盈亏数字为净盈亏（已实现+浮动，官方 user-pnl 口径），非上面的已结算口径";
   return (
     <span className="mono" style={{ whiteSpace: "nowrap" }}>
       {trophy}
       {trophy ? " " : ""}
       <span className="tip-pop" title={title} {...tipPopProps(title)}>
-        {pct}% ·{" "}
+        {pct != null ? `${pct}% · ` : ""}
         <span className={tone}>
           {stats.netPnl != null ? fmtSignedUsdCompact(stats.netPnl) : "—"}
         </span>

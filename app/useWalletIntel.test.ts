@@ -8,6 +8,8 @@ const wl = (over: Partial<WalletStatsLite> = {}): WalletStatsLite => ({
   roi: 0.2,
   settledCount: 10,
   truncated: false,
+  marketsTraded: 20,
+  isMarketMaker: false,
   ...over,
 });
 

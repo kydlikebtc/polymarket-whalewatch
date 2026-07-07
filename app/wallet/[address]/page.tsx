@@ -172,6 +172,14 @@ export default function WalletPage() {
               {data.smart.isWhitelist ? " · 手动白名单" : ""}
             </Tag>
           ) : null}
+          {data?.stats?.isMarketMaker ? (
+            <Tag variant="warn">
+              🤖 高频做市 / 机器人
+              {data.stats.marketsTraded != null
+                ? ` · ${data.stats.marketsTraded.toLocaleString()} 市场`
+                : ""}
+            </Tag>
+          ) : null}
         </h1>
         <div className="ds-hint">
           <a
@@ -215,15 +223,30 @@ export default function WalletPage() {
           {/* KPI: settled record + window flow */}
           <section className="kpi" style={{ marginBottom: "var(--s-5)" }}>
             <StatCard label="已结算胜率">
-              <div className="kpi-value">
-                {data.stats?.winRate != null
-                  ? `${Math.round(data.stats.winRate * 100)}%`
-                  : "—"}
+              <div
+                className="kpi-value"
+                title={
+                  data.stats?.isMarketMaker
+                    ? "高频做市/机器人(交易过大量不同市场):做市赚点差、非定向下注,胜率不适用"
+                    : data.stats?.truncated
+                      ? "已结算市场过多,只能取到按盈亏排序的最赚一部分(赢家偏差),胜率无法可靠统计"
+                      : undefined
+                }
+              >
+                {data.stats?.isMarketMaker
+                  ? "🤖"
+                  : data.stats?.winRate != null
+                    ? `${Math.round(data.stats.winRate * 100)}%`
+                    : "—"}
               </div>
               <div className="kpi-sub">
-                {data.stats
-                  ? `${data.stats.settledCount}${data.stats.truncated ? "+" : ""} 个已结算市场`
-                  : "无数据"}
+                {!data.stats
+                  ? "无数据"
+                  : data.stats.isMarketMaker
+                    ? `高频做市/机器人 · ${data.stats.marketsTraded?.toLocaleString() ?? "海量"} 市场 · 胜率不适用`
+                    : data.stats.truncated
+                      ? `${data.stats.settledCount}+ 个已结算市场 · 过多,胜率不可靠`
+                      : `${data.stats.settledCount} 个已结算市场`}
               </div>
             </StatCard>
             <StatCard label="净盈亏">
@@ -244,7 +267,6 @@ export default function WalletPage() {
                 {data.stats?.roi != null
                   ? `${(data.stats.roi * 100).toFixed(1)}%`
                   : "—"}
-                {data.stats?.truncated ? " · 战绩截断" : ""}
               </div>
             </StatCard>
             <StatCard label="PUSD 现金余额">
