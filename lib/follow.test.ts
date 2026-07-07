@@ -5,7 +5,9 @@ import {
   positionSlippage,
   qualifyingGroups,
   latestPriceByAsset,
+  computeStrategyMetrics,
 } from "./follow";
+import type { FollowPositionRow } from "./follow";
 import type { ConsensusGroup, ConsensusWallet } from "./consensus";
 import type { Trade } from "./types";
 
@@ -124,5 +126,86 @@ describe("follow latestPriceByAsset", () => {
   });
   it("空输入 → 空 Map", () => {
     expect(latestPriceByAsset([]).size).toBe(0);
+  });
+});
+
+// --- Task 6: 策略级指标(净值/回撤/Wilson/滑点/按赛道) ---
+const pos = (o: Partial<FollowPositionRow>): FollowPositionRow => ({
+  strategy_id: 1,
+  condition_id: "c",
+  outcome: "Yes",
+  size_usd: 500,
+  entry_price: 0.5,
+  smart_avg_price: 0.48,
+  shares: 1000,
+  status: "settled",
+  entry_ts: 0,
+  exit_ts: 86400,
+  exit_price: 1,
+  realized_pnl: 0,
+  ...o,
+});
+
+describe("computeStrategyMetrics", () => {
+  it("空仓 → 全零/空,winRate/roi 为 null", () => {
+    const m = computeStrategyMetrics([], {});
+    expect(m.settledCount).toBe(0);
+    expect(m.roi).toBeNull();
+    expect(m.winRate).toBeNull();
+    expect(m.maxDrawdown).toBe(0);
+    expect(m.equityCurve).toEqual([]);
+    expect(m.byCategory).toEqual({});
+  });
+  it("净值曲线累计 + 最大回撤(峰100→谷-400 = 500)", () => {
+    const positions = [
+      pos({ condition_id: "a", exit_ts: 1, realized_pnl: 100 }),
+      pos({ condition_id: "b", exit_ts: 2, realized_pnl: -500 }),
+      pos({ condition_id: "c", exit_ts: 3, realized_pnl: 200 }),
+    ];
+    const m = computeStrategyMetrics(positions, {});
+    expect(m.equityCurve.map((e) => e.cum)).toEqual([100, -400, -200]);
+    expect(m.maxDrawdown).toBeCloseTo(500); // 计划里写的 600 是笔误:峰100→谷-400 = 500
+    expect(m.settledCount).toBe(3);
+    expect(m.wins).toBe(2);
+    expect(m.winRate).toBeCloseTo(2 / 3); // 3 非 push,denom=3
+  });
+  it("push(realized=0)不计胜率分母", () => {
+    const m = computeStrategyMetrics(
+      [pos({ realized_pnl: 100 }), pos({ realized_pnl: 0, condition_id: "x" })],
+      {},
+    );
+    expect(m.settledCount).toBe(2);
+    expect(m.wins).toBe(1);
+    expect(m.winRate).toBeCloseTo(1); // denom = wins+losses = 1
+  });
+  it("open 仓不计入结算指标,但计入 openCount 与 slippageCost", () => {
+    const m = computeStrategyMetrics(
+      [
+        pos({
+          status: "open",
+          exit_ts: null,
+          exit_price: null,
+          realized_pnl: null,
+          entry_price: 0.6,
+          smart_avg_price: 0.57,
+          size_usd: 500,
+        }),
+      ],
+      {},
+    );
+    expect(m.settledCount).toBe(0);
+    expect(m.openCount).toBe(1);
+    expect(m.slippageCost).toBeCloseTo(25, 0); // (500/0.6)*(0.6-0.57)
+  });
+  it("byCategory 按 categoryByCid 分组,缺失归『未分类』", () => {
+    const m = computeStrategyMetrics(
+      [
+        pos({ condition_id: "a", realized_pnl: 100 }),
+        pos({ condition_id: "b", realized_pnl: -50 }),
+      ],
+      { a: "Crypto" },
+    );
+    expect(m.byCategory["Crypto"]).toEqual({ realized: 100, settledCount: 1 });
+    expect(m.byCategory["未分类"]).toEqual({ realized: -50, settledCount: 1 });
   });
 });

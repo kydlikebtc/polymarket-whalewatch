@@ -2,6 +2,7 @@ import type { ConsensusGroup, ConsensusOptions } from "./consensus";
 import { detectConsensus } from "./consensus";
 import type { DB } from "./db";
 import type { MarketMeta } from "./gamma";
+import { wilsonInterval } from "./outcomeStats";
 import type { SmartTag } from "./smartWallets";
 import type { Trade } from "./types";
 
@@ -291,4 +292,143 @@ export async function runFollowCycle(
     `[follow] cycle done · strategies=${strategies.length} · opened=${opened} · settled=${settled}`,
   );
   return { opened, settled };
+}
+
+// ---------------------------------------------------------------------------
+// Task 6: computeStrategyMetrics —— 某一策略全部仓位(open+settled)的纸面战绩汇总。
+// 纯函数、不修改入参:结算盈亏/ROI、Wilson 区间的胜率、净值曲线与最大回撤、平均
+// 持仓、滑点成本、按赛道分解。指标口径与 outcomeStats 的 push 处理保持一致:
+// realized_pnl===0 视作平局(push),不计入胜率分母。
+// ---------------------------------------------------------------------------
+
+// follow_positions 表行的读取视图(TDD 与 UI 层共用的结构契约)。
+export interface FollowPositionRow {
+  strategy_id: number;
+  condition_id: string;
+  outcome: string;
+  size_usd: number;
+  entry_price: number;
+  smart_avg_price: number;
+  shares: number;
+  status: "open" | "settled";
+  entry_ts: number;
+  exit_ts: number | null;
+  exit_price: number | null;
+  realized_pnl: number | null;
+}
+
+export interface StrategyMetrics {
+  totalRealized: number;
+  invested: number;
+  roi: number | null;
+  wins: number;
+  settledCount: number;
+  winRate: number | null;
+  winRateCI: { lo: number; hi: number };
+  openCount: number;
+  avgHoldingDays: number | null;
+  maxDrawdown: number;
+  slippageCost: number;
+  equityCurve: { ts: number; cum: number }[];
+  byCategory: Record<string, { realized: number; settledCount: number }>;
+}
+
+/**
+ * 单条策略的战绩汇总。入参 positions 是「某一策略」的全部仓位。
+ *
+ *  - 结算口径:totalRealized/invested/roi 只看 settled;realized_pnl 缺失(应有值)
+ *    按 0 计,避免 NaN 扩散。
+ *  - 胜率:wins/(wins+losses),realized_pnl===0 为 push 不进分母;winRateCI 用
+ *    Wilson 区间诚实反映小样本区间(分母 0 时 wilsonInterval 返回 {lo:0,hi:1})。
+ *  - 净值曲线:settled 按 exit_ts 升序累计 realized_pnl。
+ *  - maxDrawdown:在 cum 序列上维护 running peak,不引入隐式 0 起点(峰谷只在真实
+ *    结算点之间算);空 settled → 0。
+ *  - slippageCost:对所有仓位(open+settled,滑点在进场即产生)累计 positionSlippage。
+ *  - byCategory:settled 按 categoryByCid 分组,null/缺失归「未分类」。
+ */
+export function computeStrategyMetrics(
+  positions: FollowPositionRow[],
+  categoryByCid: Record<string, string | null>,
+): StrategyMetrics {
+  const settled = positions.filter((p) => p.status === "settled");
+  const openCount = positions.filter((p) => p.status === "open").length;
+  const settledCount = settled.length;
+
+  const totalRealized = settled.reduce((s, p) => s + (p.realized_pnl ?? 0), 0);
+  const invested = settled.reduce((s, p) => s + p.size_usd, 0);
+  const roi = invested > 0 ? totalRealized / invested : null;
+
+  // 胜负:realized_pnl>0 赢、<0 输、===0 push(不计分母)。
+  let wins = 0;
+  let losses = 0;
+  for (const p of settled) {
+    const pnl = p.realized_pnl ?? 0;
+    if (pnl > 0) wins++;
+    else if (pnl < 0) losses++;
+  }
+  const denom = wins + losses;
+  const winRate = denom > 0 ? wins / denom : null;
+  const winRateCI = wilsonInterval(wins, denom);
+
+  // 净值曲线:按 exit_ts 升序(复制后排序,不改入参)累计已实现盈亏。
+  const equityCurve: { ts: number; cum: number }[] = [];
+  let cum = 0;
+  for (const p of [...settled].sort(
+    (a, b) => (a.exit_ts ?? 0) - (b.exit_ts ?? 0),
+  )) {
+    cum += p.realized_pnl ?? 0;
+    equityCurve.push({ ts: p.exit_ts ?? 0, cum });
+  }
+
+  // 最大回撤:running peak 与当前点之差的最大值;不引入隐式 0 起点。
+  let maxDrawdown = 0;
+  let peak = -Infinity;
+  for (const pt of equityCurve) {
+    if (pt.cum > peak) peak = pt.cum;
+    const dd = peak - pt.cum;
+    if (dd > maxDrawdown) maxDrawdown = dd;
+  }
+
+  // 平均持仓天数:settled 的均值;exit_ts 异常缺失时按 entry_ts 兜底(持仓 0 天,
+  // 不产生负值)。无 settled → null。
+  const avgHoldingDays =
+    settledCount > 0
+      ? settled.reduce(
+          (s, p) => s + ((p.exit_ts ?? p.entry_ts) - p.entry_ts) / 86400,
+          0,
+        ) / settledCount
+      : null;
+
+  // 滑点成本:对所有仓位(open+settled)—— 滑点在进场即产生,与是否结算无关。
+  const slippageCost = positions.reduce(
+    (s, p) =>
+      s + positionSlippage(p.entry_price, p.smart_avg_price, p.size_usd),
+    0,
+  );
+
+  // 按赛道分解:仅 settled,categoryByCid 缺失/null 归「未分类」。
+  const byCategory: Record<string, { realized: number; settledCount: number }> =
+    {};
+  for (const p of settled) {
+    const cat = categoryByCid[p.condition_id] ?? "未分类";
+    const bucket = (byCategory[cat] ??= { realized: 0, settledCount: 0 });
+    bucket.realized += p.realized_pnl ?? 0;
+    bucket.settledCount += 1;
+  }
+
+  return {
+    totalRealized,
+    invested,
+    roi,
+    wins,
+    settledCount,
+    winRate,
+    winRateCI,
+    openCount,
+    avgHoldingDays,
+    maxDrawdown,
+    slippageCost,
+    equityCurve,
+    byCategory,
+  };
 }
