@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { fetchWithRetry } from "./fetchWithRetry";
 
 const DATA_API = "https://data-api.polymarket.com";
 const PAGE_SIZE = 50;
@@ -145,9 +146,12 @@ export async function fetchWalletMarketPositions(
   conditionId: string,
 ): Promise<Record<string, MarketPosition>> {
   const url = `${DATA_API}/positions?user=${encodeURIComponent(wallet)}&market=${encodeURIComponent(conditionId)}`;
-  const res = await fetch(url, {
-    signal: AbortSignal.timeout(8000),
+  // Retry transient 5xx/429 — a big market fans out many of these at once, so a
+  // momentary rate-limit must not silently degrade a wallet's holding to "—".
+  const res = await fetchWithRetry(url, {
+    timeoutMs: 8000,
     headers: { "User-Agent": "polymarket-monitor" },
+    label: "fetchWalletMarketPositions",
   });
   if (!res.ok) throw new Error(`fetchWalletMarketPositions ${res.status}`);
   const body = await res.json();

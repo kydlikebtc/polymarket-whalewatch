@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 const CID_RE = /^0x[0-9a-fA-F]{64}$/;
 const WALLET_RE = /^0x[0-9a-fA-F]{40}$/;
-const MAX_WALLETS = 24;
+const MAX_WALLETS = 150; // a busy disagreement market can have 25+ wallets PER side
 const CACHE_TTL_MS = 60_000; // current positions move; a minute is fresh enough
 const CACHE_MAX = 2000;
 
@@ -61,7 +61,7 @@ export async function GET(req: Request) {
   ].slice(0, MAX_WALLETS);
 
   try {
-    const results = await mapLimit(wallets, 4, async (w) => {
+    const results = await mapLimit(wallets, 6, async (w) => {
       try {
         return { w, positions: await getCached(w, conditionId) };
       } catch (e) {
