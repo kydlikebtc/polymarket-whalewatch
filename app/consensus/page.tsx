@@ -9,6 +9,7 @@ import {
   SoundToggle,
   StatCard,
   Tag,
+  WalletLink,
   catLabel,
 } from "../ui";
 import { useMarketPositions } from "../useMarketPositions";
@@ -132,15 +133,9 @@ function ConsensusDetail({ group }: { group: ConsensusGroup }) {
           {group.wallets.map((w) => (
             <tr key={w.wallet}>
               <td>
-                <a
-                  className="mono"
-                  href={`/wallet/${w.wallet}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={`${w.wallet} · 新标签打开钱包档案`}
-                >
+                <WalletLink address={w.wallet}>
                   <Icon s="🏆" /> {shortWallet(w.wallet)}
-                </a>
+                </WalletLink>
               </td>
               <td className="mono is-right" data-label="评分">
                 {w.score != null ? Math.round(w.score) : "—"}

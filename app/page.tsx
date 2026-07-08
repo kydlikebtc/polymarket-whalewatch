@@ -11,6 +11,7 @@ import {
   SideTag,
   SoundToggle,
   StatCard,
+  WalletLink,
   WalletStatsBadge,
   catLabel,
   type SmartInfoLite,
@@ -160,15 +161,12 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
         {t.price.toFixed(3)}
       </td>
       <td data-label="钱包">
-        <a
-          className="mono"
-          href={`/wallet/${t.wallet?.toLowerCase()}`}
-          target="_blank"
-          rel="noreferrer"
+        <WalletLink
+          address={t.wallet ?? ""}
           title={`${t.wallet} · 新标签打开钱包档案`}
         >
           {shortWallet(t.wallet)}
-        </a>
+        </WalletLink>
       </td>
       <td data-label="地址年龄">
         <AgeBadge ageDays={age} />

@@ -17,6 +17,7 @@ import {
   SoundToggle,
   StatCard,
   Tag,
+  WalletLink,
   WalletStatsBadge,
   type SmartInfoLite,
   type WalletStatsLite,
@@ -174,16 +175,12 @@ const AccumRow = memo(function AccumRow({
           {isOpen ? "▾" : "▸"}
         </td>
         <td>
-          <a
-            className="mono"
-            href={`/wallet/${g.wallet?.toLowerCase()}`}
-            target="_blank"
-            rel="noreferrer"
+          <WalletLink
+            address={g.wallet ?? ""}
             title={`${g.wallet} · 新标签打开钱包档案`}
-            onClick={(e) => e.stopPropagation()}
           >
             {shortWallet(g.wallet)}
-          </a>
+          </WalletLink>
         </td>
         <td data-label="地址年龄">
           <AgeBadge ageDays={age} />

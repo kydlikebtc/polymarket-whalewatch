@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Field, Icon, Segmented, SideTag, SoundToggle } from "../ui";
+import {
+  Field,
+  Icon,
+  Segmented,
+  SideTag,
+  SoundToggle,
+  WalletLink,
+} from "../ui";
 import { iconTip } from "../glossary";
 import { playBubble } from "../sound";
 import { useSoundToggle } from "../useSound";
@@ -798,15 +805,12 @@ export default function Page() {
                     </td>
                     <td data-label="钱包">
                       {a.wallet ? (
-                        <a
-                          className="mono"
-                          href={`/wallet/${a.wallet.toLowerCase()}`}
-                          target="_blank"
-                          rel="noreferrer"
+                        <WalletLink
+                          address={a.wallet}
                           title={`${a.wallet} · 新标签打开钱包档案`}
                         >
                           {shortWallet(a.wallet)}
-                        </a>
+                        </WalletLink>
                       ) : (
                         <span className="mono">—</span>
                       )}

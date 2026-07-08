@@ -223,6 +223,43 @@ export function QuietLink({
   );
 }
 
+/* ----------------------------------------------------------- WalletLink */
+
+// Every wallet-address click in the app opens the dossier in a NEW tab —
+// never an in-place navigation (the user is mid-scan; losing the list state
+// costs more than a tab). One shared component instead of seven hand-rolled
+// anchors, and the click handler FORCES the new tab via window.open:
+// target="_blank" alone is ignored by some embedded webviews (preview
+// panels), which would fall back to exactly the in-place jump we're
+// preventing. The href stays real so middle-click / copy-link still work.
+export function WalletLink({
+  address,
+  children,
+  title,
+}: {
+  address: string;
+  children: ReactNode;
+  title?: string;
+}) {
+  const href = `/wallet/${address.toLowerCase()}`;
+  return (
+    <a
+      className="mono"
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      title={title ?? `${address} · 新标签打开钱包档案`}
+      onClick={(e) => {
+        e.stopPropagation(); // never trigger the row's expand/select
+        e.preventDefault();
+        window.open(href, "_blank", "noopener,noreferrer");
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
 /* ------------------------------------------------------------- Category */
 
 // Chinese display names for the gamma tag taxonomy; unknown labels pass

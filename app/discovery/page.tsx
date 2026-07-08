@@ -1,7 +1,13 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { fmtSignedUsdCompact, Segmented, StatCard, Tag } from "../ui";
+import {
+  fmtSignedUsdCompact,
+  Segmented,
+  StatCard,
+  Tag,
+  WalletLink,
+} from "../ui";
 import { WalletTagChips, tagVariant } from "../walletTagChips";
 import type { WalletTag } from "../../lib/walletTags";
 
@@ -239,16 +245,7 @@ export default function DiscoveryPage() {
   };
 
   const walletCell = (address: string) => (
-    <a
-      className="mono"
-      href={`/wallet/${address}`}
-      target="_blank"
-      rel="noreferrer"
-      title={`${address} · 新标签打开钱包档案`}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {shortWallet(address)}
-    </a>
+    <WalletLink address={address}>{shortWallet(address)}</WalletLink>
   );
 
   return (

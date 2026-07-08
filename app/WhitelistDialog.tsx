@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Modal, fmtSignedUsdCompact } from "./ui";
+import { Modal, WalletLink, fmtSignedUsdCompact } from "./ui";
 
 type Row = {
   address: string;
@@ -98,15 +98,9 @@ export function WhitelistDialog({
               {filtered.map((r) => (
                 <tr key={r.address}>
                   <td>
-                    <a
-                      className="mono"
-                      href={`/wallet/${r.address}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={`${r.address} · 新标签打开钱包档案`}
-                    >
+                    <WalletLink address={r.address}>
                       🏆 {shortWallet(r.address)}
-                    </a>
+                    </WalletLink>
                     {r.isWhitelist ? (
                       <span className="muted"> · 手动</span>
                     ) : null}
