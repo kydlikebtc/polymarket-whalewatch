@@ -49,6 +49,13 @@ export const SPLITTER_OPTS = {
   splitCeiling: 10_000,
 } as const;
 
+// Near-certainty ceiling for echo/splitter evidence, same convention as the
+// alert engine's default maxPrice=0.95: buys at 99¢+ carry no directional
+// information. Observed live on day one — dozens of wallets split-buying the
+// same market at 99.8¢ in identical clips (parking/farming, not conviction)
+// flooded the candidate funnel with breadth-1 noise.
+export const EVIDENCE_MAX_PRICE = 0.95;
+
 // Insider signature (the glossary's "内幕猎杀组合", automated): a single
 // decisive BUY at favorite odds from a fresh address.
 export const INSIDER_MIN_USD = 5_000;
@@ -139,6 +146,7 @@ export function detectEchoEvidence(
     if (netUsd < echoMinUsd) continue;
     if ((netBoughtOutcomes.get(`${cid}:${wallet}`) ?? 0) >= 2) continue; // hedger
     const avgPrice = acc.buyShares > 0 ? acc.buyUsd / acc.buyShares : 0;
+    if (avgPrice > EVIDENCE_MAX_PRICE) continue; // near-certainty — info-free
     out.push({
       address: wallet,
       channel: "echo",
@@ -167,6 +175,7 @@ export function detectSplitterEvidence(
     const wallet = g.wallet.toLowerCase();
     if (smartTags.has(wallet)) continue;
     if (g.hedgeSuspect || g.mmSuspect) continue; // no directional conviction
+    if (g.avgBuyPrice > EVIDENCE_MAX_PRICE) continue; // near-certainty — info-free
     out.push({
       address: wallet,
       channel: "splitter",

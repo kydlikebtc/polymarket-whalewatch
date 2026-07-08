@@ -154,6 +154,20 @@ describe("detectSplitterEvidence", () => {
     expect(out[0].usd).toBe(6_000);
   });
 
+  it("drops near-certainty accumulation (99¢ parking is not conviction)", () => {
+    // Observed live: dozens of wallets split-buying the same market at 99.8¢
+    // in identical clips — farming, not a directional bet.
+    const parked = [0, 1, 2].map((i) =>
+      trade({
+        proxyWallet: "0xpark",
+        size: 5_100,
+        price: 0.998,
+        timestamp: 100 + i,
+      }),
+    );
+    expect(detectSplitterEvidence(parked, smartTags)).toHaveLength(0);
+  });
+
   it("drops hedge/mm-suspect groups (no directional conviction)", () => {
     // Qualifies on every split threshold (4 buys × $4k, net $14k) but the
     // B/S/B/S/B/B sequence flips 4/5 times → mmSuspect → dropped.
