@@ -84,6 +84,14 @@ const asArr = (v: unknown): unknown[] => {
  * Per-row salvage: undecided/refunded markets (no outcome pinned >0.99, or
  * more than one — data glitch) and sub-floor volume are skipped, a stale row
  * terminates the sweep (rows are closedTime-descending).
+ *
+ * The volume floor is applied SERVER-SIDE (`volume_num_min`, verified live
+ * 2026-07-08): the raw closed feed churns ~700 markets/hour (15-minute crypto
+ * micros, in-play tennis games), so an unfiltered 100-row page spans only a
+ * few MINUTES of settlements and no sane page budget ever reaches a 48h
+ * boundary. Filtered, ~100 rows ≈ 3.3h — a 20-page budget genuinely covers
+ * the lookback. If the budget still runs out before `sinceSec`, the gap is
+ * loudly logged (a silent cap here once hid a 97% coverage collapse).
  */
 export async function fetchRecentlyClosedMarkets(opts: {
   sinceSec: number;
@@ -96,20 +104,27 @@ export async function fetchRecentlyClosedMarkets(opts: {
   const {
     sinceSec,
     minVolume = EW_MIN_MARKET_VOLUME,
-    maxMarkets = 100,
+    maxMarkets = 1500,
     pageSize = 100,
-    maxPages = 5,
+    maxPages = 20,
     fetcher = (url: string) =>
       fetchWithRetry(url, { timeoutMs: 10_000, label: "fetchClosedMarkets" }),
   } = opts;
+  const volParam = minVolume > 0 ? `&volume_num_min=${minVolume}` : "";
   const out: ClosedMarket[] = [];
   const seen = new Set<string>();
-  for (let page = 0; page < maxPages && out.length < maxMarkets; page++) {
-    const url = `${GAMMA_API}/markets?closed=true&order=closedTime&ascending=false&limit=${pageSize}&offset=${page * pageSize}`;
+  let reachedSince = false;
+  let oldestSeenSec: number | null = null;
+  let page = 0;
+  for (; page < maxPages && out.length < maxMarkets; page++) {
+    const url = `${GAMMA_API}/markets?closed=true&order=closedTime&ascending=false&limit=${pageSize}&offset=${page * pageSize}${volParam}`;
     const res = await fetcher(url);
     if (!res.ok) throw new Error(`fetchRecentlyClosedMarkets ${res.status}`);
     const raw = await res.json();
-    if (!Array.isArray(raw) || raw.length === 0) break;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      reachedSince = true; // feed exhausted — nothing older exists
+      break;
+    }
     let stale = false;
     for (const row of raw as Record<string, unknown>[]) {
       const cid = typeof row.conditionId === "string" ? row.conditionId : "";
@@ -119,10 +134,14 @@ export async function fetchRecentlyClosedMarkets(opts: {
         typeof row.closedTime === "string" ? row.closedTime : null,
       );
       if (closedTimeSec == null) continue;
+      if (oldestSeenSec == null || closedTimeSec < oldestSeenSec) {
+        oldestSeenSec = closedTimeSec;
+      }
       if (closedTimeSec < sinceSec) {
         stale = true; // descending order: everything deeper is older
         continue;
       }
+      // Belt-and-braces client check behind the server-side filter.
       const volume = asNum(row.volumeNum) ?? asNum(row.volume) ?? 0;
       if (volume < minVolume) continue;
       const prices = asArr(row.outcomePrices).map((p) => asNum(p) ?? 0);
@@ -142,8 +161,25 @@ export async function fetchRecentlyClosedMarkets(opts: {
       });
       if (out.length >= maxMarkets) break;
     }
-    if (stale) break;
-    if (raw.length < pageSize) break;
+    if (stale) {
+      reachedSince = true;
+      break;
+    }
+    if (raw.length < pageSize) {
+      reachedSince = true;
+      break;
+    }
+  }
+  if (!reachedSince) {
+    const coveredH =
+      oldestSeenSec != null
+        ? ((Date.now() / 1000 - oldestSeenSec) / 3600).toFixed(1)
+        : "?";
+    const wantedH = ((Date.now() / 1000 - sinceSec) / 3600).toFixed(1);
+    console.warn(
+      `[discovery] closed-market listing exhausted its ${page}-page budget BEFORE reaching the lookback ` +
+        `(covered ~${coveredH}h of the requested ${wantedH}h) — older settlements are invisible this run`,
+    );
   }
   return out;
 }
@@ -292,7 +328,12 @@ export async function runEarlyWinnerScan(
   const {
     nowSec = Math.floor(Date.now() / 1000),
     lookbackSec = 48 * 3600,
-    maxMarketsPerRun = 50,
+    // Sized to the qualified settlement flow (~30/h ≈ 720/day at the $10k
+    // floor, measured live): the cap must EXCEED a day's inflow or a backlog
+    // grows that the 48h listing window then silently drops. ~800 markets ×
+    // 1-2 pages at concurrency 2 is a few hundred requests once a day — noise
+    // against the ~150req/10s budget.
+    maxMarketsPerRun = 800,
     concurrency = 2,
     marketsFetcher = fetchRecentlyClosedMarkets,
     tradesFetcher = fetchMarketTrades,
@@ -301,9 +342,19 @@ export async function runEarlyWinnerScan(
   const isScanned = db.prepare(
     "SELECT 1 FROM early_winner_scans WHERE condition_id = ?",
   );
-  const fresh = markets
-    .filter((m) => !isScanned.get(m.conditionId))
+  const unscanned = markets.filter((m) => !isScanned.get(m.conditionId));
+  // Drain OLDEST-first: whatever the cap cuts must be the newest markets —
+  // those re-appear in tomorrow's 48h listing, while the oldest are about to
+  // fall out of it forever.
+  const fresh = unscanned
+    .slice()
+    .sort((a, b) => a.closedTimeSec - b.closedTimeSec)
     .slice(0, maxMarketsPerRun);
+  if (unscanned.length > fresh.length) {
+    console.warn(
+      `[discovery] early-winner scan capped: ${fresh.length}/${unscanned.length} unscanned market(s) this run — the newest ${unscanned.length - fresh.length} roll over to tomorrow's listing`,
+    );
+  }
   if (fresh.length === 0) {
     return {
       candidateMarkets: markets.length,
@@ -329,12 +380,24 @@ export async function runEarlyWinnerScan(
   await mapLimit(fresh, concurrency, async (m) => {
     try {
       const { trades, truncated } = await tradesFetcher(m.conditionId, {});
+      if (truncated) {
+        // The 3000-offset cap cut exactly the DEEPEST (earliest) fills — the
+        // most valuable rows for this channel. The evidence extracted from
+        // the visible slice is still true, but early buyers beyond the cap
+        // are invisible; say so instead of silently posing as a full sweep.
+        console.warn(
+          `[discovery] early-winner sweep TRUNCATED at the /trades offset cap for ${m.conditionId} ` +
+            `(${trades.length} rows) — the earliest fills are beyond reach, evidence is a newest-slice lower bound`,
+        );
+      }
       const ev = extractEarlyWinnerEvidence(trades, m, { poolAddresses: pool });
       inserted += recordEvidence(db, ev, nowSec);
       evidence += ev.length;
       markScanned.run(m.conditionId, nowSec, trades.length, truncated ? 1 : 0);
       scanned++;
     } catch (e) {
+      // No cursor row on failure: the market re-appears in tomorrow's 48h
+      // listing (closed markets are immutable), so the retry is loss-free.
       console.warn(
         `[discovery] early-winner sweep failed for ${m.conditionId} (will retry next run):`,
         e,

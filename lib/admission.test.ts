@@ -44,10 +44,10 @@ describe("evaluateAdmission", () => {
       "admit",
     );
   });
-  it("admits on positive netPnl with real capital efficiency", () => {
+  it("admits on positive netPnl with real capital efficiency over enough settled markets", () => {
     expect(
       evaluateAdmission(
-        stats({ winRate: null, settledCount: 0, netPnl: 5_000, roi: 0.05 }),
+        stats({ winRate: null, settledCount: 5, netPnl: 5_000, roi: 0.05 }),
       ),
     ).toBe("admit");
   });
@@ -56,6 +56,13 @@ describe("evaluateAdmission", () => {
     // win rate under the bar, roi under the bar
     expect(
       evaluateAdmission(stats({ winRate: 0.54, roi: 0.04, netPnl: 100 })),
+    ).toBe("hold");
+    // the ROI path has its own settled floor: one lucky $200 win reads as
+    // roi>=5% but is noise, not capital efficiency
+    expect(
+      evaluateAdmission(
+        stats({ winRate: null, settledCount: 1, netPnl: 5_000, roi: 0.5 }),
+      ),
     ).toBe("hold");
     // good win rate but too few settled markets to trust it
     expect(
@@ -141,6 +148,62 @@ describe("admitCandidates", () => {
       .prepare("SELECT updated_at FROM smart_wallets WHERE address = '0xboard'")
       .get() as { updated_at: number };
     expect(board.updated_at).toBe(100); // untouched
+  });
+
+  it("re-qualifies a standing member on track record alone (no fresh evidence needed)", async () => {
+    const db = openDb(":memory:");
+    // In the pool, detectors skip the wallet, so it can never accrue new
+    // evidence — the aging clock must renew on quality alone.
+    db.prepare(
+      "INSERT INTO smart_wallets (address, source, updated_at) VALUES ('0xmember', 'discovered:splitter', 100), ('0xdecayed', 'discovered:echo', 100)",
+    ).run();
+    const fetcher = vi.fn(async (w: string) =>
+      w === "0xmember"
+        ? stats()
+        : stats({ winRate: 0.3, roi: -0.2, netPnl: -5_000 }),
+    );
+    const r = await admitCandidates(db, {
+      nowSec: 2_000,
+      statsFetcher: fetcher as never,
+    });
+    expect(r.evaluated).toBe(2);
+    expect(r.admitted).toBe(1);
+    const at = (a: string) =>
+      (
+        db
+          .prepare("SELECT updated_at FROM smart_wallets WHERE address = ?")
+          .get(a) as { updated_at: number }
+      ).updated_at;
+    expect(at("0xmember")).toBe(2_000); // renewed — survives the aging sweep
+    expect(at("0xdecayed")).toBe(100); // quality decayed — left to age out
+  });
+
+  it("excludes persistently-classified bots from the evaluation slots", async () => {
+    const db = openDb(":memory:");
+    // A known bot with heavy evidence would otherwise take the only slot.
+    db.prepare(
+      "INSERT INTO wallet_stats (wallet, markets_traded, fetched_at) VALUES ('0xbot', 5000, 1)",
+    ).run();
+    for (const [w, markets] of [
+      ["0xbot", ["0xm1", "0xm2", "0xm3", "0xm4"]],
+      ["0xreal", ["0xm1", "0xm2", "0xm3"]],
+    ] as const) {
+      recordEvidence(
+        db,
+        markets.map((m) => ev(w, "echo", m)),
+        1_000,
+      );
+    }
+    const fetcher = vi.fn(async () => stats());
+    const r = await admitCandidates(db, {
+      nowSec: 2_000,
+      maxEnrichPerRun: 1,
+      statsFetcher: fetcher as never,
+    });
+    expect(r.admitted).toBe(1); // 0xreal got the slot, not the bot
+    expect(db.prepare("SELECT address FROM smart_wallets").all()).toEqual([
+      { address: "0xreal" },
+    ]);
   });
 
   it("never admits bots or weak records", async () => {

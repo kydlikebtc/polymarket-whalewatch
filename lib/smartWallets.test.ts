@@ -170,6 +170,40 @@ describe("seedSmartWallets", () => {
     expect(spec?.volume).toBe(90_000);
   });
 
+  it("gates category specialists through the admission quality bar (weak records stay out)", async () => {
+    const db = openDb(":memory:");
+    const fetchBoard = vi.fn(
+      async ({ category }: { period: string; category?: string }) => {
+        if (!category) return [];
+        return category === "culture"
+          ? [
+              lbRow("0xskilled", 30_000, 100_000),
+              lbRow("0xlucky", 1_900, 40_000), // board tail — $1.9k of luck
+            ]
+          : [];
+      },
+    );
+    // 0xskilled passes the gate; 0xlucky's record fails it.
+    const statsFetcher = vi.fn(async (w: string) =>
+      w === "0xskilled"
+        ? stats()
+        : stats({ winRate: 0.4, roi: 0.01, netPnl: 1_900, settledCount: 3 }),
+    );
+    await seedSmartWallets(db, {
+      periods: ["ALL"],
+      categories: ["culture"],
+      fetchBoard: fetchBoard as never,
+      statsFetcher,
+      nowSec: 1000,
+    });
+    const rows = db.prepare("SELECT address FROM smart_wallets").all() as {
+      address: string;
+    }[];
+    // Pool membership IS the consensus whitelist — a category-board tail spot
+    // is not a quality bar, so 0xlucky must NOT gain membership.
+    expect(rows).toEqual([{ address: "0xskilled" }]);
+  });
+
   it("keeps the best-pnl category row when a specialist tops several categories", async () => {
     const db = openDb(":memory:");
     const fetchBoard = vi.fn(

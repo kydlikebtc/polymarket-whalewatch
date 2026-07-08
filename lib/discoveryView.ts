@@ -42,11 +42,13 @@ export function buildDiscoveryView(
   db: DB,
   nowSec: number = Math.floor(Date.now() / 1000),
 ): DiscoveryView {
+  // Window keyed on evidence_ts (behavior freshness, refreshed on
+  // re-observation) — the same basis the admission gate uses.
   const evidence = db
     .prepare(
       `SELECT address, channel, condition_id, evidence_ts, note
          FROM wallet_candidates
-        WHERE created_at >= ?`,
+        WHERE evidence_ts >= ?`,
     )
     .all(nowSec - ADMIT_EVIDENCE_WINDOW_SEC) as {
     address: string;

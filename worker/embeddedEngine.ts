@@ -10,6 +10,7 @@ import { runAlertCycle } from "../lib/alertEngine";
 import {
   getAllSmartTags,
   getSmartTags,
+  isSeedInFlight,
   maybeDailySeed,
 } from "../lib/smartWallets";
 import { LEADERBOARD_CATEGORIES } from "../lib/leaderboard";
@@ -201,15 +202,21 @@ export function startAlertEngine(): void {
       // Daily (UTC) discovery run: the early-winner settled-market sweep
       // (channel ②) followed by the admission gate that graduates recurrent,
       // quality-checked candidates into the pool. Same fire-and-forget
-      // posture as seeding.
-      maybeDailyDiscovery(db)
-        ?.then((r) =>
-          console.log(
-            `[engine] discovery: ${r.scan.scanned} settled market(s) swept · ` +
-              `${r.admission.admitted} admitted / ${r.admission.evaluated} evaluated`,
-          ),
-        )
-        .catch((e) => console.error("[engine] discovery run failed", e));
+      // posture as seeding, but SERIALIZED behind it: both gates open on the
+      // same UTC-midnight tick, and stacking the seed's enrichment fan-out
+      // with the settled-market sweep would slam data-api's rate budget while
+      // the 4s alert loop shares it. Discovery starts on the first tick after
+      // the seed lands.
+      if (!isSeedInFlight()) {
+        maybeDailyDiscovery(db)
+          ?.then((r) =>
+            console.log(
+              `[engine] discovery: ${r.scan.scanned} settled market(s) swept · ` +
+                `${r.admission.admitted} admitted / ${r.admission.evaluated} evaluated`,
+            ),
+          )
+          .catch((e) => console.error("[engine] discovery run failed", e));
+      }
 
       // Daily seen_trades retention prune (synchronous, day-gated, sub-ms on
       // the steady-state table): the dedup ledger otherwise grows without

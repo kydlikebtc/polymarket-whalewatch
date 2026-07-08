@@ -225,7 +225,14 @@ export function detectInsiderPending(
   return [...best.values()];
 }
 
-/** Persist evidence rows; the PK makes re-observations no-ops. Returns rows actually inserted. */
+/**
+ * Persist evidence rows. The PK dedups per (wallet, channel, market), but a
+ * strictly NEWER observation of the same behavior refreshes the row
+ * (evidence_ts/usd/note) — the 30-day recurrence window keys on evidence_ts,
+ * so a wallet still actively doing the thing must not read as stale just
+ * because it was first seen a month ago. created_at stays frozen at first
+ * discovery. Returns rows actually written (new or refreshed).
+ */
 export function recordEvidence(
   db: DB,
   evidence: CandidateEvidence[],
@@ -233,14 +240,20 @@ export function recordEvidence(
 ): number {
   if (evidence.length === 0) return 0;
   const ins = db.prepare(
-    `INSERT OR IGNORE INTO wallet_candidates
+    `INSERT INTO wallet_candidates
      (address, channel, condition_id, evidence_ts, usd, price, note, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(address, channel, condition_id) DO UPDATE SET
+       evidence_ts = excluded.evidence_ts,
+       usd = excluded.usd,
+       price = excluded.price,
+       note = excluded.note
+     WHERE excluded.evidence_ts > wallet_candidates.evidence_ts`,
   );
-  let inserted = 0;
+  let written = 0;
   const tx = db.transaction(() => {
     for (const e of evidence) {
-      inserted += ins.run(
+      written += ins.run(
         e.address,
         e.channel,
         e.conditionId,
@@ -253,7 +266,7 @@ export function recordEvidence(
     }
   });
   tx();
-  return inserted;
+  return written;
 }
 
 export interface FirehoseResult {
@@ -298,10 +311,26 @@ export async function collectFirehoseEvidence(
 
   let insider: CandidateEvidence[] = [];
   if (pending.length > 0) {
-    const wallets = [...new Set(pending.map((p) => p.address))].slice(
-      0,
-      maxAgeLookups,
+    const distinct = [...new Set(pending.map((p) => p.address))];
+    // The cap bounds NETWORK cost, so it must only spend on cache misses:
+    // wallets whose age is already in wallet_age are free lookups and always
+    // included — otherwise a hot window's cached wallets would consume the
+    // budget and starve the (older-fill) uncached ones indefinitely.
+    const placeholders = distinct.map(() => "?").join(",");
+    const cached = new Set(
+      (
+        db
+          .prepare(
+            `SELECT wallet FROM wallet_age WHERE wallet IN (${placeholders})`,
+          )
+          .all(...distinct) as { wallet: string }[]
+      ).map((r) => r.wallet),
     );
+    const uncached = distinct.filter((w) => !cached.has(w));
+    const wallets = [
+      ...distinct.filter((w) => cached.has(w)),
+      ...uncached.slice(0, maxAgeLookups),
+    ];
     const walletSet = new Set(wallets);
     // Failed lookups are ABSENT from the map (not null) — those fills are
     // skipped this cycle and re-evaluated next cycle (the PK makes retries
@@ -322,7 +351,7 @@ export async function collectFirehoseEvidence(
   const inserted = recordEvidence(db, all, nowSec);
   if (all.length > 0) {
     console.log(
-      `[discovery] firehose evidence: echo ${echo.length} · splitter ${splitter.length} · insider ${insider.length} — ${inserted} new row(s)`,
+      `[discovery] firehose evidence: echo ${echo.length} · splitter ${splitter.length} · insider ${insider.length} — ${inserted} new/refreshed row(s)`,
     );
   }
   return { evidence: all.length, inserted };

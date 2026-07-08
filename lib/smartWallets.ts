@@ -5,6 +5,7 @@ import {
   type LeaderboardRow,
 } from "./leaderboard";
 import { getWalletStats, type WalletStats } from "./walletStats";
+import { evaluateAdmission } from "./admissionGate";
 
 // A smart-wallet tag as consumed by the alert engine and the dashboards.
 export interface SmartTag {
@@ -55,6 +56,11 @@ export function computeScore(input: {
 export interface SeedResult {
   seeded: number;
   enriched: number;
+  // Wallets that came from the GLOBAL boards specifically. The intra-day
+  // failure retry keys on this, not on `seeded`: with category boards merged
+  // in, "some category board answered" must not mask "every global board is
+  // down" (the pool's backbone would silently skip a day).
+  globalSeeded: number;
 }
 
 /**
@@ -176,7 +182,7 @@ export async function seedSmartWallets(
       }
     }
   }
-  if (merged.size === 0) return { seeded: 0, enriched: 0 };
+  if (merged.size === 0) return { seeded: 0, enriched: 0, globalSeeded: 0 };
 
   // Settled-record enrichment for the biggest earners (bounded upstream cost;
   // getWalletStats caches per-wallet for a day so re-seeds are nearly free).
@@ -200,11 +206,38 @@ export async function seedSmartWallets(
        updated_at = excluded.updated_at,
        source = COALESCE(source, excluded.source)`,
   );
+  // Pre-read existing sources once: category rows must never overwrite a
+  // leaderboard-history row (its account-wide pnl/vol would be replaced by
+  // category-scoped figures while the source still claims 'leaderboard').
+  const existingSource = new Map(
+    (
+      db.prepare("SELECT address, source FROM smart_wallets").all() as {
+        address: string;
+        source: string | null;
+      }[]
+    ).map((r) => [r.address.toLowerCase(), r.source]),
+  );
   let enriched = 0;
+  let categoryGated = 0;
   const tx = db.transaction(() => {
     for (const [wallet, lb] of merged) {
       const s = stats[wallet] ?? null;
       if (s) enriched++;
+      if (lb.source.startsWith("category:")) {
+        // Channel-③ quality gate. Pool membership IS the consensus whitelist,
+        // and a category board's tail is NOT a quality bar (measured live:
+        // culture WEEK #25 ≈ $1.9k pnl — 37-80x below the global boards'
+        // #100). Category rows therefore pass the same track-record gate the
+        // discovered channels do; the global boards' own top-100 bar stays
+        // their own gate. Un-enriched rows fail closed (no stats, no entry).
+        if (evaluateAdmission(s) !== "admit") {
+          categoryGated++;
+          continue;
+        }
+        // A stale global-board row outranks a category row: skip rather than
+        // mix bases. It ages out in 30 days if it never re-boards.
+        if (existingSource.get(wallet) === "leaderboard") continue;
+      }
       // Prefer the wallet's authoritative net P/L (user-pnl-api, all-time) when
       // enriched; fall back to the merged leaderboard row's pnl when the wallet
       // is un-enriched OR its netPnl is null (PnL API failed on a truncated
@@ -252,12 +285,15 @@ export async function seedSmartWallets(
   const specialists = [...merged.values()].filter((v) =>
     v.source.startsWith("category:"),
   ).length;
+  const globalSeeded = merged.size - specialists;
   console.log(
     `[smartWallets] seeded ${merged.size} wallets · enrichment coverage ${enriched}/${merged.size}` +
       ` (${Math.round((enriched / merged.size) * 100)}%)` +
-      (categories.length > 0 ? ` · category specialists ${specialists}` : ""),
+      (categories.length > 0
+        ? ` · category specialists ${specialists - categoryGated} admitted / ${categoryGated} gated out`
+        : ""),
   );
-  return { seeded: merged.size, enriched };
+  return { seeded: merged.size, enriched, globalSeeded };
 }
 
 const STALE_AFTER_SEC = 30 * 86_400;
@@ -300,6 +336,14 @@ function parseSeedMarker(value: string | null | undefined): SeedMarker | null {
 // In-process guard so a retry-eligible marker (or a UTC day rollover) can't
 // start a second seed while one is still running.
 let seedInFlight = false;
+
+// The engine serializes the daily discovery run behind the seed (both fire on
+// the same UTC-midnight tick otherwise, stacking two enrichment fan-outs plus
+// the settled-market sweep against data-api's rate budget while the 4s alert
+// loop shares it).
+export function isSeedInFlight(): boolean {
+  return seedInFlight;
+}
 
 /**
  * Day-gated seeding: returns the seeding promise when a seed should run now,
@@ -359,10 +403,11 @@ export function maybeDailySeed(
   seedInFlight = true;
   return seedSmartWallets(db, { ...opts, nowSec })
     .then((r) => {
-      if (r.seeded === 0) {
-        // Every board failed/empty (per-board warns already logged): nothing
-        // was written, so don't consume the day marker.
-        recordFailure("all leaderboards empty or failed");
+      if (r.seeded === 0 || r.globalSeeded === 0) {
+        // The GLOBAL boards all failed/empty (per-board warns already
+        // logged). Checked on globalSeeded, not seeded: a surviving category
+        // board must not mask a dead global backbone and consume the day.
+        recordFailure("all global leaderboards empty or failed");
       }
       return r;
     })

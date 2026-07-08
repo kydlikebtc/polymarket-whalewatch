@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { StatCard, Tag } from "../ui";
+import { fmtSignedUsdCompact, StatCard, Tag } from "../ui";
 
 // -------------------------------------------------------------- read model
 
@@ -85,10 +85,6 @@ function sourceLabel(source: string): string {
 function shortWallet(w: string): string {
   if (!w) return "";
   return w.length > 12 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w;
-}
-
-function fmtUsd(usd: number): string {
-  return usd.toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
 function fmtAgo(tsSec: number): string {
@@ -243,6 +239,12 @@ export default function DiscoveryPage() {
               </tbody>
             </table>
           </div>
+          {data && data.counts.candidateWallets > data.candidates.length && (
+            <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+              仅显示复发广度前 {data.candidates.length} 名（30 天窗口内共{" "}
+              {data.counts.candidateWallets} 个候选钱包）
+            </div>
+          )}
         </section>
 
         {/* Program output */}
@@ -285,8 +287,20 @@ export default function DiscoveryPage() {
                         ? `${Math.round(a.winRate * 100)}%`
                         : "—"}
                     </td>
-                    <td className="mono is-right">
-                      {a.netPnl != null ? `$${fmtUsd(a.netPnl)}` : "—"}
+                    <td
+                      className="mono is-right"
+                      style={
+                        a.netPnl != null
+                          ? {
+                              color:
+                                a.netPnl >= 0
+                                  ? "var(--up-700)"
+                                  : "var(--down-700)",
+                            }
+                          : undefined
+                      }
+                    >
+                      {a.netPnl != null ? fmtSignedUsdCompact(a.netPnl) : "—"}
                     </td>
                     <td className="mono is-right">
                       {a.updatedAt != null ? fmtAgo(a.updatedAt) : "—"}

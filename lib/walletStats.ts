@@ -37,7 +37,9 @@ const DEFAULT_MAX_PAGES = 20; // ~1000 settled positions
 // and meaningless (they capture spread, not directional bets) for these, so we
 // SKIP the expensive /closed-positions pagination and label them instead. The
 // wide gap makes false positives (a human at 1000+ markets) practically impossible.
-const MARKET_MAKER_MIN_MARKETS = 1000;
+// Exported for the admission gate's persistent-bot pre-filter (a cached bot
+// verdict is durable — markets_traded only ever grows).
+export const MARKET_MAKER_MIN_MARKETS = 1000;
 
 // Single source of truth for the classification, used at compute time, on the
 // PnL-API-only bot fast path, and on the SQLite cache read.

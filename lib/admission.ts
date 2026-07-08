@@ -1,7 +1,21 @@
 import type { DB } from "./db";
 import { getWalletStats, type WalletStats } from "./walletStats";
+import { MARKET_MAKER_MIN_MARKETS } from "./walletStats";
 import { computeScore } from "./smartWallets";
+import { evaluateAdmission } from "./admissionGate";
 import { runEarlyWinnerScan, type EarlyWinnerScanResult } from "./earlyWinner";
+
+// The quality gate itself lives in lib/admissionGate (shared with the
+// category-board seeding — smartWallets importing from HERE would be a
+// require cycle); re-exported so gate consumers/tests keep one import site.
+export {
+  evaluateAdmission,
+  ADMIT_MIN_WIN_RATE,
+  ADMIT_MIN_SETTLED,
+  ADMIT_MIN_ROI,
+  ADMIT_MIN_SETTLED_ROI,
+  type AdmissionVerdict,
+} from "./admissionGate";
 
 // ---------------------------------------------------------------------------
 // Admission gate: the ONLY path from wallet_candidates into smart_wallets.
@@ -20,38 +34,8 @@ import { runEarlyWinnerScan, type EarlyWinnerScanResult } from "./earlyWinner";
 // can be luck or a single leak; three starts to look like a process.
 export const ADMIT_MIN_DISTINCT_MARKETS = 3;
 export const ADMIT_EVIDENCE_WINDOW_SEC = 30 * 86_400;
-// Quality bar, deliberately NOT the 0-100 score: the score's profit axis
-// saturates at $1M and would re-introduce exactly the size bias these
-// channels exist to escape. Either a trustworthy settled win rate…
-export const ADMIT_MIN_WIN_RATE = 0.55;
-export const ADMIT_MIN_SETTLED = 10;
-// …or genuine capital efficiency on a profitable book.
-export const ADMIT_MIN_ROI = 0.05;
 // Enrichment fans out to network calls (24h-cached per wallet) — bound per run.
 export const ADMIT_MAX_ENRICH_PER_RUN = 25;
-
-export type AdmissionVerdict = "admit" | "reject_bot" | "hold";
-
-export function evaluateAdmission(stats: WalletStats | null): AdmissionVerdict {
-  if (!stats) return "hold"; // enrichment failed — re-evaluated tomorrow
-  if (stats.isMarketMaker) return "reject_bot";
-  if (
-    stats.winRate != null &&
-    stats.settledCount >= ADMIT_MIN_SETTLED &&
-    stats.winRate >= ADMIT_MIN_WIN_RATE
-  ) {
-    return "admit";
-  }
-  if (
-    stats.netPnl != null &&
-    stats.netPnl > 0 &&
-    stats.roi != null &&
-    stats.roi >= ADMIT_MIN_ROI
-  ) {
-    return "admit";
-  }
-  return "hold";
-}
 
 export interface AdmissionResult {
   evaluated: number;
@@ -87,13 +71,16 @@ export async function admitCandidates(
   } = opts;
 
   // Per (wallet, channel) recurrence inside the window; the majority channel
-  // (ties → earliest evidence) becomes the source attribution.
+  // (ties → earliest evidence) becomes the source attribution. The window is
+  // keyed on evidence_ts (when the BEHAVIOR happened, refreshed on
+  // re-observation) — created_at is the frozen first-recorded time and would
+  // make a persistently-active wallet look stale after 30 days.
   const rows = db
     .prepare(
       `SELECT address, channel, COUNT(DISTINCT condition_id) AS markets,
               MIN(evidence_ts) AS first_ts
          FROM wallet_candidates
-        WHERE created_at >= ?
+        WHERE evidence_ts >= ?
         GROUP BY address, channel`,
     )
     .all(nowSec - evidenceWindowSec) as {
@@ -137,9 +124,6 @@ export async function admitCandidates(
   const recurrent = [...byWallet.entries()].filter(
     ([, agg]) => agg.total >= minDistinctMarkets,
   );
-  if (recurrent.length === 0) {
-    return { evaluated: 0, admitted: 0, rejectedBot: 0, held: 0 };
-  }
 
   // Wallets other pipelines already track are not discoveries; our own
   // discovered rows ARE re-evaluated (their aging clock renews on re-admit).
@@ -151,20 +135,58 @@ export async function admitCandidates(
       }[]
     ).map((r) => [r.address.toLowerCase(), r.source]),
   );
+  // Persistent-bot pre-filter: a cached market-maker classification is durable
+  // (markets_traded only grows), so re-enriching a known bot every day would
+  // let high-evidence bots hog the evaluation slots and starve real
+  // candidates. Filter them out BEFORE the slot cap, regardless of cache age.
+  const knownBots = new Set(
+    (
+      db
+        .prepare("SELECT wallet FROM wallet_stats WHERE markets_traded >= ?")
+        .all(MARKET_MAKER_MIN_MARKETS) as { wallet: string }[]
+    ).map((r) => r.wallet.toLowerCase()),
+  );
   const candidates = recurrent
     .filter(([addr]) => {
+      if (knownBots.has(addr)) return false;
       const src = poolSource.get(addr);
       return src === undefined || src?.startsWith("discovered:");
     })
     .sort((a, b) => b[1].total - a[1].total)
     .slice(0, maxEnrichPerRun);
-  if (candidates.length === 0) {
+
+  // Standing members re-qualify on their track record ALONE: recurrence gated
+  // their FIRST admission, but once in the pool the detectors skip them
+  // (smartTags.has), so no new evidence can accrue — demanding it would
+  // starve every member out at the 30-day sweep by construction. Quality
+  // decay is still an exit: a failing verdict here skips the refresh and the
+  // aging sweep does the rest.
+  const inCandidates = new Set(candidates.map(([a]) => a));
+  const members: [string, Agg][] = [...poolSource.entries()]
+    .filter(
+      ([addr, src]) =>
+        src?.startsWith("discovered:") &&
+        !inCandidates.has(addr) &&
+        !knownBots.has(addr),
+    )
+    .map(([addr, src]) => [
+      addr,
+      {
+        total: 0,
+        bestChannel: (src as string).slice("discovered:".length),
+        bestMarkets: 0,
+        bestFirstTs: 0,
+      },
+    ]);
+
+  const toEvaluate = [...candidates, ...members];
+  if (toEvaluate.length === 0) {
     return { evaluated: 0, admitted: 0, rejectedBot: 0, held: 0 };
   }
 
   const stats = await getWalletStats(
     db,
-    candidates.map(([addr]) => addr),
+    toEvaluate.map(([addr]) => addr),
     {
       concurrency: 3,
       nowSec,
@@ -184,12 +206,12 @@ export async function admitCandidates(
        source = COALESCE(source, excluded.source)`,
   );
   const result: AdmissionResult = {
-    evaluated: candidates.length,
+    evaluated: toEvaluate.length,
     admitted: 0,
     rejectedBot: 0,
     held: 0,
   };
-  for (const [addr, agg] of candidates) {
+  for (const [addr, agg] of toEvaluate) {
     const s = stats[addr] ?? null;
     const verdict = evaluateAdmission(s);
     if (verdict === "admit" && s) {
@@ -214,7 +236,7 @@ export async function admitCandidates(
       );
       result.admitted++;
       console.log(
-        `[discovery] admitted ${addr} via ${agg.bestChannel} · ${agg.total} market(s) of evidence · ` +
+        `[discovery] ${agg.total > 0 ? `admitted ${addr} via ${agg.bestChannel} · ${agg.total} market(s) of evidence` : `re-qualified standing member ${addr} (${agg.bestChannel})`} · ` +
           `wr ${s.winRate != null ? Math.round(s.winRate * 100) + "%" : "—"} · roi ${
             s.roi != null ? Math.round(s.roi * 100) + "%" : "—"
           } · score ${score}`,
@@ -272,7 +294,20 @@ export function maybeDailyDiscovery(
   );
   discoveryInFlight = true;
   return (async () => {
-    const scan = await runEarlyWinnerScan(db, { nowSec, ...opts.scan });
+    // The two halves are independent: a gamma outage that kills the settled-
+    // market scan must not also swallow the day's admission pass (firehose
+    // candidates keep accruing regardless). Failed markets self-heal anyway —
+    // no cursor row means tomorrow's 48h listing re-serves them.
+    let scan: EarlyWinnerScanResult;
+    try {
+      scan = await runEarlyWinnerScan(db, { nowSec, ...opts.scan });
+    } catch (e) {
+      console.error(
+        "[discovery] early-winner scan failed — admission still runs:",
+        e,
+      );
+      scan = { candidateMarkets: 0, scanned: 0, evidence: 0, inserted: 0 };
+    }
     const admission = await admitCandidates(db, { nowSec, ...opts.admission });
     return { scan, admission };
   })().finally(() => {

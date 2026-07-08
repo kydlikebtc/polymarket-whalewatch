@@ -61,6 +61,16 @@ A whale on Polymarket rarely announces themselves. They split a big position int
 - Top earners get a **settled track-record enrichment** from `/closed-positions` — win rate, realized PnL, ROI — feeding an explainable 0-100 score (profit 40 + capital efficiency 30 + win rate 30).
 - The alert engine cross-checks every fill against the whitelist in real time: 🏆 prefix on Telegram, `type='smart'` in history, plus a **smart-only alert mode**. On the dashboard the whitelist count is **clickable → a searchable dialog** of every whitelisted wallet (score · win rate · realized PnL, each linking to its dossier).
 
+### 🔭 Smart-money discovery channels (聪明钱发现)
+
+The leaderboards rank by **size**, so they structurally miss skilled-but-small wallets. Three discovery channels widen the funnel — every candidate flows through the same **admission gate** before touching the pool (pool membership _is_ the consensus whitelist, so candidacy is free but membership is earned):
+
+- **🔁🧩🕵️ Firehose emergence** — the consensus loop's own 6h trade window, run backwards: non-pool wallets that **echo a smart-money consensus** (same outcome, ≥$2k net), run a **clean split-buy accumulation** (≥3 sub-$10k fills netting ≥$5k, no hedge/MM suspicion), or match the **insider signature** (≤7-day-old address, single ≥$5k fill at 0.5–0.9). Zero extra trade requests.
+- **🎯 Early winners** — freshly-settled markets (gamma `closedTime` ordering, verified: `endDate` is useless for this) swept once each via `/trades?market=`: wallets that bought the **winning** outcome at ≤40¢ **≥24h before resolution** — skill, not size. Closed markets are immutable, so each scan is permanent.
+- **🏅 Category boards** — the segmented leaderboards (`sports/politics/crypto/culture/tech/finance`, verified live): specialists who dominate one vertical but never crack the global top-100 (a politics #1 at $38k pnl vs the global #1 at $8M the same week). Only wallets absent from the global boards are added.
+
+**Admission gate**: recurrence (≥3 distinct markets of evidence in 30d) → track-record review (settled win-rate ≥55% over ≥10 markets, _or_ positive net PnL with ROI ≥5% — deliberately not the 0-100 score, whose profit axis would re-import the size bias) → market-maker bots (≥1000 markets) hard-rejected. Admitted wallets age out after 30 days unless they keep re-qualifying. Every pool member carries a `source` attribution (`leaderboard` / `category:<cat>` / `discovered:<channel>`) so channel effectiveness can be scored later. The **`/discovery` board** shows the whole funnel: evidence → candidates → verdicts.
+
 ### 🔥 Consensus detection (聪明钱共识)
 
 Two or three unrelated high-win-rate wallets independently buying the **same outcome** beats any single whale fill. A 5-minute worker loop scans a 6h window and pushes `🔥 聪明钱共识` when ≥N whitelist wallets each net-buy ≥$X of one outcome — alerting only on **formation and escalation** (a third wallet joining), never repeats. Expanding any consensus group — or disagreement market below — lists its wallets with both their **window net-buy (flow)** and their **current position in that market (stock)**, lazily fetched per market; a fresh entry, a long-time accumulator, and someone who already sold out then read differently at a glance.
@@ -212,6 +222,8 @@ docs/plans/ design + implementation docs
 - [x] Wallet track-record badges + full dossier page
 - [x] Market-context enrichment (impact ratio · liquidity · pre-settlement rush condition)
 - [x] Validation loop: 1h/24h follow-through + settlement backfill on every alert
+- [x] Smart-money **discovery channels**: firehose emergence (echo/splitter/insider) · early winners in settled markets · category-board specialists — all behind a recurrence + track-record **admission gate**, with per-wallet `source` attribution and a `/discovery` funnel board
+- [ ] Channel effectiveness scorecard (per-source forward hit-rate via the validation loop — the `source` column is the groundwork)
 - [ ] Accumulation → Telegram alerts (stateful, tier-crossing dedup)
 - [ ] Event-level accumulation (across correlated sub-markets)
 - [ ] Threshold calibration via backtesting (needs an opt-in trade archive — everything above is query-only)

@@ -185,6 +185,33 @@ describe("fetchRecentlyClosedMarkets", () => {
     expect(out[0].winnerOutcome).toBe("Yes");
     expect(fetcher.mock.calls[0][0]).toContain("closed=true");
     expect(fetcher.mock.calls[0][0]).toContain("order=closedTime");
+    // Server-side volume filter (verified live): without it the raw feed is
+    // ~700 micro-markets/hour and no page budget ever reaches the lookback.
+    expect(fetcher.mock.calls[0][0]).toContain("volume_num_min=10000");
+  });
+
+  it("warns loudly when the page budget runs out before reaching the lookback", async () => {
+    // Every page full of fresh (in-window) rows → neither stale-break nor a
+    // short page ever fires; the loop must exit on maxPages AND say so.
+    let n = 0;
+    const fullPage = () =>
+      Array.from({ length: 2 }, () => gammaRow({ conditionId: `0xm${n++}` }));
+    const fetcher = vi.fn(async () => ({
+      ok: true,
+      json: async () => fullPage(),
+    }));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const out = await fetchRecentlyClosedMarkets({
+      sinceSec: 0, // 48h+ ago — unreachable within the budget
+      pageSize: 2,
+      maxPages: 2,
+      fetcher: fetcher as never,
+    });
+    expect(out).toHaveLength(4);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("BEFORE reaching the lookback"),
+    );
+    warnSpy.mockRestore();
   });
 
   it("stops paginating once rows age past sinceSec", async () => {

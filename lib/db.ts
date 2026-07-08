@@ -18,6 +18,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS wallet_candidates (address TEXT NOT NULL, channel TEXT NOT NULL, condition_id TEXT NOT NULL, evidence_ts INTEGER, usd REAL, price REAL, note TEXT, created_at INTEGER, PRIMARY KEY (address, channel, condition_id));
     CREATE TABLE IF NOT EXISTS early_winner_scans (condition_id TEXT PRIMARY KEY, scanned_at INTEGER, trades_scanned INTEGER, truncated INTEGER);
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
+    CREATE INDEX IF NOT EXISTS idx_candidates_evidence_ts ON wallet_candidates(evidence_ts);
   `);
   // wallet_stats gained markets_traded (the high-frequency market-maker
   // classifier) after the table already shipped; add it to pre-existing DBs.
@@ -32,20 +33,46 @@ export function openDb(path = "data.sqlite") {
   // smart_wallets gained source (first-discoverer channel attribution: which
   // pipeline put the wallet in the pool — 'leaderboard', 'category:<cat>',
   // 'discovered:<channel>') after the table shipped; add it to pre-existing
-  // DBs, then backfill. Auto rows (is_whitelist=0) can ONLY have come from
-  // leaderboard seeding — the sole write path before discovery channels
-  // existed — so the backfill is attribution, not guesswork. Manually-flagged
-  // rows keep an honest NULL: their origin is unknowable. Both statements are
-  // idempotent (duplicate-column throw swallowed / WHERE matches 0 rows), so
-  // no version marker is needed.
+  // DBs (idempotent duplicate-column swallow, same as markets_traded above).
   try {
     db.prepare("ALTER TABLE smart_wallets ADD COLUMN source TEXT").run();
   } catch {
     // column already present
   }
-  db.prepare(
-    "UPDATE smart_wallets SET source = 'leaderboard' WHERE source IS NULL AND is_whitelist = 0",
-  ).run();
+  // discovery_gate v1 (version-gated like wallet_age_v — several routes open
+  // a connection per request, so unconditional writes here would contend for
+  // the WAL lock on every request):
+  //  1. Backfill source for legacy rows. Auto rows (is_whitelist=0) can ONLY
+  //     have come from leaderboard seeding — the sole write path before the
+  //     discovery channels existed — so this is attribution, not guesswork.
+  //     Manually-flagged rows keep an honest NULL (origin unknowable).
+  //  2. Purge category rows written by the first channel-③ build, which
+  //     seeded them WITHOUT the admission quality gate (a category board's
+  //     tail is not a quality bar). Rebuildable cache: clearing the seed-day
+  //     marker forces the next cycle to re-seed, and the gated path re-admits
+  //     only the specialists whose track record passes.
+  const gateVer = db
+    .prepare("SELECT value FROM config WHERE key = 'discovery_gate_v'")
+    .get() as { value: string | null } | undefined;
+  if (gateVer?.value !== "1") {
+    db.prepare(
+      "UPDATE smart_wallets SET source = 'leaderboard' WHERE source IS NULL AND is_whitelist = 0",
+    ).run();
+    const purged = db
+      .prepare(
+        "DELETE FROM smart_wallets WHERE source LIKE 'category:%' AND is_whitelist = 0",
+      )
+      .run().changes;
+    db.prepare("DELETE FROM config WHERE key = 'smart_seed_last_day'").run();
+    db.prepare(
+      "INSERT OR REPLACE INTO config (key, value) VALUES ('discovery_gate_v', '1')",
+    ).run();
+    if (purged > 0) {
+      console.log(
+        `[db] discovery_gate v1: purged ${purged} ungated category row(s) — next seed re-admits through the quality gate`,
+      );
+    }
+  }
   // One alert row per (type, dedup_key): running the embedded engine and the
   // standalone worker against the same db is a documented deployment, and their
   // check-then-act race could double-insert. The one-time cleanup removes any

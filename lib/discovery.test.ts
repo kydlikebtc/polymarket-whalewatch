@@ -216,7 +216,7 @@ describe("detectInsiderPending", () => {
 });
 
 describe("recordEvidence", () => {
-  it("inserts idempotently on the (address, channel, market) key", () => {
+  it("dedups on the (address, channel, market) key but refreshes on newer evidence", () => {
     const db = openDb(":memory:");
     const ev: CandidateEvidence = {
       address: "0xa",
@@ -228,13 +228,19 @@ describe("recordEvidence", () => {
       note: "n",
     };
     expect(recordEvidence(db, [ev], 1000)).toBe(1);
-    expect(recordEvidence(db, [ev], 2000)).toBe(0); // re-observation is a no-op
-    const n = (
-      db.prepare("SELECT COUNT(*) AS c FROM wallet_candidates").get() as {
-        c: number;
-      }
-    ).c;
-    expect(n).toBe(1);
+    expect(recordEvidence(db, [ev], 2000)).toBe(0); // same observation — no-op
+    // A strictly newer observation refreshes evidence_ts (keeps the wallet
+    // inside the 30-day recurrence window) without minting a second row;
+    // created_at stays frozen at first discovery.
+    expect(recordEvidence(db, [{ ...ev, ts: 500, usd: 9000 }], 3000)).toBe(1);
+    const row = db
+      .prepare(
+        "SELECT COUNT(*) AS c, MAX(evidence_ts) AS ts, MAX(created_at) AS created FROM wallet_candidates",
+      )
+      .get() as { c: number; ts: number; created: number };
+    expect(row.c).toBe(1);
+    expect(row.ts).toBe(500);
+    expect(row.created).toBe(1000);
   });
 });
 
