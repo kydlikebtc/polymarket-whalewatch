@@ -341,3 +341,91 @@ describe("runFollowCycle 新鲜度闸门 + 跳过已结算市场", () => {
     db.close();
   });
 });
+
+// M8 进场价偏离护栏:新鲜度闸门(30min)拦不住 in-play 体育盘 —— 真机实证 30 分钟内
+// 现价照样能跑 20¢(Osaka 仓:聪明钱均价 46.4¢、我们进 26.5¢,单仓滑点 −$375)。
+// 现价偏离聪明钱均价超过 maxEntryDeviationCents(默认 10¢)即不开仓,宁可错过也不
+// 追高/接飞刀。单位:price 是 0-1 小数、阈值是 ¢,比较时 ×100。
+describe("runFollowCycle 进场价偏离护栏", () => {
+  // 新鲜共识:ts=1000、nowSec=2000 → age 1000s < 1800,不会被新鲜度闸门拦下,
+  // 只考察偏离护栏本身。两钱包各净买 $6k @0.6 → 聪明钱均价 0.6,命中激进策略
+  // (≥2 钱包 ≥$5k;保守要 ≥3 钱包 ≥$10k,不合格)。
+  const freshTrades = (): Trade[] => [
+    trade({
+      proxyWallet: "w1",
+      transactionHash: "h1",
+      size: 10000,
+      timestamp: 1000,
+    }),
+    trade({
+      proxyWallet: "w2",
+      transactionHash: "h2",
+      size: 10000,
+      timestamp: 1000,
+    }),
+  ];
+
+  it("偏离超过默认 10¢ → 不开仓(现价 0.45 vs 均价 0.6,偏离 15¢)", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: freshTrades() }),
+      getSmart: smart,
+      fetchPrice: async () => 0.45,
+      getMeta: async () => ({}),
+      nowSec: 2000,
+    });
+    expect(r.opened).toBe(0);
+    const cnt = db
+      .prepare("SELECT COUNT(*) AS n FROM follow_positions")
+      .get() as { n: number };
+    expect(cnt.n).toBe(0);
+    db.close();
+  });
+
+  it("偏离在默认阈内照常开仓(现价 0.55 vs 均价 0.6,偏离 5¢)", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: freshTrades() }),
+      getSmart: smart,
+      fetchPrice: async () => 0.55,
+      getMeta: async () => ({}),
+      nowSec: 2000,
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    db.close();
+  });
+
+  it("每策略阈值可调:显式 maxEntryDeviationCents=50 时 15¢ 偏离照开", async () => {
+    const db = openDb(":memory:");
+    // 给种子「激进」策略显式放宽护栏到 50¢(params_json 就地 UPDATE,模拟运营调参)。
+    db.prepare(
+      "UPDATE follow_strategies SET params_json = ? WHERE name = '激进'",
+    ).run(
+      JSON.stringify({
+        minWallets: 2,
+        minPerWalletUsd: 5000,
+        sizeUsd: 500,
+        exitRule: "settlement",
+        maxEntryDeviationCents: 50,
+      }),
+    );
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: freshTrades() }),
+      getSmart: smart,
+      fetchPrice: async () => 0.45, // 偏离 15¢ < 50¢ → 该策略照开
+      getMeta: async () => ({}),
+      nowSec: 2000,
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const pos = db
+      .prepare(
+        "SELECT entry_price FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as { entry_price: number };
+    expect(pos.entry_price).toBe(0.45);
+    db.close();
+  });
+});

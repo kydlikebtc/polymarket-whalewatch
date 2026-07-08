@@ -178,6 +178,9 @@ export function openDb(path = "data.sqlite") {
       "INSERT OR IGNORE INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
     );
     const now = Math.floor(Date.now() / 1000);
+    // maxEntryDeviationCents: 进场价偏离护栏(¢),现价偏离聪明钱均价超阈不开仓。
+    // 仅影响全新安装;既有库的 params_json 缺该字段时由 lib/follow parseStrategy
+    // 按同值默认兜底,故无需 bump follow_seed_v 做迁移。
     ins.run(
       "保守",
       JSON.stringify({
@@ -185,6 +188,7 @@ export function openDb(path = "data.sqlite") {
         minPerWalletUsd: 10000,
         sizeUsd: 500,
         exitRule: "settlement",
+        maxEntryDeviationCents: 10,
       }),
       now,
     );
@@ -195,6 +199,7 @@ export function openDb(path = "data.sqlite") {
         minPerWalletUsd: 5000,
         sizeUsd: 500,
         exitRule: "settlement",
+        maxEntryDeviationCents: 10,
       }),
       now,
     );

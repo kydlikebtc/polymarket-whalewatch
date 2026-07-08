@@ -289,6 +289,8 @@ describe("buildFollowView", () => {
       minPerWalletUsd: 5000,
       sizeUsd: 500,
       exitRule: "settlement",
+      // 字段缺失时展示侧退到与开仓侧一致的默认 10¢(不能显示成 0=「无护栏」)。
+      maxEntryDeviationCents: 10,
     });
     expect(strategies[0].enabled).toBe(true);
   });
@@ -308,6 +310,8 @@ describe("buildFollowView", () => {
       minPerWalletUsd: 0,
       sizeUsd: 0,
       exitRule: "settlement",
+      // 护栏阈值的安全默认是 10(开仓侧实际生效值),不同于其余字段的 0 占位。
+      maxEntryDeviationCents: 10,
     };
     expect(strategies[0].params).toEqual(dflt);
     expect(strategies[1].params).toEqual(dflt);

@@ -95,7 +95,14 @@ interface FollowStrategy {
   minPerWalletUsd: number;
   sizeUsd: number;
   exitRule: string;
+  // 进场价偏离护栏(¢):|现价 − 聪明钱均价|×100 超过该值即不开仓。默认 10。
+  maxEntryDeviationCents: number;
 }
+
+// 进场价偏离护栏默认阈值(¢)。开仓侧 parseStrategy 与展示侧 parseParamsView 共用,
+// 保证两侧默认值永远一致(真机实证:in-play 体育盘 30min 内能跑 20¢,10¢ 是
+// 「正常盘口抖动」与「行情已反向」的分界)。
+const DEFAULT_MAX_ENTRY_DEVIATION_CENTS = 10;
 
 export interface FollowCycleDeps {
   db: DB;
@@ -107,7 +114,8 @@ export interface FollowCycleDeps {
   // 新鲜度闸门(秒):只对「最近一笔合格成交距 now <= freshSec」的共识组开仓。
   // 默认 1800(30min)。滚动 6h 检测窗口会重复看见几小时前形成的共识 —— 无此闸门
   // 时一启动就会把每个历史共识按当前价补开一遍(接飞刀:信号价 64¢、现价已崩到 13¢
-  // 且市场已结算)。生效后现价自然贴近信号价,无需额外的进场价偏离护栏。
+  // 且市场已结算)。注意它拦不住 in-play 体育盘:30min 内现价照样能跑 20¢,故另有
+  // 每策略的进场价偏离护栏(maxEntryDeviationCents)在开仓时二次把关。
   freshSec?: number;
   nowSec?: number;
 }
@@ -143,12 +151,17 @@ function parseStrategy(
     );
     return null;
   }
+  // 护栏阈值:显式合法值(有限数且 >0)生效;缺失/非法退默认 10 —— 既有库的
+  // params_json 没有该字段,靠这里兜底,无需数据迁移。
+  const maxDev = numOr(p.maxEntryDeviationCents);
   return {
     id,
     minWallets,
     minPerWalletUsd,
     sizeUsd,
     exitRule: typeof p.exitRule === "string" ? p.exitRule : "settlement",
+    maxEntryDeviationCents:
+      maxDev != null && maxDev > 0 ? maxDev : DEFAULT_MAX_ENTRY_DEVIATION_CENTS,
   };
 }
 
@@ -292,6 +305,22 @@ export async function runFollowCycle(
             `[follow] strategy ${s.id} 组 ${g.conditionId}/${g.outcome}: 无有效现价(${String(
               entry,
             )}),跳过本轮开仓`,
+          );
+          continue;
+        }
+        // 进场价偏离护栏:price 是 0-1 小数、阈值是 ¢,×100 后比较。新鲜度闸门拦不住
+        // in-play 体育盘(30min 内可跑 20¢)—— 现价偏离聪明钱均价超阈说明行情已脱离
+        // 信号价(追高或已反向/接飞刀),宁可错过也不开;偏离是瞬时态,不像已开仓那样
+        // 需要查重,下轮价格回到阈内仍可正常跟进。
+        const deviationCents = Math.abs(entry - g.avgBuyPrice) * 100;
+        if (deviationCents > s.maxEntryDeviationCents) {
+          console.log(
+            `[follow] strategy ${s.id} 组 ${g.conditionId}/${g.outcome}(${g.title}): ` +
+              `进场价偏离护栏 —— 现价 ${(entry * 100).toFixed(1)}¢ vs 聪明钱均价 ${(
+                g.avgBuyPrice * 100
+              ).toFixed(1)}¢,偏离 ${deviationCents.toFixed(1)}¢ > ${
+                s.maxEntryDeviationCents
+              }¢,跳过开仓`,
           );
           continue;
         }
@@ -494,6 +523,7 @@ export interface FollowStrategyView {
     minPerWalletUsd: number;
     sizeUsd: number;
     exitRule: string;
+    maxEntryDeviationCents: number;
   };
   metrics: StrategyMetrics;
   open: FollowPositionRow[]; // status==='open'
@@ -514,6 +544,9 @@ function parseParamsView(
     minPerWalletUsd: 0,
     sizeUsd: 0,
     exitRule: "settlement",
+    // 展示侧默认与开仓侧 parseStrategy 同源:字段缺失时开仓实际生效的就是 10¢,
+    // 界面不能展示成 0(会被误读为「无护栏」)。
+    maxEntryDeviationCents: DEFAULT_MAX_ENTRY_DEVIATION_CENTS,
   };
   if (!paramsJson) return fallback;
   let p: Record<string, unknown>;
@@ -526,11 +559,18 @@ function parseParamsView(
   }
   const numOr = (v: unknown, d: number): number =>
     typeof v === "number" && Number.isFinite(v) ? v : d;
+  const maxDev = numOr(
+    p.maxEntryDeviationCents,
+    DEFAULT_MAX_ENTRY_DEVIATION_CENTS,
+  );
   return {
     minWallets: numOr(p.minWallets, 0),
     minPerWalletUsd: numOr(p.minPerWalletUsd, 0),
     sizeUsd: numOr(p.sizeUsd, 0),
     exitRule: typeof p.exitRule === "string" ? p.exitRule : "settlement",
+    // 非正数同样退默认(与开仓侧一致:只有 >0 的显式值才生效)。
+    maxEntryDeviationCents:
+      maxDev > 0 ? maxDev : DEFAULT_MAX_ENTRY_DEVIATION_CENTS,
   };
 }
 

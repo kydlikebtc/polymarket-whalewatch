@@ -9,6 +9,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import { Tag } from "../ui";
@@ -60,6 +61,9 @@ type FollowStrategyView = {
     minPerWalletUsd: number;
     sizeUsd: number;
     exitRule: string;
+    // 进场价偏离护栏(¢)。server 侧 parseParamsView 恒有值(默认 10);类型上留
+    // 可选以对旧响应宽容,展示时按 10 兜底。
+    maxEntryDeviationCents?: number;
   };
   metrics: StrategyMetrics;
   open: FollowPositionRow[];
@@ -110,6 +114,28 @@ function rowSlippage(p: FollowPositionRow): number {
   return p.shares * (p.entry_price - p.smart_avg_price);
 }
 
+// 单仓滑点 ¢ 差 =(自己入场价 − 聪明钱建仓均价)× 100 —— 看板主显示口径。
+// 美元滑点受份额膨胀影响(入场价越低份额越大,绝对值可超本金),¢ 差才可跨仓横比。
+function rowSlipCents(p: FollowPositionRow): number {
+  return (p.entry_price - p.smart_avg_price) * 100;
+}
+
+// 带符号 ¢ 差:+5.9¢ / −19.9¢(0 记 +0.0¢)。
+function fmtSignedCents(c: number): string {
+  const sign = c < 0 ? MINUS : "+";
+  return `${sign}${Math.abs(c).toFixed(1)}¢`;
+}
+
+// 滑点着色原则:一律中性 —— 负滑点绝不标绿(它常意味着「价格已反向/接飞刀」,
+// 不是捡便宜);正滑点也不标红(不是亏损,是成本)。仅 |¢差| 超过警示线时用琥珀
+// (全站琥珀=警示语义),与开仓侧默认护栏 10¢ 同一分界。
+const SLIP_WARN_CENTS = 10;
+function slipWarnStyle(cents: number): CSSProperties | undefined {
+  return Math.abs(cents) > SLIP_WARN_CENTS
+    ? { color: "var(--warn-700)" }
+    : undefined;
+}
+
 // 结算胜率 + Wilson 95% 区间,如「83% · 95%CI 44–97%」。无判定样本时置「—」。
 function winRateLabel(m: StrategyMetrics): string {
   if (m.winRate == null) return "—";
@@ -121,9 +147,11 @@ function winRateLabel(m: StrategyMetrics): string {
 
 function paramsHint(p: FollowStrategyView["params"]): string {
   const exit = p.exitRule === "settlement" ? "持有到结算" : p.exitRule;
+  // 偏离护栏:字段缺失(旧响应)按 10 兜底,与 lib/follow 开仓侧默认一致。
+  const maxDev = p.maxEntryDeviationCents ?? 10;
   return `≥${p.minWallets} 钱包 · 每钱包 ≥$${fmtUsd0(
     p.minPerWalletUsd,
-  )} · $${fmtUsd0(p.sizeUsd)}/信号 · ${exit}`;
+  )} · $${fmtUsd0(p.sizeUsd)}/信号 · 偏离≤${maxDev}¢ · ${exit}`;
 }
 
 // 市场展示名:优先 title,回退到 event_slug / condition_id。
@@ -370,7 +398,13 @@ function StrategyCard({
 }) {
   const m = s.metrics;
   const slip = m.slippageCost;
-  const slipTone = slip > 0 ? "down" : slip < 0 ? "up" : "muted";
+  // 均 ¢ 差/仓:所有仓位(open+settled,滑点在进场即产生)的单仓 ¢ 差算术平均。
+  // 简单口径 —— 每仓等权、不按 usd 加权;目的只是把美元合计还原成可横比的偏离度。
+  const allPos = [...s.open, ...s.settled];
+  const avgSlipCents =
+    allPos.length > 0
+      ? allPos.reduce((sum, p) => sum + rowSlipCents(p), 0) / allPos.length
+      : null;
   return (
     <div
       className="ds-card"
@@ -457,11 +491,19 @@ function StrategyCard({
         />
         <Metric
           label="累计滑点"
-          title="份额 ×(自己入场价 − 聪明钱建仓均价)之和。正值 = 跟进时多付出的成本(拖累收益)"
+          title="份额 ×(自己入场价 − 聪明钱建仓均价)之和(美元)。正=追高多付的成本;负≠捡便宜(常是行情已反向/接飞刀)。中性展示,请结合单仓 ¢ 差与已实现盈亏一起看"
           value={
-            <span className={`mono ${slipTone}`}>
-              {slip >= 0 ? `$${fmtUsd0(slip)}` : `${MINUS}$${fmtUsd0(-slip)}`}
-            </span>
+            <>
+              {/* 配色中性:滑点不是盈亏,不用涨绿跌红。 */}
+              <span className="mono">
+                {slip >= 0 ? `$${fmtUsd0(slip)}` : `${MINUS}$${fmtUsd0(-slip)}`}
+              </span>
+              {avgSlipCents != null ? (
+                <div className="kpi-sub mono">
+                  均 {fmtSignedCents(avgSlipCents)}/仓
+                </div>
+              ) : null}
+            </>
           }
         />
         <Metric
@@ -527,7 +569,7 @@ function SettledTable({ rows }: { rows: LabeledRow[] }) {
             </th>
             <th
               className="is-right"
-              title="份额 ×(入场价 − 聪明钱建仓均价);正值=多付出的成本"
+              title="入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示"
             >
               滑点
             </th>
@@ -538,6 +580,7 @@ function SettledTable({ rows }: { rows: LabeledRow[] }) {
         <tbody>
           {rows.map((p) => {
             const slip = rowSlippage(p);
+            const slipC = rowSlipCents(p);
             const held = (p.exit_ts ?? now) - p.entry_ts;
             const realized = p.realized_pnl ?? 0;
             return (
@@ -556,13 +599,14 @@ function SettledTable({ rows }: { rows: LabeledRow[] }) {
                   <span className="muted"> → </span>
                   {p.exit_price != null ? cents(p.exit_price) : "—"}
                 </td>
+                {/* 主显示 ¢ 差(可跨仓横比),美元退居括号小字;中性色,超警示线转琥珀。 */}
                 <td
-                  className={`mono is-right ${slip > 0 ? "down" : slip < 0 ? "up" : "muted"}`}
+                  className="mono is-right"
                   data-label="滑点"
+                  style={slipWarnStyle(slipC)}
                 >
-                  {slip >= 0
-                    ? `$${fmtUsd0(slip)}`
-                    : `${MINUS}$${fmtUsd0(-slip)}`}
+                  {fmtSignedCents(slipC)}
+                  <span className="muted"> ({fmtSignedUsd(slip)})</span>
                 </td>
                 <td className="mono muted is-right" data-label="持有期">
                   {fmtHold(held)}
@@ -600,7 +644,7 @@ function OpenTable({ rows }: { rows: LabeledRow[] }) {
             </th>
             <th
               className="is-right"
-              title="份额 ×(入场价 − 聪明钱建仓均价);正值=多付出的成本"
+              title="入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示"
             >
               滑点
             </th>
@@ -611,6 +655,7 @@ function OpenTable({ rows }: { rows: LabeledRow[] }) {
         <tbody>
           {rows.map((p) => {
             const slip = rowSlippage(p);
+            const slipC = rowSlipCents(p);
             const held = now - p.entry_ts;
             return (
               <tr key={`${p.strategy_id}:${p.condition_id}:${p.outcome}`}>
@@ -626,13 +671,14 @@ function OpenTable({ rows }: { rows: LabeledRow[] }) {
                 <td className="mono is-right" data-label="进价">
                   {cents(p.entry_price)}
                 </td>
+                {/* 主显示 ¢ 差(可跨仓横比),美元退居括号小字;中性色,超警示线转琥珀。 */}
                 <td
-                  className={`mono is-right ${slip > 0 ? "down" : slip < 0 ? "up" : "muted"}`}
+                  className="mono is-right"
                   data-label="滑点"
+                  style={slipWarnStyle(slipC)}
                 >
-                  {slip >= 0
-                    ? `$${fmtUsd0(slip)}`
-                    : `${MINUS}$${fmtUsd0(-slip)}`}
+                  {fmtSignedCents(slipC)}
+                  <span className="muted"> ({fmtSignedUsd(slip)})</span>
                 </td>
                 <td className="mono muted is-right" data-label="已持有">
                   {fmtHold(held)}
