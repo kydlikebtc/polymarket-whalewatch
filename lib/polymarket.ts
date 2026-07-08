@@ -14,7 +14,8 @@ const fetchTrades = (url: string) =>
 // letting NaN notionals slip past every filter (NaN comparisons are all false)
 // and fire "$NaN" alerts. Bad rows are dropped and summarized in one warn with
 // the first issue path so shape drift stays diagnosable from the log.
-function parseTradeRows(raw: unknown, source: string): Trade[] {
+// Exported for every /trades-shaped consumer (earlyWinner's per-market sweep).
+export function parseTradeRows(raw: unknown, source: string): Trade[] {
   if (!Array.isArray(raw)) {
     console.warn(`[${source}] response is not an array — treating as empty`);
     return [];
