@@ -3,12 +3,14 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   fmtSignedUsdCompact,
+  Modal,
   Segmented,
   StatCard,
   Tag,
   WalletLink,
 } from "../ui";
 import { WalletTagChips, tagVariant } from "../walletTagChips";
+import { WALLET_TAGS } from "../glossary";
 import type { WalletTag } from "../../lib/walletTags";
 
 // -------------------------------------------------------------- read model
@@ -167,6 +169,7 @@ export default function DiscoveryPage() {
   const [query, setQuery] = useState("");
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [tagHelpOpen, setTagHelpOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -333,6 +336,13 @@ export default function DiscoveryPage() {
           onChange={(e) => setQuery(e.target.value)}
           aria-label="搜索"
         />
+        <button
+          className="ds-btn"
+          onClick={() => setTagHelpOpen(true)}
+          title="查看全部钱包标签的定义（与说明页同一数据源）"
+        >
+          🏷 标签说明
+        </button>
         {(activeTags.size > 0 || q) && (
           <span className="ds-hint">
             {filtered.length}/{rows.length} 条匹配
@@ -546,6 +556,42 @@ export default function DiscoveryPage() {
           </table>
         </div>
       )}
+
+      {/* Tag definitions dialog — same data source as /glossary (WALLET_TAGS) */}
+      <Modal
+        open={tagHelpOpen}
+        onClose={() => setTagHelpOpen(false)}
+        title="🏷 钱包标签说明"
+        width={720}
+      >
+        <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+          与「说明」页同一数据源；悬停任意标签也能看到一句话提示。点击下方标签可直接按其筛选当前列表。
+        </div>
+        <div className="ds-table-wrap">
+          <table className="ds-table">
+            <thead>
+              <tr>
+                <th style={{ width: 150 }}>标签</th>
+                <th style={{ width: 86 }}>类别</th>
+                <th>定义</th>
+              </tr>
+            </thead>
+            <tbody>
+              {WALLET_TAGS.map((t) => (
+                <tr key={t.keyPrefix}>
+                  <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>
+                    {t.icon} {t.name}
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>{t.kind}</td>
+                  <td style={{ whiteSpace: "normal", lineHeight: 1.6 }}>
+                    {t.detail}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Modal>
     </main>
   );
 }

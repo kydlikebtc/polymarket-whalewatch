@@ -1,6 +1,7 @@
 "use client";
 
 import { Tag } from "./ui";
+import { walletTagTip } from "./glossary";
 import type { WalletTag } from "../lib/walletTags";
 
 // Shared renderer for derived wallet tags (lib/walletTags) — used by the
@@ -36,9 +37,11 @@ export function WalletTagChips({
       }}
     >
       {shown.map((t) => (
-        <Tag key={t.key} variant={tagVariant(t)}>
-          {t.label}
-        </Tag>
+        // Hover tip from the same data source as /glossary and the tag
+        // dialog (app/glossary.ts WALLET_TAGS) — the three can never drift.
+        <span key={t.key} title={walletTagTip(t.key) || t.label}>
+          <Tag variant={tagVariant(t)}>{t.label}</Tag>
+        </span>
       ))}
       {hidden > 0 && <span className="ds-hint">+{hidden}</span>}
     </span>

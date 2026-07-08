@@ -1,6 +1,6 @@
 "use client";
 
-import { ICONS, TERMS } from "../glossary";
+import { ICONS, TERMS, WALLET_TAGS } from "../glossary";
 
 // Static reference page — every symbol and term the dashboard uses, from the
 // same data source that powers the hover tooltips (app/glossary.ts).
@@ -42,6 +42,42 @@ export default function GlossaryPage() {
                   </td>
                   <td style={{ whiteSpace: "normal", lineHeight: 1.6 }}>
                     {e.detail}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Wallet tags — same data source as the /discovery tag dialog and
+          every tag chip's hover tip (app/glossary.ts WALLET_TAGS) */}
+      <section style={{ marginBottom: "var(--s-6)" }}>
+        <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+          钱包标签（聪明钱发现 / 钱包档案页）
+        </div>
+        <div className="ds-table-wrap">
+          <table className="ds-table">
+            <thead>
+              <tr>
+                <th style={{ width: 56 }}>符号</th>
+                <th style={{ width: 150 }}>标签</th>
+                <th style={{ width: 90 }}>类别</th>
+                <th>定义</th>
+              </tr>
+            </thead>
+            <tbody>
+              {WALLET_TAGS.map((t) => (
+                <tr key={t.keyPrefix}>
+                  <td style={{ fontSize: "var(--t-lg)", textAlign: "center" }}>
+                    {t.icon}
+                  </td>
+                  <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+                    {t.name}
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>{t.kind}</td>
+                  <td style={{ whiteSpace: "normal", lineHeight: 1.6 }}>
+                    {t.detail}
                   </td>
                 </tr>
               ))}
