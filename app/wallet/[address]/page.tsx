@@ -14,6 +14,8 @@ import {
   type SmartInfoLite,
   type WalletStatsLite,
 } from "../../ui";
+import { WalletTagChips } from "../../walletTagChips";
+import type { WalletTag } from "../../../lib/walletTags";
 
 // External trade page for a market slug (wired.fund) — same as the 24h scanner.
 const TRADE_LINK_BASE =
@@ -88,6 +90,8 @@ type WalletResponse = {
   ageDays: number | null;
   stats: WalletStatsLite | null;
   smart: SmartInfoLite | null;
+  // Derived tags (lib/walletTags): pool source, discovery-channel evidence, bot.
+  tags?: WalletTag[];
   // Live PUSD (Polymarket cash) balance in USD; null = RPC unavailable.
   pusdBalance: number | null;
   profile: Profile;
@@ -179,6 +183,16 @@ export default function WalletPage() {
                 ? ` · ${data.stats.marketsTraded.toLocaleString()} 市场`
                 : ""}
             </Tag>
+          ) : null}
+          {/* Derived tags (same model as /discovery): pool-source attribution
+              and discovery-channel evidence. bot/whitelist are filtered out —
+              the richer badges above already carry them. */}
+          {data?.tags ? (
+            <WalletTagChips
+              tags={data.tags.filter(
+                (t) => t.key !== "bot" && t.key !== "whitelist",
+              )}
+            />
           ) : null}
         </h1>
         <div className="ds-hint">

@@ -56,8 +56,20 @@ describe("buildDiscoveryView", () => {
     );
     expect(v.candidates.find((c) => c.address === "0xbot")?.status).toBe("bot");
 
+    // Per-row derived tags + full evidence detail (newest first).
+    expect(cand?.tags.map((t) => t.key)).toEqual(["ch:echo", "ch:splitter"]);
+    expect(cand?.evidence).toHaveLength(3);
+    expect(cand?.evidence[0].note).toBe("note-splitter-0xm1");
+    const bot = v.candidates.find((c) => c.address === "0xbot");
+    expect(bot?.tags.some((t) => t.key === "bot")).toBe(true);
+
     // Program output: discovered + category rows, NOT the global-board row.
     expect(v.admitted.map((a) => a.address)).toEqual(["0xdone", "0xspec"]);
+    expect(
+      v.admitted[0].tags.some((t) => t.key === "src:discovered:early_winner"),
+    ).toBe(true);
+    expect(v.admitted[0].evidence).toHaveLength(1);
+    expect(v.admitted[1].evidence).toHaveLength(0); // specialist without evidence rows
     expect(v.counts).toEqual({
       evidenceRows: 5,
       candidateWallets: 3,

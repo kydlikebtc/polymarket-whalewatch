@@ -9,6 +9,7 @@ import { getWalletAges } from "../../../../lib/walletAge";
 import { getWalletStats } from "../../../../lib/walletStats";
 import { fetchPusdBalance } from "../../../../lib/pusdBalance";
 import { getSmartTags } from "../../../../lib/smartWallets";
+import { getWalletTags } from "../../../../lib/walletTags";
 import { getEventCategories } from "../../../../lib/gamma";
 import {
   analyzeTrades,
@@ -107,6 +108,9 @@ export async function GET(
       ]);
       const firstTs = ages[address] ?? null;
       const smart = getSmartTags(db, [address])[address] ?? null;
+      // Derived wallet tags (pool source / discovery-channel evidence / bot),
+      // same model the /discovery funnel shows — lib/walletTags.
+      const tags = getWalletTags(db, address);
 
       // Category focus via EVENT TAGS over the top markets (cheap, cached) —
       // the market-level category field is null for most modern markets.
@@ -146,6 +150,7 @@ export async function GET(
         ageDays: firstTs != null ? (Date.now() / 1000 - firstTs) / 86400 : null,
         stats: stats[address],
         smart,
+        tags,
         pusdBalance,
         profile: { ...profile, topMarkets },
         holdings,
