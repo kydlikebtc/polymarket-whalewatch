@@ -429,3 +429,122 @@ describe("runFollowCycle 进场价偏离护栏", () => {
     db.close();
   });
 });
+
+// 分歧市场互斥:detectConsensus 按 (conditionId, outcome) 分组,不同的聪明钱各买
+// 同一市场的对立结果时会产出两个单边「假共识」组(对冲者剔除只防同一钱包买两边)。
+// 真机实锤:激进策略同时持有 Argentina O/U 2.5 的 Over@41.5¢ 和 Under@58.5¢ ——
+// 跟了分歧,而产品语义是「只跟共识,不跟分歧」。修复:复用共识页同一口径
+// (detectDisagreement + excludeContestedFromConsensus,DEFAULT_DISAGREEMENT 阈值:
+// minPerSideUsd $5k / minWalletsPerSide 1)把分歧市场整体剔除,双边都不跟。
+describe("runFollowCycle 分歧市场不跟(市场级互斥)", () => {
+  // 4 个白名单钱包桩:w1,w2 买 Yes;w3,w4 买 No。
+  const smart4 = (): Map<string, SmartTag> =>
+    new Map([
+      ["w1", { score: 80, winRate: 0.7, netPnl: 1, isWhitelist: true }],
+      ["w2", { score: 75, winRate: 0.65, netPnl: 1, isWhitelist: true }],
+      ["w3", { score: 70, winRate: 0.6, netPnl: 1, isWhitelist: true }],
+      ["w4", { score: 65, winRate: 0.55, netPnl: 1, isWhitelist: true }],
+    ]);
+
+  // 同一市场 c1 的对立两 token:Yes=tokYes/0、No=tokNo/1,asset 与 outcomeIndex
+  // 均不同。价格互补(0.6/0.4),size 折算每笔净买 $6000 —— 同时超过激进策略阈值
+  // ($5k/钱包)与分歧 side 阈值(minPerSideUsd $5k)。ts=1000、nowSec=2000 →
+  // age 1000s < 1800,全部 fresh,新鲜度闸门不会先拦下,单独考察分歧互斥。
+  const yesBuy = (wallet: string, hash: string): Trade =>
+    trade({
+      proxyWallet: wallet,
+      transactionHash: hash,
+      asset: "tokYes",
+      outcome: "Yes",
+      outcomeIndex: 0,
+      size: 10000,
+      price: 0.6,
+      timestamp: 1000,
+    });
+  const noBuy = (wallet: string, hash: string): Trade =>
+    trade({
+      proxyWallet: wallet,
+      transactionHash: hash,
+      asset: "tokNo",
+      outcome: "No",
+      outcomeIndex: 1,
+      size: 15000,
+      price: 0.4,
+      timestamp: 1000,
+    });
+  // 现价按 token 给:与各侧聪明钱均价一致(偏离 0¢),偏离护栏也不会先拦下。
+  const priceByAsset = async (asset: string) =>
+    asset === "tokYes" ? 0.6 : 0.4;
+
+  it("分歧市场(两边各 2 钱包净买 $6k)→ 双边都不跟,c1 无任何仓", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({
+        trades: [
+          yesBuy("w1", "h1"),
+          yesBuy("w2", "h2"),
+          noBuy("w3", "h3"),
+          noBuy("w4", "h4"),
+        ],
+      }),
+      getSmart: smart4,
+      fetchPrice: priceByAsset,
+      getMeta: async () => ({}),
+      nowSec: 2000,
+    });
+    // 修复前:Yes/No 各成一个激进「假共识」组,各开一仓(opened=2)。
+    expect(r.opened).toBe(0);
+    const cnt = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as { n: number };
+    expect(cnt.n).toBe(0);
+    db.close();
+  });
+
+  it("软对立(Yes 侧够共识,No 侧单钱包 $6k 只够分歧 side)→ 同样不跟", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({
+        trades: [yesBuy("w1", "h1"), yesBuy("w2", "h2"), noBuy("w3", "h3")],
+      }),
+      getSmart: smart4,
+      fetchPrice: priceByAsset,
+      getMeta: async () => ({}),
+      nowSec: 2000,
+    });
+    // No 侧单钱包不构成共识组,但 $6k ≥ minPerSideUsd($5k)/1 钱包 ≥
+    // minWalletsPerSide(1)→ 市场即分歧,Yes 侧共识也被市场级互斥剔除。
+    expect(r.opened).toBe(0);
+    const cnt = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as { n: number };
+    expect(cnt.n).toBe(0);
+    db.close();
+  });
+
+  it("单边共识(仅 w1,w2 买 Yes,无对立方)不受互斥误伤,照常开仓", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({
+        trades: [yesBuy("w1", "h1"), yesBuy("w2", "h2")],
+      }),
+      getSmart: smart4,
+      fetchPrice: priceByAsset,
+      getMeta: async () => ({}),
+      nowSec: 2000,
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const pos = db
+      .prepare("SELECT outcome FROM follow_positions WHERE condition_id='c1'")
+      .get() as { outcome: string };
+    expect(pos.outcome).toBe("Yes");
+    db.close();
+  });
+});

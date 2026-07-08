@@ -1,7 +1,9 @@
 import type { ConsensusGroup, ConsensusOptions } from "./consensus";
 import { detectConsensus } from "./consensus";
 import type { DB } from "./db";
+import { DEFAULT_DISAGREEMENT, detectDisagreement } from "./disagreement";
 import type { MarketMeta } from "./gamma";
+import { excludeContestedFromConsensus } from "./marketSignals";
 import { wilsonInterval } from "./outcomeStats";
 import type { SmartTag } from "./smartWallets";
 import type { Trade } from "./types";
@@ -170,8 +172,10 @@ function parseStrategy(
  *  1. 空白名单(getSmart().size===0)→ 直接 no-op,与 consensus 一致(种子未跑/失败
  *     时不应假装无信号)。
  *  2. 读启用策略;用「所有启用策略里最松的 minWallets/minPerWalletUsd」跑一次
- *     detectConsensus 产出候选组,再用新鲜度闸门(nowSec - g.lastTs <= freshSec)
- *     筛掉陈旧组 —— 只跟最近成交的共识,不补开历史/接飞刀。
+ *     detectConsensus 产出候选组;先按市场级互斥剔除分歧市场(聪明钱两边都买 →
+ *     不是共识,双边都不跟,口径与共识页一致),再用新鲜度闸门
+ *     (nowSec - g.lastTs <= freshSec)筛掉陈旧组 —— 只跟最近成交的共识,
+ *     不补开历史/接飞刀。
  *  3. 一次性取 meta:对「新鲜候选组的 distinct condition_id」∪「现有 open 仓的
  *     condition_id」调用 getMeta(抛错则降级为空 meta,不 reject 整轮);开仓阶段
  *     用它跳过已 closed 的市场,结算阶段复用同一份。
@@ -224,8 +228,28 @@ export async function runFollowCycle(
       minPerWalletUsd: Math.min(...strategies.map((s) => s.minPerWalletUsd)),
     };
     const groups = detectConsensus(trades, smart, loosest);
-    freshGroups = groups.filter((g) => nowSec - g.lastTs <= freshSec);
-    const stale = groups.length - freshGroups.length;
+    // 分歧市场互斥:detectConsensus 按 (conditionId, outcome) 分组,不同的聪明钱
+    // 各买同一市场的对立结果时会产出两个单边「假共识」组(其对冲者剔除只防同一钱包
+    // 买两边)—— 真机实锤:激进策略同时持有同一 O/U 盘的 Over 和 Under 双边仓。
+    // 产品语义是「只跟共识,不跟分歧」,故复用共识页同一口径(detectDisagreement
+    // 默认阈值 + excludeContestedFromConsensus 市场级互斥)把分歧市场整体剔除,
+    // 双边都不跟。
+    const contested = detectDisagreement(trades, smart, DEFAULT_DISAGREEMENT);
+    const uncontested = excludeContestedFromConsensus(groups, contested);
+    const dropped = groups.length - uncontested.length;
+    if (dropped > 0) {
+      const contestedCids = new Set(contested.map((d) => d.conditionId));
+      const droppedMarkets = new Set(
+        groups
+          .filter((g) => contestedCids.has(g.conditionId))
+          .map((g) => g.conditionId),
+      ).size;
+      console.log(
+        `[follow] 分歧互斥:剔除 ${dropped} 个单边共识组(${droppedMarkets} 个分歧市场,聪明钱两边都买 → 不跟)`,
+      );
+    }
+    freshGroups = uncontested.filter((g) => nowSec - g.lastTs <= freshSec);
+    const stale = uncontested.length - freshGroups.length;
     if (stale > 0) {
       console.log(
         `[follow] 新鲜度闸门:跳过 ${stale} 个陈旧共识组(最近成交距 now > ${freshSec}s),不补开历史`,
