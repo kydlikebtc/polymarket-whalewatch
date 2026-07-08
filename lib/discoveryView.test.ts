@@ -63,17 +63,28 @@ describe("buildDiscoveryView", () => {
     const bot = v.candidates.find((c) => c.address === "0xbot");
     expect(bot?.tags.some((t) => t.key === "bot")).toBe(true);
 
-    // Program output: discovered + category rows, NOT the global-board row.
-    expect(v.admitted.map((a) => a.address)).toEqual(["0xdone", "0xspec"]);
-    expect(
-      v.admitted[0].tags.some((t) => t.key === "src:discovered:early_winner"),
-    ).toBe(true);
-    expect(v.admitted[0].evidence).toHaveLength(1);
-    expect(v.admitted[1].evidence).toHaveLength(0); // specialist without evidence rows
+    // The pool in FULL — global-board members included, score-desc ordering.
+    expect(v.members.map((m) => m.address)).toEqual([
+      "0xboard", // score 90
+      "0xdone", // score 61
+      "0xspec", // score 22
+    ]);
+    const done = v.members.find((m) => m.address === "0xdone")!;
+    expect(done.tags.some((t) => t.key === "src:discovered:early_winner")).toBe(
+      true,
+    );
+    // Upstream funnel evidence rides along on the member row.
+    expect(done.evidence).toHaveLength(1);
+    expect(done.evidence[0].channel).toBe("early_winner");
+    const board = v.members.find((m) => m.address === "0xboard")!;
+    expect(board.tags.some((t) => t.key === "src:leaderboard")).toBe(true);
+    expect(board.evidence).toHaveLength(0);
     expect(v.counts).toEqual({
       evidenceRows: 5,
       candidateWallets: 3,
-      admitted: 2,
+      poolTotal: 3,
+      poolGlobal: 1,
+      poolDiscovery: 2,
     });
   });
 

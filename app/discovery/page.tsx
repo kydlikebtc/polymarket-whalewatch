@@ -1,14 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import {
-  fmtSignedUsdCompact,
-  Modal,
-  Segmented,
-  StatCard,
-  Tag,
-  WalletLink,
-} from "../ui";
+import { fmtSignedUsdCompact, Modal, Segmented, Tag, WalletLink } from "../ui";
 import { WalletTagChips, tagVariant } from "../walletTagChips";
 import { WALLET_TAGS } from "../glossary";
 import type { WalletTag } from "../../lib/walletTags";
@@ -37,9 +30,10 @@ interface CandidateRow {
   tags: WalletTag[];
   evidence: EvidenceDetail[];
 }
-interface AdmittedRow {
+interface MemberRow {
   address: string;
-  source: string;
+  source: string | null;
+  isWhitelist: boolean;
   score: number | null;
   winRate: number | null;
   netPnl: number | null;
@@ -49,8 +43,14 @@ interface AdmittedRow {
 }
 interface DiscoveryPayload {
   candidates: CandidateRow[];
-  admitted: AdmittedRow[];
-  counts: { evidenceRows: number; candidateWallets: number; admitted: number };
+  members: MemberRow[];
+  counts: {
+    evidenceRows: number;
+    candidateWallets: number;
+    poolTotal: number;
+    poolGlobal: number;
+    poolDiscovery: number;
+  };
   error?: string;
 }
 
@@ -95,6 +95,33 @@ function filterChipLabel(key: string, sample: WalletTag): string {
   return sample.label.replace(/ ×\d+$/, "");
 }
 
+// ---------------------------------------------------------- funnel strip
+
+function FunnelArrow({ label }: { label: string }) {
+  return (
+    <div
+      aria-hidden
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        minWidth: 56,
+        flex: "0 0 auto",
+        gap: 2,
+      }}
+    >
+      <span
+        className="ds-hint"
+        style={{ fontSize: 11, textAlign: "center", lineHeight: 1.3 }}
+      >
+        {label}
+      </span>
+      <span style={{ color: "var(--n-500)", fontSize: 16 }}>→</span>
+    </div>
+  );
+}
+
 // ------------------------------------------------------- expandable detail
 
 function EvidenceDetailRows({
@@ -109,7 +136,8 @@ function EvidenceDetailRows({
       <td colSpan={colSpan} style={{ background: "var(--n-50)" }}>
         {evidence.length === 0 ? (
           <div className="ds-hint" style={{ padding: "var(--s-2)" }}>
-            近 30 天无渠道证据 —— 该钱包经分类榜播种直接入池
+            近 30 天无渠道证据 —— 经榜单播种入池（全局榜/分类榜），或证据已滚出
+            30 天窗口
           </div>
         ) : (
           <table className="ds-table" style={{ margin: "var(--s-2) 0" }}>
@@ -193,9 +221,9 @@ export default function DiscoveryPage() {
   // Tag filter chips for the ACTIVE view: union of row tag keys with the
   // number of wallets carrying each. Selecting several = AND (a wallet must
   // carry every selected tag — "echo AND splitter" is the interesting query).
-  const rows: Array<CandidateRow | AdmittedRow> = useMemo(
+  const rows: Array<CandidateRow | MemberRow> = useMemo(
     () =>
-      view === "candidates" ? (data?.candidates ?? []) : (data?.admitted ?? []),
+      view === "candidates" ? (data?.candidates ?? []) : (data?.members ?? []),
     [data, view],
   );
   const chipStats = useMemo(() => {
@@ -215,6 +243,20 @@ export default function DiscoveryPage() {
     () =>
       rows.filter((r) => {
         for (const k of activeTags) {
+          // Funnel-segment pseudo filters (set by clicking a pool segment in
+          // the funnel strip): group across every category/discovered source.
+          if (k === "grp:discovery") {
+            if (
+              !r.tags.some(
+                (t) =>
+                  t.key.startsWith("src:category:") ||
+                  t.key.startsWith("src:discovered:"),
+              )
+            ) {
+              return false;
+            }
+            continue;
+          }
           if (!r.tags.some((t) => t.key === k)) return false;
         }
         if (!q) return true;
@@ -225,9 +267,9 @@ export default function DiscoveryPage() {
     [rows, activeTags, q],
   );
 
-  const switchView = (v: View) => {
+  const switchView = (v: View, presetTags?: string[]) => {
     setView(v);
-    setActiveTags(new Set()); // chips are view-specific
+    setActiveTags(new Set(presetTags ?? [])); // chips are view-specific
     setExpanded(new Set());
   };
   const toggleTag = (key: string) => {
@@ -270,38 +312,107 @@ export default function DiscoveryPage() {
         </div>
       )}
 
-      {/* KPI strip — the two list cards jump to their tab */}
-      <section className="kpi" style={{ marginBottom: "var(--s-4)" }}>
-        <StatCard label="30 天证据条数">
+      {/* Live funnel strip — the discovery pipeline with real counts.
+          Stages are clickable and drive the tabs/filters below. */}
+      <section
+        aria-label="发现漏斗"
+        style={{
+          display: "flex",
+          alignItems: "stretch",
+          gap: "var(--s-2)",
+          flexWrap: "wrap",
+          marginBottom: "var(--s-2)",
+        }}
+      >
+        <div className="kpi-card" style={{ flex: "1 1 130px" }}>
+          <div className="ds-label">① 30 天证据</div>
           <div className="kpi-value">{data?.counts.evidenceRows ?? "—"}</div>
-        </StatCard>
+          <div className="kpi-sub">成交流涌现 + 结算回溯</div>
+        </div>
+        <FunnelArrow label="聚合" />
         <div
+          className="kpi-card"
           role="button"
           tabIndex={0}
           onClick={() => switchView("candidates")}
           onKeyDown={(e) => e.key === "Enter" && switchView("candidates")}
-          style={{ cursor: "pointer" }}
-          title="查看候选钱包列表"
+          style={{
+            flex: "1 1 130px",
+            cursor: "pointer",
+            outline:
+              view === "candidates" ? "2px solid var(--brand-500)" : "none",
+          }}
+          title="查看候选漏斗列表"
         >
-          <StatCard label="候选钱包 →">
-            <div className="kpi-value">
-              {data?.counts.candidateWallets ?? "—"}
-            </div>
-          </StatCard>
+          <div className="ds-label">② 候选钱包 →</div>
+          <div className="kpi-value">
+            {data?.counts.candidateWallets ?? "—"}
+          </div>
+          <div className="kpi-sub">纯观察 · 不进任何信号</div>
         </div>
+        <FunnelArrow label="复发≥3 · 战绩审查" />
         <div
-          role="button"
-          tabIndex={0}
-          onClick={() => switchView("members")}
-          onKeyDown={(e) => e.key === "Enter" && switchView("members")}
-          style={{ cursor: "pointer" }}
-          title="查看发现渠道在池成员列表"
+          className="kpi-card"
+          style={{ flex: "1 1 130px", borderColor: "var(--warn-700)" }}
+          title="准入闸门：复发广度 ≥3 → 战绩审查（胜率≥55%&≥10结算 或 盈利&ROI≥5%&≥5结算）→ 做市机器人硬拒。分类榜走旁路：免复发、仅战绩审查。"
         >
-          <StatCard label="发现渠道在池成员 →">
-            <div className="kpi-value">{data?.counts.admitted ?? "—"}</div>
-          </StatCard>
+          <div className="ds-label">③ 准入闸门</div>
+          <div className="kpi-value" aria-hidden>
+            ⛩
+          </div>
+          <div className="kpi-sub">机器人硬拒 · 分类榜旁路</div>
+        </div>
+        <FunnelArrow label="通过" />
+        <div className="kpi-card" style={{ flex: "2 1 240px", padding: 0 }}>
+          <div style={{ padding: "var(--s-4) var(--s-4) 0" }}>
+            <div className="ds-label">
+              ④ 共识白名单池 · {data?.counts.poolTotal ?? "—"}
+            </div>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              gap: "var(--s-2)",
+              padding: "var(--s-2) var(--s-4) var(--s-3)",
+            }}
+          >
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => switchView("members", ["src:leaderboard"])}
+              onKeyDown={(e) =>
+                e.key === "Enter" && switchView("members", ["src:leaderboard"])
+              }
+              style={{ flex: 1, cursor: "pointer" }}
+              title="查看全局榜成员（top-100 自带门槛，免审查）"
+            >
+              <div className="kpi-value">{data?.counts.poolGlobal ?? "—"}</div>
+              <div className="kpi-sub">🏛 全局榜 →</div>
+            </div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => switchView("members", ["grp:discovery"])}
+              onKeyDown={(e) =>
+                e.key === "Enter" && switchView("members", ["grp:discovery"])
+              }
+              style={{ flex: 1, cursor: "pointer" }}
+              title="查看发现渠道产出的成员（分类榜专家 + 漏斗毕业生）"
+            >
+              <div className="kpi-value" style={{ color: "var(--up-700)" }}>
+                {data?.counts.poolDiscovery ?? "—"}
+              </div>
+              <div className="kpi-sub">🔭 发现渠道 →</div>
+            </div>
+          </div>
         </div>
       </section>
+      <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
+        🏅 分类榜旁路：六类 × 周/月榜前 25
+        直接进闸门（榜单排名即复发证据，仅过战绩审查） · ↺
+        在池成员每日按战绩重新认证，30
+        天不再合格自动出池——行为再现即可重新成为候选
+      </div>
 
       {/* Controls: tab toggle + search */}
       <div
@@ -323,7 +434,7 @@ export default function DiscoveryPage() {
               value: "candidates",
             },
             {
-              label: `在池成员 (${data?.counts.admitted ?? 0})`,
+              label: `白名单池 (${data?.counts.poolTotal ?? 0})`,
               value: "members",
             },
           ]}
@@ -500,7 +611,7 @@ export default function DiscoveryPage() {
               </tr>
             </thead>
             <tbody>
-              {(filtered as AdmittedRow[]).map((a) => (
+              {(filtered as MemberRow[]).map((a) => (
                 <Fragment key={a.address}>
                   <tr
                     onClick={() => toggleExpand(a.address)}
