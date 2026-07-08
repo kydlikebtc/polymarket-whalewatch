@@ -12,8 +12,11 @@ import {
   getSmartTags,
   maybeDailySeed,
 } from "../lib/smartWallets";
+import { LEADERBOARD_CATEGORIES } from "../lib/leaderboard";
 import { getMarketMeta } from "../lib/gamma";
 import { runConsensusCycle } from "../lib/consensus";
+import { collectFirehoseEvidence } from "../lib/discovery";
+import { maybeDailyDiscovery } from "../lib/admission";
 import { wrapSendWithHealth } from "../lib/telegramHealth";
 
 // Guarded singleton PER PROCESS: instrumentation may call this more than once
@@ -182,16 +185,31 @@ export function startAlertEngine(): void {
 
   async function loop() {
     try {
-      // Daily (UTC) smart-wallet seeding from the official leaderboards. Fire
-      // and forget: seeding can take a while (per-wallet /closed-positions
-      // enrichment) and must never delay the 4s alert cycle.
-      maybeDailySeed(db)
+      // Daily (UTC) smart-wallet seeding from the official leaderboards —
+      // global boards plus the six category boards (channel ③: specialists
+      // the global top-100 structurally misses). Fire and forget: seeding can
+      // take a while (per-wallet /closed-positions enrichment) and must never
+      // delay the 4s alert cycle.
+      maybeDailySeed(db, { categories: [...LEADERBOARD_CATEGORIES] })
         ?.then((r) =>
           console.log(
             `[engine] smart-wallet seed: ${r.seeded} wallets (${r.enriched} enriched)`,
           ),
         )
         .catch((e) => console.error("[engine] smart-wallet seed failed", e));
+
+      // Daily (UTC) discovery run: the early-winner settled-market sweep
+      // (channel ②) followed by the admission gate that graduates recurrent,
+      // quality-checked candidates into the pool. Same fire-and-forget
+      // posture as seeding.
+      maybeDailyDiscovery(db)
+        ?.then((r) =>
+          console.log(
+            `[engine] discovery: ${r.scan.scanned} settled market(s) swept · ` +
+              `${r.admission.admitted} admitted / ${r.admission.evaluated} evaluated`,
+          ),
+        )
+        .catch((e) => console.error("[engine] discovery run failed", e));
 
       // Daily seen_trades retention prune (synchronous, day-gated, sub-ms on
       // the steady-state table): the dedup ledger otherwise grows without
@@ -231,14 +249,18 @@ export function startAlertEngine(): void {
 
   async function consensusLoop() {
     try {
+      // ONE deep window fetch per cycle, shared by consensus detection and
+      // the firehose discovery pass — the discovery channels ride the fetch
+      // the consensus loop was already paying for.
+      const win = await getTradesWindowDeep({
+        minUsd: CONSENSUS_FLOOR_USD,
+        sinceSec: Math.floor(Date.now() / 1000) - CONSENSUS_WINDOW_SEC,
+      });
+      const smart = getAllSmartTags(db);
       const fired = await runConsensusCycle({
         db,
-        fetchWindow: () =>
-          getTradesWindowDeep({
-            minUsd: CONSENSUS_FLOOR_USD,
-            sinceSec: Math.floor(Date.now() / 1000) - CONSENSUS_WINDOW_SEC,
-          }),
-        getSmart: () => getAllSmartTags(db),
+        fetchWindow: async () => win,
+        getSmart: () => smart,
         send,
         // Coverage-log denominator: fetchWindow's effectiveSinceSec is
         // measured against this requested window.
@@ -247,6 +269,11 @@ export function startAlertEngine(): void {
       if (fired > 0) {
         console.log(`[engine] consensus cycle fired ${fired} alert(s)`);
       }
+      // Channel ① (echo / splitter / insider) over the same window. Fire and
+      // forget: a discovery failure must never disturb the consensus cadence.
+      collectFirehoseEvidence(db, win.trades, smart).catch((e) =>
+        console.error("[discovery] firehose collection failed", e),
+      );
     } catch (e) {
       console.error("[engine] consensus cycle error", e);
     }
