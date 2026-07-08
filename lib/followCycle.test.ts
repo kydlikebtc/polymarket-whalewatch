@@ -894,6 +894,75 @@ describe("runFollowCycle markout 惰性回填", () => {
     db.close();
   });
 
+  it("死仓不饿死新仓:10 个取不到价的旧仓占不满名额,最新仓照常回填", async () => {
+    const db = openDb(":memory:");
+    // 11 个 formation_ts 递增的仓:前 10 个(旧)的 token 已失活 —— fetchPriceAt
+    // 对这类 token 恒返回 null,markout 列永远填不上。修复前按 ORDER BY id 它们
+    // 永远排在前面占住每轮 10 个名额,最新仓的回填永久停摆且每轮空烧 HTTP。
+    const ins = db.prepare(
+      "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status,formation_ts) VALUES (2,?,'Yes',?,0,0.6,500,833,'open',?)",
+    );
+    for (let i = 1; i <= 10; i++) {
+      ins.run(`dead${i}`, `tokDead${i}`, 1000 + i * 100);
+    }
+    ins.run("newest", "tokNew", 2000); // formation_ts 最大 → 应最先被处理
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: [] }),
+      getSmart: smart,
+      fetchPrice: async (asset: string) => (asset === "tokNew" ? 0.7 : null),
+      getMeta: async () => ({}),
+      nowSec: 10_000, // 2000+7200+300=9500 < 10000 → 两列均到期
+    });
+    expect(r.opened).toBe(0);
+    const fresh = db
+      .prepare(
+        "SELECT markout_30m, markout_2h FROM follow_positions WHERE condition_id='newest'",
+      )
+      .get() as { markout_30m: number | null; markout_2h: number | null };
+    // ORDER BY formation_ts DESC → 最新仓排第一,不被死仓堵住。
+    expect(fresh.markout_30m).toBe(0.7);
+    expect(fresh.markout_2h).toBe(0.7);
+    // 死仓取不到价 → 列保持 null(不写脏值)。
+    const dead = db
+      .prepare(
+        "SELECT markout_30m FROM follow_positions WHERE condition_id='dead1'",
+      )
+      .get() as { markout_30m: number | null };
+    expect(dead.markout_30m).toBeNull();
+    db.close();
+  });
+
+  it("形成超 7 天的仓不再重试(截止期出队,不空烧 HTTP)", async () => {
+    const db = openDb(":memory:");
+    const nowSec = 30 * 86400;
+    // 形成于 8 天前:已过 7 天截止,即使 markout 仍为 null 也不再进回填队列。
+    db.prepare(
+      "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status,formation_ts) VALUES (2,'ancient','Yes','tokA',0,0.6,500,833,'open',?)",
+    ).run(nowSec - 8 * 86400);
+    let called = 0;
+    await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: [] }),
+      getSmart: smart,
+      fetchPrice: async () => {
+        called++;
+        return 0.5;
+      },
+      getMeta: async () => ({}),
+      nowSec,
+    });
+    expect(called).toBe(0); // 截止期把死仓彻底出队,不再每轮空烧
+    const row = db
+      .prepare(
+        "SELECT markout_30m, markout_2h FROM follow_positions WHERE condition_id='ancient'",
+      )
+      .get() as { markout_30m: number | null; markout_2h: number | null };
+    expect(row.markout_30m).toBeNull();
+    expect(row.markout_2h).toBeNull();
+    db.close();
+  });
+
   it("formation_ts 为 null 的历史仓不参与回填(老数据兼容)", async () => {
     const db = openDb(":memory:");
     db.prepare(

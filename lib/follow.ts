@@ -452,19 +452,32 @@ export async function runFollowCycle(
   // 红线:formation_price/markout 只用于归因展示,绝不参与 realized_pnl。
   const MARKOUT_GRACE_SEC = 300;
   const MARKOUT_BATCH = 10;
+  // 死仓截止期:fetchPriceAt 对已失活/过期 token 恒返回 null,这类仓的 markout
+  // 永远填不上。不设截止的话,积累 ≥MARKOUT_BATCH 个死仓后它们会永久占住每轮
+  // 名额(饿死所有新仓的回填)并每轮空烧 HTTP —— 形成超过 7 天还填不上的仓
+  // 直接出队,不再重试(7 天后回补的 markout 归因价值也早已衰减)。
+  const MARKOUT_MAX_AGE_SEC = 7 * 86400;
   let markouts = 0;
   for (const spec of [
     { col: "markout_30m", delta: 1800 },
     { col: "markout_2h", delta: 7200 },
   ]) {
+    // ORDER BY formation_ts DESC:新仓优先 —— 反复取不到价的死仓自然沉底,不会
+    // 像 ORDER BY id 那样永远霸占 LIMIT 名额;配合上面的 7 天截止彻底出队。
     const due = db
       .prepare(
         `SELECT id, asset, formation_ts FROM follow_positions
           WHERE formation_ts IS NOT NULL AND ${spec.col} IS NULL
             AND formation_ts + ? < ?
-          ORDER BY id LIMIT ?`,
+            AND formation_ts > ?
+          ORDER BY formation_ts DESC LIMIT ?`,
       )
-      .all(spec.delta + MARKOUT_GRACE_SEC, nowSec, MARKOUT_BATCH) as {
+      .all(
+        spec.delta + MARKOUT_GRACE_SEC,
+        nowSec,
+        nowSec - MARKOUT_MAX_AGE_SEC,
+        MARKOUT_BATCH,
+      ) as {
       id: number;
       asset: string;
       formation_ts: number;
