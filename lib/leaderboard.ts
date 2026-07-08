@@ -12,6 +12,22 @@ const PAGE_SIZE = 50;
 export type LeaderboardPeriod = "DAY" | "WEEK" | "MONTH" | "ALL";
 export type LeaderboardOrder = "PNL" | "VOL";
 
+// Verified live (2026-07-08): the category values the API accepts — anything
+// else fails fast with HTTP 400 {"error":"invalid category parameter"}.
+// Category boards are REAL segmented rankings (politics #1 ≈ $38k pnl vs the
+// global #1 ≈ $8M the same week): they surface specialists the global boards
+// structurally miss. NOTE: a category row's pnl/vol are category-scoped — a
+// different basis from the global row's account-wide figures.
+export const LEADERBOARD_CATEGORIES = [
+  "sports",
+  "politics",
+  "crypto",
+  "culture",
+  "tech",
+  "finance",
+] as const;
+export type LeaderboardCategory = (typeof LEADERBOARD_CATEGORIES)[number];
+
 // `rank` comes back as a STRING ("1") from the live API; coerce to number.
 // NOTE: leaderboard pnl is mark-to-market (includes unrealized gains) — treat
 // it as a seed-pool signal, not a settled track record.
@@ -28,13 +44,15 @@ export async function fetchLeaderboard(opts: {
   period: LeaderboardPeriod;
   orderBy?: LeaderboardOrder;
   maxEntries?: number;
+  category?: string;
 }): Promise<LeaderboardRow[]> {
-  const { period, orderBy = "PNL", maxEntries = 100 } = opts;
+  const { period, orderBy = "PNL", maxEntries = 100, category } = opts;
+  const catParam = category ? `&category=${encodeURIComponent(category)}` : "";
   const out: LeaderboardRow[] = [];
   const seen = new Set<string>();
   const pages = Math.ceil(maxEntries / PAGE_SIZE);
   for (let page = 0; page < pages; page++) {
-    const url = `${LB_API}?timePeriod=${period}&orderBy=${orderBy}&limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`;
+    const url = `${LB_API}?timePeriod=${period}&orderBy=${orderBy}&limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}${catParam}`;
     // Transient Cloudflare 5xx are retried (shared backoff); if a page still
     // fails after retries, the collected prefix is returned instead of thrown
     // away — it holds the board's TOP ranks, and the daily seeding window

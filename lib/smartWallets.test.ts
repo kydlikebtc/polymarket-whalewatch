@@ -137,6 +137,65 @@ describe("seedSmartWallets", () => {
     expect(rows.find((r) => r.address === "0xnew")?.source).toBe("leaderboard");
   });
 
+  it("adds category-board specialists missing from the global boards with source='category:<cat>'", async () => {
+    const db = openDb(":memory:");
+    const fetchBoard = vi.fn(
+      async ({ category }: { period: string; category?: string }) => {
+        if (!category) return [lbRow("0xglobal", 900_000, 5_000_000)];
+        if (category === "politics")
+          // 0xglobal also tops the politics board — the GLOBAL row must win
+          // (category pnl/vol are category-scoped, a different basis).
+          return [
+            lbRow("0xglobal", 120_000, 500_000),
+            lbRow("0xspec", 37_000, 90_000),
+          ];
+        return [];
+      },
+    );
+    await seedSmartWallets(db, {
+      periods: ["ALL"],
+      categories: ["politics", "sports"],
+      fetchBoard: fetchBoard as never,
+      statsFetcher: async () => stats(),
+      nowSec: 1000,
+    });
+    const rows = db
+      .prepare("SELECT address, source, volume FROM smart_wallets")
+      .all() as { address: string; source: string | null; volume: number }[];
+    const global = rows.find((r) => r.address === "0xglobal");
+    const spec = rows.find((r) => r.address === "0xspec");
+    expect(global?.source).toBe("leaderboard");
+    expect(global?.volume).toBe(5_000_000); // global row kept, category row not mixed in
+    expect(spec?.source).toBe("category:politics");
+    expect(spec?.volume).toBe(90_000);
+  });
+
+  it("keeps the best-pnl category row when a specialist tops several categories", async () => {
+    const db = openDb(":memory:");
+    const fetchBoard = vi.fn(
+      async ({ category }: { period: string; category?: string }) => {
+        if (!category) return [];
+        if (category === "crypto") return [lbRow("0xspec", 20_000, 80_000)];
+        if (category === "tech") return [lbRow("0xspec", 55_000, 200_000)];
+        return [];
+      },
+    );
+    await seedSmartWallets(db, {
+      periods: ["ALL"],
+      categories: ["crypto", "tech"],
+      fetchBoard: fetchBoard as never,
+      statsFetcher: async () => stats(),
+      nowSec: 1000,
+    });
+    const row = db
+      .prepare(
+        "SELECT source, volume FROM smart_wallets WHERE address = '0xspec'",
+      )
+      .get() as { source: string; volume: number };
+    expect(row.source).toBe("category:tech"); // attribution follows the best-pnl board
+    expect(row.volume).toBe(200_000);
+  });
+
   it("preserves a manual whitelist flag across re-seeding", async () => {
     const db = openDb(":memory:");
     db.prepare(

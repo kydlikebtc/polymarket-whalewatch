@@ -60,6 +60,30 @@ describe("fetchLeaderboard", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2); // page 2 made no progress → stop
   });
 
+  it("appends the category filter to every page URL", async () => {
+    const page = [row(1, "0xAAA")];
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => page });
+    vi.stubGlobal("fetch", fetchMock);
+    const rows = await fetchLeaderboard({
+      period: "WEEK",
+      maxEntries: 25,
+      category: "sports",
+    });
+    expect(rows).toHaveLength(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("category=sports");
+  });
+
+  it("omits the category param entirely when not given (global board)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => [row(1, "0xAAA")] });
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchLeaderboard({ period: "WEEK", maxEntries: 25 });
+    expect(fetchMock.mock.calls[0][0]).not.toContain("category=");
+  });
+
   it("throws on a non-ok response", async () => {
     vi.stubGlobal(
       "fetch",

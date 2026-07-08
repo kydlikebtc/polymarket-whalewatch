@@ -72,12 +72,23 @@ export interface SeedResult {
  * shows); the old settled-realized profit axis that excluded unrealized was
  * dropped with the netPnl switch. `enrichTop` can still bound the enrichment for
  * tests. Manual whitelist flags (is_whitelist=1) survive re-seeding.
+ *
+ * `categories` (off by default) additionally sweeps the segmented category
+ * boards (WEEK/MONTH × top `perCategory`) for SPECIALISTS the global boards
+ * structurally miss — a politics-only expert whose $38k pnl never cracks the
+ * global top 100. Only wallets ABSENT from the global merge are added
+ * (source='category:<cat>'): a category row's pnl/vol are category-scoped, a
+ * different basis that must never overwrite a global row. The category pnl
+ * axis is rough by construction; enrichment overrides it with the
+ * authoritative account-wide netPnl for every wallet it reaches.
  */
 export async function seedSmartWallets(
   db: DB,
   opts: {
     periods?: LeaderboardPeriod[];
     perPeriod?: number;
+    categories?: string[];
+    perCategory?: number;
     enrichTop?: number;
     fetchBoard?: typeof fetchLeaderboard;
     statsFetcher?: (w: string) => Promise<WalletStats>;
@@ -87,6 +98,8 @@ export async function seedSmartWallets(
   const {
     periods = ["WEEK", "MONTH", "ALL"],
     perPeriod = 100,
+    categories = [],
+    perCategory = 25,
     // Whole merged pool (~300 wallets across three 100-row boards): the 24h
     // walletStats cache + concurrency 3 keep the daily incremental cost well
     // inside the ~150req/10s budget.
@@ -97,7 +110,10 @@ export async function seedSmartWallets(
   } = opts;
 
   // Merge the boards; a wallet on several boards keeps its best-pnl ROW.
-  const merged = new Map<string, { pnl: number; vol: number }>();
+  const merged = new Map<
+    string,
+    { pnl: number; vol: number; source: string }
+  >();
   for (const period of periods) {
     let rows: LeaderboardRow[];
     try {
@@ -118,7 +134,45 @@ export async function seedSmartWallets(
       // Independently maxing pnl and vol across boards (old behavior) could
       // pair an ALL-board pnl with a WEEK-board vol — a ratio of nothing.
       if (!prev || r.pnl > prev.pnl) {
-        merged.set(wallet, { pnl: r.pnl, vol: r.vol });
+        merged.set(wallet, { pnl: r.pnl, vol: r.vol, source: "leaderboard" });
+      }
+    }
+  }
+
+  // Category sweep AFTER the global merge: global rows always win (their
+  // account-wide pnl/vol must not be replaced by category-scoped figures).
+  // A specialist topping several categories keeps its best-pnl category row —
+  // the attribution follows the board that ranked it highest.
+  const CATEGORY_PERIODS: LeaderboardPeriod[] = ["WEEK", "MONTH"];
+  for (const category of categories) {
+    for (const period of CATEGORY_PERIODS) {
+      let rows: LeaderboardRow[];
+      try {
+        rows = await fetchBoard({
+          period,
+          orderBy: "PNL",
+          maxEntries: perCategory,
+          category,
+        });
+      } catch (e) {
+        console.warn(
+          `[smartWallets] category board ${category}/${period} failed:`,
+          e,
+        );
+        continue;
+      }
+      for (const r of rows) {
+        if (r.vol <= 0) continue;
+        const wallet = r.proxyWallet.toLowerCase();
+        const prev = merged.get(wallet);
+        if (prev?.source === "leaderboard") continue; // global row wins
+        if (!prev || r.pnl > prev.pnl) {
+          merged.set(wallet, {
+            pnl: r.pnl,
+            vol: r.vol,
+            source: `category:${category}`,
+          });
+        }
       }
     }
   }
@@ -178,7 +232,7 @@ export async function seedSmartWallets(
         s?.roi ?? null,
         lb.vol,
         nowSec,
-        "leaderboard",
+        lb.source,
       );
     }
     // Retention: auto-seeded wallets that haven't re-appeared on any board for
@@ -195,9 +249,13 @@ export async function seedSmartWallets(
   // on mark-to-market pnl, so low coverage silently dilutes the pool with
   // unrealized-gain whales. Log the ratio so a regression (e.g. walletStats
   // failures shrinking coverage) is visible straight from the seed logs.
+  const specialists = [...merged.values()].filter((v) =>
+    v.source.startsWith("category:"),
+  ).length;
   console.log(
     `[smartWallets] seeded ${merged.size} wallets · enrichment coverage ${enriched}/${merged.size}` +
-      ` (${Math.round((enriched / merged.size) * 100)}%)`,
+      ` (${Math.round((enriched / merged.size) * 100)}%)` +
+      (categories.length > 0 ? ` · category specialists ${specialists}` : ""),
   );
   return { seeded: merged.size, enriched };
 }
