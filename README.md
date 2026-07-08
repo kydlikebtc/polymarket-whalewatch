@@ -8,7 +8,7 @@
 [![Next.js 16](https://img.shields.io/badge/Next.js%2016-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org/)
 [![Node 20+](https://img.shields.io/badge/Node-20%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-![Tests](https://img.shields.io/badge/tests-357%20passing-3fb950)
+![Tests](https://img.shields.io/badge/tests-433%20passing-3fb950)
 ![License](https://img.shields.io/badge/license-research%20use-blue)
 [![Last commit](https://img.shields.io/github/last-commit/kydlikebtc/polymarket-whalewatch?color=blue)](https://github.com/kydlikebtc/polymarket-whalewatch/commits/main)
 [![Stars](https://img.shields.io/github/stars/kydlikebtc/polymarket-whalewatch?style=social)](https://github.com/kydlikebtc/polymarket-whalewatch/stargazers)
@@ -31,17 +31,19 @@ A whale on Polymarket rarely announces themselves. They split a big position int
 
 ## ✨ At a glance
 
-|     | Capability                 | What it catches                                                         |
-| :-: | :------------------------- | :---------------------------------------------------------------------- |
-| 🔔  | **Large-trade alerts**     | Big executed fills, pushed to Telegram in seconds                       |
-| 🧩  | **Split-buy detection**    | Positions built from many small sub-threshold orders                    |
-| 🆕  | **Fresh-wallet flagging**  | Address lifespan + new-wallet badges on every row                       |
-| 🎯  | **Insider-hunt filters**   | New wallet **＋** favorable odds **＋** pre-settlement rush             |
-| 🏆  | **Smart-money whitelist**  | Auto-seeded daily from the official profit leaderboards, 🏆-tagged live |
-| 🔥  | **Consensus detection**    | ≥N whitelist wallets independently buying the SAME outcome              |
-| ⚖️  | **Disagreement detection** | Smart money split across OPPOSING outcomes — a quality-weighted balance |
-| 📈  | **Track-record badges**    | Settled win-rate · realized PnL on every wallet, plus a full dossier    |
-| 📐  | **Validation loop**        | 1h/24h follow-through + settlement result on every alert it fired       |
+|     | Capability                 | What it catches                                                                   |
+| :-: | :------------------------- | :-------------------------------------------------------------------------------- |
+| 🔔  | **Large-trade alerts**     | Big executed fills, pushed to Telegram in seconds                                 |
+| 🧩  | **Split-buy detection**    | Positions built from many small sub-threshold orders                              |
+| 🆕  | **Fresh-wallet flagging**  | Address lifespan + new-wallet badges on every row                                 |
+| 🎯  | **Insider-hunt filters**   | New wallet **＋** favorable odds **＋** pre-settlement rush                       |
+| 🏆  | **Smart-money whitelist**  | Auto-seeded daily from the official profit leaderboards, 🏆-tagged live           |
+| 🔭  | **Discovery channels**     | Skilled-but-small wallets the boards miss — funneled through an admission gate    |
+| 🏷️  | **Wallet tags**            | Source attribution + behavior labels (split-buyer, early winner…) on every wallet |
+| 🔥  | **Consensus detection**    | ≥N whitelist wallets independently buying the SAME outcome                        |
+| ⚖️  | **Disagreement detection** | Smart money split across OPPOSING outcomes — a quality-weighted balance           |
+| 📈  | **Track-record badges**    | Settled win-rate · realized PnL on every wallet, plus a full dossier              |
+| 📐  | **Validation loop**        | 1h/24h follow-through + settlement result on every alert it fired                 |
 
 ---
 
@@ -102,6 +104,16 @@ No trade-feed archival. Wallet history, track records, price history, and settle
 ## 📸 More views
 
 <table>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/discovery.png" alt="Smart-money discovery funnel">
+<br><sub><b>Smart-money discovery funnel (<code>/discovery</code>)</b> — the live pipeline with real counts: 30-day evidence → candidate wallets → admission gate → whitelist pool. Every stage is clickable; rows carry behavior tags (🔁 echo · 🧩 splitter · 🕵️ insider · 🎯 early winner) and expand into the full evidence detail. Tag chips filter with AND semantics.</sub>
+</td>
+<td width="50%" valign="top">
+<img src="docs/discovery-pool.png" alt="Whitelist pool with wallet tags">
+<br><sub><b>Whitelist pool, in full</b> — all members (global boards + category specialists + graduated candidates) with source attribution, derived behavior tags, score / settled win-rate / net PnL. Honest by construction: market-maker bots are labeled 🤖, and upstream funnel evidence rides along on every member row.</sub>
+</td>
+</tr>
 <tr>
 <td width="50%" valign="top">
 <img src="docs/accumulation.png" alt="Split-buy accumulation board">
