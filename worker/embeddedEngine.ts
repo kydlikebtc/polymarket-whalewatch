@@ -14,6 +14,8 @@ import {
 } from "../lib/smartWallets";
 import { getMarketMeta } from "../lib/gamma";
 import { runConsensusCycle } from "../lib/consensus";
+import { runFollowCycle } from "../lib/follow";
+import { fetchPriceAt } from "../lib/priceHistory";
 import { wrapSendWithHealth } from "../lib/telegramHealth";
 
 // Guarded singleton PER PROCESS: instrumentation may call this more than once
@@ -256,4 +258,50 @@ export function startAlertEngine(): void {
   // First pass shortly after start (gives the daily seed a head start on a
   // fresh install; an empty whitelist just skips the cycle).
   setTimeout(consensusLoop, 30_000);
+
+  // --- Consensus follow (paper) loop -----------------------------------
+  // Mirrors consensusLoop: every 5 minutes pull the same 6h/$2k window and
+  // run runFollowCycle, which opens paper positions on qualifying consensus
+  // groups and settles closed markets. State lives in follow_positions
+  // (UNIQUE(strategy_id,condition_id,outcome) + INSERT OR IGNORE dedups opens),
+  // so re-running the same window never double-opens. Heavy window fetch keeps
+  // it off the 4s tick, same as consensus.
+  const FOLLOW_INTERVAL_MS = 5 * 60_000;
+  const FOLLOW_WINDOW_SEC = 6 * 3600;
+  const FOLLOW_FLOOR_USD = 2000;
+
+  async function followLoop() {
+    try {
+      const { opened, settled } = await runFollowCycle({
+        db,
+        fetchWindow: async () => {
+          const { trades } = await getTradesWindowDeep({
+            minUsd: FOLLOW_FLOOR_USD,
+            sinceSec: Math.floor(Date.now() / 1000) - FOLLOW_WINDOW_SEC,
+          });
+          return { trades };
+        },
+        getSmart: () => getAllSmartTags(db),
+        fetchPrice: (asset, tsSec) => fetchPriceAt(asset, tsSec),
+        // 形成价:只取 ≤formationTs 的历史点(atOrBefore)防前视偏差 —— 形成后
+        // 价格通常朝进场方向移动,取"之后的最近点"会系统性低估延迟成本。
+        fetchFormationPrice: (asset, tsSec) =>
+          fetchPriceAt(asset, tsSec, { atOrBefore: true }),
+        getMeta: (cids) => getMarketMeta(db, cids),
+      });
+      if (opened > 0 || settled > 0) {
+        console.log(
+          `[engine] follow cycle: opened ${opened}, settled ${settled}`,
+        );
+      }
+    } catch (e) {
+      console.error("[engine] follow cycle error", e);
+    }
+    setTimeout(followLoop, FOLLOW_INTERVAL_MS);
+  }
+
+  // First pass staggered AFTER consensus (45s vs 30s): lets the daily seed
+  // populate the whitelist and consensus claim its window first, so follow
+  // opens against an already-warmed signal rather than racing an empty whitelist.
+  setTimeout(followLoop, 45_000);
 }

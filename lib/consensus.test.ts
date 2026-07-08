@@ -168,6 +168,100 @@ describe("detectConsensus", () => {
     // $20k over 60k shares → 0.333…
     expect(g.avgBuyPrice).toBeCloseTo(20000 / 60000);
   });
+
+  // ---- formationTs / qualifiedTs(P1 信号触发改造)---------------------------
+  // 背景缺陷:lastTs 被组内任何白名单成交(含 SELL、含不达标非成员)刷新,follow 的
+  // 新鲜度锚在 lastTs 上 → 5 小时前形成的老共识被一笔小额杂音"续命"成新鲜。修法:
+  // 锚定「形成时刻」—— 第 minWallets 个合格钱包的累计净买最后一次从 <floor 升到
+  // >=floor 的成交时间(last upward crossing,保持到窗口末尾)。
+  describe("formationTs / qualifiedTs", () => {
+    // price 0.5 ⇒ size = 2×USD,便于按美元构造净买轨迹。
+    const buy = (w: string, ts: number, usdVal: number, hash: string) =>
+      mk({
+        proxyWallet: w,
+        timestamp: ts,
+        size: usdVal * 2,
+        price: 0.5,
+        transactionHash: hash,
+      });
+    const sell = (w: string, ts: number, usdVal: number, hash: string) =>
+      mk({
+        proxyWallet: w,
+        timestamp: ts,
+        size: usdVal * 2,
+        price: 0.5,
+        side: "SELL",
+        transactionHash: hash,
+      });
+
+    it("买-卖-再买:qualifiedTs = last upward crossing(跌回后再跨线覆盖前次)", () => {
+      const trades = [
+        buy("0xA", 1000, 6000, "0xa1"), // net $6k ≥ $5k → 首次跨线 @1000
+        sell("0xA", 2000, 3000, "0xa2"), // net $3k < $5k → 跌回
+        buy("0xA", 3000, 4000, "0xa3"), // net $7k ≥ $5k → 再跨线 @3000(覆盖)
+        buy("0xB", 1500, 10000, "0xb1"), // B 一笔跨线 @1500
+      ];
+      const [g] = detectConsensus(trades, smartSet("0xA", "0xB"), {
+        minWallets: 2,
+        minPerWalletUsd: 5000,
+      });
+      expect(g).toBeDefined();
+      const byWallet = new Map(g.wallets.map((w) => [w.wallet, w]));
+      expect(byWallet.get("0xa")?.qualifiedTs).toBe(3000);
+      expect(byWallet.get("0xb")?.qualifiedTs).toBe(1500);
+      // formationTs = qualifiedTs 升序第 minWallets(2)个 = max(1500, 3000)。
+      expect(g.formationTs).toBe(3000);
+    });
+
+    it("formationTs = 第 minWallets 个钱包跨线时刻;qualified 数超过 minWallets 仍取第 minWallets 个", () => {
+      const trades = [
+        buy("0xA", 1000, 10000, "0xa1"), // 跨线 @1000
+        buy("0xB", 5000, 10000, "0xb1"), // 跨线 @5000 → 第 2 人到位,共识成立
+        buy("0xD", 7000, 10000, "0xd1"), // 后来者不改变「共识最早成立」时刻
+      ];
+      const [g] = detectConsensus(trades, smartSet("0xA", "0xB", "0xD"), {
+        minWallets: 2,
+        minPerWalletUsd: 5000,
+      });
+      expect(g.walletCount).toBe(3);
+      expect(g.formationTs).toBe(5000);
+    });
+
+    it("卖单/不达标非成员刷新 lastTs 但不影响 formationTs(核心缺陷复现)", () => {
+      const trades = [
+        buy("0xA", 1000, 10000, "0xa1"),
+        buy("0xB", 5000, 10000, "0xb1"),
+        // C 白名单但只买 $1k,不达标 —— 旧实现里这笔照样刷新 lastTs"续命"。
+        buy("0xC", 9000, 1000, "0xc1"),
+        // A 卖一小笔(net 仍 $9k ≥ floor,crossing 不变)。
+        sell("0xA", 10000, 1000, "0xa2"),
+      ];
+      const [g] = detectConsensus(trades, smartSet("0xA", "0xB", "0xC"), {
+        minWallets: 2,
+        minPerWalletUsd: 5000,
+      });
+      expect(g.walletCount).toBe(2); // C 不达标
+      expect(g.formationTs).toBe(5000); // 杂音动不了形成时刻(lastTs 的既有语义不在此断言)
+    });
+
+    it("乱序入参(newest-first)与升序结果一致 —— 不依赖入参顺序契约", () => {
+      const asc = [
+        buy("0xA", 1000, 6000, "0xa1"),
+        sell("0xA", 2000, 3000, "0xa2"),
+        buy("0xA", 3000, 4000, "0xa3"),
+        buy("0xB", 1500, 10000, "0xb1"),
+      ];
+      const desc = [...asc].reverse(); // getTradesWindowDeep 实际给 newest-first
+      const opts = { minWallets: 2, minPerWalletUsd: 5000 };
+      const [gAsc] = detectConsensus(asc, smartSet("0xA", "0xB"), opts);
+      const [gDesc] = detectConsensus(desc, smartSet("0xA", "0xB"), opts);
+      expect(gDesc.formationTs).toBe(gAsc.formationTs);
+      expect(gDesc.formationTs).toBe(3000);
+      const q = (g: typeof gAsc) =>
+        g.wallets.map((w) => [w.wallet, w.qualifiedTs]).sort();
+      expect(q(gDesc)).toEqual(q(gAsc));
+    });
+  });
 });
 
 describe("runConsensusCycle", () => {

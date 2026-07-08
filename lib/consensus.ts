@@ -13,6 +13,10 @@ export interface ConsensusWallet {
   avgBuyPrice: number; // size-weighted
   score: number | null;
   winRate: number | null; // settled win rate from the smart tag (0-1)
+  // 该钱包累计净买 **最后一次** 从 <minPerWalletUsd 升到 ≥minPerWalletUsd 的那笔
+  // 成交 timestamp(last upward crossing,保持到窗口末尾;中途跌回再跨则覆盖)。
+  // 只对幸存 qualified 钱包有意义 —— 窗口末尾 net ≥ floor 保证至少跨过一次线。
+  qualifiedTs: number;
 }
 
 // N distinct smart wallets net-buying the SAME outcome of the SAME market
@@ -33,6 +37,13 @@ export interface ConsensusGroup {
   avgBuyPrice: number; // usd-weighted across qualified wallets
   firstTs: number;
   lastTs: number;
+  // 共识「形成时刻」= qualified 钱包 qualifiedTs 升序第 minWallets 个 ——
+  // 即"第 N 人到位"时刻;qualified 数 > minWallets 时仍取第 minWallets 个
+  // (共识最早成立的时刻不因后来者加入而变晚)。与 lastTs 的关键区别:lastTs 被
+  // 组内任何白名单成交(含 SELL、含不达标非成员)刷新,曾把 5 小时前形成的老共识
+  // "续命"成新鲜(真实尾部 0~6h);formationTs 只随合格钱包的跨线动作移动,是
+  // follow 新鲜度/进场护栏的正确锚点。
+  formationTs: number;
 }
 
 export interface ConsensusOptions {
@@ -64,6 +75,10 @@ export function detectConsensus(
     sellUsd: number;
     buyShares: number;
     buyCount: number;
+    // last upward crossing:净买最后一次从 <floor 升到 ≥floor 的成交 ts。
+    // null = 从未跨线(或 floor≤0 的退化配置,见 qualifiedTs 的兜底)。
+    crossTs: number | null;
+    firstOwnTs: number; // 该钱包在本组的最早成交 ts(退化配置下的兜底锚点)
   };
   const groups = new Map<
     string,
@@ -79,12 +94,22 @@ export function detectConsensus(
       byWallet: Map<string, Acc>;
     }
   >();
+  // 白名单过滤 + 去重后自排序(升序):crossing 检测必须按时间正序累计净买,而
+  // getTradesWindowDeep 给的是 newest-first,route.ts 等其它调用方又没有顺序契约
+  // —— 不能对入参加隐式有序假设,这里自己排。同秒多笔的相对顺序不稳定属已知
+  // 限制(上游 timestamp 只有秒级精度),对跨线判定的影响以秒为界。
+  const rows: Trade[] = [];
   for (const t of trades) {
     const wallet = t.proxyWallet.toLowerCase();
     if (!smartTags.has(wallet)) continue;
     const dk = dedupKey(t);
     if (seen.has(dk)) continue;
     seen.add(dk);
+    rows.push(t);
+  }
+  rows.sort((a, b) => a.timestamp - b.timestamp);
+  for (const t of rows) {
+    const wallet = t.proxyWallet.toLowerCase();
     const key = `${t.conditionId}:${t.outcome}`;
     let g = groups.get(key);
     if (!g) {
@@ -105,16 +130,29 @@ export function detectConsensus(
     if (t.timestamp > g.lastTs) g.lastTs = t.timestamp;
     let acc = g.byWallet.get(wallet);
     if (!acc) {
-      acc = { buyUsd: 0, sellUsd: 0, buyShares: 0, buyCount: 0 };
+      acc = {
+        buyUsd: 0,
+        sellUsd: 0,
+        buyShares: 0,
+        buyCount: 0,
+        crossTs: null,
+        firstOwnTs: t.timestamp, // rows 已升序,首见即最早
+      };
       g.byWallet.set(wallet, acc);
     }
     const tradeUsd = notionalUsd(t);
+    const prevNet = acc.buyUsd - acc.sellUsd;
     if (t.side === "BUY") {
       acc.buyUsd += tradeUsd;
       acc.buyShares += t.size;
       acc.buyCount += 1;
     } else {
       acc.sellUsd += tradeUsd;
+    }
+    const newNet = acc.buyUsd - acc.sellUsd;
+    // upward crossing:每次从线下升到线上都覆盖记录 → 最终保留 last crossing。
+    if (prevNet < opts.minPerWalletUsd && newNet >= opts.minPerWalletUsd) {
+      acc.crossTs = t.timestamp;
     }
   }
 
@@ -165,9 +203,17 @@ export function detectConsensus(
         avgBuyPrice: acc.buyShares > 0 ? acc.buyUsd / acc.buyShares : 0,
         score: tag?.score ?? null,
         winRate: tag?.winRate ?? null,
+        // 窗口末尾 net ≥ floor(>0)⇒ 至少跨线一次,crossTs 必非 null;
+        // firstOwnTs 兜底只保护 floor≤0 的退化配置(净买 0 也"合格",从未跨线)。
+        qualifiedTs: acc.crossTs ?? acc.firstOwnTs,
       });
     }
     if (qualified.length < opts.minWallets) continue;
+    // formationTs 先于 netUsd 排序计算:取 qualifiedTs 升序第 minWallets 个
+    //(minWallets≤0 的退化配置钳到第 1 个)。
+    const crossings = qualified.map((w) => w.qualifiedTs).sort((a, b) => a - b);
+    const formationTs =
+      crossings[Math.max(1, Math.min(opts.minWallets, crossings.length)) - 1];
     qualified.sort((a, b) => b.netUsd - a.netUsd);
     const totalNetUsd = qualified.reduce((s, w) => s + w.netUsd, 0);
     const totalShareWeighted = qualified.reduce(
@@ -189,6 +235,7 @@ export function detectConsensus(
         totalShareWeighted > 0 ? totalNetUsd / totalShareWeighted : 0,
       firstTs: g.firstTs,
       lastTs: g.lastTs,
+      formationTs,
     });
   }
   out.sort((a, b) => b.totalNetUsd - a.totalNetUsd);
