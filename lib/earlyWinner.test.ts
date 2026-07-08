@@ -165,11 +165,17 @@ describe("fetchRecentlyClosedMarkets", () => {
     ...over,
   });
 
-  it("parses rows, derives the winner, and filters thin/undecided markets", async () => {
+  it("parses rows, derives the winner, and filters thin/undecided/short-lived markets", async () => {
     const rows = [
       gammaRow(),
       gammaRow({ conditionId: "0xthin", volumeNum: 500 }), // below volume floor
       gammaRow({ conditionId: "0xcancel", outcomePrices: '["0.5", "0.5"]' }), // no winner (refund)
+      // Lived 2h — no trade can be >=24h pre-close, evidence is impossible.
+      gammaRow({
+        conditionId: "0xinplay",
+        createdAt: "2026-07-08T08:00:00Z",
+        closedTime: "2026-07-08 10:00:00+00",
+      }),
     ];
     const fetcher = vi
       .fn()

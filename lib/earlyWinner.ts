@@ -144,6 +144,20 @@ export async function fetchRecentlyClosedMarkets(opts: {
       // Belt-and-braces client check behind the server-side filter.
       const volume = asNum(row.volumeNum) ?? asNum(row.volume) ?? 0;
       if (volume < minVolume) continue;
+      // A market that LIVED for less than the early-lead window cannot
+      // mathematically yield evidence (no trade can be >=24h before a close
+      // that is <24h after creation) — skip it before it costs a sweep.
+      // In-play sports games and 15-minute crypto micros are the bulk of the
+      // settled flow, so this cuts most of the scan queue for free.
+      const createdSec = parseClosedTime(
+        typeof row.createdAt === "string" ? row.createdAt : null,
+      );
+      if (
+        createdSec != null &&
+        closedTimeSec - createdSec < EW_EARLY_LEAD_SEC
+      ) {
+        continue;
+      }
       const prices = asArr(row.outcomePrices).map((p) => asNum(p) ?? 0);
       const winners = prices
         .map((p, i) => (p > 0.99 ? i : -1))
