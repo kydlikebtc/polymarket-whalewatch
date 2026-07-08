@@ -17,6 +17,7 @@ const cg = (conditionId: string, outcome: string): ConsensusGroup =>
     avgBuyPrice: 0.5,
     firstTs: 1,
     lastTs: 2,
+    formationTs: 2,
   }) as ConsensusGroup;
 
 const dm = (conditionId: string): DisagreementMarket =>

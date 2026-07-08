@@ -44,6 +44,7 @@ const wallet = (over: Partial<ConsensusWallet>): ConsensusWallet => ({
   avgBuyPrice: 0.5,
   score: null,
   winRate: null,
+  qualifiedTs: 0,
   ...over,
 });
 const group = (over: Partial<ConsensusGroup>): ConsensusGroup => ({
@@ -59,6 +60,7 @@ const group = (over: Partial<ConsensusGroup>): ConsensusGroup => ({
   avgBuyPrice: 0.5,
   firstTs: 0,
   lastTs: 0,
+  formationTs: 0,
   ...over,
 });
 

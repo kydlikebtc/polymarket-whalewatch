@@ -283,6 +283,10 @@ export function startAlertEngine(): void {
         },
         getSmart: () => getAllSmartTags(db),
         fetchPrice: (asset, tsSec) => fetchPriceAt(asset, tsSec),
+        // 形成价:只取 ≤formationTs 的历史点(atOrBefore)防前视偏差 —— 形成后
+        // 价格通常朝进场方向移动,取"之后的最近点"会系统性低估延迟成本。
+        fetchFormationPrice: (asset, tsSec) =>
+          fetchPriceAt(asset, tsSec, { atOrBefore: true }),
         getMeta: (cids) => getMarketMeta(db, cids),
       });
       if (opened > 0 || settled > 0) {

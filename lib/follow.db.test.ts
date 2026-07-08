@@ -2,7 +2,25 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { openDb } from "./db";
+
+// P1 信号触发改造新增的归因列:formation_ts/formation_price(形成时刻三价记录)
+// + markout_30m/markout_2h(形成后 30min/2h 的市价回填)。只用于归因展示,
+// 绝不参与 realized_pnl。
+const FORMATION_COLS = [
+  "formation_ts",
+  "formation_price",
+  "markout_30m",
+  "markout_2h",
+];
+
+const positionCols = (db: ReturnType<typeof openDb>): string[] =>
+  (
+    db.prepare("PRAGMA table_info(follow_positions)").all() as {
+      name: string;
+    }[]
+  ).map((r) => r.name);
 
 describe("follow tables migration", () => {
   it("creates follow_strategies + follow_positions, seeds two strategies, enforces the position UNIQUE key", () => {
@@ -36,6 +54,36 @@ describe("follow tables migration", () => {
         .run(),
     ).toThrow();
     db.close();
+  });
+
+  it("fresh db: follow_positions carries the formation/markout columns", () => {
+    const db = openDb(":memory:");
+    const cols = positionCols(db);
+    for (const c of FORMATION_COLS) expect(cols).toContain(c);
+    db.close();
+  });
+
+  it("pre-existing db without the columns gets them via ALTER TABLE on reopen", () => {
+    const dir = mkdtempSync(join(tmpdir(), "whaledb-"));
+    const path = join(dir, "old.sqlite");
+    try {
+      // 老库形状:P1 之前的 follow_positions(无 formation/markout 列)。
+      // CREATE TABLE IF NOT EXISTS 会跳过既有表,只有 ALTER 路径能补列。
+      const raw = new Database(path);
+      raw
+        .prepare(
+          "CREATE TABLE follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, UNIQUE(strategy_id, condition_id, outcome))",
+        )
+        .run();
+      raw.close();
+
+      const db = openDb(path);
+      const cols = positionCols(db);
+      for (const c of FORMATION_COLS) expect(cols).toContain(c);
+      db.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("seeds the two strategies exactly once via the follow_seed_v marker (reopen must not re-seed)", () => {

@@ -16,7 +16,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS consensus_state (condition_id TEXT, outcome TEXT, wallet_count INTEGER, total_usd REAL, last_alert_ts INTEGER, PRIMARY KEY (condition_id, outcome));
     CREATE TABLE IF NOT EXISTS alert_outcomes (alert_id INTEGER PRIMARY KEY, price_1h REAL, price_24h REAL, resolved INTEGER DEFAULT 0, resolution_price REAL, won INTEGER, checked_at INTEGER);
     CREATE TABLE IF NOT EXISTS follow_strategies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, enabled INTEGER DEFAULT 1, params_json TEXT, created_at INTEGER);
-    CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, UNIQUE(strategy_id, condition_id, outcome));
+    CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, formation_ts INTEGER, formation_price REAL, markout_30m REAL, markout_2h REAL, UNIQUE(strategy_id, condition_id, outcome));
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
   `);
   // wallet_stats gained markets_traded (the high-frequency market-maker
@@ -28,6 +28,24 @@ export function openDb(path = "data.sqlite") {
     ).run();
   } catch {
     // column already present
+  }
+  // follow_positions gained the formation/markout attribution columns after the
+  // table already shipped (P1 信号触发改造):formation_ts/formation_price 记录
+  // 共识「形成时刻」与彼时价格,markout_30m/markout_2h 惰性回填形成后 30min/2h
+  // 的市价 —— 量化「延迟成本」用。红线:这些列只用于归因展示,绝不参与
+  // realized_pnl。同 markets_traded 的写法:老库 ALTER 补列,新库 CREATE TABLE
+  // 已含 → "duplicate column" 静默。
+  for (const col of [
+    "formation_ts INTEGER",
+    "formation_price REAL",
+    "markout_30m REAL",
+    "markout_2h REAL",
+  ]) {
+    try {
+      db.prepare(`ALTER TABLE follow_positions ADD COLUMN ${col}`).run();
+    } catch {
+      // column already present
+    }
   }
   // One alert row per (type, dedup_key): running the embedded engine and the
   // standalone worker against the same db is a documented deployment, and their

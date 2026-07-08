@@ -53,7 +53,8 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
       getSmart: smart,
       fetchPrice: async () => 0.63,
       getMeta: async () => ({}),
-      nowSec: 2000,
+      // ts=1000、nowSec=1800 → 距 formationTs 800s < freshSec 默认 900,保持新鲜。
+      nowSec: 1800,
     });
     expect(r.opened).toBeGreaterThanOrEqual(1);
     const pos = db
@@ -80,7 +81,7 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
       getSmart: smart,
       fetchPrice: async () => 0.63,
       getMeta: async () => ({}),
-      nowSec: 2000,
+      nowSec: 1800, // 距 formationTs(1000)800s < 900,新鲜
     };
     const a = await runFollowCycle(deps);
     const b = await runFollowCycle(deps);
@@ -168,8 +169,9 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
     db.prepare(
       "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status) VALUES (1,'c2','Yes','tok2',0,0.5,500,1000,'open')",
     ).run();
-    // 成交需落在新鲜度窗口内(nowSec=3000、ts=2000 → age 1000s<1800),否则新鲜度闸门
-    // 会拦下开仓,本用例考察的是「fetchPrice 抛错不掀翻整轮」而非陈旧组过滤。
+    // 成交需落在新鲜度窗口内(nowSec=2800、ts=2000 → 距 formationTs 800s<900),
+    // 否则新鲜度闸门会拦下开仓,本用例考察的是「fetchPrice 抛错不掀翻整轮」而非
+    // 陈旧组过滤。
     const trades = [
       trade({
         proxyWallet: "w1",
@@ -202,7 +204,7 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
         throw new Error("CLOB 5xx");
       },
       getMeta: async () => ({ c2: closed }),
-      nowSec: 3000,
+      nowSec: 2800,
     });
     // fetchPrice 抛错被兜住 → 回退窗口最近价 0.6 开出 c1 仓;整轮不 reject。
     expect(r.opened).toBe(1);
@@ -246,8 +248,9 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
 });
 
 // 新鲜度闸门 + 跳过已结算市场:消除「一启动就把过去 6h 里形成过的每个共识按当前价
-// 补开一遍仓」的接飞刀 —— 只跟 freshSec(默认 1800s)内最近成交的共识,且不给已 closed
-// 的市场开仓。两笔各净买 $6k(size=10000@0.6),满足默认策略阈值。
+// 补开一遍仓」的接飞刀 —— 只跟 freshSec(默认 900s=15min)内「形成」(formationTs,
+// 第 N 个合格钱包跨线时刻)的共识,且不给已 closed 的市场开仓。两笔各净买 $6k
+// (size=10000@0.6),满足默认策略阈值。
 describe("runFollowCycle 新鲜度闸门 + 跳过已结算市场", () => {
   const bigTrades = (ts: number): Trade[] => [
     trade({
@@ -264,9 +267,9 @@ describe("runFollowCycle 新鲜度闸门 + 跳过已结算市场", () => {
     }),
   ];
 
-  it("陈旧共识(lastTs 距 now 超过 30min)一律不开仓", async () => {
+  it("陈旧共识(formationTs 距 now 超过 freshSec)一律不开仓", async () => {
     const db = openDb(":memory:");
-    // ts=1000、nowSec=3000 → age=2000s>1800 → 陈旧,不该补开历史/接飞刀。
+    // ts=1000、nowSec=3000 → age=2000s>900 → 陈旧,不该补开历史/接飞刀。
     const r = await runFollowCycle({
       db,
       fetchWindow: async () => ({ trades: bigTrades(1000) }),
@@ -283,16 +286,16 @@ describe("runFollowCycle 新鲜度闸门 + 跳过已结算市场", () => {
     db.close();
   });
 
-  it("新鲜共识(lastTs 距 now 在 30min 内)照常开仓", async () => {
+  it("新鲜共识(formationTs 距 now 在 freshSec 内)照常开仓", async () => {
     const db = openDb(":memory:");
-    // ts=1000、nowSec=2000 → age=1000s<1800 → 新鲜,开仓。
+    // ts=1000、nowSec=1800 → age=800s<900 → 新鲜,开仓。
     const r = await runFollowCycle({
       db,
       fetchWindow: async () => ({ trades: bigTrades(1000) }),
       getSmart: smart,
       fetchPrice: async () => 0.63,
       getMeta: async () => ({}),
-      nowSec: 2000,
+      nowSec: 1800,
     });
     expect(r.opened).toBeGreaterThanOrEqual(1);
     db.close();
@@ -316,7 +319,7 @@ describe("runFollowCycle 新鲜度闸门 + 跳过已结算市场", () => {
       getSmart: smart,
       fetchPrice: async () => 0.63,
       getMeta: async () => ({ c1: closed }),
-      nowSec: 2000,
+      nowSec: 1800,
     });
     expect(r.opened).toBe(0);
     const cnt = db
@@ -335,7 +338,7 @@ describe("runFollowCycle 新鲜度闸门 + 跳过已结算市场", () => {
       getSmart: smart,
       fetchPrice: async () => 0.63,
       getMeta: async () => ({}),
-      nowSec: 2000,
+      nowSec: 1800,
     });
     expect(r.opened).toBeGreaterThanOrEqual(1);
     db.close();
@@ -347,9 +350,11 @@ describe("runFollowCycle 新鲜度闸门 + 跳过已结算市场", () => {
 // 现价偏离聪明钱均价超过 maxEntryDeviationCents(默认 10¢)即不开仓,宁可错过也不
 // 追高/接飞刀。单位:price 是 0-1 小数、阈值是 ¢,比较时 ×100。
 describe("runFollowCycle 进场价偏离护栏", () => {
-  // 新鲜共识:ts=1000、nowSec=2000 → age 1000s < 1800,不会被新鲜度闸门拦下,
-  // 只考察偏离护栏本身。两钱包各净买 $6k @0.6 → 聪明钱均价 0.6,命中激进策略
-  // (≥2 钱包 ≥$5k;保守要 ≥3 钱包 ≥$10k,不合格)。
+  // 新鲜共识:ts=1000、nowSec=1800 → 距 formationTs 800s < 900,不会被新鲜度闸门
+  // 拦下,只考察偏离护栏本身。两钱包各净买 $6k @0.6 → 聪明钱均价 0.6,命中激进策略
+  // (≥2 钱包 ≥$5k;保守要 ≥3 钱包 ≥$10k,不合格)。本组不注入 fetchFormationPrice
+  // → formationPrice 为 null,护栏走 avgBuyPrice 回退基准(formationPrice 基准见
+  // 下方「护栏基准 = formationPrice」组)。
   const freshTrades = (): Trade[] => [
     trade({
       proxyWallet: "w1",
@@ -373,7 +378,7 @@ describe("runFollowCycle 进场价偏离护栏", () => {
       getSmart: smart,
       fetchPrice: async () => 0.45,
       getMeta: async () => ({}),
-      nowSec: 2000,
+      nowSec: 1800,
     });
     expect(r.opened).toBe(0);
     const cnt = db
@@ -391,7 +396,7 @@ describe("runFollowCycle 进场价偏离护栏", () => {
       getSmart: smart,
       fetchPrice: async () => 0.55,
       getMeta: async () => ({}),
-      nowSec: 2000,
+      nowSec: 1800,
     });
     expect(r.opened).toBeGreaterThanOrEqual(1);
     db.close();
@@ -417,7 +422,7 @@ describe("runFollowCycle 进场价偏离护栏", () => {
       getSmart: smart,
       fetchPrice: async () => 0.45, // 偏离 15¢ < 50¢ → 该策略照开
       getMeta: async () => ({}),
-      nowSec: 2000,
+      nowSec: 1800,
     });
     expect(r.opened).toBeGreaterThanOrEqual(1);
     const pos = db
@@ -449,7 +454,7 @@ describe("runFollowCycle 分歧市场不跟(市场级互斥)", () => {
   // 同一市场 c1 的对立两 token:Yes=tokYes/0、No=tokNo/1,asset 与 outcomeIndex
   // 均不同。价格互补(0.6/0.4),size 折算每笔净买 $6000 —— 同时超过激进策略阈值
   // ($5k/钱包)与分歧 side 阈值(minPerSideUsd $5k)。ts=1000、nowSec=2000 →
-  // age 1000s < 1800,全部 fresh,新鲜度闸门不会先拦下,单独考察分歧互斥。
+  // 距 formationTs 800s < 900,全部 fresh,新鲜度闸门不会先拦下,单独考察分歧互斥。
   const yesBuy = (wallet: string, hash: string): Trade =>
     trade({
       proxyWallet: wallet,
@@ -491,7 +496,7 @@ describe("runFollowCycle 分歧市场不跟(市场级互斥)", () => {
       getSmart: smart4,
       fetchPrice: priceByAsset,
       getMeta: async () => ({}),
-      nowSec: 2000,
+      nowSec: 1800,
     });
     // 修复前:Yes/No 各成一个激进「假共识」组,各开一仓(opened=2)。
     expect(r.opened).toBe(0);
@@ -514,7 +519,7 @@ describe("runFollowCycle 分歧市场不跟(市场级互斥)", () => {
       getSmart: smart4,
       fetchPrice: priceByAsset,
       getMeta: async () => ({}),
-      nowSec: 2000,
+      nowSec: 1800,
     });
     // No 侧单钱包不构成共识组,但 $6k ≥ minPerSideUsd($5k)/1 钱包 ≥
     // minWalletsPerSide(1)→ 市场即分歧,Yes 侧共识也被市场级互斥剔除。
@@ -538,13 +543,382 @@ describe("runFollowCycle 分歧市场不跟(市场级互斥)", () => {
       getSmart: smart4,
       fetchPrice: priceByAsset,
       getMeta: async () => ({}),
-      nowSec: 2000,
+      nowSec: 1800,
     });
     expect(r.opened).toBeGreaterThanOrEqual(1);
     const pos = db
       .prepare("SELECT outcome FROM follow_positions WHERE condition_id='c1'")
       .get() as { outcome: string };
     expect(pos.outcome).toBe("Yes");
+    db.close();
+  });
+});
+
+// P1 信号触发改造:新鲜度从 lastTs 换锚到 formationTs(第 N 个合格钱包跨线时刻)。
+// 已验证的缺陷:lastTs 被组内任何白名单成交(含 SELL、含不达标非成员)刷新 ——
+// 5 小时前形成的老共识被一笔 $2k 卖单"续命"成新鲜,按现价跟入,买入成本失控
+// (真实尾部 0~6h)。formationTs 只随合格钱包的跨线动作移动,杂音续不了命。
+describe("runFollowCycle formationTs 锚定新鲜度(P1 核心)", () => {
+  const smart3 = (): Map<string, SmartTag> =>
+    new Map([
+      ["w1", { score: 80, winRate: 0.7, netPnl: 1, isWhitelist: true }],
+      ["w2", { score: 75, winRate: 0.65, netPnl: 1, isWhitelist: true }],
+      ["w3", { score: 70, winRate: 0.6, netPnl: 1, isWhitelist: true }],
+    ]);
+
+  it("老共识 + 白名单杂音续命 → 不再被跟(修复前锚 lastTs 会开仓)", async () => {
+    const db = openDb(":memory:");
+    const trades = [
+      // A t=1000 买 $6k、B t=1200 买 $6k → formationTs=1200(第 2 人跨线)。
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "h1",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "h2",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1200,
+      }),
+      // C 白名单但只买 $2.5k(不达标非成员)在 t=9000 —— 旧实现里这笔刷新
+      // lastTs=9000,把 2 小时前的老共识"续命"成新鲜。
+      trade({
+        proxyWallet: "w3",
+        transactionHash: "h3",
+        size: 5000,
+        price: 0.5,
+        timestamp: 9000,
+      }),
+    ];
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart3,
+      fetchPrice: async () => 0.6,
+      getMeta: async () => ({}),
+      // lastTs=9000 距 now 仅 600s(很"新鲜"),但 formationTs=1200 距 now
+      // 8400s ≫ freshSec(900)→ 陈旧,不开。
+      nowSec: 9600,
+    });
+    expect(r.opened).toBe(0);
+    const cnt = db
+      .prepare("SELECT COUNT(*) AS n FROM follow_positions")
+      .get() as { n: number };
+    expect(cnt.n).toBe(0);
+    db.close();
+  });
+
+  it("INSERT 落库 formation_ts=组 formationTs、formation_price=fetchFormationPrice 结果", async () => {
+    const db = openDb(":memory:");
+    const trades = [
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "h1",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "h2",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1200,
+      }),
+    ];
+    const calls: { asset: string; ts: number }[] = [];
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart,
+      fetchPrice: async () => 0.63,
+      fetchFormationPrice: async (asset, ts) => {
+        calls.push({ asset, ts });
+        return 0.58;
+      },
+      getMeta: async () => ({}),
+      nowSec: 1800, // 距 formationTs(1200)600s < 900,新鲜
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    // 形成价按「形成时刻」查:asset=组 token、ts=formationTs(第 2 人跨线 @1200)。
+    expect(calls).toContainEqual({ asset: "tok", ts: 1200 });
+    const pos = db
+      .prepare(
+        "SELECT formation_ts, formation_price FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as { formation_ts: number; formation_price: number };
+    expect(pos.formation_ts).toBe(1200);
+    expect(pos.formation_price).toBe(0.58);
+    db.close();
+  });
+
+  it("fetchFormationPrice 抛错/null → formation_price 存 null,不阻塞开仓", async () => {
+    const db = openDb(":memory:");
+    const trades = [
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "h1",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "h2",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1200,
+      }),
+    ];
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart,
+      fetchPrice: async () => 0.63,
+      fetchFormationPrice: async () => {
+        throw new Error("CLOB 5xx");
+      },
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const pos = db
+      .prepare(
+        "SELECT formation_ts, formation_price FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as { formation_ts: number; formation_price: number | null };
+    expect(pos.formation_ts).toBe(1200);
+    expect(pos.formation_price).toBeNull();
+    db.close();
+  });
+});
+
+// 护栏基准切换:偏离护栏改比 |entry − formationPrice|(形成后的真实漂移);
+// formationPrice 为 null 时回退旧基准 |entry − avgBuyPrice|。均价差含聪明钱的
+// 信息租金(他们买得早/便宜),用它当基准会误拦正常跟进、漏拦真漂移。
+describe("runFollowCycle 护栏基准 = formationPrice", () => {
+  // 两钱包各净买 $6k @0.5(avgBuyPrice=0.5),formationPrice 桩 0.6 —— 两基准
+  // 拉开 10¢ 差距,才能区分护栏用的是哪个。ts=1000/1200、nowSec=1800 → 新鲜。
+  const freshTrades = (): Trade[] => [
+    trade({
+      proxyWallet: "w1",
+      transactionHash: "h1",
+      size: 12000,
+      price: 0.5,
+      timestamp: 1000,
+    }),
+    trade({
+      proxyWallet: "w2",
+      transactionHash: "h2",
+      size: 12000,
+      price: 0.5,
+      timestamp: 1200,
+    }),
+  ];
+
+  it("entry=0.75 vs formationPrice=0.6:偏 15¢ > 10 → 不开", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: freshTrades() }),
+      getSmart: smart,
+      fetchPrice: async () => 0.75,
+      fetchFormationPrice: async () => 0.6,
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBe(0);
+    db.close();
+  });
+
+  it("entry=0.65 vs formationPrice=0.6:偏 5¢ ≤ 10 → 开(旧基准 avg=0.5 差 15¢ 会误拦 —— 坐实基准已切换)", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: freshTrades() }),
+      getSmart: smart,
+      fetchPrice: async () => 0.65,
+      fetchFormationPrice: async () => 0.6,
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const pos = db
+      .prepare(
+        "SELECT entry_price, formation_price FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as { entry_price: number; formation_price: number };
+    expect(pos.entry_price).toBe(0.65);
+    expect(pos.formation_price).toBe(0.6);
+    db.close();
+  });
+
+  it("formationPrice=null → 回退 avgBuyPrice 基准仍生效(0.65 vs avg 0.5 = 15¢ → 拦)", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: freshTrades() }),
+      getSmart: smart,
+      fetchPrice: async () => 0.65,
+      fetchFormationPrice: async () => null,
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBe(0);
+    db.close();
+  });
+
+  it("formationPrice=null 回退基准内(0.55 vs avg 0.5 = 5¢)→ 照常开", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: freshTrades() }),
+      getSmart: smart,
+      fetchPrice: async () => 0.55,
+      fetchFormationPrice: async () => null,
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    db.close();
+  });
+});
+
+// markout 惰性回填:formation_ts 非空、markout 列为 null 且 nowSec >
+// formation_ts+delta+300 的仓位(open+settled 都要),用 fetchPrice(asset,
+// formation_ts+delta) 取常规最近点回填。红线:markout 只用于归因展示,绝不参与
+// realized_pnl。
+describe("runFollowCycle markout 惰性回填", () => {
+  it("open+settled 两仓均回填 markout_30m/markout_2h;已填不重复拉", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status,formation_ts) VALUES (2,'m1','Yes','tokM',0,0.6,500,833,'open',1000)",
+    ).run();
+    db.prepare(
+      "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status,formation_ts,exit_ts,exit_price,realized_pnl) VALUES (2,'m2','Yes','tokM2',0,0.6,500,833,'settled',1000,9000,1,333)",
+    ).run();
+    // nowSec=8501:1000+1800+300=3100 与 1000+7200+300=8500 都已过 → 两列均可回填。
+    const priceByTs = async (_asset: string, ts: number) =>
+      ts === 2800 ? 0.66 : ts === 8200 ? 0.72 : null;
+    const r1 = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: [] }),
+      getSmart: smart,
+      fetchPrice: priceByTs,
+      getMeta: async () => ({}),
+      nowSec: 8501,
+    });
+    expect(r1.opened).toBe(0);
+    const rows = db
+      .prepare(
+        "SELECT condition_id, markout_30m, markout_2h, realized_pnl FROM follow_positions ORDER BY condition_id",
+      )
+      .all() as {
+      condition_id: string;
+      markout_30m: number;
+      markout_2h: number;
+      realized_pnl: number | null;
+    }[];
+    for (const row of rows) {
+      expect(row.markout_30m).toBe(0.66); // 价格 @ formation_ts+1800=2800
+      expect(row.markout_2h).toBe(0.72); // 价格 @ formation_ts+7200=8200
+    }
+    // 红线:markout 回填绝不改 realized_pnl(settled 仓保持原值,open 仓保持 null)。
+    expect(rows.find((row) => row.condition_id === "m2")?.realized_pnl).toBe(
+      333,
+    );
+    expect(
+      rows.find((row) => row.condition_id === "m1")?.realized_pnl,
+    ).toBeNull();
+
+    // 第二轮:桩改返回 0.99 —— 已填列不得被重复拉取/覆盖。
+    const r2 = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: [] }),
+      getSmart: smart,
+      fetchPrice: async () => 0.99,
+      getMeta: async () => ({}),
+      nowSec: 9000,
+    });
+    expect(r2.opened).toBe(0);
+    const again = db
+      .prepare("SELECT markout_30m, markout_2h FROM follow_positions")
+      .all() as { markout_30m: number; markout_2h: number }[];
+    for (const row of again) {
+      expect(row.markout_30m).toBe(0.66);
+      expect(row.markout_2h).toBe(0.72);
+    }
+    db.close();
+  });
+
+  it("30m 已到期、2h 未到 → 只回填 markout_30m;fetchPrice 失败留 null 下轮再试", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status,formation_ts) VALUES (2,'m1','Yes','tokM',0,0.6,500,833,'open',1000)",
+    ).run();
+    db.prepare(
+      "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status,formation_ts) VALUES (2,'m2','Yes','tokFAIL',0,0.6,500,833,'open',1000)",
+    ).run();
+    // nowSec=3101 > 1000+1800+300=3100,但 < 1000+7200+300=8500 → 只有 30m 到期。
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: [] }),
+      getSmart: smart,
+      fetchPrice: async (asset: string) => {
+        if (asset === "tokFAIL") throw new Error("CLOB 5xx");
+        return 0.66;
+      },
+      getMeta: async () => ({}),
+      nowSec: 3101,
+    });
+    expect(r.opened).toBe(0);
+    const m1 = db
+      .prepare(
+        "SELECT markout_30m, markout_2h FROM follow_positions WHERE condition_id='m1'",
+      )
+      .get() as { markout_30m: number; markout_2h: number | null };
+    expect(m1.markout_30m).toBe(0.66);
+    expect(m1.markout_2h).toBeNull(); // 未到期
+    // 失败仓:两列都留 null(下轮重试),且失败不掀翻整轮(m1 已正常回填)。
+    const m2 = db
+      .prepare(
+        "SELECT markout_30m, markout_2h FROM follow_positions WHERE condition_id='m2'",
+      )
+      .get() as { markout_30m: number | null; markout_2h: number | null };
+    expect(m2.markout_30m).toBeNull();
+    expect(m2.markout_2h).toBeNull();
+    db.close();
+  });
+
+  it("formation_ts 为 null 的历史仓不参与回填(老数据兼容)", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status) VALUES (2,'legacy','Yes','tokL',0,0.6,500,833,'open')",
+    ).run();
+    let called = 0;
+    await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: [] }),
+      getSmart: smart,
+      fetchPrice: async () => {
+        called++;
+        return 0.5;
+      },
+      getMeta: async () => ({}),
+      nowSec: 100_000,
+    });
+    expect(called).toBe(0); // 无 formation_ts → 无 markout 目标,也无开仓取价
+    const row = db
+      .prepare(
+        "SELECT markout_30m, markout_2h FROM follow_positions WHERE condition_id='legacy'",
+      )
+      .get() as { markout_30m: number | null; markout_2h: number | null };
+    expect(row.markout_30m).toBeNull();
+    expect(row.markout_2h).toBeNull();
     db.close();
   });
 });
