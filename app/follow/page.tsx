@@ -34,6 +34,13 @@ type FollowPositionRow = {
   exit_ts: number | null;
   exit_price: number | null;
   realized_pnl: number | null;
+  // P1 三段成本分解归因列(route 直选,老仓位/取价失败为 null;类型上设可选以对
+  // 旧响应宽容):formation_ts/price = 共识形成时刻与彼时市价,markout_30m/2h =
+  // 形成后 30min/2h 的回填市价。只用于归因展示,绝不参与盈亏计算。
+  formation_ts?: number | null;
+  formation_price?: number | null;
+  markout_30m?: number | null;
+  markout_2h?: number | null;
 };
 
 type StrategyMetrics = {
@@ -118,6 +125,32 @@ function rowSlippage(p: FollowPositionRow): number {
 // 美元滑点受份额膨胀影响(入场价越低份额越大,绝对值可超本金),¢ 差才可跨仓横比。
 function rowSlipCents(p: FollowPositionRow): number {
   return (p.entry_price - p.smart_avg_price) * 100;
+}
+
+// 买入成本三段分解:聪明钱均价 →(信息租金,拿不到别追)→ 形成价 →(延迟成本,
+// 系统可优化)→ 进场价。下面两个函数是后两段的展示口径。
+
+// 单仓延迟成本 ¢ =(进场价 − 形成价)× 100。正=共识形成后我们追贵了(检测+执行
+// 延迟);formation_price 缺失(老仓位/取价失败)返回 null,由调用方显示「—」。
+function rowDelayCents(p: FollowPositionRow): number | null {
+  return p.formation_price != null
+    ? (p.entry_price - p.formation_price) * 100
+    : null;
+}
+
+// 形成后 2h 走势 ¢ =(markout_2h − 形成价)× 100,衡量"共识形成后还有没有肉"。
+// 两值任一缺失(未到期/回填失败/老仓位)返回 null。
+function rowMarkout2hCents(p: FollowPositionRow): number | null {
+  return p.markout_2h != null && p.formation_price != null
+    ? (p.markout_2h - p.formation_price) * 100
+    : null;
+}
+
+// 形成后走势着色:这是价格方向(不是成本),沿用全站涨绿跌红语义,与信号验证
+// 1h/24h 口径一致 —— ±0.5¢ 死区内记平推(muted)。
+function markoutToneClass(c: number): string {
+  if (Math.abs(c) <= 0.5) return "muted";
+  return c > 0 ? "up" : "down";
 }
 
 // 带符号 ¢ 差:+5.9¢ / −19.9¢(0 记 +0.0¢)。
@@ -405,6 +438,15 @@ function StrategyCard({
     allPos.length > 0
       ? allPos.reduce((sum, p) => sum + rowSlipCents(p), 0) / allPos.length
       : null;
+  // 均延迟成本:仅统计有 formation_price 的仓位(老仓位/取价失败不进样本),
+  // 每仓等权算术平均;样本数以 n=N 标注,提醒读者小样本不可过度解读。
+  const delaySamples = allPos
+    .map(rowDelayCents)
+    .filter((c): c is number => c != null);
+  const avgDelayCents =
+    delaySamples.length > 0
+      ? delaySamples.reduce((sum, c) => sum + c, 0) / delaySamples.length
+      : null;
   return (
     <div
       className="ds-card"
@@ -507,6 +549,23 @@ function StrategyCard({
           }
         />
         <Metric
+          label="均延迟成本"
+          title="有形成价的仓位的(进场价 − 形成价)¢ 算术平均。正=共识形成后我们追贵了 —— 检测+执行延迟造成的可优化成本;与「累计滑点」(vs 聪明钱均价、含拿不到的信息租金)口径不同。老仓位无形成价,不进样本"
+          value={
+            avgDelayCents == null ? (
+              <span className="muted">—</span>
+            ) : (
+              <>
+                {/* 配色中性:延迟成本不是盈亏;|¢|>10 琥珀,与进场偏离护栏阈一致。 */}
+                <span className="mono" style={slipWarnStyle(avgDelayCents)}>
+                  {fmtSignedCents(avgDelayCents)}
+                </span>
+                <div className="kpi-sub mono">n={delaySamples.length}</div>
+              </>
+            )
+          }
+        />
+        <Metric
           label="最大回撤"
           title="净值曲线从峰值到后续谷底的最大跌幅(美元)"
           value={
@@ -569,9 +628,21 @@ function SettledTable({ rows }: { rows: LabeledRow[] }) {
             </th>
             <th
               className="is-right"
-              title="入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示"
+              title="入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示。口径含聪明钱的信息租金(他们买得早/便宜,拿不到别追)—— 与「延迟成本」(vs 形成价)不同"
             >
               滑点
+            </th>
+            <th
+              className="is-right"
+              title="进场价 − 形成价(¢)。形成价=第 N 个白名单钱包到位那一刻的市价;正=共识形成后追贵了,是系统检测+执行延迟造成的可优化成本(不含信息租金,与「滑点」口径不同)。老仓位/取价失败显示 —;|¢|>10 琥珀,与进场偏离护栏阈一致"
+            >
+              延迟成本
+            </th>
+            <th
+              className="is-right"
+              title="markout:形成后 2 小时市价 − 形成价(¢),衡量共识形成后还有没有肉。涨绿跌红(±0.5¢ 死区记平推);形成价或 2h 回填价缺失显示 —"
+            >
+              形成后2h
             </th>
             <th className="is-right">持有期</th>
             <th className="is-right">已实现</th>
@@ -581,6 +652,8 @@ function SettledTable({ rows }: { rows: LabeledRow[] }) {
           {rows.map((p) => {
             const slip = rowSlippage(p);
             const slipC = rowSlipCents(p);
+            const delayC = rowDelayCents(p);
+            const mo2 = rowMarkout2hCents(p);
             const held = (p.exit_ts ?? now) - p.entry_ts;
             const realized = p.realized_pnl ?? 0;
             return (
@@ -607,6 +680,28 @@ function SettledTable({ rows }: { rows: LabeledRow[] }) {
                 >
                   {fmtSignedCents(slipC)}
                   <span className="muted"> ({fmtSignedUsd(slip)})</span>
+                </td>
+                {/* 延迟成本:中性色(是成本不是盈亏),超护栏阈转琥珀;无形成价显示 —。 */}
+                <td
+                  className="mono is-right"
+                  data-label="延迟成本"
+                  style={delayC != null ? slipWarnStyle(delayC) : undefined}
+                >
+                  {delayC != null ? (
+                    fmtSignedCents(delayC)
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </td>
+                {/* 形成后 2h:价格方向,涨绿跌红(±0.5¢ 死区平推);缺值显示 —。 */}
+                <td className="mono is-right" data-label="形成后2h">
+                  {mo2 != null ? (
+                    <span className={markoutToneClass(mo2)}>
+                      {fmtSignedCents(mo2)}
+                    </span>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
                 </td>
                 <td className="mono muted is-right" data-label="持有期">
                   {fmtHold(held)}
@@ -644,9 +739,15 @@ function OpenTable({ rows }: { rows: LabeledRow[] }) {
             </th>
             <th
               className="is-right"
-              title="入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示"
+              title="入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示。口径含聪明钱的信息租金(他们买得早/便宜,拿不到别追)—— 与「延迟成本」(vs 形成价)不同"
             >
               滑点
+            </th>
+            <th
+              className="is-right"
+              title="进场价 − 形成价(¢)。形成价=第 N 个白名单钱包到位那一刻的市价;正=共识形成后追贵了,是系统检测+执行延迟造成的可优化成本(不含信息租金,与「滑点」口径不同)。老仓位/取价失败显示 —;|¢|>10 琥珀,与进场偏离护栏阈一致"
+            >
+              延迟成本
             </th>
             <th className="is-right">已持有</th>
             <th>状态</th>
@@ -656,6 +757,7 @@ function OpenTable({ rows }: { rows: LabeledRow[] }) {
           {rows.map((p) => {
             const slip = rowSlippage(p);
             const slipC = rowSlipCents(p);
+            const delayC = rowDelayCents(p);
             const held = now - p.entry_ts;
             return (
               <tr key={`${p.strategy_id}:${p.condition_id}:${p.outcome}`}>
@@ -679,6 +781,18 @@ function OpenTable({ rows }: { rows: LabeledRow[] }) {
                 >
                   {fmtSignedCents(slipC)}
                   <span className="muted"> ({fmtSignedUsd(slip)})</span>
+                </td>
+                {/* 延迟成本:中性色(是成本不是盈亏),超护栏阈转琥珀;无形成价显示 —。 */}
+                <td
+                  className="mono is-right"
+                  data-label="延迟成本"
+                  style={delayC != null ? slipWarnStyle(delayC) : undefined}
+                >
+                  {delayC != null ? (
+                    fmtSignedCents(delayC)
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
                 </td>
                 <td className="mono muted is-right" data-label="已持有">
                   {fmtHold(held)}
@@ -770,7 +884,8 @@ export default function FollowPage() {
           🧾 共识跟单 · 纸面模拟
         </h1>
         <div className="ds-hint">
-          现价进场 · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)
+          现价进场 · 只跟 15 分钟内新形成的共识 · 持有到结算 · 固定 $/信号 ·
+          仅结算盈亏(不做浮盈)
           {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
           {loading ? (
             <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>

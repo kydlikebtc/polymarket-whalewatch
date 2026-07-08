@@ -17,10 +17,19 @@ type StrategyRow = {
 // follow_positions row read for the view: exactly the FollowPositionRow columns
 // PLUS event_slug + title — the route needs the slug to look up each position's
 // event category, and the /follow board wants the human market title next to the
-// outcome. Both are structurally harmless when passed to buildFollowView (which
-// only reads the FollowPositionRow fields) and flow through untouched into the
-// open/settled arrays, so the client can render title/slug without extra fetches.
-type PositionRow = FollowPositionRow & { event_slug: string; title: string };
+// outcome. PLUS the formation/markout attribution columns(P1 三段成本分解:
+// formation_ts/formation_price 是共识形成时刻与彼时市价,markout_30m/2h 是形成后
+// 30min/2h 的回填价;老仓位/取价失败为 null,前端逐行兜底)。这些额外列在传给
+// buildFollowView 时结构无害(它只读 FollowPositionRow 字段),原样流入 open/settled
+// 数组,客户端无需额外请求即可渲染延迟成本与 markout。
+type PositionRow = FollowPositionRow & {
+  event_slug: string;
+  title: string;
+  formation_ts: number | null;
+  formation_price: number | null;
+  markout_30m: number | null;
+  markout_2h: number | null;
+};
 
 // Read-only: strategies + their paper positions + per-strategy metrics. No live
 // upstream fetch except the (cached, degradable) event-category enrichment.
@@ -38,7 +47,8 @@ export async function GET() {
         .prepare(
           `SELECT strategy_id, condition_id, outcome, title, event_slug, size_usd,
                   entry_price, smart_avg_price, shares, status, entry_ts,
-                  exit_ts, exit_price, realized_pnl
+                  exit_ts, exit_price, realized_pnl,
+                  formation_ts, formation_price, markout_30m, markout_2h
              FROM follow_positions`,
         )
         .all() as PositionRow[];
