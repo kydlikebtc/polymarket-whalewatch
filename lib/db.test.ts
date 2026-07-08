@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { openDb } from "./db";
 describe("openDb", () => {
   it("creates the seen_trades table", () => {
@@ -238,6 +239,67 @@ describe("openDb", () => {
       const db3 = openDb(path);
       expect(won(db3, 1)).toBe(1);
       db3.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("creates the discovery tables (wallet_candidates, early_winner_scans)", () => {
+    const db = openDb(":memory:");
+    for (const name of ["wallet_candidates", "early_winner_scans"]) {
+      const row = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+        )
+        .get(name);
+      expect(row, name).toBeTruthy();
+    }
+    // Evidence rows are idempotent per (address, channel, market): the same
+    // wallet re-appearing in the same market must not inflate its recurrence.
+    const ins = db.prepare(
+      `INSERT OR IGNORE INTO wallet_candidates
+       (address, channel, condition_id, evidence_ts, usd, price, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    ins.run("0xa", "echo", "0xc1", 100, 5000, 0.4, "n", 100);
+    ins.run("0xa", "echo", "0xc1", 200, 9000, 0.5, "n2", 200);
+    const n = (
+      db.prepare("SELECT COUNT(*) AS c FROM wallet_candidates").get() as {
+        c: number;
+      }
+    ).c;
+    expect(n).toBe(1);
+  });
+
+  it("adds the source column to a legacy smart_wallets table and backfills auto rows only", () => {
+    const dir = mkdtempSync(join(tmpdir(), "whaledb-"));
+    const path = join(dir, "t.sqlite");
+    try {
+      // Simulate a pre-source database: the old CREATE TABLE shape.
+      const legacy = new Database(path);
+      legacy
+        .prepare(
+          `CREATE TABLE smart_wallets (address TEXT PRIMARY KEY, score REAL, realized_pnl REAL, win_rate REAL, roi REAL, volume REAL, consistency REAL, is_whitelist INTEGER DEFAULT 0, updated_at INTEGER)`,
+        )
+        .run();
+      legacy
+        .prepare(
+          "INSERT INTO smart_wallets (address, is_whitelist) VALUES ('0xauto', 0), ('0xmanual', 1)",
+        )
+        .run();
+      legacy.close();
+
+      const db = openDb(path);
+      const rows = db
+        .prepare("SELECT address, source FROM smart_wallets ORDER BY address")
+        .all() as { address: string; source: string | null }[];
+      // Auto rows can only have come from leaderboard seeding — attributable.
+      expect(rows.find((r) => r.address === "0xauto")?.source).toBe(
+        "leaderboard",
+      );
+      // A manually-flagged row's origin is unknowable — stays honest NULL.
+      expect(rows.find((r) => r.address === "0xmanual")?.source).toBeNull();
+      db.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

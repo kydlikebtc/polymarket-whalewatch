@@ -5,7 +5,7 @@ export function openDb(path = "data.sqlite") {
   db.pragma("journal_mode = WAL");
   db.exec(`
     CREATE TABLE IF NOT EXISTS seen_trades (dedup_key TEXT PRIMARY KEY, ts INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS smart_wallets (address TEXT PRIMARY KEY, score REAL, realized_pnl REAL, win_rate REAL, roi REAL, volume REAL, consistency REAL, is_whitelist INTEGER DEFAULT 0, updated_at INTEGER);
+    CREATE TABLE IF NOT EXISTS smart_wallets (address TEXT PRIMARY KEY, score REAL, realized_pnl REAL, win_rate REAL, roi REAL, volume REAL, consistency REAL, is_whitelist INTEGER DEFAULT 0, updated_at INTEGER, source TEXT);
     CREATE TABLE IF NOT EXISTS token_map (token_id TEXT PRIMARY KEY, condition_id TEXT, question TEXT, outcome TEXT, slug TEXT, event_slug TEXT, updated_at INTEGER);
     CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, dedup_key TEXT, payload TEXT, created_at INTEGER);
     CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT);
@@ -15,6 +15,8 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS event_category (event_slug TEXT PRIMARY KEY, category TEXT, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS consensus_state (condition_id TEXT, outcome TEXT, wallet_count INTEGER, total_usd REAL, last_alert_ts INTEGER, PRIMARY KEY (condition_id, outcome));
     CREATE TABLE IF NOT EXISTS alert_outcomes (alert_id INTEGER PRIMARY KEY, price_1h REAL, price_24h REAL, resolved INTEGER DEFAULT 0, resolution_price REAL, won INTEGER, checked_at INTEGER);
+    CREATE TABLE IF NOT EXISTS wallet_candidates (address TEXT NOT NULL, channel TEXT NOT NULL, condition_id TEXT NOT NULL, evidence_ts INTEGER, usd REAL, price REAL, note TEXT, created_at INTEGER, PRIMARY KEY (address, channel, condition_id));
+    CREATE TABLE IF NOT EXISTS early_winner_scans (condition_id TEXT PRIMARY KEY, scanned_at INTEGER, trades_scanned INTEGER, truncated INTEGER);
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
   `);
   // wallet_stats gained markets_traded (the high-frequency market-maker
@@ -27,6 +29,23 @@ export function openDb(path = "data.sqlite") {
   } catch {
     // column already present
   }
+  // smart_wallets gained source (first-discoverer channel attribution: which
+  // pipeline put the wallet in the pool — 'leaderboard', 'category:<cat>',
+  // 'discovered:<channel>') after the table shipped; add it to pre-existing
+  // DBs, then backfill. Auto rows (is_whitelist=0) can ONLY have come from
+  // leaderboard seeding — the sole write path before discovery channels
+  // existed — so the backfill is attribution, not guesswork. Manually-flagged
+  // rows keep an honest NULL: their origin is unknowable. Both statements are
+  // idempotent (duplicate-column throw swallowed / WHERE matches 0 rows), so
+  // no version marker is needed.
+  try {
+    db.prepare("ALTER TABLE smart_wallets ADD COLUMN source TEXT").run();
+  } catch {
+    // column already present
+  }
+  db.prepare(
+    "UPDATE smart_wallets SET source = 'leaderboard' WHERE source IS NULL AND is_whitelist = 0",
+  ).run();
   // One alert row per (type, dedup_key): running the embedded engine and the
   // standalone worker against the same db is a documented deployment, and their
   // check-then-act race could double-insert. The one-time cleanup removes any

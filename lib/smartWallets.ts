@@ -135,15 +135,16 @@ export async function seedSmartWallets(
   });
 
   const upsert = db.prepare(
-    `INSERT INTO smart_wallets (address, score, realized_pnl, win_rate, roi, volume, consistency, is_whitelist, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?)
+    `INSERT INTO smart_wallets (address, score, realized_pnl, win_rate, roi, volume, consistency, is_whitelist, updated_at, source)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, ?)
      ON CONFLICT(address) DO UPDATE SET
        score = excluded.score,
        realized_pnl = excluded.realized_pnl,
        win_rate = excluded.win_rate,
        roi = excluded.roi,
        volume = excluded.volume,
-       updated_at = excluded.updated_at`,
+       updated_at = excluded.updated_at,
+       source = COALESCE(source, excluded.source)`,
   );
   let enriched = 0;
   const tx = db.transaction(() => {
@@ -177,6 +178,7 @@ export async function seedSmartWallets(
         s?.roi ?? null,
         lb.vol,
         nowSec,
+        "leaderboard",
       );
     }
     // Retention: auto-seeded wallets that haven't re-appeared on any board for

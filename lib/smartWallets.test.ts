@@ -110,6 +110,33 @@ describe("seedSmartWallets", () => {
     expect(tags["0xhold"]).toBeUndefined();
   });
 
+  it("stamps new rows source='leaderboard' but never overwrites an existing source", async () => {
+    const db = openDb(":memory:");
+    // A wallet discovered earlier by the firehose channel: seeding must keep
+    // its first-discoverer attribution (the effectiveness scorecard needs to
+    // know which channel found it FIRST, not which touched it last).
+    db.prepare(
+      "INSERT INTO smart_wallets (address, source, updated_at) VALUES ('0xdisc', 'discovered:echo', 500)",
+    ).run();
+    const fetchBoard = vi.fn(async () => [
+      lbRow("0xdisc", 200_000, 1_000_000),
+      lbRow("0xnew", 100_000, 1_000_000),
+    ]);
+    await seedSmartWallets(db, {
+      periods: ["ALL"],
+      fetchBoard: fetchBoard as never,
+      statsFetcher: async () => stats(),
+      nowSec: 1000,
+    });
+    const rows = db
+      .prepare("SELECT address, source FROM smart_wallets ORDER BY address")
+      .all() as { address: string; source: string | null }[];
+    expect(rows.find((r) => r.address === "0xdisc")?.source).toBe(
+      "discovered:echo",
+    );
+    expect(rows.find((r) => r.address === "0xnew")?.source).toBe("leaderboard");
+  });
+
   it("preserves a manual whitelist flag across re-seeding", async () => {
     const db = openDb(":memory:");
     db.prepare(
