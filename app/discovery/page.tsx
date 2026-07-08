@@ -26,7 +26,7 @@ interface CandidateRow {
   totalMarkets: number;
   lastTs: number;
   latestNote: string;
-  status: "candidate" | "admitted" | "bot";
+  status: "candidate" | "bot";
   tags: WalletTag[];
   evidence: EvidenceDetail[];
 }
@@ -83,8 +83,9 @@ function fmtAgo(tsSec: number): string {
   return `${Math.round(h / 24)} 天前`;
 }
 
+// Pool members graduate OUT of this list into the pool tab, so the funnel
+// statuses are binary: still watching, or permanently disqualified.
 function statusTag(status: CandidateRow["status"]) {
-  if (status === "admitted") return <Tag variant="up">已入池</Tag>;
   if (status === "bot") return <Tag variant="warn">🤖 做市机器人</Tag>;
   return <Tag>候选中</Tag>;
 }

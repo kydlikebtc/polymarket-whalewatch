@@ -310,7 +310,7 @@ describe("runEarlyWinnerScan", () => {
     expect(tradesFetcher).toHaveBeenCalledTimes(1);
   });
 
-  it("skips pool wallets and leaves failed markets un-cursored for a retry", async () => {
+  it("records pool wallets as behavior tags and leaves failed markets un-cursored", async () => {
     const db = openDb(":memory:");
     db.prepare(
       "INSERT INTO smart_wallets (address, is_whitelist) VALUES ('0xpool', 0)",
@@ -339,7 +339,13 @@ describe("runEarlyWinnerScan", () => {
     });
     warnSpy.mockRestore();
     expect(r.scanned).toBe(1); // only 0xc1 completed
-    expect(r.inserted).toBe(0); // pool wallet is not a discovery
+    // The pool wallet IS recorded — an early-winner row doubles as a behavior
+    // tag on members; only candidacy/admission filter pool sources downstream.
+    expect(r.inserted).toBe(1);
+    const ev = db.prepare("SELECT address FROM wallet_candidates").all() as {
+      address: string;
+    }[];
+    expect(ev).toEqual([{ address: "0xpool" }]);
     const cursors = db
       .prepare("SELECT condition_id FROM early_winner_scans")
       .all() as { condition_id: string }[];

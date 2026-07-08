@@ -51,9 +51,9 @@ describe("buildDiscoveryView", () => {
     expect(cand?.totalMarkets).toBe(3); // echo 2 + splitter 1
     expect(cand?.channels[0]).toEqual({ channel: "echo", markets: 2 });
     expect(cand?.latestNote).toBe("note-splitter-0xm1"); // newest evidence_ts wins
-    expect(v.candidates.find((c) => c.address === "0xdone")?.status).toBe(
-      "admitted",
-    );
+    // Pool members never appear in the funnel — they graduated to `members`
+    // and their evidence rides along there.
+    expect(v.candidates.find((c) => c.address === "0xdone")).toBeUndefined();
     expect(v.candidates.find((c) => c.address === "0xbot")?.status).toBe("bot");
 
     // Per-row derived tags + full evidence detail (newest first).
@@ -81,7 +81,7 @@ describe("buildDiscoveryView", () => {
     expect(board.evidence).toHaveLength(0);
     expect(v.counts).toEqual({
       evidenceRows: 5,
-      candidateWallets: 3,
+      candidateWallets: 2, // 0xcand + 0xbot — 0xdone counts in the pool, not the funnel
       poolTotal: 3,
       poolGlobal: 1,
       poolDiscovery: 2,

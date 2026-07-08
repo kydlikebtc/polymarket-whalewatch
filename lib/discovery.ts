@@ -161,19 +161,26 @@ export function detectEchoEvidence(
 }
 
 /**
- * Non-pool wallets running a clean split-buy accumulation (>=3 sub-ceiling
- * fills netting >=$5k, no hedge/market-making suspicion). Reuses the
- * accumulation page's aggregate() verbatim — same thresholds, same tags.
+ * Wallets running a clean split-buy accumulation (>=3 sub-ceiling fills
+ * netting >=$5k, no hedge/market-making suspicion). Reuses the accumulation
+ * page's aggregate() verbatim — same thresholds, same tags.
+ *
+ * Pool members are RECORDED too: split-buying is a BEHAVIOR tag, equally
+ * informative on a whitelist whale as on an unknown wallet. Candidacy and
+ * admission stay pool-exclusive downstream (the candidates view filters pool
+ * members out; admitCandidates skips non-discovered pool sources) — the
+ * evidence table serves both the discovery funnel and the behavior-label
+ * system (方向③), and conflating "who may be recorded" with "who may be
+ * admitted" was exactly how pool rows ended up permanently tag-less.
  */
 export function detectSplitterEvidence(
   trades: Trade[],
-  smartTags: Map<string, SmartTag>,
+  _smartTags: Map<string, SmartTag>,
   opts: typeof SPLITTER_OPTS = SPLITTER_OPTS,
 ): CandidateEvidence[] {
   const out: CandidateEvidence[] = [];
   for (const g of aggregate(trades, opts)) {
     const wallet = g.wallet.toLowerCase();
-    if (smartTags.has(wallet)) continue;
     if (g.hedgeSuspect || g.mmSuspect) continue; // no directional conviction
     if (g.avgBuyPrice > EVIDENCE_MAX_PRICE) continue; // near-certainty — info-free
     out.push({

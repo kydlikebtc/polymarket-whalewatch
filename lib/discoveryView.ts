@@ -29,7 +29,9 @@ export interface DiscoveryCandidateRow {
   totalMarkets: number; // sum across channels (a market seen by two channels counts twice — two signatures beat one)
   lastTs: number;
   latestNote: string;
-  status: "candidate" | "admitted" | "bot";
+  // Pool members never appear here (they live in `members`), so the funnel
+  // statuses are just "still watching" vs "permanently disqualified".
+  status: "candidate" | "bot";
   tags: WalletTag[];
   evidence: DiscoveryEvidenceDetail[]; // newest first, capped
 }
@@ -152,24 +154,26 @@ export function buildDiscoveryView(
     ).map((r) => r.wallet.toLowerCase()),
   );
 
+  // The candidate funnel lists NON-POOL wallets only: evidence rows exist for
+  // pool members too (splitter/early-winner double as behavior tags), but a
+  // member's place is the pool tab — its evidence rides along there. Without
+  // this filter every whitelist whale's split-buy would flood the funnel.
   const candidates: DiscoveryCandidateRow[] = [...byWallet.entries()]
+    .filter(([address]) => !poolSource.has(address))
     .map(([address, agg]) => {
       const channels = [...agg.perChannel.entries()]
         .map(([channel, set]) => ({ channel, markets: set.size }))
         .sort((a, b) => b.markets - a.markets);
       const totalMarkets = channels.reduce((s, c) => s + c.markets, 0);
-      const status: DiscoveryCandidateRow["status"] = poolSource.has(address)
-        ? "admitted"
-        : bots.has(address)
-          ? "bot"
-          : "candidate";
       return {
         address,
         channels,
         totalMarkets,
         lastTs: agg.lastTs,
         latestNote: agg.latestNote,
-        status,
+        status: (bots.has(address)
+          ? "bot"
+          : "candidate") as DiscoveryCandidateRow["status"],
         tags: [] as WalletTag[], // filled below in one batch
         evidence: detailsOf(address),
       };
@@ -221,7 +225,10 @@ export function buildDiscoveryView(
     members,
     counts: {
       evidenceRows: evidence.length,
-      candidateWallets: byWallet.size,
+      // Funnel semantics: wallets under observation OUTSIDE the pool. Pool
+      // members with evidence are counted in poolTotal, not here.
+      candidateWallets: [...byWallet.keys()].filter((a) => !poolSource.has(a))
+        .length,
       poolTotal: members.length,
       poolGlobal: members.length - poolDiscovery,
       poolDiscovery,

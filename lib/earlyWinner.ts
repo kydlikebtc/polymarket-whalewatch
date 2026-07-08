@@ -237,8 +237,11 @@ export async function fetchMarketTrades(
 /**
  * Pure extraction: wallets whose early (>=24h pre-resolution) cheap (<=40¢)
  * buys of the WINNING outcome total >= $500. Buys on any other outcome count
- * against the wallet (a both-sides book is market-making, not foresight);
- * pool wallets are not discoveries.
+ * against the wallet (a both-sides book is market-making, not foresight).
+ * Pool members are recorded too — "bought the winner early and cheap" is the
+ * single most informative BEHAVIOR tag a whitelist member can carry; only
+ * candidacy/admission are pool-exclusive (filtered downstream). The optional
+ * poolAddresses exclusion remains for callers that want funnel-only output.
  */
 export function extractEarlyWinnerEvidence(
   trades: Trade[],
@@ -377,14 +380,6 @@ export async function runEarlyWinnerScan(
       inserted: 0,
     };
   }
-  // The pool snapshot: discoveries are wallets we DON'T already track.
-  const pool = new Set(
-    (
-      db.prepare("SELECT address FROM smart_wallets").all() as {
-        address: string;
-      }[]
-    ).map((r) => r.address.toLowerCase()),
-  );
   const markScanned = db.prepare(
     "INSERT OR REPLACE INTO early_winner_scans (condition_id, scanned_at, trades_scanned, truncated) VALUES (?, ?, ?, ?)",
   );
@@ -404,7 +399,10 @@ export async function runEarlyWinnerScan(
             `(${trades.length} rows) — the earliest fills are beyond reach, evidence is a newest-slice lower bound`,
         );
       }
-      const ev = extractEarlyWinnerEvidence(trades, m, { poolAddresses: pool });
+      // No pool exclusion: an early-winner record is a behavior tag for pool
+      // members and a candidacy signal for outsiders — same evidence row,
+      // different downstream consumers (admission filters pool sources).
+      const ev = extractEarlyWinnerEvidence(trades, m);
       inserted += recordEvidence(db, ev, nowSec);
       evidence += ev.length;
       markScanned.run(m.conditionId, nowSec, trades.length, truncated ? 1 : 0);

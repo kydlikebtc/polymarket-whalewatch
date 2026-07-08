@@ -134,7 +134,7 @@ describe("detectEchoEvidence", () => {
 });
 
 describe("detectSplitterEvidence", () => {
-  it("surfaces a clean non-pool split accumulator and skips pool wallets", () => {
+  it("records split accumulation for outsiders AND pool members (behavior tag)", () => {
     const splits = (wallet: string) =>
       [0, 1, 2].map((i) =>
         trade({
@@ -144,12 +144,14 @@ describe("detectSplitterEvidence", () => {
           timestamp: 100 + i,
         }),
       );
+    // Pool membership does NOT suppress the record: split-buying is a
+    // behavior label on a whitelist whale, a candidacy signal on an unknown.
+    // The funnel/admission filter pool members downstream instead.
     const out = detectSplitterEvidence(
       [...splits("0xsplit"), ...splits("0xsmart1")],
       smartTags,
     );
-    expect(out).toHaveLength(1);
-    expect(out[0].address).toBe("0xsplit");
+    expect(out.map((e) => e.address).sort()).toEqual(["0xsmart1", "0xsplit"]);
     expect(out[0].channel).toBe("splitter");
     expect(out[0].usd).toBe(6_000);
   });
