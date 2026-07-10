@@ -223,6 +223,39 @@ export function QuietLink({
   );
 }
 
+/* ----------------------------------------------------- MarketSlugActions */
+
+// External trade page for a market slug (wired.fund tooling).
+export const TRADE_LINK_BASE =
+  "https://onchain-dev.wired.fund/polymarket/trade-slug?slug=";
+
+// The ⧉↗ pair that follows a market subtitle everywhere: ⧉ copies the MARKET
+// slug (the per-market key gamma /markets?slug= takes — not the event slug),
+// ↗ opens the wired.fund trade page for it. One component so every list
+// (scanner / consensus / disagreement / accumulation / wallet / discovery)
+// renders the exact same affordance. Renders nothing without a slug.
+export function MarketSlugActions({
+  slug,
+  eventSlug,
+}: {
+  slug?: string | null;
+  eventSlug?: string | null;
+}) {
+  const s = slug || eventSlug || "";
+  if (!s) return null;
+  return (
+    <>
+      <CopyButton text={s} label="复制 market slug" />
+      <QuietLink
+        href={`${TRADE_LINK_BASE}${encodeURIComponent(s)}`}
+        title={`在 wired.fund 打开交易页：${s}`}
+      >
+        ↗
+      </QuietLink>
+    </>
+  );
+}
+
 /* ----------------------------------------------------------- WalletLink */
 
 // Every wallet-address click in the app opens the dossier in a NEW tab —

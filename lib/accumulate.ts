@@ -14,6 +14,8 @@ export interface AccumGroup {
   outcome: string;
   outcomeIndex: number;
   title: string;
+  // MARKET slug — drives the dashboard's ⧉ copy / ↗ trade-page affordance.
+  slug: string;
   eventSlug: string;
   buyUsd: number;
   sellUsd: number;
@@ -96,6 +98,7 @@ export function aggregate(trades: Trade[], opts: AccumOptions): AccumGroup[] {
         outcome: t.outcome,
         outcomeIndex: t.outcomeIndex,
         title: t.title,
+        slug: t.slug,
         eventSlug: t.eventSlug,
         buyUsd: 0,
         sellUsd: 0,

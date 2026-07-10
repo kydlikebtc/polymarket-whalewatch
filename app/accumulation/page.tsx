@@ -12,7 +12,9 @@ import {
 import {
   AgeBadge,
   Field,
+  HoldingCell,
   Icon,
+  MarketSlugActions,
   Segmented,
   SoundToggle,
   StatCard,
@@ -22,6 +24,7 @@ import {
   type SmartInfoLite,
   type WalletStatsLite,
 } from "../ui";
+import { useMarketPositions } from "../useMarketPositions";
 import { useSoundToggle } from "../useSound";
 import { useNewRecordChime } from "../useNewRecordChime";
 import { useWalletIntel } from "../useWalletIntel";
@@ -47,6 +50,7 @@ type AccumGroup = {
   outcome: string;
   outcomeIndex: number;
   title: string;
+  slug: string;
   eventSlug: string;
   buyUsd: number;
   sellUsd: number;
@@ -132,6 +136,79 @@ function rowKey(g: AccumGroup): string {
   return `${g.wallet}:${g.conditionId}:${g.outcome}`;
 }
 
+/* --------------------------------------------------------------- Detail */
+
+// Expanded group detail. Mounts only when the row is open, so it lazily
+// fetches the wallet's CURRENT position in this market ("stock") to sit above
+// the window's underlying buys ("flow") — telling a fresh entry that's still
+// held from one that was already flipped. Other-outcome holdings in the same
+// market are listed too: they let the 对冲? suspicion be eyeballed directly.
+function AccumDetail({ g }: { g: AccumGroup }) {
+  const { positions, loading } = useMarketPositions(
+    g.conditionId,
+    [g.wallet],
+    true,
+  );
+  const walletPos = positions?.[g.wallet.toLowerCase()];
+  const pos = walletPos?.[g.outcome.toLowerCase()];
+  const others = walletPos
+    ? Object.values(walletPos).filter(
+        (p) => p.outcome.toLowerCase() !== g.outcome.toLowerCase(),
+      )
+    : [];
+  return (
+    <>
+      <div className="ds-hint" style={{ margin: "var(--s-2) 0 var(--s-1)" }}>
+        当前持仓（{g.outcome}）：
+        <HoldingCell pos={pos} loading={loading} />
+        {others.length > 0 ? (
+          <span className="muted">
+            {" · 同市场其他结果："}
+            {others.map((p, i) => (
+              <span key={p.outcome} className="mono">
+                {i > 0 ? "、" : ""}
+                {p.outcome} $
+                {Math.round(p.currentValue).toLocaleString("en-US")}
+              </span>
+            ))}
+          </span>
+        ) : null}
+      </div>
+      <div className="ds-hint" style={{ margin: "var(--s-2) 0 var(--s-1)" }}>
+        底层买单（共 {g.buys.length} 笔，最新在前）
+      </div>
+      <table className="ds-table--compact" style={{ maxWidth: 440 }}>
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th className="is-right">金额</th>
+            <th className="is-right">价格(赔率)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {g.buys.map((b, bi) => (
+            <tr key={`buy-${bi}`}>
+              <td className="mono" data-label="时间">
+                {fmtTime(b.ts)}
+              </td>
+              <td className="mono is-right" data-label="金额">
+                ${fmtUsd(b.usd)}
+              </td>
+              <td
+                className="mono is-right"
+                data-label="价格(赔率)"
+                style={{ color: "var(--warn-700)" }}
+              >
+                {b.price.toFixed(3)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
 /* ------------------------------------------------------------------ Row */
 
 // One group row (plus its expandable buy-detail row), memoized so the lazy
@@ -204,7 +281,12 @@ const AccumRow = memo(function AccumRow({
           ) : (
             g.title
           )}
-          <div className="kpi-sub">{g.outcome}</div>
+          {/* ⧉ copies the MARKET slug, ↗ opens the wired.fund trade page —
+              same affordance as the 24h scanner. */}
+          <div className="kpi-sub" style={{ whiteSpace: "nowrap" }}>
+            {g.outcome}
+            <MarketSlugActions slug={g.slug} eventSlug={g.eventSlug} />
+          </div>
         </td>
         <td data-label="标记">
           {g.hedgeSuspect || g.mmSuspect ? (
@@ -294,40 +376,7 @@ const AccumRow = memo(function AccumRow({
               background: "var(--n-50)",
             }}
           >
-            <div
-              className="ds-hint"
-              style={{ margin: "var(--s-2) 0 var(--s-1)" }}
-            >
-              底层买单（共 {g.buys.length} 笔，最新在前）
-            </div>
-            <table className="ds-table--compact" style={{ maxWidth: 440 }}>
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th className="is-right">金额</th>
-                  <th className="is-right">价格(赔率)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {g.buys.map((b, bi) => (
-                  <tr key={`${rk}-buy-${bi}`}>
-                    <td className="mono" data-label="时间">
-                      {fmtTime(b.ts)}
-                    </td>
-                    <td className="mono is-right" data-label="金额">
-                      ${fmtUsd(b.usd)}
-                    </td>
-                    <td
-                      className="mono is-right"
-                      data-label="价格(赔率)"
-                      style={{ color: "var(--warn-700)" }}
-                    >
-                      {b.price.toFixed(3)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <AccumDetail g={g} />
           </td>
         </tr>
       ) : null}

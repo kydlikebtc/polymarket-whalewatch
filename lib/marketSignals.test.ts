@@ -8,6 +8,7 @@ const cg = (conditionId: string, outcome: string): ConsensusGroup =>
     conditionId,
     outcome,
     title: "M",
+    slug: "m",
     eventSlug: "e",
     asset: "a",
     outcomeIndex: 0,
@@ -23,6 +24,7 @@ const dm = (conditionId: string): DisagreementMarket =>
   ({
     conditionId,
     title: "M",
+    slug: "m",
     eventSlug: "e",
     sides: [],
     totalNetUsd: 0,

@@ -4,8 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   AgeBadge,
-  CopyButton,
-  QuietLink,
+  MarketSlugActions,
   SideTag,
   StatCard,
   Tag,
@@ -16,10 +15,6 @@ import {
 } from "../../ui";
 import { WalletTagChips } from "../../walletTagChips";
 import type { WalletTag } from "../../../lib/walletTags";
-
-// External trade page for a market slug (wired.fund) — same as the 24h scanner.
-const TRADE_LINK_BASE =
-  "https://onchain-dev.wired.fund/polymarket/trade-slug?slug=";
 
 type PriceBand = { from: number; to: number; buyUsd: number; buyCount: number };
 type MarketFocus = {
@@ -356,30 +351,15 @@ export default function WalletPage() {
                           ) : (
                             h.title
                           )}
-                          {/* Copy/jump on the subtitle row (same as the 24h
-                              scanner): ⧉ copies the MARKET slug, ↗ opens the
-                              wired.fund trade page. */}
                           <div
                             className="kpi-sub"
                             style={{ whiteSpace: "nowrap" }}
                           >
                             {h.outcome}
-                            <CopyButton
-                              text={h.slug || h.eventSlug}
-                              label="复制 market slug"
+                            <MarketSlugActions
+                              slug={h.slug}
+                              eventSlug={h.eventSlug}
                             />
-                            {h.slug || h.eventSlug ? (
-                              <QuietLink
-                                href={`${TRADE_LINK_BASE}${encodeURIComponent(
-                                  h.slug || h.eventSlug,
-                                )}`}
-                                title={`在 wired.fund 打开交易页：${
-                                  h.slug || h.eventSlug
-                                }`}
-                              >
-                                ↗
-                              </QuietLink>
-                            ) : null}
                           </div>
                         </td>
                         <td className="mono is-right" data-label="份额">

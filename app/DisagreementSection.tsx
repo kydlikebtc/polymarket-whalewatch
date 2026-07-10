@@ -1,7 +1,14 @@
 "use client";
 
 import { Fragment, useState } from "react";
-import { HoldingCell, Icon, Tag, WalletLink, catLabel } from "./ui";
+import {
+  HoldingCell,
+  Icon,
+  MarketSlugActions,
+  Tag,
+  WalletLink,
+  catLabel,
+} from "./ui";
 import { useMarketPositions } from "./useMarketPositions";
 
 export type DisagreementWallet = {
@@ -27,6 +34,7 @@ export type DisagreementSide = {
 export type DisagreementMarket = {
   conditionId: string;
   title: string;
+  slug: string;
   eventSlug: string;
   sides: DisagreementSide[];
   totalNetUsd: number;
@@ -310,12 +318,18 @@ export function DisagreementSection({
                     ) : (
                       m.title
                     )}
+                    {/* ⧉ copies the MARKET slug, ↗ opens the wired.fund trade
+                        page — same affordance as the 24h scanner. */}
                     <div className="kpi-sub">
                       {m.sides.map((s) => s.outcome).join(" ⚔ ")}
                       {m.category ? ` · ${catLabel(m.category)}` : ""}
                       {m.excludedWallets > 0
                         ? ` · 已剔除 ${m.excludedWallets} 个两边押`
                         : ""}
+                      <MarketSlugActions
+                        slug={m.slug}
+                        eventSlug={m.eventSlug}
+                      />
                     </div>
                   </td>
                   <td

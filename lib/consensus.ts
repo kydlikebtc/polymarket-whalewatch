@@ -21,6 +21,9 @@ export interface ConsensusGroup {
   conditionId: string;
   outcome: string;
   title: string;
+  // MARKET slug (the per-market key gamma /markets?slug= takes) — drives the
+  // dashboard's ⧉ copy / ↗ trade-page affordance; eventSlug is the fallback.
+  slug: string;
   eventSlug: string;
   // Token identity for the alert_outcomes validation loop: every member trade
   // of a (conditionId, outcome) group fills the SAME token, so any member's
@@ -71,6 +74,7 @@ export function detectConsensus(
       conditionId: string;
       outcome: string;
       title: string;
+      slug: string;
       eventSlug: string;
       asset: string;
       outcomeIndex: number;
@@ -92,6 +96,7 @@ export function detectConsensus(
         conditionId: t.conditionId,
         outcome: t.outcome,
         title: t.title,
+        slug: t.slug,
         eventSlug: t.eventSlug,
         asset: t.asset,
         outcomeIndex: t.outcomeIndex,
@@ -178,6 +183,7 @@ export function detectConsensus(
       conditionId: g.conditionId,
       outcome: g.outcome,
       title: g.title,
+      slug: g.slug,
       eventSlug: g.eventSlug,
       asset: g.asset,
       outcomeIndex: g.outcomeIndex,

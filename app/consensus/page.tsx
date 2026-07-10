@@ -5,6 +5,7 @@ import {
   Field,
   HoldingCell,
   Icon,
+  MarketSlugActions,
   Segmented,
   SoundToggle,
   StatCard,
@@ -39,6 +40,7 @@ type ConsensusGroup = {
   conditionId: string;
   outcome: string;
   title: string;
+  slug: string;
   eventSlug: string;
   wallets: ConsensusWallet[];
   walletCount: number;
@@ -568,9 +570,20 @@ export default function ConsensusPage() {
                           ) : (
                             g.title
                           )}
-                          <div className="kpi-sub">
+                          {/* ⧉ copies the MARKET slug, ↗ opens the wired.fund
+                              trade page — same affordance as the 24h scanner.
+                              Kept on the one-line subtitle so it never
+                              orphan-wraps under a long title. */}
+                          <div
+                            className="kpi-sub"
+                            style={{ whiteSpace: "nowrap" }}
+                          >
                             {g.outcome}
                             {g.category ? ` · ${catLabel(g.category)}` : ""}
+                            <MarketSlugActions
+                              slug={g.slug}
+                              eventSlug={g.eventSlug}
+                            />
                           </div>
                         </td>
                         <td className="mono is-right" data-label="钱包数">

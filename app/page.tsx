@@ -3,10 +3,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AgeBadge,
-  CopyButton,
   Field,
   Icon,
-  QuietLink,
+  MarketSlugActions,
   Segmented,
   SideTag,
   SoundToggle,
@@ -67,9 +66,6 @@ type SortDir = "asc" | "desc";
 
 const AMOUNT_PRESETS = [10000, 50000, 100000];
 
-// External trade page for a market slug (wired.fund tooling).
-const TRADE_LINK_BASE =
-  "https://onchain-dev.wired.fund/polymarket/trade-slug?slug=";
 // Sentinel for the "全部" (no cap) option in the address-age segmented control,
 // since the control's value type can't be null.
 const AGE_ALL = -1;
@@ -140,15 +136,7 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
         <div className="kpi-sub" style={{ whiteSpace: "nowrap" }}>
           {t.outcome}
           {t.category ? ` · ${catLabel(t.category)}` : ""}
-          <CopyButton text={t.slug || t.eventSlug} label="复制 market slug" />
-          {t.slug || t.eventSlug ? (
-            <QuietLink
-              href={`${TRADE_LINK_BASE}${encodeURIComponent(t.slug || t.eventSlug)}`}
-              title={`在 wired.fund 打开交易页：${t.slug || t.eventSlug}`}
-            >
-              ↗
-            </QuietLink>
-          ) : null}
+          <MarketSlugActions slug={t.slug} eventSlug={t.eventSlug} />
         </div>
       </td>
       <td data-label="方向">

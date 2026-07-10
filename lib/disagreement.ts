@@ -43,6 +43,8 @@ export type Tilt = "lopsided" | "balanced";
 export interface DisagreementMarket {
   conditionId: string;
   title: string;
+  // MARKET slug — drives the dashboard's ⧉ copy / ↗ trade-page affordance.
+  slug: string;
   eventSlug: string;
   sides: DisagreementSide[]; // >= 2, sorted by weightedUsd desc
   totalNetUsd: number;
@@ -93,6 +95,7 @@ export function detectDisagreement(
     string,
     {
       title: string;
+      slug: string;
       eventSlug: string;
       firstTs: number;
       lastTs: number;
@@ -120,6 +123,7 @@ export function detectDisagreement(
     if (!m) {
       m = {
         title: t.title,
+        slug: t.slug,
         eventSlug: t.eventSlug,
         firstTs: t.timestamp,
         lastTs: t.timestamp,
@@ -216,6 +220,7 @@ export function detectDisagreement(
     out.push({
       conditionId,
       title: m.title,
+      slug: m.slug,
       eventSlug: m.eventSlug,
       sides,
       totalNetUsd,
