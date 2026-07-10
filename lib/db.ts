@@ -15,7 +15,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS event_category (event_slug TEXT PRIMARY KEY, category TEXT, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS consensus_state (condition_id TEXT, outcome TEXT, wallet_count INTEGER, total_usd REAL, last_alert_ts INTEGER, PRIMARY KEY (condition_id, outcome));
     CREATE TABLE IF NOT EXISTS alert_outcomes (alert_id INTEGER PRIMARY KEY, price_1h REAL, price_24h REAL, resolved INTEGER DEFAULT 0, resolution_price REAL, won INTEGER, checked_at INTEGER);
-    CREATE TABLE IF NOT EXISTS wallet_candidates (address TEXT NOT NULL, channel TEXT NOT NULL, condition_id TEXT NOT NULL, evidence_ts INTEGER, usd REAL, price REAL, note TEXT, created_at INTEGER, PRIMARY KEY (address, channel, condition_id));
+    CREATE TABLE IF NOT EXISTS wallet_candidates (address TEXT NOT NULL, channel TEXT NOT NULL, condition_id TEXT NOT NULL, evidence_ts INTEGER, usd REAL, price REAL, note TEXT, title TEXT, slug TEXT, event_slug TEXT, outcome TEXT, created_at INTEGER, PRIMARY KEY (address, channel, condition_id));
     CREATE TABLE IF NOT EXISTS early_winner_scans (condition_id TEXT PRIMARY KEY, scanned_at INTEGER, trades_scanned INTEGER, truncated INTEGER);
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
     CREATE INDEX IF NOT EXISTS idx_candidates_evidence_ts ON wallet_candidates(evidence_ts);
@@ -38,6 +38,21 @@ export function openDb(path = "data.sqlite") {
     db.prepare("ALTER TABLE smart_wallets ADD COLUMN source TEXT").run();
   } catch {
     // column already present
+  }
+  // wallet_candidates gained full market context (title / market slug / event
+  // slug / outcome) after the table shipped — the evidence detail on /discovery
+  // used to show only a 40-char truncated title inside the note. Legacy rows
+  // start NULL (the UI falls back to the note) and heal by two paths: a
+  // re-observation of the behavior refreshes them through recordEvidence, and
+  // the engine's backfillEvidenceMarketContext pass fills the rest straight
+  // from gamma (early_winner markets are scanned exactly once, so upsert-time
+  // healing alone could never reach that channel's legacy rows).
+  for (const col of ["title", "slug", "event_slug", "outcome"]) {
+    try {
+      db.prepare(`ALTER TABLE wallet_candidates ADD COLUMN ${col} TEXT`).run();
+    } catch {
+      // column already present
+    }
   }
   // discovery_gate v1 (version-gated like wallet_age_v — several routes open
   // a connection per request, so unconditional writes here would contend for

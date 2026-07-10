@@ -1,7 +1,14 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { fmtSignedUsdCompact, Modal, Segmented, Tag, WalletLink } from "../ui";
+import {
+  fmtSignedUsdCompact,
+  MarketSlugActions,
+  Modal,
+  Segmented,
+  Tag,
+  WalletLink,
+} from "../ui";
 import { WalletTagChips, tagVariant } from "../walletTagChips";
 import { WALLET_TAGS } from "../glossary";
 import type { WalletTag } from "../../lib/walletTags";
@@ -15,6 +22,12 @@ interface EvidenceDetail {
   usd: number;
   price: number;
   note: string;
+  // Full market context; null on legacy rows written before the columns
+  // existed (they self-heal when the behavior is re-observed).
+  title: string | null;
+  slug: string | null;
+  eventSlug: string | null;
+  outcome: string | null;
 }
 interface ChannelStat {
   channel: string;
@@ -146,6 +159,7 @@ function EvidenceDetailRows({
               <tr>
                 <th style={{ width: 130 }}>渠道</th>
                 <th>证据</th>
+                <th>市场 · 结果</th>
                 <th className="is-right" style={{ width: 110 }}>
                   金额
                 </th>
@@ -165,6 +179,44 @@ function EvidenceDetailRows({
                   </td>
                   <td style={{ whiteSpace: "normal", lineHeight: 1.5 }}>
                     {e.note}
+                  </td>
+                  {/* Full market title + outcome with the standard ⧉↗ pair —
+                      the note above only carries a 40-char truncated title.
+                      Legacy rows (no stored market context) fall back to a
+                      muted em-dash and self-heal on re-observation. */}
+                  <td style={{ whiteSpace: "normal", maxWidth: 300 }}>
+                    {e.title ? (
+                      <>
+                        {e.eventSlug ? (
+                          <a
+                            href={`https://polymarket.com/event/${e.eventSlug}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {e.title}
+                          </a>
+                        ) : (
+                          e.title
+                        )}
+                        <div
+                          className="kpi-sub"
+                          style={{ whiteSpace: "nowrap" }}
+                        >
+                          {e.outcome ?? ""}
+                          <MarketSlugActions
+                            slug={e.slug}
+                            eventSlug={e.eventSlug}
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <span
+                        className="muted"
+                        title="旧证据行未存市场详情 — 引擎会从 gamma 自动回填（启动后约 1 分钟），个别已下架市场保持空缺"
+                      >
+                        —
+                      </span>
+                    )}
                   </td>
                   <td className="mono is-right">
                     ${Math.round(e.usd).toLocaleString("en-US")}

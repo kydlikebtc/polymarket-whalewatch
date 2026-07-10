@@ -9,6 +9,7 @@ import {
 import { aggregate } from "./accumulate";
 import { dedupKey, notionalUsd } from "./trades";
 import { getWalletAges } from "./walletAge";
+import { fetchWithRetry } from "./fetchWithRetry";
 
 // ---------------------------------------------------------------------------
 // Firehose discovery: the consensus loop already pulls the full $2k-floor 6h
@@ -34,6 +35,14 @@ export interface CandidateEvidence {
   usd: number;
   price: number;
   note: string; // one human-readable line for the discovery dashboard
+  // Full market context for the evidence detail view — the note only carries a
+  // 40-char truncated title, which is not enough to identify (let alone open)
+  // the market. Nullable because rows written before these columns existed
+  // stay NULL until the rolling window re-observes the behavior.
+  title: string | null;
+  slug: string | null; // MARKET slug (gamma /markets?slug= key)
+  eventSlug: string | null;
+  outcome: string | null;
 }
 
 // Echo floor: below the consensus fetch floor's own $2k visibility there is
@@ -96,6 +105,8 @@ export function detectEchoEvidence(
     buyShares: number;
     lastTs: number;
     title: string;
+    slug: string;
+    eventSlug: string;
   };
   // conditionId:outcome:wallet -> accumulator (consensus markets only)
   const byKey = new Map<string, Acc>();
@@ -115,6 +126,8 @@ export function detectEchoEvidence(
         buyShares: 0,
         lastTs: t.timestamp,
         title: t.title,
+        slug: t.slug,
+        eventSlug: t.eventSlug,
       };
       byKey.set(key, acc);
     }
@@ -155,6 +168,10 @@ export function detectEchoEvidence(
       usd: netUsd,
       price: avgPrice,
       note: `与共识同向净买 ${fmtUsd(netUsd)} @ ${fmtPrice(avgPrice)} · ${shortTitle(acc.title)}`,
+      title: acc.title,
+      slug: acc.slug,
+      eventSlug: acc.eventSlug,
+      outcome,
     });
   }
   return out;
@@ -191,6 +208,10 @@ export function detectSplitterEvidence(
       usd: g.netUsd,
       price: g.avgBuyPrice,
       note: `拆单 ${g.buyCount} 笔净买 ${fmtUsd(g.netUsd)} @ ${fmtPrice(g.avgBuyPrice)} · ${shortTitle(g.title)}`,
+      title: g.title,
+      slug: g.slug,
+      eventSlug: g.eventSlug,
+      outcome: g.outcome,
     });
   }
   return out;
@@ -236,6 +257,10 @@ export function detectInsiderPending(
       usd,
       price: t.price,
       note: `单笔 ${fmtUsd(usd)} 买入 @ ${fmtPrice(t.price)} · ${shortTitle(t.title)}`,
+      title: t.title,
+      slug: t.slug,
+      eventSlug: t.eventSlug,
+      outcome: t.outcome,
     });
   }
   return [...best.values()];
@@ -255,16 +280,28 @@ export function recordEvidence(
   nowSec: number,
 ): number {
   if (evidence.length === 0) return 0;
+  // Two update paths: a strictly NEWER observation refreshes everything, and a
+  // same-age re-observation may still BACKFILL market context onto a legacy
+  // row (title IS NULL — written before those columns existed). Market context
+  // is immutable per market, so taking it from any observation is safe;
+  // MAX() keeps evidence_ts from regressing when a sliding window recomputes
+  // the same behavior with an older lastTs on the backfill path.
   const ins = db.prepare(
     `INSERT INTO wallet_candidates
-     (address, channel, condition_id, evidence_ts, usd, price, note, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     (address, channel, condition_id, evidence_ts, usd, price, note,
+      title, slug, event_slug, outcome, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(address, channel, condition_id) DO UPDATE SET
-       evidence_ts = excluded.evidence_ts,
+       evidence_ts = MAX(excluded.evidence_ts, wallet_candidates.evidence_ts),
        usd = excluded.usd,
        price = excluded.price,
-       note = excluded.note
-     WHERE excluded.evidence_ts > wallet_candidates.evidence_ts`,
+       note = excluded.note,
+       title = COALESCE(excluded.title, wallet_candidates.title),
+       slug = COALESCE(excluded.slug, wallet_candidates.slug),
+       event_slug = COALESCE(excluded.event_slug, wallet_candidates.event_slug),
+       outcome = COALESCE(excluded.outcome, wallet_candidates.outcome)
+     WHERE excluded.evidence_ts > wallet_candidates.evidence_ts
+        OR (wallet_candidates.title IS NULL AND excluded.title IS NOT NULL)`,
   );
   let written = 0;
   const tx = db.transaction(() => {
@@ -277,12 +314,151 @@ export function recordEvidence(
         e.usd,
         e.price,
         e.note,
+        e.title,
+        e.slug,
+        e.eventSlug,
+        e.outcome,
         nowSec,
       ).changes;
     }
   });
   tx();
   return written;
+}
+
+/* ------------------------------------------------------ legacy backfill */
+
+// Mirrors lib/admission.ADMIT_EVIDENCE_WINDOW_SEC — duplicated instead of
+// imported because admission → earlyWinner → discovery already chains, and
+// discovery → admission would close an import cycle.
+const BACKFILL_WINDOW_SEC = 30 * 86_400;
+// Same chunking convention as lib/gamma: short URLs, independent failures.
+const BACKFILL_CHUNK = 20;
+// Per-pass ceiling on gamma requests; the remainder heals on later cycles.
+const BACKFILL_MAX_IDS = 100;
+
+const GAMMA_API = "https://gamma-api.polymarket.com";
+
+// The slice of a gamma /markets row the backfill needs. Field shapes verified
+// live (2026-07-10): `question` is the market title, `slug` the market slug,
+// `events[0].slug` the event slug.
+export interface MarketContext {
+  title: string;
+  slug: string | null;
+  eventSlug: string | null;
+}
+
+type ContextFetcher = (url: string) => Promise<Response>;
+
+async function sweepMarketContexts(
+  ids: string[],
+  extraQs: string,
+  out: Record<string, MarketContext>,
+  fetcher: ContextFetcher,
+): Promise<void> {
+  for (let i = 0; i < ids.length; i += BACKFILL_CHUNK) {
+    const chunk = ids.slice(i, i + BACKFILL_CHUNK);
+    const qs =
+      chunk.map((c) => `condition_ids=${encodeURIComponent(c)}`).join("&") +
+      extraQs;
+    try {
+      const res = await fetcher(`${GAMMA_API}/markets?${qs}`);
+      if (!res.ok) {
+        console.warn(
+          `[discovery] backfill chunk failed (${res.status}), skipping ${chunk.length} ids`,
+        );
+        continue;
+      }
+      const raw = await res.json();
+      if (!Array.isArray(raw)) continue;
+      for (const row of raw as Record<string, unknown>[]) {
+        const cid = typeof row.conditionId === "string" ? row.conditionId : "";
+        const question = typeof row.question === "string" ? row.question : "";
+        if (!cid || !question) continue;
+        const events = Array.isArray(row.events)
+          ? (row.events as Record<string, unknown>[])
+          : [];
+        out[cid] = {
+          title: question,
+          slug: typeof row.slug === "string" ? row.slug : null,
+          eventSlug:
+            typeof events[0]?.slug === "string" ? events[0].slug : null,
+        };
+      }
+    } catch (e) {
+      console.warn(
+        `[discovery] backfill chunk error, skipping ${chunk.length} ids:`,
+        e,
+      );
+    }
+  }
+}
+
+/**
+ * Heal evidence rows written before the market-context columns existed
+ * (title IS NULL): one chunked gamma sweep per pass fills title/slug/
+ * event_slug for every distinct legacy market still inside the evidence
+ * window. Needed because the upsert-time backfill can't reach most legacy
+ * rows — early_winner markets are scanned exactly ONCE (cursor table), and
+ * the firehose channels only re-observe wallets that repeat the behavior.
+ * `outcome` stays NULL (it is per-evidence, not per-market; the UI renders
+ * without it). Once every row carries context the SELECT comes back empty
+ * and the pass is a free no-op. Markets gamma no longer serves stay NULL and
+ * age out of the window naturally.
+ *
+ * Two sweeps like lib/gamma.getMarketMeta: the plain /markets query EXCLUDES
+ * closed markets (verified live), so whatever the first sweep misses gets a
+ * second closed=true sweep — most legacy markets are settled by now.
+ */
+export async function backfillEvidenceMarketContext(
+  db: DB,
+  opts: {
+    nowSec?: number;
+    windowSec?: number;
+    maxIds?: number;
+    fetcher?: ContextFetcher;
+  } = {},
+): Promise<number> {
+  const {
+    nowSec = Math.floor(Date.now() / 1000),
+    windowSec = BACKFILL_WINDOW_SEC,
+    maxIds = BACKFILL_MAX_IDS,
+    fetcher = (url: string) =>
+      fetchWithRetry(url, { timeoutMs: 10_000, label: "evidenceBackfill" }),
+  } = opts;
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT condition_id FROM wallet_candidates
+        WHERE title IS NULL AND evidence_ts >= ?`,
+    )
+    .all(nowSec - windowSec) as { condition_id: string }[];
+  if (rows.length === 0) return 0;
+  const ids = rows.map((r) => r.condition_id).slice(0, maxIds);
+
+  const contexts: Record<string, MarketContext> = {};
+  await sweepMarketContexts(ids, "", contexts, fetcher);
+  const missing = ids.filter((c) => !contexts[c]);
+  if (missing.length > 0) {
+    await sweepMarketContexts(missing, "&closed=true", contexts, fetcher);
+  }
+
+  const upd = db.prepare(
+    `UPDATE wallet_candidates SET title = ?, slug = ?, event_slug = ?
+      WHERE condition_id = ? AND title IS NULL`,
+  );
+  let healed = 0;
+  const tx = db.transaction(() => {
+    for (const [cid, c] of Object.entries(contexts)) {
+      healed += upd.run(c.title, c.slug, c.eventSlug, cid).changes;
+    }
+  });
+  tx();
+  if (healed > 0) {
+    console.log(
+      `[discovery] backfilled market context onto ${healed} legacy evidence row(s) across ${Object.keys(contexts).length} market(s)`,
+    );
+  }
+  return healed;
 }
 
 export interface FirehoseResult {

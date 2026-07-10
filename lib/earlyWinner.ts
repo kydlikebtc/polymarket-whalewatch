@@ -268,8 +268,15 @@ export function extractEarlyWinnerEvidence(
     otherBuyUsd: number;
   };
   const byWallet = new Map<string, Acc>();
+  // Market-level slug/eventSlug for the evidence rows: gamma's closed-market
+  // listing (ClosedMarket) doesn't carry them, but every trade of the market
+  // does — any row will do.
+  let slug: string | null = null;
+  let eventSlug: string | null = null;
   for (const t of trades) {
     if (t.conditionId !== market.conditionId) continue;
+    if (slug == null && t.slug) slug = t.slug;
+    if (eventSlug == null && t.eventSlug) eventSlug = t.eventSlug;
     if (t.side !== "BUY") continue;
     const dk = dedupKey(t);
     if (seen.has(dk)) continue;
@@ -313,6 +320,10 @@ export function extractEarlyWinnerEvidence(
         (market.title.length > 40
           ? `${market.title.slice(0, 39)}…`
           : market.title),
+      title: market.title,
+      slug,
+      eventSlug,
+      outcome: market.winnerOutcome,
     });
   }
   return out;

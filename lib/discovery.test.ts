@@ -3,6 +3,7 @@ import { openDb } from "./db";
 import type { Trade } from "./types";
 import type { SmartTag } from "./smartWallets";
 import {
+  backfillEvidenceMarketContext,
   detectEchoEvidence,
   detectSplitterEvidence,
   detectInsiderPending,
@@ -242,6 +243,10 @@ describe("recordEvidence", () => {
       usd: 6000,
       price: 0.5,
       note: "n",
+      title: "Test Market",
+      slug: "test-market",
+      eventSlug: "test-event",
+      outcome: "Yes",
     };
     expect(recordEvidence(db, [ev], 1000)).toBe(1);
     expect(recordEvidence(db, [ev], 2000)).toBe(0); // same observation — no-op
@@ -257,6 +262,149 @@ describe("recordEvidence", () => {
     expect(row.c).toBe(1);
     expect(row.ts).toBe(500);
     expect(row.created).toBe(1000);
+  });
+
+  it("backfills market context onto a legacy row on a same-ts re-observation", () => {
+    const db = openDb(":memory:");
+    // A row written before the market-context columns existed: title/slug/
+    // event_slug/outcome are NULL, exactly what a pre-migration DB holds.
+    db.prepare(
+      `INSERT INTO wallet_candidates
+       (address, channel, condition_id, evidence_ts, usd, price, note, created_at)
+       VALUES ('0xa', 'insider', '0xc1', 100, 6000, 0.5, 'legacy', 500)`,
+    ).run();
+    const ev: CandidateEvidence = {
+      address: "0xa",
+      channel: "insider",
+      conditionId: "0xc1",
+      ts: 100, // SAME ts — an insider fill's signature never moves
+      usd: 6000,
+      price: 0.5,
+      note: "n",
+      title: "Test Market",
+      slug: "test-market",
+      eventSlug: "test-event",
+      outcome: "Yes",
+    };
+    expect(recordEvidence(db, [ev], 1000)).toBe(1); // backfill path fires
+    const row = db
+      .prepare(
+        "SELECT title, slug, event_slug, outcome, evidence_ts FROM wallet_candidates",
+      )
+      .get() as {
+      title: string;
+      slug: string;
+      event_slug: string;
+      outcome: string;
+      evidence_ts: number;
+    };
+    expect(row.title).toBe("Test Market");
+    expect(row.slug).toBe("test-market");
+    expect(row.event_slug).toBe("test-event");
+    expect(row.outcome).toBe("Yes");
+    expect(row.evidence_ts).toBe(100); // unchanged — no fake freshness
+    // Once healed, the same observation is a no-op again (evidence_ts not
+    // newer, title no longer NULL) — the backfill path can't loop.
+    expect(recordEvidence(db, [ev], 2000)).toBe(0);
+    // A sliding-window recomputation with an OLDER lastTs must never regress
+    // evidence_ts (MAX guard) once a newer observation has been recorded.
+    expect(recordEvidence(db, [{ ...ev, ts: 900 }], 3000)).toBe(1);
+    expect(recordEvidence(db, [{ ...ev, ts: 800 }], 4000)).toBe(0);
+    const ts = (
+      db.prepare("SELECT evidence_ts AS t FROM wallet_candidates").get() as {
+        t: number;
+      }
+    ).t;
+    expect(ts).toBe(900);
+  });
+});
+
+describe("backfillEvidenceMarketContext", () => {
+  const legacyRow = (
+    db: ReturnType<typeof openDb>,
+    address: string,
+    channel: string,
+    conditionId: string,
+    ts: number,
+  ) =>
+    db
+      .prepare(
+        `INSERT INTO wallet_candidates
+         (address, channel, condition_id, evidence_ts, usd, price, note, created_at)
+         VALUES (?, ?, ?, ?, 500, 0.3, 'legacy', ?)`,
+      )
+      .run(address, channel, conditionId, ts, ts);
+
+  it("heals NULL-title rows from gamma; unknown markets stay NULL for retry", async () => {
+    const db = openDb(":memory:");
+    // Two legacy rows share market 0xc1 (both must heal from ONE fetch);
+    // 0xdead is a market gamma no longer serves; the stale row is outside
+    // the evidence window and must not be queried at all.
+    legacyRow(db, "0xa", "early_winner", "0xc1", 1_000);
+    legacyRow(db, "0xb", "splitter", "0xc1", 1_100);
+    legacyRow(db, "0xc", "insider", "0xdead", 1_200);
+    legacyRow(db, "0xd", "insider", "0xstale", 10);
+    const fetcher = vi.fn(async (url: string) => {
+      expect(url).not.toContain("0xstale");
+      const body = url.includes("condition_ids=0xc1")
+        ? [
+            {
+              conditionId: "0xc1",
+              question: "Full Market Title",
+              slug: "mkt-slug",
+              events: [{ slug: "ev-slug" }],
+            },
+          ]
+        : [];
+      return new Response(JSON.stringify(body));
+    });
+    const healed = await backfillEvidenceMarketContext(db, {
+      nowSec: 2_000,
+      windowSec: 1_500,
+      fetcher,
+    });
+    expect(healed).toBe(2);
+    const rows = db
+      .prepare(
+        "SELECT condition_id AS cid, title, slug, event_slug AS es FROM wallet_candidates ORDER BY address",
+      )
+      .all() as {
+      cid: string;
+      title: string | null;
+      slug: string | null;
+      es: string | null;
+    }[];
+    expect(rows[0]).toEqual({
+      cid: "0xc1",
+      title: "Full Market Title",
+      slug: "mkt-slug",
+      es: "ev-slug",
+    });
+    expect(rows[1].title).toBe("Full Market Title");
+    expect(rows[2].title).toBeNull(); // gamma-unknown — retried next pass
+    expect(rows[3].title).toBeNull(); // outside the window — never queried
+
+    // Second pass only re-queries the still-NULL in-window market.
+    fetcher.mockClear();
+    const healed2 = await backfillEvidenceMarketContext(db, {
+      nowSec: 2_000,
+      windowSec: 1_500,
+      fetcher,
+    });
+    expect(healed2).toBe(0);
+    for (const call of fetcher.mock.calls) {
+      expect(call[0]).toContain("0xdead");
+      expect(call[0]).not.toContain("0xc1");
+    }
+  });
+
+  it("is a free no-op when every row already has context", async () => {
+    const db = openDb(":memory:");
+    const fetcher = vi.fn();
+    expect(
+      await backfillEvidenceMarketContext(db, { nowSec: 2_000, fetcher }),
+    ).toBe(0);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });
 

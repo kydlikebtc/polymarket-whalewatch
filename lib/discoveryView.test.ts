@@ -16,6 +16,10 @@ const ev = (
   usd: 6_000,
   price: 0.5,
   note: `note-${channel}-${conditionId}`,
+  title: "Test Market",
+  slug: "test-market",
+  eventSlug: "test-event",
+  outcome: "Yes",
 });
 
 describe("buildDiscoveryView", () => {

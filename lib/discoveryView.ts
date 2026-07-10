@@ -16,6 +16,12 @@ export interface DiscoveryEvidenceDetail {
   usd: number;
   price: number;
   note: string;
+  // Full market context (null on rows written before these columns existed —
+  // the UI then falls back to the note's truncated title).
+  title: string | null;
+  slug: string | null;
+  eventSlug: string | null;
+  outcome: string | null;
 }
 
 export interface DiscoveryChannelStat {
@@ -77,7 +83,8 @@ export function buildDiscoveryView(
   // re-observation) — the same basis the admission gate uses.
   const evidence = db
     .prepare(
-      `SELECT address, channel, condition_id, evidence_ts, usd, price, note
+      `SELECT address, channel, condition_id, evidence_ts, usd, price, note,
+              title, slug, event_slug, outcome
          FROM wallet_candidates
         WHERE evidence_ts >= ?`,
     )
@@ -89,6 +96,10 @@ export function buildDiscoveryView(
     usd: number | null;
     price: number | null;
     note: string | null;
+    title: string | null;
+    slug: string | null;
+    event_slug: string | null;
+    outcome: string | null;
   }[];
 
   type Agg = {
@@ -121,6 +132,10 @@ export function buildDiscoveryView(
       usd: r.usd ?? 0,
       price: r.price ?? 0,
       note: r.note ?? "",
+      title: r.title,
+      slug: r.slug,
+      eventSlug: r.event_slug,
+      outcome: r.outcome,
     });
   }
   const detailsOf = (address: string): DiscoveryEvidenceDetail[] =>

@@ -16,7 +16,10 @@ import {
 import { LEADERBOARD_CATEGORIES } from "../lib/leaderboard";
 import { getMarketMeta } from "../lib/gamma";
 import { runConsensusCycle } from "../lib/consensus";
-import { collectFirehoseEvidence } from "../lib/discovery";
+import {
+  backfillEvidenceMarketContext,
+  collectFirehoseEvidence,
+} from "../lib/discovery";
 import { maybeDailyDiscovery } from "../lib/admission";
 import { wrapSendWithHealth } from "../lib/telegramHealth";
 
@@ -290,4 +293,23 @@ export function startAlertEngine(): void {
   // First pass shortly after start (gives the daily seed a head start on a
   // fresh install; an empty whitelist just skips the cycle).
   setTimeout(consensusLoop, 30_000);
+
+  // --- Legacy-evidence market-context backfill ---------------------------
+  // Evidence rows written before wallet_candidates gained title/slug/
+  // event_slug can't all self-heal through the upsert (early_winner markets
+  // are scanned exactly once; firehose rows only refresh when the behavior
+  // recurs) — so heal them directly from gamma. One pass right after start
+  // fixes the /discovery detail view within a minute of deploying the
+  // migration; afterwards the pass is a free no-op (SELECT finds no NULL-title
+  // rows), and the slow 6h cadence only serves gamma-transient retries.
+  const BACKFILL_INTERVAL_MS = 6 * 3600_000;
+  async function evidenceBackfillLoop() {
+    try {
+      await backfillEvidenceMarketContext(db);
+    } catch (e) {
+      console.error("[discovery] evidence market-context backfill failed", e);
+    }
+    setTimeout(evidenceBackfillLoop, BACKFILL_INTERVAL_MS);
+  }
+  setTimeout(evidenceBackfillLoop, 60_000);
 }
