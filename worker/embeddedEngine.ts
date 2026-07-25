@@ -22,6 +22,10 @@ import {
 } from "../lib/discovery";
 import { maybeDailyDiscovery } from "../lib/admission";
 import { wrapSendWithHealth } from "../lib/telegramHealth";
+import {
+  createBackfillState,
+  runOutcomeBackfillCycle,
+} from "../lib/outcomeBackfill";
 
 // Guarded singleton PER PROCESS: instrumentation may call this more than once
 // within a runtime, and the flag makes repeat calls no-ops. It does NOT guard
@@ -312,4 +316,39 @@ export function startAlertEngine(): void {
     setTimeout(evidenceBackfillLoop, BACKFILL_INTERVAL_MS);
   }
   setTimeout(evidenceBackfillLoop, 60_000);
+
+  // --- Alert-outcome backfill loop ---------------------------------------
+  // The validation loop's 1h/24h follow-through + settlement backfill used to
+  // run only when someone VIEWED the alerts page (/api/alert-outcomes), so
+  // the hit-rate statistics covered a biased "was looked at" sample and went
+  // dark whenever nobody opened the dashboard. This loop makes the worker
+  // sweep every non-terminal alert itself — the win-rate denominator is the
+  // full alert history, watched or not. Per-alert cost is bounded by
+  // computeAlertOutcomes' own semantics (immutable-price caching, 6h
+  // null-retry backoff, cached gamma meta); the cycle only picks candidates.
+  const OUTCOME_BACKFILL_INTERVAL_MS = 10 * 60_000;
+  const outcomeBackfillState = createBackfillState();
+  async function outcomeBackfillLoop() {
+    try {
+      const r = await runOutcomeBackfillCycle(db, outcomeBackfillState, {
+        outcomes: { getMeta: (cids) => getMarketMeta(db, cids) },
+      });
+      if (r.processed > 0) {
+        console.log(
+          `[engine] outcome backfill: ${r.processed} processed · ` +
+            `${r.updated} tracked · ${r.pending} pending` +
+            (r.newlyUntrackable > 0
+              ? ` · ${r.newlyUntrackable} untrackable skipped`
+              : "") +
+            (r.wrapped ? " · sweep complete" : " · sweep continues next cycle"),
+        );
+      }
+    } catch (e) {
+      console.error("[engine] outcome backfill failed", e);
+    }
+    setTimeout(outcomeBackfillLoop, OUTCOME_BACKFILL_INTERVAL_MS);
+  }
+  // First pass at 45s: after the consensus loop's head start (30s), before the
+  // evidence backfill (60s) — staggered so startup doesn't stack fetches.
+  setTimeout(outcomeBackfillLoop, 45_000);
 }

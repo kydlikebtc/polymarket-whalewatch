@@ -241,6 +241,49 @@ describe("computeAlertOutcomes", () => {
     expect(fetchPrice).toHaveBeenCalledWith("tok1", T0 + 3600);
   });
 
+  it("a concurrent writer's persisted facts survive a slower failing writer (merge upsert)", async () => {
+    // Race made routine by the worker backfill loop: this writer reads the
+    // cache snapshot (no row yet), then — while it is stuck in fetchPrice —
+    // a concurrent writer (dashboard route / second engine) lands the full
+    // outcome row; this writer's own fetch then fails and it flushes its
+    // stale all-null snapshot. The upsert must MERGE, never blank out
+    // already-persisted immutable facts (which would also arm the 6h null
+    // backoff against a value we already have).
+    const db = openDb(":memory:");
+    const id = insertAlert(db);
+    const concurrentCheckedAt = T0 + 90_500;
+    const fetchPrice = vi.fn(async () => {
+      db.prepare(
+        `INSERT INTO alert_outcomes
+           (alert_id, price_1h, price_24h, resolved, resolution_price, won, checked_at)
+         VALUES (?, 0.68, 0.9, 1, 1, 1, ?)`,
+      ).run(id, concurrentCheckedAt);
+      throw new Error("timeout");
+    });
+    await computeAlertOutcomes(db, [id], {
+      fetchPrice,
+      getMeta: async () => ({}), // meta lookup fails to see the settlement
+      nowSec: T0 + 90_000,
+    });
+    const row = db
+      .prepare("SELECT * FROM alert_outcomes WHERE alert_id = ?")
+      .get(id) as {
+      price_1h: number | null;
+      price_24h: number | null;
+      resolved: number;
+      resolution_price: number | null;
+      won: number | null;
+      checked_at: number;
+    };
+    expect(row.price_1h).toBe(0.68);
+    expect(row.price_24h).toBe(0.9);
+    expect(row.resolved).toBe(1);
+    expect(row.resolution_price).toBe(1);
+    expect(row.won).toBe(1);
+    // checked_at keeps the most recent attempt (backoff stays honest).
+    expect(row.checked_at).toBe(concurrentCheckedAt);
+  });
+
   it("skips pre-upgrade consensus payloads missing token fields (graceful downgrade)", async () => {
     const db = openDb(":memory:");
     const r = db

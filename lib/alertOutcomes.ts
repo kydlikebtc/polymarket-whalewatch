@@ -134,10 +134,26 @@ export async function computeAlertOutcomes(
   const selOut = db.prepare(
     "SELECT price_1h, price_24h, resolved, resolution_price, won, checked_at FROM alert_outcomes WHERE alert_id = ?",
   );
+  // MERGE, not replace: every fact here is immutable once known (historical
+  // prices, settlement), so an existing non-null column always wins over the
+  // incoming value. This makes concurrent writers safe by construction — the
+  // worker backfill loop, the dashboard route, and a second engine process
+  // routinely process the same fresh alerts, and a full-row REPLACE from the
+  // slower writer's stale snapshot used to blank out already-persisted facts
+  // (then the bumped checked_at armed the 6h null backoff against a value we
+  // already had). resolved is monotonic 0→1; checked_at keeps the most recent
+  // attempt so the null-retry backoff stays honest.
   const upsert = db.prepare(
-    `INSERT OR REPLACE INTO alert_outcomes
+    `INSERT INTO alert_outcomes
        (alert_id, price_1h, price_24h, resolved, resolution_price, won, checked_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(alert_id) DO UPDATE SET
+       price_1h = COALESCE(alert_outcomes.price_1h, excluded.price_1h),
+       price_24h = COALESCE(alert_outcomes.price_24h, excluded.price_24h),
+       resolved = MAX(alert_outcomes.resolved, excluded.resolved),
+       resolution_price = COALESCE(alert_outcomes.resolution_price, excluded.resolution_price),
+       won = COALESCE(alert_outcomes.won, excluded.won),
+       checked_at = MAX(alert_outcomes.checked_at, excluded.checked_at)`,
   );
 
   // One batched (cached) meta lookup covers every unresolved market.
