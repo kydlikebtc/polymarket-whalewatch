@@ -8,7 +8,7 @@
 [![Next.js 16](https://img.shields.io/badge/Next.js%2016-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org/)
 [![Node 20+](https://img.shields.io/badge/Node-20%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-![Tests](https://img.shields.io/badge/tests-436%20passing-3fb950)
+![Tests](https://img.shields.io/badge/tests-448%20passing-3fb950)
 ![License](https://img.shields.io/badge/license-research%20use-blue)
 [![Last commit](https://img.shields.io/github/last-commit/kydlikebtc/polymarket-whalewatch?color=blue)](https://github.com/kydlikebtc/polymarket-whalewatch/commits/main)
 [![Stars](https://img.shields.io/github/stars/kydlikebtc/polymarket-whalewatch?style=social)](https://github.com/kydlikebtc/polymarket-whalewatch/stargazers)
@@ -87,7 +87,7 @@ When smart money piles into a market's **opposing outcomes**, the old per-outcom
 - **Track-record badges (战绩)** — every wallet row shows its settled win rate and realized PnL (`72% · +$38k`), computed from `/closed-positions` and cached for a day. Same badge on the accumulation board.
 - **Wallet dossier (`/wallet/<address>`, opens in a new tab)** — click any address: **current live holdings** (per-market shares / entry price / current price / value / unrealized PnL, each with ⧉ copy-slug + ↗ trade-page jump), age, win rate/ROI, category focus, **odds-band histogram**, split-buy tendency, this tool's own alert history, recent trades. One click replaces ten minutes of block-explorer digging.
 - **Split-buy accumulation board (拆单累计买入榜)** — aggregates trades by `(wallet, market, outcome)` and ranks by **NET buy-in**, catching wallets that build a large position through many sub-threshold orders. In live testing, single-trade monitoring missed **~60%** of ≥$10k accumulators.
-- **Alert history + validation (📐)** — every fired alert shows the market price **1h/24h after the signal** (direction-colored ¢ deltas) and the final settlement result (✅/❌/➖ for 50-50 pushes), plus a live strip: _24h direction hit-rate · settled win-rate_. Computed on demand from public history — the tool grades its own signals.
+- **Alert history + validation (📐)** — every fired alert shows the market price **1h/24h after the signal** (direction-colored ¢ deltas) and the final settlement result (✅/❌/➖ for 50-50 pushes), plus a live strip: _24h direction hit-rate · settled win-rate_. The worker sweeps **every** non-terminal alert on a 10-minute cadence (dashboard views still fill in on demand), so the hit-rate denominator is the full alert history — not just the alerts somebody happened to look at. The tool grades its own signals, watched or not.
 - **Address age on every wallet** — lifespan since the wallet's first Polymarket activity, badged `🆕` for new addresses (hours/minutes under a day, exact days ≤30d). Permanently cached.
 - **Built-in glossary (`/glossary`)** — every symbol (💰 🐳 🧩 🆕 🏆 🔥 ⚖️ ✅ ❌ ➖ 📐) and term (冲击占比 · 跟单空间 · 评分构成 · 质量加权 · 内幕猎杀组合 …) is documented on a reference page, **and hovering any icon anywhere in the dashboard shows the same explanation** — tooltips and the docs page share one data source (`app/glossary.ts`), so they can never drift apart.
 
