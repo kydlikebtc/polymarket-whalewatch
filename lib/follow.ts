@@ -113,7 +113,12 @@ const DEFAULT_MAX_ENTRY_DEVIATION_CENTS = 10;
 
 export interface FollowCycleDeps {
   db: DB;
-  fetchWindow: () => Promise<{ trades: Trade[] }>;
+  // truncated(可选):窗口深抓被页数上限/瞬态失败裁短时为 true。截断窗口里
+  // 截断边缘前的成交不可见,可见跨线会把 formationTs 系统性后移 —— 新鲜度
+  // 闸门与形成价护栏被同一错误时间戳同时削弱,故截断轮次跳过开仓(结算/
+  // markout 只依赖已有仓位,照常)。与 worker 推送路径的『窗口仅覆盖 ~Xh』
+  // 诚实标注同源:consensus 是标注着推,follow 动"仓"故直接不动。
+  fetchWindow: () => Promise<{ trades: Trade[]; truncated?: boolean }>;
   getSmart: () => Map<string, SmartTag>;
   // 现价来源:开仓时传入 now;markout 回填时传入 formation_ts+Δ(第二个参数的
   // 时间语义在此兑现)。
@@ -240,13 +245,18 @@ export async function runFollowCycle(
     .map((r) => parseStrategy(r.id, r.params_json))
     .filter((s): s is FollowStrategy => s !== null);
 
-  const { trades } = await fetchWindow();
+  const { trades, truncated = false } = await fetchWindow();
+  if (truncated) {
+    console.warn(
+      "[follow] window truncated — formationTs untrustworthy this cycle, opening skipped (settlement/markout proceed)",
+    );
+  }
 
   // 每策略各自的新鲜候选组。分歧互斥只检测一次(DEFAULT_DISAGREEMENT 与策略阈值
   // 无关),剔除的 contested 市场对所有策略生效;detectConsensus 则必须每策略重跑
   // —— formationTs 的跨线时刻依赖该策略自己的 minPerWalletUsd(见函数头注释 2)。
   const freshByStrategy = new Map<number, ConsensusGroup[]>();
-  if (strategies.length > 0 && trades.length > 0) {
+  if (!truncated && strategies.length > 0 && trades.length > 0) {
     // 分歧市场互斥:detectConsensus 按 (conditionId, outcome) 分组,不同的聪明钱
     // 各买同一市场的对立结果时会产出两个单边「假共识」组(其对冲者剔除只防同一钱包
     // 买两边)—— 真机实锤:激进策略同时持有同一 O/U 盘的 Over 和 Under 双边仓。

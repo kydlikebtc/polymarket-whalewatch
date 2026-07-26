@@ -7,6 +7,8 @@ import {
   DEFAULT_CONSENSUS,
   type ConsensusGroup,
 } from "./consensus";
+import { DEFAULT_DISAGREEMENT, detectDisagreement } from "./disagreement";
+import { excludeContestedFromConsensus } from "./marketSignals";
 import { aggregate } from "./accumulate";
 import { dedupKey, notionalUsd } from "./trades";
 import { getWalletAges } from "./walletAge";
@@ -212,9 +214,11 @@ export function detectSplitterEvidence(
       channel: "splitter",
       conditionId: g.conditionId,
       ts: g.lastTs,
-      usd: g.netUsd,
+      // 成本敞口口径,与 echo 证据同源(P0.6):资格按敞口过闸,金额也记敞口,
+      // 发现页同一 USD 列两渠道不再混排两种口径。
+      usd: g.exposureUsd,
       price: g.avgBuyPrice,
-      note: `拆单 ${g.buyCount} 笔净买 ${fmtUsd(g.netUsd)} @ ${fmtPrice(g.avgBuyPrice)} · ${shortTitle(g.title)}`,
+      note: `拆单 ${g.buyCount} 笔净买 ${fmtUsd(g.exposureUsd)} @ ${fmtPrice(g.avgBuyPrice)} · ${shortTitle(g.title)}`,
       title: g.title,
       slug: g.slug,
       eventSlug: g.eventSlug,
@@ -496,7 +500,13 @@ export async function collectFirehoseEvidence(
     nowSec = Math.floor(Date.now() / 1000),
     // Re-detecting here (pure, in-memory) keeps discovery decoupled from the
     // alert path's state machine; callers that already hold groups can inject.
-    groups = detectConsensus(trades, smartTags, DEFAULT_CONSENSUS),
+    // Disagreement mutex, same classification as the push path / follow
+    // engine: a contested market's one-sided "consensus" is fake, so wallets
+    // echoing it are not "following consensus" and must not become evidence.
+    groups = excludeContestedFromConsensus(
+      detectConsensus(trades, smartTags, DEFAULT_CONSENSUS),
+      detectDisagreement(trades, smartTags, DEFAULT_DISAGREEMENT),
+    ),
     agesFetcher = getWalletAges,
     maxAgeLookups = INSIDER_AGE_LOOKUPS_PER_CYCLE,
     insiderMaxAgeDays = INSIDER_MAX_AGE_DAYS,

@@ -434,6 +434,46 @@ describe("backfillEvidenceMarketContext", () => {
 });
 
 describe("collectFirehoseEvidence", () => {
+  it("contested 市场的单边伪共识不产出 echo 证据（分歧互斥与推送/follow 同口径）", async () => {
+    // 聪明钱两边都买(0xc1 分歧)时,Yes 侧的单边"共识"是假象 —— 跟着它买的
+    // 池外钱包不是"与共识同向",不该进候选漏斗。
+    const db = openDb(":memory:");
+    const contested = new Map<string, SmartTag>([
+      ["0xsmart1", tag()],
+      ["0xsmart2", tag()],
+      ["0xsmart3", tag()],
+    ]);
+    const trades = [
+      ...consensusTrades, // smart1+smart2 各 $6k 买 (0xc1, Yes)
+      trade({
+        proxyWallet: "0xsmart3",
+        size: 12_000,
+        price: 0.5,
+        outcome: "No",
+        asset: "tokNo",
+        outcomeIndex: 1,
+        timestamp: 250,
+      }),
+      trade({
+        proxyWallet: "0xecho",
+        size: 12_000,
+        price: 0.5,
+        timestamp: 300,
+      }),
+    ];
+    const r = await collectFirehoseEvidence(db, trades, contested, {
+      nowSec: 10_000,
+      agesFetcher: async () => ({}),
+    });
+    // splitter/insider 在此窗口本就无产出（单笔成交、无年龄数据）——
+    // evidence=0 意味着 echo 也被互斥归零。
+    expect(r.evidence).toBe(0);
+    const rows = db
+      .prepare("SELECT address FROM wallet_candidates WHERE channel = 'echo'")
+      .all();
+    expect(rows).toHaveLength(0);
+  });
+
   it("runs all three detectors over the window and persists evidence", async () => {
     const db = openDb(":memory:");
     const nowSec = 10_000;

@@ -50,8 +50,11 @@ function parseMinNetUsd(raw: string | null): number {
 
 type AccumStats = {
   groupCount: number;
-  totalNetUsd: number;
-  topNetUsd: number;
+  // Cost-basis exposure totals (P0.6) — same measure as the board's floor,
+  // ranking and per-row primary figure, so the KPI cards can never disagree
+  // with the rows beneath them.
+  totalExposureUsd: number;
+  topExposureUsd: number;
 };
 
 type AccumResponse = {
@@ -75,13 +78,13 @@ function oldestTimestamp(trades: Trade[]): number | null {
 }
 
 function computeStats(groups: AccumGroup[]): AccumStats {
-  let totalNetUsd = 0;
-  let topNetUsd = 0;
+  let totalExposureUsd = 0;
+  let topExposureUsd = 0;
   for (const g of groups) {
-    totalNetUsd += g.netUsd;
-    if (g.netUsd > topNetUsd) topNetUsd = g.netUsd;
+    totalExposureUsd += g.exposureUsd;
+    if (g.exposureUsd > topExposureUsd) topExposureUsd = g.exposureUsd;
   }
-  return { groupCount: groups.length, totalNetUsd, topNetUsd };
+  return { groupCount: groups.length, totalExposureUsd, topExposureUsd };
 }
 
 export async function GET(req: Request) {
@@ -124,7 +127,7 @@ export async function GET(req: Request) {
     console.error("[/api/accumulation] live scan failed:", message);
     const body: AccumResponse = {
       filters,
-      stats: { groupCount: 0, totalNetUsd: 0, topNetUsd: 0 },
+      stats: { groupCount: 0, totalExposureUsd: 0, topExposureUsd: 0 },
       truncated: false,
       oldestTs: null,
       groups: [],

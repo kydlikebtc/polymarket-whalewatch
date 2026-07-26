@@ -69,6 +69,41 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
     db.close();
   });
 
+  it("截断窗口跳过开仓(formationTs 不可信),结算照常", async () => {
+    // 窗口被截断时,截断边缘前的成交不可见,可见跨线会把 formationTs 系统性
+    // 后移 —— 新鲜度闸门与形成价护栏同时失真,此轮禁止开仓;结算与 markout
+    // 只依赖已有仓位,不受窗口影响,照常执行。
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status) VALUES (1,'c9','Yes','tok9',0,0.5,500,1000,'open')",
+    ).run();
+    const trades = [
+      trade({ proxyWallet: "w1", transactionHash: "h1", size: 10000 }),
+      trade({ proxyWallet: "w2", transactionHash: "h2", size: 10000 }),
+    ];
+    const c9: MarketMeta = {
+      conditionId: "c9",
+      closed: true,
+      outcomePrices: [1, 0],
+      outcomes: ["Yes", "No"],
+      volume24hr: null,
+      liquidity: null,
+      endDate: null,
+      category: null,
+    };
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades, truncated: true }),
+      getSmart: smart,
+      fetchPrice: async () => 0.63,
+      getMeta: async () => ({ c9 }),
+      nowSec: 1800, // 未截断本该开仓(新鲜度内)
+    });
+    expect(r.opened).toBe(0);
+    expect(r.settled).toBe(1);
+    db.close();
+  });
+
   it("幂等:同组第二轮不重复开仓", async () => {
     const db = openDb(":memory:");
     const trades = [

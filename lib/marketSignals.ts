@@ -10,9 +10,14 @@ import type { DisagreementMarket } from "./disagreement";
  * group whose conditionId is contested, so each market lands in exactly one
  * bucket: one-sided → consensus, split → disagreement.
  *
- * Shared by all three consensus surfaces — the page API, the follow engine's
- * candidate filter, and the Telegram push path (runConsensusCycle) — so a
- * contested market is classified identically everywhere.
+ * Shared by every consensus surface — the page API, the follow engine's
+ * candidate filter, the Telegram push path (runConsensusCycle) and the echo
+ * discovery channel. The two ACTION paths (push, follow) and discovery pin
+ * the disagreement thresholds to DEFAULT_DISAGREEMENT, so they always agree;
+ * the page API deliberately scales its threshold with the user's
+ * minPerWalletUsd ("both views tune together"), so an exploratory non-default
+ * view can classify a market differently from the push — a view-only
+ * divergence, by design.
  */
 export function excludeContestedFromConsensus(
   consensus: ConsensusGroup[],

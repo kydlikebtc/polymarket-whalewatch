@@ -9,6 +9,9 @@ type Row = {
   winRate: number | null;
   netPnl: number | null;
   isWhitelist: boolean;
+  // MM-tagged pool members keep membership but never vote in consensus /
+  // disagreement (P0.5) — badged so the pool count stays explainable.
+  isMarketMaker?: boolean;
 };
 
 function shortWallet(w: string): string {
@@ -103,6 +106,15 @@ export function WhitelistDialog({
                     </WalletLink>
                     {r.isWhitelist ? (
                       <span className="muted"> · 手动</span>
+                    ) : null}
+                    {r.isMarketMaker ? (
+                      <span
+                        className="muted"
+                        title="做市机器人（成交市场数 ≥1000）：保留池成员资格积累战绩数据，但不计入共识/分歧投票——做市流是库存再平衡，不是方向性观点"
+                      >
+                        {" "}
+                        · 🤖 无投票权
+                      </span>
                     ) : null}
                   </td>
                   <td className="mono is-right" data-label="评分">

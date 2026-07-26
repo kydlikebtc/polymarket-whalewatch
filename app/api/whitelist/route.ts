@@ -19,6 +19,9 @@ export async function GET() {
           winRate: t.winRate,
           netPnl: t.netPnl,
           isWhitelist: t.isWhitelist,
+          // Surfaced so the dialog can explain why consensus groups shrank
+          // after P0.5: MM-tagged members stay in the pool but never vote.
+          isMarketMaker: t.isMarketMaker === true,
         }))
         .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
       return Response.json({ wallets, count: wallets.length });

@@ -54,11 +54,17 @@ type AccumGroup = {
   eventSlug: string;
   buyUsd: number;
   sellUsd: number;
+  // Window cashflow (buyUsd − sellUsd) — display context only.
   netUsd: number;
   buyCount: number;
   sellCount: number;
   maxSingleBuyUsd: number;
   buyShares: number;
+  sellShares: number;
+  // Cost-basis exposure (P0.6): netShares × avgBuyPrice — the measure the
+  // server's floor and default ranking use, and the row's primary figure.
+  netShares: number;
+  exposureUsd: number;
   avgBuyPrice: number;
   firstTs: number;
   lastTs: number;
@@ -73,8 +79,8 @@ type AccumGroup = {
 
 type AccumStats = {
   groupCount: number;
-  totalNetUsd: number;
-  topNetUsd: number;
+  totalExposureUsd: number;
+  topExposureUsd: number;
 };
 
 type AccumResponse = {
@@ -233,7 +239,7 @@ const AccumRow = memo(function AccumRow({
   stats,
   smart,
 }: AccumRowProps) {
-  const whale = g.netUsd >= WHALE_NET;
+  const whale = g.exposureUsd >= WHALE_NET;
   return (
     <Fragment>
       <tr
@@ -343,9 +349,13 @@ const AccumRow = memo(function AccumRow({
         >
           {fmtTime(g.lastTs)}
         </td>
-        <td className="mono is-right" data-label="净买入">
+        <td
+          className="mono is-right"
+          data-label="净买入"
+          title={`成本敞口 = 留存净股数 × 买入均价（${fmtUsd(g.netShares)} 股 × ${(g.avgBuyPrice * 100).toFixed(1)}¢）· 窗口现金流 $${fmtUsd(g.netUsd)}`}
+        >
           <span className="up" style={{ fontWeight: 700 }}>
-            <Icon s={whale ? "🐳" : "🧩"} /> ${fmtUsd(g.netUsd)}
+            <Icon s={whale ? "🐳" : "🧩"} /> ${fmtUsd(g.exposureUsd)}
           </span>
         </td>
         <td className="mono is-right" data-label="笔数">
@@ -468,7 +478,7 @@ export default function AccumulationPage() {
       if (reqId !== activeReq.current) return;
       setData({
         filters: { floor, hours, minNetUsd },
-        stats: { groupCount: 0, totalNetUsd: 0, topNetUsd: 0 },
+        stats: { groupCount: 0, totalExposureUsd: 0, topExposureUsd: 0 },
         truncated: false,
         oldestTs: null,
         groups: [],
@@ -530,7 +540,7 @@ export default function AccumulationPage() {
     const pick = (g: AccumGroup): number => {
       switch (sortKey) {
         case "net":
-          return g.netUsd;
+          return g.exposureUsd;
         case "buyCount":
           return g.buyCount;
         case "maxSingle":
@@ -736,10 +746,10 @@ export default function AccumulationPage() {
             <div className="kpi-value">{stats.groupCount}</div>
           </StatCard>
           <StatCard label="合计净买入">
-            <div className="kpi-value">${fmtUsd(stats.totalNetUsd)}</div>
+            <div className="kpi-value">${fmtUsd(stats.totalExposureUsd)}</div>
           </StatCard>
           <StatCard label="最大净买入">
-            <div className="kpi-value">${fmtUsd(stats.topNetUsd)}</div>
+            <div className="kpi-value">${fmtUsd(stats.topExposureUsd)}</div>
           </StatCard>
         </section>
       ) : null}
