@@ -4,6 +4,10 @@ import type { SmartTag } from "./smartWallets";
 import { dedupKey, notionalUsd } from "./trades";
 import { cents, durText, esc, short, urlSeg, usd } from "./tgFormat";
 import { isPermanentSendError } from "./telegram";
+import { DEFAULT_DISAGREEMENT, detectDisagreement } from "./disagreement";
+// Runtime-safe despite marketSignals importing FROM this module: that import
+// is type-only (erased at compile), so no require cycle exists.
+import { excludeContestedFromConsensus } from "./marketSignals";
 
 // One smart wallet's aggregated position inside a consensus group.
 export interface ConsensusWallet {
@@ -391,7 +395,26 @@ export async function runConsensusCycle(
       `[consensus] window truncated at the page cap (${trades.length} rows) — detection runs on the shortened window`,
     );
   }
-  const groups = detectConsensus(trades, smartTags, opts);
+  const rawGroups = detectConsensus(trades, smartTags, opts);
+  if (rawGroups.length === 0) return 0;
+  // Disagreement mutex (P0.7): detectConsensus keys by (conditionId, outcome),
+  // so a market with smart money on BOTH opposing outcomes yields two
+  // one-sided "consensus" groups — and this push path used to alert on each,
+  // contradicting the page API and the follow engine which already exclude
+  // contested markets. Same classification everywhere: page, db, Telegram.
+  // Skipping (not claiming) is deliberate — when the disagreement later
+  // resolves and the group re-forms one-sided, it must still fire as news.
+  const contestedMkts = detectDisagreement(
+    trades,
+    smartTags,
+    DEFAULT_DISAGREEMENT,
+  );
+  const groups = excludeContestedFromConsensus(rawGroups, contestedMkts);
+  if (groups.length < rawGroups.length) {
+    console.log(
+      `[consensus] disagreement mutex: dropped ${rawGroups.length - groups.length} contested group(s) from the push path`,
+    );
+  }
   if (groups.length === 0) return 0;
   // Per qualified wallet: the smallest single visible BUY fill (lower bound —
   // fills under the fetch floor are invisible). Minima hugging the floor mean

@@ -10,8 +10,9 @@ import type { DisagreementMarket } from "./disagreement";
  * group whose conditionId is contested, so each market lands in exactly one
  * bucket: one-sided → consensus, split → disagreement.
  *
- * Page-level only — the Telegram consensus alert path (runConsensusCycle) is
- * intentionally left untouched.
+ * Shared by all three consensus surfaces — the page API, the follow engine's
+ * candidate filter, and the Telegram push path (runConsensusCycle) — so a
+ * contested market is classified identically everywhere.
  */
 export function excludeContestedFromConsensus(
   consensus: ConsensusGroup[],

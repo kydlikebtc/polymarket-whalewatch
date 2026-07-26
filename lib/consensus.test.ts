@@ -319,6 +319,41 @@ describe("runConsensusCycle", () => {
     expect(rows[1].dedup_key).toContain(":3"); // escalation level in the key
   });
 
+  it("contested 市场整体沉默：对立结果都有聪明钱时不推任何单边共识（P0.7 分歧互斥）", async () => {
+    const db = openDb(":memory:");
+    const send = vi.fn().mockResolvedValue(undefined);
+    // 0xA+0xB 净买 Yes（构成共识组），0xC 净买同市场 No ≥$5k —— 按
+    // DEFAULT_DISAGREEMENT（每边 ≥$5k、≥1 钱包）这是分歧市场；worker 推送
+    // 必须与页面 API / follow 引擎同口径：contested 一侧的"共识"是假象。
+    const contested = deps(db, {
+      send,
+      fetchWindow: async () => ({
+        trades: [
+          mk({ proxyWallet: "0xA", transactionHash: "0x1" }),
+          mk({ proxyWallet: "0xB", transactionHash: "0x2" }),
+          mk({
+            proxyWallet: "0xC",
+            transactionHash: "0x3",
+            asset: "asset2",
+            outcome: "No",
+            outcomeIndex: 1,
+          }),
+        ],
+        truncated: false,
+      }),
+    });
+    expect(await runConsensusCycle(contested)).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    // 既不落 alerts 也不写 consensus_state —— 分歧解除后组重新形成时必须
+    // 还能作为"新闻"推送，预占状态会吞掉那次推送。
+    expect(db.prepare("SELECT COUNT(*) AS n FROM alerts").get()).toEqual({
+      n: 0,
+    });
+    expect(
+      db.prepare("SELECT COUNT(*) AS n FROM consensus_state").get(),
+    ).toEqual({ n: 0 });
+  });
+
   it("stores the token fields the alert_outcomes validation loop needs in the payload", async () => {
     const db = openDb(":memory:");
     await runConsensusCycle(deps(db));
