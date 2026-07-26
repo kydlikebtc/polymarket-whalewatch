@@ -88,47 +88,67 @@ describe("fetchRecentTrades", () => {
       return { ok: true, json: async () => pages[offset] ?? [] };
     });
 
-  it("discards page 2 after a short page 1 and filters malformed rows", async () => {
+  it("discards trailing pages after a short first page and filters malformed rows", async () => {
     const fetchMock = mockByOffset({
       0: [row(1), { bad: true }],
-      1000: [row(2)], // must be DISCARDED — page 1 wasn't full
+      500: [row(2)], // must be DISCARDED — page 1 wasn't full
     });
     vi.stubGlobal("fetch", fetchMock);
     const trades = await fetchRecentTrades("0xabc");
     expect(trades).toHaveLength(1);
     expect(trades[0].transactionHash).toBe("0x1");
-    expect(fetchMock).toHaveBeenCalledTimes(2); // concurrent pages
+    expect(fetchMock).toHaveBeenCalledTimes(4); // concurrent pages
     const url = fetchMock.mock.calls[0][0] as string;
     expect(url).toContain("type=TRADE");
     expect(url).toContain("sortDirection=DESC");
-    expect(url).toContain("limit=1000");
+    // 2026-07 上游把 /activity 的 limit 上限从 1000 降到 500（limit=501 即
+    // 400 "max activity limit of 500 exceeded"）——此断言钉住新上限。
+    expect(url).toContain("limit=500");
   });
 
-  it("keeps both max-size pages (the verified offset cap)", async () => {
-    const fullPage = Array.from({ length: 1000 }, (_, i) => row(i));
-    const fetchMock = mockByOffset({ 0: fullPage, 1000: fullPage });
+  it("keeps all four max-size pages (2000-row budget at the 500 cap)", async () => {
+    const fullPage = Array.from({ length: 500 }, (_, i) => row(i));
+    const fetchMock = mockByOffset({
+      0: fullPage,
+      500: fullPage,
+      1000: fullPage,
+      1500: fullPage,
+    });
     vi.stubGlobal("fetch", fetchMock);
     const trades = await fetchRecentTrades("0xabc");
     expect(trades).toHaveLength(2000);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     const urls = fetchMock.mock.calls.map((c) => c[0] as string);
-    expect(urls.some((u) => u.includes("offset=1000"))).toBe(true);
+    expect(urls.some((u) => u.includes("offset=1500"))).toBe(true);
+  });
+
+  it("stops stitching at the first short page (keeps its rows, drops deeper pages)", async () => {
+    const fullPage = Array.from({ length: 500 }, (_, i) => row(i));
+    const fetchMock = mockByOffset({
+      0: fullPage,
+      500: [row(9)], // short — stitching ends AFTER this page
+      1000: fullPage, // beyond the wallet's real history: discard
+      1500: fullPage,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const trades = await fetchRecentTrades("0xabc");
+    expect(trades).toHaveLength(501);
   });
 
   it("retries a failed page once before giving up", async () => {
     const fetchMock = vi
       .fn()
-      // page 0 attempt 1 + page 1000 attempt 1 fire together: fail page 0.
+      // all four first attempts fire together: fail page 0's first attempt.
       .mockImplementationOnce(async () => {
         throw new Error("timeout");
       })
       .mockImplementation(async (url: string) => ({
         ok: true,
-        json: async () => (String(url).includes("offset=0") ? [row(1)] : []),
+        json: async () => (String(url).includes("offset=0&") ? [row(1)] : []),
       }));
     vi.stubGlobal("fetch", fetchMock);
     const trades = await fetchRecentTrades("0xabc");
     expect(trades).toHaveLength(1);
-    expect(fetchMock).toHaveBeenCalledTimes(3); // 2 pages + 1 retry
+    expect(fetchMock).toHaveBeenCalledTimes(5); // 4 pages + 1 retry
   });
 });

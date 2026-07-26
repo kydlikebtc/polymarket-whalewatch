@@ -2,9 +2,14 @@ import { z } from "zod";
 
 const DATA_API = "https://data-api.polymarket.com";
 
-// Verified live limits for /activity: limit caps at 1000, offset hard-caps at
-// 3000 (400 beyond) — so "recent 2000 trades" is exactly two max-size pages.
-const PAGE_LIMIT = 1000;
+// Verified live limits for /activity (re-verified 2026-07-26): limit now caps
+// at 500 — limit=501 returns 400 "max activity limit of 500 exceeded". The cap
+// used to be 1000; the upstream lowered it silently and every dossier load
+// started failing with fetchRecentTrades 400. offset semantics unchanged
+// (1500 and 3000 both verified 200), so the "recent 2000 trades" budget is
+// now four max-size pages instead of two.
+const PAGE_LIMIT = 500;
+const PAGE_COUNT = 4; // 4 × 500 = the dossier's 2000-row analysis budget
 
 // One TRADE row from /activity (usdcSize is USD — verified size*price≈usdcSize).
 const ActivityTradeSchema = z.object({
@@ -55,14 +60,20 @@ async function fetchActivityPage(
 export async function fetchRecentTrades(
   wallet: string,
 ): Promise<ActivityTrade[]> {
-  // Both pages fire CONCURRENTLY (uncached origin pages are ~3s each — serial
-  // was the dossier's whole latency budget). Page 2 costs one wasted request
-  // for small wallets and is discarded unless page 1 came back full.
-  const [p0, p1] = await Promise.all([
-    fetchActivityPage(wallet, 0),
-    fetchActivityPage(wallet, PAGE_LIMIT),
-  ]);
-  const rows = p0.length === PAGE_LIMIT ? [...p0, ...p1] : p0;
+  // All pages fire CONCURRENTLY (uncached origin pages are ~3s each — serial
+  // was the dossier's whole latency budget). Trailing pages cost wasted
+  // requests for small wallets; stitching stops at the first short page, so
+  // rows past the wallet's real history are never double-served or reordered.
+  const pages = await Promise.all(
+    Array.from({ length: PAGE_COUNT }, (_, i) =>
+      fetchActivityPage(wallet, i * PAGE_LIMIT),
+    ),
+  );
+  const rows: unknown[] = [];
+  for (const page of pages) {
+    rows.push(...page);
+    if (page.length < PAGE_LIMIT) break;
+  }
   const out: ActivityTrade[] = [];
   for (const row of rows) {
     const parsed = ActivityTradeSchema.safeParse(row);
