@@ -235,6 +235,7 @@ docs/plans/ design + implementation docs
 - [x] Market-context enrichment (impact ratio · liquidity · pre-settlement rush condition)
 - [x] Validation loop: 1h/24h follow-through + settlement backfill on every alert
 - [x] Smart-money **discovery channels**: firehose emergence (echo/splitter/insider) · early winners in settled markets · category-board specialists — all behind a recurrence + track-record **admission gate**, with per-wallet `source` attribution and a `/discovery` funnel board
+- [x] Consensus-follow **paper simulation** (`/follow` board — forward paper P&L, settlement-only equity curve, slippage vs smart-money entry, per-strategy A/B; zero real capital)
 - [ ] Channel effectiveness scorecard (per-source forward hit-rate via the validation loop — the `source` column is the groundwork)
 - [ ] Accumulation → Telegram alerts (stateful, tier-crossing dedup)
 - [ ] Event-level accumulation (across correlated sub-markets)

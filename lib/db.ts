@@ -17,6 +17,8 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS alert_outcomes (alert_id INTEGER PRIMARY KEY, price_1h REAL, price_24h REAL, resolved INTEGER DEFAULT 0, resolution_price REAL, won INTEGER, checked_at INTEGER);
     CREATE TABLE IF NOT EXISTS wallet_candidates (address TEXT NOT NULL, channel TEXT NOT NULL, condition_id TEXT NOT NULL, evidence_ts INTEGER, usd REAL, price REAL, note TEXT, title TEXT, slug TEXT, event_slug TEXT, outcome TEXT, created_at INTEGER, PRIMARY KEY (address, channel, condition_id));
     CREATE TABLE IF NOT EXISTS early_winner_scans (condition_id TEXT PRIMARY KEY, scanned_at INTEGER, trades_scanned INTEGER, truncated INTEGER);
+    CREATE TABLE IF NOT EXISTS follow_strategies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, enabled INTEGER DEFAULT 1, params_json TEXT, created_at INTEGER);
+    CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, formation_ts INTEGER, formation_price REAL, markout_30m REAL, markout_2h REAL, UNIQUE(strategy_id, condition_id, outcome));
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
     CREATE INDEX IF NOT EXISTS idx_candidates_evidence_ts ON wallet_candidates(evidence_ts);
   `);
@@ -50,6 +52,24 @@ export function openDb(path = "data.sqlite") {
   for (const col of ["title", "slug", "event_slug", "outcome"]) {
     try {
       db.prepare(`ALTER TABLE wallet_candidates ADD COLUMN ${col} TEXT`).run();
+    } catch {
+      // column already present
+    }
+  }
+  // follow_positions gained the formation/markout attribution columns after the
+  // table already shipped (P1 信号触发改造):formation_ts/formation_price 记录
+  // 共识「形成时刻」与彼时价格,markout_30m/markout_2h 惰性回填形成后 30min/2h
+  // 的市价 —— 量化「延迟成本」用。红线:这些列只用于归因展示,绝不参与
+  // realized_pnl。同 markets_traded 的写法:老库 ALTER 补列,新库 CREATE TABLE
+  // 已含 → "duplicate column" 静默。
+  for (const col of [
+    "formation_ts INTEGER",
+    "formation_price REAL",
+    "markout_30m REAL",
+    "markout_2h REAL",
+  ]) {
+    try {
+      db.prepare(`ALTER TABLE follow_positions ADD COLUMN ${col}`).run();
     } catch {
       // column already present
     }
@@ -222,6 +242,48 @@ export function openDb(path = "data.sqlite") {
     db.prepare("DELETE FROM config WHERE key = 'smart_seed_last_day'").run();
     db.prepare(
       "INSERT OR REPLACE INTO config (key, value) VALUES ('wallet_stats_v', '5')",
+    ).run();
+  }
+  // follow_strategies seed v1: paper follow-the-consensus simulation ships with
+  // two built-in strategies (保守/激进). Version-gated like wallet_stats_v above
+  // so the seed INSERT runs once per DB — dashboard routes open a fresh
+  // connection per request, and INSERT OR IGNORE alone would keep probing the
+  // unique index on every open for zero benefit after the first pass.
+  const followVer = db
+    .prepare("SELECT value FROM config WHERE key = 'follow_seed_v'")
+    .get() as { value: string | null } | undefined;
+  if (followVer?.value !== "1") {
+    const ins = db.prepare(
+      "INSERT OR IGNORE INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
+    );
+    const now = Math.floor(Date.now() / 1000);
+    // maxEntryDeviationCents: 进场价偏离护栏(¢),现价偏离聪明钱均价超阈不开仓。
+    // 仅影响全新安装;既有库的 params_json 缺该字段时由 lib/follow parseStrategy
+    // 按同值默认兜底,故无需 bump follow_seed_v 做迁移。
+    ins.run(
+      "保守",
+      JSON.stringify({
+        minWallets: 3,
+        minPerWalletUsd: 10000,
+        sizeUsd: 500,
+        exitRule: "settlement",
+        maxEntryDeviationCents: 10,
+      }),
+      now,
+    );
+    ins.run(
+      "激进",
+      JSON.stringify({
+        minWallets: 2,
+        minPerWalletUsd: 5000,
+        sizeUsd: 500,
+        exitRule: "settlement",
+        maxEntryDeviationCents: 10,
+      }),
+      now,
+    );
+    db.prepare(
+      "INSERT OR REPLACE INTO config (key, value) VALUES ('follow_seed_v', '1')",
     ).run();
   }
   return db;
