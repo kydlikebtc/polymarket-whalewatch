@@ -109,7 +109,12 @@ export function detectConsensus(
   const rows: Trade[] = [];
   for (const t of trades) {
     const wallet = t.proxyWallet.toLowerCase();
-    if (!smartTags.has(wallet)) continue;
+    // MM disenfranchisement (P0.5): market-maker flow is inventory
+    // rebalancing, not a directional opinion — an MM-tagged pool member never
+    // votes in consensus (72 of 291 global-board members are MMs; at
+    // minWallets=2 two of them could otherwise form a fake consensus).
+    const smartTag = smartTags.get(wallet);
+    if (!smartTag || smartTag.isMarketMaker) continue;
     const dk = dedupKey(t);
     if (seen.has(dk)) continue;
     seen.add(dk);

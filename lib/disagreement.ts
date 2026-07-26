@@ -114,7 +114,12 @@ export function detectDisagreement(
   // deduped (offset pagination re-serves boundary rows).
   for (const t of trades) {
     const wallet = t.proxyWallet.toLowerCase();
-    if (!smartTags.has(wallet)) continue;
+    // MM disenfranchisement (P0.5), same gate as detectConsensus: an MM
+    // absorbing one side is liquidity provision, not directional opposition —
+    // counting it would fake a "disagreement" and (via the mutex) suppress
+    // the genuine consensus on the other side.
+    const smartTag = smartTags.get(wallet);
+    if (!smartTag || smartTag.isMarketMaker) continue;
     const dk = dedupKey(t);
     if (seen.has(dk)) continue;
     seen.add(dk);

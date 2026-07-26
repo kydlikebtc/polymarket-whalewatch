@@ -93,6 +93,24 @@ describe("detectDisagreement", () => {
     expect(markets).toHaveLength(0);
   });
 
+  it("MM 不构成分歧对立面：isMarketMaker 一侧不足额时市场不算 contested（P0.5）", () => {
+    // 做市挂单吃掉一边不代表方向性反对 —— 若对立面全是 MM，市场不该被
+    // 归为分歧（否则 P0.7 互斥会连带压掉另一侧真实共识的推送）。
+    const trades = [
+      mk({ proxyWallet: "0xA", transactionHash: "0x1", outcome: "Yes" }),
+      mk({
+        proxyWallet: "0xMM",
+        transactionHash: "0x2",
+        outcome: "No",
+        asset: "assetNo",
+        outcomeIndex: 1,
+      }),
+    ];
+    const smart = smartMap({ "0xA": 80 });
+    smart.set("0xmm", { ...tag(80), isMarketMaker: true });
+    expect(detectDisagreement(trades, smart, OPTS)).toHaveLength(0);
+  });
+
   it("drops a wallet net-buying BOTH sides (hedger/market-maker = fake opposition)", () => {
     const trades = [
       // 0xMM plays both sides — a hedge, not an opinion.

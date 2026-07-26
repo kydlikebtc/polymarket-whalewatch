@@ -510,6 +510,20 @@ describe("getAllSmartTags", () => {
     expect(map.get("0xaaa")?.score).toBe(80);
     expect(map.get("0xbbb")?.isWhitelist).toBe(true);
   });
+
+  it("flags market makers from wallet_stats.markets_traded (P0.5 投票权数据源)", () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO smart_wallets (address, score) VALUES ('0xmm', 70), ('0xok', 80), ('0xnostats', 60)",
+    ).run();
+    db.prepare(
+      "INSERT INTO wallet_stats (wallet, markets_traded) VALUES ('0xmm', 1500), ('0xok', 12)",
+    ).run();
+    const map = getAllSmartTags(db);
+    expect(map.get("0xmm")?.isMarketMaker).toBe(true);
+    expect(map.get("0xok")?.isMarketMaker).toBeFalsy();
+    expect(map.get("0xnostats")?.isMarketMaker).toBeFalsy(); // 无统计=不剥夺
+  });
 });
 
 describe("getSmartPoolStatus", () => {

@@ -60,6 +60,34 @@ describe("detectConsensus", () => {
     expect(groups[0].outcomeIndex).toBe(0);
   });
 
+  it("MM 无共识投票权：isMarketMaker 标记的池成员不计入组（P0.5）", () => {
+    // 做市流是库存再平衡不是方向性观点；291 个全局榜成员含 72 个 MM，
+    // minWallets=2 时两个 MM 即可推出假共识 —— 剥夺投票权、池内保留。
+    const trades = [
+      mk({ proxyWallet: "0xA", transactionHash: "0x1" }),
+      mk({ proxyWallet: "0xMM", transactionHash: "0x2" }),
+    ];
+    const smart = smartSet("0xA", "0xMM");
+    smart.set("0xmm", { ...tag(), isMarketMaker: true });
+    // MM 被剥夺后只剩 1 个合格钱包 → 不成组。
+    expect(
+      detectConsensus(trades, smart, { minWallets: 2, minPerWalletUsd: 5000 }),
+    ).toHaveLength(0);
+    // 两个正常钱包 + MM：组成立但 MM 不在成员里、金额不计入。
+    const trades3 = [
+      ...trades,
+      mk({ proxyWallet: "0xB", transactionHash: "0x3" }),
+    ];
+    smart.set("0xb", tag());
+    const [g] = detectConsensus(trades3, smart, {
+      minWallets: 2,
+      minPerWalletUsd: 5000,
+    });
+    expect(g.walletCount).toBe(2);
+    expect(g.wallets.map((w) => w.wallet).sort()).toEqual(["0xa", "0xb"]);
+    expect(g.totalNetUsd).toBe(20000);
+  });
+
   it("drops hedgers that net-buy BOTH outcomes, so a hedger-only side is not a fake consensus", () => {
     // Live-bug repro: an O/U 2.5 market whose Under side was ENTIRELY the two
     // wallets that also bought Over. detectConsensus used to surface Under+Over

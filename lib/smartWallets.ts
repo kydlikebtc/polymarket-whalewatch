@@ -4,7 +4,11 @@ import {
   type LeaderboardPeriod,
   type LeaderboardRow,
 } from "./leaderboard";
-import { getWalletStats, type WalletStats } from "./walletStats";
+import {
+  getWalletStats,
+  MARKET_MAKER_MIN_MARKETS,
+  type WalletStats,
+} from "./walletStats";
 import { evaluateAdmission } from "./admissionGate";
 
 // A smart-wallet tag as consumed by the alert engine and the dashboards.
@@ -13,6 +17,12 @@ export interface SmartTag {
   winRate: number | null;
   netPnl: number | null; // net P/L (realized + unrealized), Polymarket-profile figure
   isWhitelist: boolean;
+  // Market-maker classifier (wallet_stats.markets_traded >= 1000). MM flow is
+  // inventory rebalancing, not a directional opinion, so these wallets keep
+  // pool membership (scorecard data keeps accruing, 🏆 fill-tagging unchanged)
+  // but are DISENFRANCHISED from consensus/disagreement voting (P0.5).
+  // Optional: absent (per-wallet lookups, old constructions) = not an MM.
+  isMarketMaker?: boolean;
 }
 
 // Incomplete-record haircut on the win-rate axis. walletStats already merges
@@ -493,9 +503,15 @@ export function getSmartPoolStatus(
 // Full smart-wallet map (address -> tag) for consensus detection over a trade
 // window. Table stays small (hundreds of rows), so loading it whole is cheap.
 export function getAllSmartTags(db: DB): Map<string, SmartTag> {
+  // LEFT JOIN: a pool wallet with no wallet_stats row (enrichment pending or
+  // skipped) keeps full voting rights — disenfranchisement needs EVIDENCE of
+  // market-making, not the absence of stats.
   const rows = db
     .prepare(
-      "SELECT address, score, win_rate, realized_pnl, is_whitelist FROM smart_wallets",
+      `SELECT sw.address, sw.score, sw.win_rate, sw.realized_pnl, sw.is_whitelist,
+              ws.markets_traded
+       FROM smart_wallets sw
+       LEFT JOIN wallet_stats ws ON ws.wallet = sw.address`,
     )
     .all() as {
     address: string;
@@ -503,6 +519,7 @@ export function getAllSmartTags(db: DB): Map<string, SmartTag> {
     win_rate: number | null;
     realized_pnl: number | null;
     is_whitelist: number;
+    markets_traded: number | null;
   }[];
   const out = new Map<string, SmartTag>();
   for (const r of rows) {
@@ -511,6 +528,9 @@ export function getAllSmartTags(db: DB): Map<string, SmartTag> {
       winRate: r.win_rate,
       netPnl: r.realized_pnl,
       isWhitelist: !!r.is_whitelist,
+      isMarketMaker:
+        r.markets_traded != null &&
+        r.markets_traded >= MARKET_MAKER_MIN_MARKETS,
     });
   }
   return out;
