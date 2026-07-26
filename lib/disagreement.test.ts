@@ -93,6 +93,34 @@ describe("detectDisagreement", () => {
     expect(markets).toHaveLength(0);
   });
 
+  it("等股买卖的假净买不构成分歧一侧（P0.6 验收）", () => {
+    // No 侧唯一钱包买 20000 股 @75¢ 后全部卖出 @25¢：USD 净买 $10k 但仓位 0 股
+    // —— 不是真实对立面，市场不算分歧。
+    const trades = [
+      mk({ proxyWallet: "0xA", transactionHash: "0x1", outcome: "Yes" }),
+      mk({
+        proxyWallet: "0xC",
+        transactionHash: "0x2",
+        outcome: "No",
+        asset: "assetNo",
+        outcomeIndex: 1,
+        price: 0.75,
+      }),
+      mk({
+        proxyWallet: "0xC",
+        transactionHash: "0x3",
+        outcome: "No",
+        asset: "assetNo",
+        outcomeIndex: 1,
+        side: "SELL",
+        price: 0.25,
+      }),
+    ];
+    expect(
+      detectDisagreement(trades, smartMap({ "0xA": 80, "0xC": 80 }), OPTS),
+    ).toHaveLength(0);
+  });
+
   it("MM 不构成分歧对立面：isMarketMaker 一侧不足额时市场不算 contested（P0.5）", () => {
     // 做市挂单吃掉一边不代表方向性反对 —— 若对立面全是 MM，市场不该被
     // 归为分歧（否则 P0.7 互斥会连带压掉另一侧真实共识的推送）。

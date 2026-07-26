@@ -19,6 +19,9 @@ export interface AccumGroup {
   eventSlug: string;
   buyUsd: number;
   sellUsd: number;
+  // Window CASHFLOW (buyUsd − sellUsd) — kept for display, but NOT the
+  // qualification/ranking measure (P0.6): equal shares bought high and sold
+  // low read as a fake USD "net buy" while the wallet holds nothing.
   netUsd: number;
   buyCount: number;
   sellCount: number;
@@ -26,6 +29,12 @@ export interface AccumGroup {
   // Size-weighted average BUY price (the odds the wallet accumulated at):
   // buyUsd / buyShares, or 0 when there are no buys.
   buyShares: number;
+  sellShares: number;
+  // Net RETAINED position (P0.6): buyShares − sellShares, and its cost basis
+  // netShares × avgBuyPrice. exposureUsd drives the board's floor and ranking;
+  // 0 whenever the position is flat or net-short in the window.
+  netShares: number;
+  exposureUsd: number;
   avgBuyPrice: number;
   // Timestamp span across ALL trades in the group (buy AND sell).
   firstTs: number;
@@ -107,6 +116,9 @@ export function aggregate(trades: Trade[], opts: AccumOptions): AccumGroup[] {
         sellCount: 0,
         maxSingleBuyUsd: 0,
         buyShares: 0,
+        sellShares: 0,
+        netShares: 0,
+        exposureUsd: 0,
         avgBuyPrice: 0,
         firstTs: t.timestamp,
         lastTs: t.timestamp,
@@ -133,6 +145,7 @@ export function aggregate(trades: Trade[], opts: AccumOptions): AccumGroup[] {
     } else {
       g.sellUsd += usd;
       g.sellCount += 1;
+      g.sellShares += t.size;
     }
   }
 
@@ -143,6 +156,8 @@ export function aggregate(trades: Trade[], opts: AccumOptions): AccumGroup[] {
   for (const [key, g] of groups) {
     g.netUsd = g.buyUsd - g.sellUsd;
     g.avgBuyPrice = g.buyShares > 0 ? g.buyUsd / g.buyShares : 0;
+    g.netShares = g.buyShares - g.sellShares;
+    g.exposureUsd = g.netShares > 0 ? g.netShares * g.avgBuyPrice : 0;
     g.flipRate = computeFlipRate(seqs.get(key)!);
     g.mmSuspect = g.flipRate > MM_FLIP_RATE;
     const wmKey = `${g.wallet}:${g.conditionId}`;
@@ -159,8 +174,10 @@ export function aggregate(trades: Trade[], opts: AccumOptions): AccumGroup[] {
     // synthetic same-side SELL at 1−p. Net shares are approximated as
     // netUsd / avgBuyPrice (sells assumed near the buy price band).
     const siblings = byWalletMarket.get(`${g.wallet}:${g.conditionId}`) ?? [];
+    // Net-shares gate (P0.6): an opposite-outcome group the wallet fully
+    // round-tripped is not a live hedge.
     const opposites = siblings.filter(
-      (s) => s.outcome !== g.outcome && s.netUsd > 0,
+      (s) => s.outcome !== g.outcome && s.netShares > 0,
     );
     if (opposites.length > 0) {
       g.hedgeSuspect = true;
@@ -172,14 +189,17 @@ export function aggregate(trades: Trade[], opts: AccumOptions): AccumGroup[] {
       if (binary) {
         const o = opposites[0];
         if (o.avgBuyPrice > 0 && o.avgBuyPrice < 1) {
-          const equivalentSellUsd =
-            (o.netUsd / o.avgBuyPrice) * (1 - o.avgBuyPrice);
+          // Exact now that net shares are tracked (P0.6): buying S shares of
+          // the complement at p IS selling S shares of this outcome at 1−p.
+          const equivalentSellUsd = o.netShares * (1 - o.avgBuyPrice);
           g.hedgeAdjustedNetUsd = Math.max(0, g.netUsd - equivalentSellUsd);
         }
       }
     }
     if (
-      g.netUsd >= minNetUsd &&
+      // Cost-basis exposure, not cashflow (P0.6): a round-tripped position
+      // must never rank as accumulation, whatever the trade prices were.
+      g.exposureUsd >= minNetUsd &&
       g.buyCount >= minBuyCount &&
       g.maxSingleBuyUsd < splitCeiling &&
       g.buyUsd >= sideConsistency * g.sellUsd
@@ -196,7 +216,7 @@ export function aggregate(trades: Trade[], opts: AccumOptions): AccumGroup[] {
     const sa = a.hedgeSuspect || a.mmSuspect ? 1 : 0;
     const sb = b.hedgeSuspect || b.mmSuspect ? 1 : 0;
     if (sa !== sb) return sa - sb;
-    return b.netUsd - a.netUsd;
+    return b.exposureUsd - a.exposureUsd;
   });
   return out;
 }

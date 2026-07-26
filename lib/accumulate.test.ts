@@ -50,6 +50,33 @@ describe("aggregate (split-buy accumulation)", () => {
     expect(g.maxSingleBuyUsd).toBe(5000);
   });
 
+  it("等股买卖不同价 → 净仓位 0，不上榜（P0.6 验收）", () => {
+    // 3 笔买入共 15000 股 @80¢（$12k），一笔卖出 15000 股 @10¢（$1.5k）：
+    // USD 口径"净买 $10.5k" 达标，但真实仓位 = 0 股 —— 不许上榜。
+    const trades = [
+      trade({ transactionHash: "0x1", size: 5000, price: 0.8 }),
+      trade({ transactionHash: "0x2", size: 5000, price: 0.8 }),
+      trade({ transactionHash: "0x3", size: 5000, price: 0.8 }),
+      trade({ transactionHash: "0x4", size: 15000, price: 0.1, side: "SELL" }),
+    ];
+    expect(aggregate(trades, DEFAULTS)).toHaveLength(0);
+  });
+
+  it("留存仓位成本敞口（netShares × avgBuyPrice）作门槛与排序（P0.6）", () => {
+    // 买 15000 股 @80¢（$12k），卖 5000 股 @90¢：留存 10000 股 × 0.8 = $8k。
+    const trades = [
+      trade({ transactionHash: "0x1", size: 5000, price: 0.8 }),
+      trade({ transactionHash: "0x2", size: 5000, price: 0.8 }),
+      trade({ transactionHash: "0x3", size: 5000, price: 0.8 }),
+      trade({ transactionHash: "0x4", size: 5000, price: 0.9, side: "SELL" }),
+    ];
+    const [g] = aggregate(trades, { ...DEFAULTS, minNetUsd: 5000 });
+    expect(g.netShares).toBe(10000);
+    expect(g.exposureUsd).toBe(8000);
+    // 现金流字段保持诚实原义（$12k − $4.5k）。
+    expect(g.netUsd).toBeCloseTo(7500);
+  });
+
   it("computes size-weighted avgBuyPrice across the group's BUYs", () => {
     // 100sh@0.5 ($50) + 100sh@0.7 ($70) → buyUsd $120 / buyShares 200 = avg 0.6.
     // (Add a third sub-ceiling buy so the group qualifies at minBuyCount=3,

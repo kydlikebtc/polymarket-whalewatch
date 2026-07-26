@@ -1,6 +1,7 @@
 import type { Trade } from "./types";
 import type { SmartTag } from "./smartWallets";
 import { dedupKey, notionalUsd } from "./trades";
+import { avgBuyPrice, exposureUsd, netShares } from "./netPosition";
 
 /**
  * Per-USD quality multiplier for a wallet's net buy, driven by its smart-money
@@ -68,7 +69,12 @@ export const DEFAULT_DISAGREEMENT: DisagreementOptions = {
   lopsidedTiltPct: 0.7,
 };
 
-type WalletAcc = { buyUsd: number; sellUsd: number; buyShares: number };
+type WalletAcc = {
+  buyUsd: number;
+  sellUsd: number;
+  buyShares: number;
+  sellShares: number;
+};
 
 /**
  * Pure detection over a trade window: find markets where whitelisted smart
@@ -146,7 +152,7 @@ export function detectDisagreement(
     }
     let acc = o.byWallet.get(wallet);
     if (!acc) {
-      acc = { buyUsd: 0, sellUsd: 0, buyShares: 0 };
+      acc = { buyUsd: 0, sellUsd: 0, buyShares: 0, sellShares: 0 };
       o.byWallet.set(wallet, acc);
     }
     const usdVal = notionalUsd(t);
@@ -155,6 +161,7 @@ export function detectDisagreement(
       acc.buyShares += t.size;
     } else {
       acc.sellUsd += usdVal;
+      acc.sellShares += t.size;
     }
   }
 
@@ -167,7 +174,8 @@ export function detectDisagreement(
     const netBuyOutcomes = new Map<string, number>();
     for (const o of m.byOutcome.values()) {
       for (const [wallet, acc] of o.byWallet) {
-        if (acc.buyUsd - acc.sellUsd > 0) {
+        // 净股数口径(P0.6):只有真实留仓的结果才算"净买了该结果"。
+        if (netShares(acc) > 0) {
           netBuyOutcomes.set(wallet, (netBuyOutcomes.get(wallet) ?? 0) + 1);
         }
       }
@@ -185,8 +193,10 @@ export function detectDisagreement(
       let sumBuyShares = 0;
       for (const [wallet, acc] of o.byWallet) {
         if (excluded.has(wallet)) continue;
-        const net = acc.buyUsd - acc.sellUsd;
-        if (net <= 0) continue; // net sellers aren't buying this side
+        // 成本敞口口径(P0.6):留存净股数 × 买入均价 —— 等股买卖不同价的
+        // "USD 假净买"不构成一侧;纯买入时与旧现金流口径数值一致。
+        const net = exposureUsd(acc);
+        if (net <= 0) continue; // flat / net sellers aren't buying this side
         const smart = smartTags.get(wallet);
         const score = smart?.score ?? null;
         netUsd += net;
@@ -198,7 +208,7 @@ export function detectDisagreement(
           netUsd: net,
           score,
           winRate: smart?.winRate ?? null,
-          avgBuyPrice: acc.buyShares > 0 ? acc.buyUsd / acc.buyShares : 0,
+          avgBuyPrice: avgBuyPrice(acc),
         });
       }
       if (wallets.length < opts.minWalletsPerSide) continue;

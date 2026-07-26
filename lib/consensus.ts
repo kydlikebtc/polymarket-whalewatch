@@ -5,6 +5,7 @@ import { dedupKey, notionalUsd } from "./trades";
 import { cents, durText, esc, short, urlSeg, usd } from "./tgFormat";
 import { isPermanentSendError } from "./telegram";
 import { DEFAULT_DISAGREEMENT, detectDisagreement } from "./disagreement";
+import { avgBuyPrice, exposureUsd, netShares } from "./netPosition";
 // Runtime-safe despite marketSignals importing FROM this module: that import
 // is type-only (erased at compile), so no require cycle exists.
 import { excludeContestedFromConsensus } from "./marketSignals";
@@ -12,6 +13,8 @@ import { excludeContestedFromConsensus } from "./marketSignals";
 // One smart wallet's aggregated position inside a consensus group.
 export interface ConsensusWallet {
   wallet: string;
+  // 成本敞口(P0.6 净股数口径):留存净股数 × 买入均价。等股买卖不同价 → 0,
+  // 纯买入(无卖出)时与旧的 buyUsd − sellUsd 现金流口径数值一致。
   netUsd: number;
   buyCount: number;
   avgBuyPrice: number; // size-weighted
@@ -81,9 +84,11 @@ export function detectConsensus(
     buyUsd: number;
     sellUsd: number;
     buyShares: number;
+    sellShares: number;
     buyCount: number;
-    // last upward crossing:净买最后一次从 <floor 升到 ≥floor 的成交 ts。
-    // null = 从未跨线(或 floor≤0 的退化配置,见 qualifiedTs 的兜底)。
+    // last upward crossing:成本敞口(exposureUsd,P0.6 净股数口径)最后一次从
+    // <floor 升到 ≥floor 的成交 ts。null = 从未跨线(或 floor≤0 的退化配置,
+    // 见 qualifiedTs 的兜底)。
     crossTs: number | null;
     firstOwnTs: number; // 该钱包在本组的最早成交 ts(退化配置下的兜底锚点)
   };
@@ -148,6 +153,7 @@ export function detectConsensus(
         buyUsd: 0,
         sellUsd: 0,
         buyShares: 0,
+        sellShares: 0,
         buyCount: 0,
         crossTs: null,
         firstOwnTs: t.timestamp, // rows 已升序,首见即最早
@@ -155,15 +161,19 @@ export function detectConsensus(
       g.byWallet.set(wallet, acc);
     }
     const tradeUsd = notionalUsd(t);
-    const prevNet = acc.buyUsd - acc.sellUsd;
+    // 跨线与资格同用成本敞口口径(P0.6):等股买卖不同价的"USD 假净买"既不能
+    // 让钱包合格,也不能制造形成时刻。买入推高敞口,卖出按股数消减 —— 二者
+    // 同口径才保住"合格 ⇒ 至少跨线一次 ⇒ crossTs 非空"的不变量。
+    const prevNet = exposureUsd(acc);
     if (t.side === "BUY") {
       acc.buyUsd += tradeUsd;
       acc.buyShares += t.size;
       acc.buyCount += 1;
     } else {
       acc.sellUsd += tradeUsd;
+      acc.sellShares += t.size;
     }
-    const newNet = acc.buyUsd - acc.sellUsd;
+    const newNet = exposureUsd(acc);
     // upward crossing:每次从线下升到线上都覆盖记录 → 最终保留 last crossing。
     if (prevNet < opts.minPerWalletUsd && newNet >= opts.minPerWalletUsd) {
       acc.crossTs = t.timestamp;
@@ -189,7 +199,9 @@ export function detectConsensus(
         perMarket.set(g.conditionId, perWallet);
       }
       for (const [wallet, acc] of g.byWallet) {
-        if (acc.buyUsd - acc.sellUsd > 0) {
+        // 净股数口径(P0.6):在某结果上等股买卖清零的钱包不算"净买了该结果",
+        // 只在真实留仓的结果上计数 —— 一边清仓一边留仓是方向性,不是对冲。
+        if (netShares(acc) > 0) {
           perWallet.set(wallet, (perWallet.get(wallet) ?? 0) + 1);
         }
       }
@@ -207,18 +219,20 @@ export function detectConsensus(
     const qualified: ConsensusWallet[] = [];
     for (const [wallet, acc] of g.byWallet) {
       if (hedgers?.has(wallet)) continue; // plays both sides — not a directional vote
-      const netUsd = acc.buyUsd - acc.sellUsd;
+      // 成本敞口口径(P0.6):netUsd 字段承载"留存净股数 × 买入均价",不再是
+      // buyUsd − sellUsd 现金流 —— 等股买卖不同价的钱包敞口为 0,永不合格。
+      const netUsd = exposureUsd(acc);
       if (netUsd < opts.minPerWalletUsd) continue;
       const tag = smartTags.get(wallet);
       qualified.push({
         wallet,
         netUsd,
         buyCount: acc.buyCount,
-        avgBuyPrice: acc.buyShares > 0 ? acc.buyUsd / acc.buyShares : 0,
+        avgBuyPrice: avgBuyPrice(acc),
         score: tag?.score ?? null,
         winRate: tag?.winRate ?? null,
-        // 窗口末尾 net ≥ floor(>0)⇒ 至少跨线一次,crossTs 必非 null;
-        // firstOwnTs 兜底只保护 floor≤0 的退化配置(净买 0 也"合格",从未跨线)。
+        // 窗口末尾敞口 ≥ floor(>0)⇒ 至少跨线一次,crossTs 必非 null;
+        // firstOwnTs 兜底只保护 floor≤0 的退化配置(敞口 0 也"合格",从未跨线)。
         qualifiedTs: acc.crossTs ?? acc.firstOwnTs,
       });
     }

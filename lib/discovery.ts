@@ -1,6 +1,7 @@
 import type { DB } from "./db";
 import type { Trade } from "./types";
 import type { SmartTag } from "./smartWallets";
+import { avgBuyPrice, exposureUsd, netShares } from "./netPosition";
 import {
   detectConsensus,
   DEFAULT_CONSENSUS,
@@ -103,6 +104,7 @@ export function detectEchoEvidence(
     buyUsd: number;
     sellUsd: number;
     buyShares: number;
+    sellShares: number;
     lastTs: number;
     title: string;
     slug: string;
@@ -124,6 +126,7 @@ export function detectEchoEvidence(
         buyUsd: 0,
         sellUsd: 0,
         buyShares: 0,
+        sellShares: 0,
         lastTs: t.timestamp,
         title: t.title,
         slug: t.slug,
@@ -138,6 +141,7 @@ export function detectEchoEvidence(
       acc.buyShares += t.size;
     } else {
       acc.sellUsd += usd;
+      acc.sellShares += t.size;
     }
   }
 
@@ -145,7 +149,8 @@ export function detectEchoEvidence(
   // per (market, wallet) across ALL outcomes seen in that market.
   const netBoughtOutcomes = new Map<string, number>(); // cid:wallet -> n
   for (const [key, acc] of byKey) {
-    if (acc.buyUsd - acc.sellUsd <= 0) continue;
+    // 净股数口径(P0.6):等股买卖清零的结果不算净买。
+    if (netShares(acc) <= 0) continue;
     const [cid, , wallet] = key.split(":");
     const wm = `${cid}:${wallet}`;
     netBoughtOutcomes.set(wm, (netBoughtOutcomes.get(wm) ?? 0) + 1);
@@ -155,10 +160,12 @@ export function detectEchoEvidence(
   for (const [key, acc] of byKey) {
     const [cid, outcome, wallet] = key.split(":");
     if (!targets.has(`${cid}:${outcome}`)) continue;
-    const netUsd = acc.buyUsd - acc.sellUsd;
+    // 成本敞口口径(P0.6):echo 是"跟随建仓"信号,要求真实留仓 —— 等股买卖
+    // 不同价的 USD 假净买不构成证据。
+    const netUsd = exposureUsd(acc);
     if (netUsd < echoMinUsd) continue;
     if ((netBoughtOutcomes.get(`${cid}:${wallet}`) ?? 0) >= 2) continue; // hedger
-    const avgPrice = acc.buyShares > 0 ? acc.buyUsd / acc.buyShares : 0;
+    const avgPrice = avgBuyPrice(acc);
     if (avgPrice > EVIDENCE_MAX_PRICE) continue; // near-certainty — info-free
     out.push({
       address: wallet,

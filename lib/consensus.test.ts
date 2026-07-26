@@ -60,6 +60,49 @@ describe("detectConsensus", () => {
     expect(groups[0].outcomeIndex).toBe(0);
   });
 
+  it("等股买卖不同价 → 净仓位为 0，不计入共识（P0.6 验收）", () => {
+    // A 买 20000 股 @75¢（$15k）后全部卖出 @25¢（$5k）：USD 口径"净买 $10k"，
+    // 真实仓位 = 0 股 —— 假净买不许投票，与成交价格无关。
+    const trades = [
+      mk({ proxyWallet: "0xA", transactionHash: "0x1", price: 0.75 }),
+      mk({
+        proxyWallet: "0xA",
+        transactionHash: "0x2",
+        side: "SELL",
+        price: 0.25,
+      }),
+      mk({ proxyWallet: "0xB", transactionHash: "0x3" }),
+    ];
+    expect(
+      detectConsensus(trades, smartSet("0xA", "0xB"), {
+        minWallets: 2,
+        minPerWalletUsd: 5000,
+      }),
+    ).toHaveLength(0);
+  });
+
+  it("部分卖出后按留存净股数 × 买入均价（成本敞口）计资格与金额（P0.6）", () => {
+    // A 买 20000 股 @50¢（$10k），卖 4000 股 @90¢：留存 16000 股 × 0.5 = $8k。
+    const trades = [
+      mk({ proxyWallet: "0xA", transactionHash: "0x1" }),
+      mk({
+        proxyWallet: "0xA",
+        transactionHash: "0x2",
+        side: "SELL",
+        size: 4000,
+        price: 0.9,
+      }),
+      mk({ proxyWallet: "0xB", transactionHash: "0x3" }),
+    ];
+    const [g] = detectConsensus(trades, smartSet("0xA", "0xB"), {
+      minWallets: 2,
+      minPerWalletUsd: 5000,
+    });
+    expect(g.walletCount).toBe(2);
+    const a = g.wallets.find((w) => w.wallet === "0xa")!;
+    expect(a.netUsd).toBe(8000); // 16000 股 × 50¢ 成本，不是 $10k−$3.6k=$6.4k 现金流
+  });
+
   it("MM 无共识投票权：isMarketMaker 标记的池成员不计入组（P0.5）", () => {
     // 做市流是库存再平衡不是方向性观点；291 个全局榜成员含 72 个 MM，
     // minWallets=2 时两个 MM 即可推出假共识 —— 剥夺投票权、池内保留。

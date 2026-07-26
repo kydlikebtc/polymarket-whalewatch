@@ -49,6 +49,31 @@ const consensusTrades = [
 ];
 
 describe("detectEchoEvidence", () => {
+  it("等股买卖的假净买不构成 echo 证据（P0.6 验收）", () => {
+    // 买 12000 股 @75¢（$9k）后全部卖出 @25¢（$3k）：USD 净买 $6k ≥ 阈值,
+    // 但真实仓位 = 0 股 —— 不是跟随建仓,不产生证据。
+    const trades = [
+      ...consensusTrades,
+      trade({
+        proxyWallet: "0xFlat",
+        size: 12_000,
+        price: 0.75,
+        timestamp: 300,
+      }),
+      trade({
+        proxyWallet: "0xFlat",
+        size: 12_000,
+        price: 0.25,
+        side: "SELL",
+        timestamp: 400,
+      }),
+    ];
+    const out = detectEchoEvidence(trades, smartTags, {
+      groups: [{ conditionId: "0xc1", outcome: "Yes" }],
+    });
+    expect(out).toHaveLength(0);
+  });
+
   it("surfaces a non-pool wallet net-buying the same outcome as a consensus group", () => {
     const trades = [
       ...consensusTrades,
