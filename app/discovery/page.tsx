@@ -220,6 +220,7 @@ function EvidenceDetailRows({
                           <MarketSlugActions
                             slug={e.slug}
                             eventSlug={e.eventSlug}
+                            conditionId={e.conditionId}
                           />
                         </div>
                       </>

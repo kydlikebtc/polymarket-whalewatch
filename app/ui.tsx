@@ -250,29 +250,53 @@ export function QuietLink({
 export const TRADE_LINK_BASE =
   "https://onchain-dev.wired.fund/polymarket/trade-slug?slug=";
 
-// The ⧉↗ pair that follows a market subtitle everywhere: ⧉ copies the MARKET
-// slug (the per-market key gamma /markets?slug= takes — not the event slug),
-// ↗ opens the wired.fund trade page for it. One component so every list
-// (scanner / consensus / disagreement / accumulation / wallet / discovery)
-// renders the exact same affordance. Renders nothing without a slug.
+// The ⧉↗🎯 trio that follows a market subtitle everywhere: ⧉ copies the
+// MARKET slug (the per-market key gamma /markets?slug= takes — not the event
+// slug), ↗ opens the wired.fund trade page, 🎯 opens THIS tool's market
+// signal card (new tab, same forced window.open as WalletLink — embedded
+// webviews ignore target=_blank). One component so every list (scanner /
+// consensus / disagreement / accumulation / wallet / discovery) renders the
+// exact same affordance. Renders nothing without a slug; 🎯 renders only
+// when the caller has the conditionId at hand.
 export function MarketSlugActions({
   slug,
   eventSlug,
+  conditionId,
 }: {
   slug?: string | null;
   eventSlug?: string | null;
+  conditionId?: string | null;
 }) {
   const s = slug || eventSlug || "";
-  if (!s) return null;
+  if (!s && !conditionId) return null;
+  const cardHref = conditionId ? `/market/${conditionId}` : null;
   return (
     <>
-      <CopyButton text={s} label="复制 market slug" />
-      <QuietLink
-        href={`${TRADE_LINK_BASE}${encodeURIComponent(s)}`}
-        title={`在 wired.fund 打开交易页：${s}`}
-      >
-        ↗
-      </QuietLink>
+      {s && <CopyButton text={s} label="复制 market slug" />}
+      {s && (
+        <QuietLink
+          href={`${TRADE_LINK_BASE}${encodeURIComponent(s)}`}
+          title={`在 wired.fund 打开交易页：${s}`}
+        >
+          ↗
+        </QuietLink>
+      )}
+      {cardHref && (
+        <a
+          className="copy-btn"
+          href={cardHref}
+          target="_blank"
+          rel="noreferrer"
+          title="打开市场信号卡：共识/分歧 · 聪明钱敞口 · 拆单 · 新钱包 · 告警战绩"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            window.open(cardHref, "_blank", "noopener,noreferrer");
+          }}
+        >
+          🎯
+        </a>
+      )}
     </>
   );
 }

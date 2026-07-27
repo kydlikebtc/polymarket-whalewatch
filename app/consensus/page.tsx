@@ -583,6 +583,7 @@ export default function ConsensusPage() {
                             <MarketSlugActions
                               slug={g.slug}
                               eventSlug={g.eventSlug}
+                              conditionId={g.conditionId}
                             />
                           </div>
                         </td>

@@ -329,6 +329,7 @@ export function DisagreementSection({
                       <MarketSlugActions
                         slug={m.slug}
                         eventSlug={m.eventSlug}
+                        conditionId={m.conditionId}
                       />
                     </div>
                   </td>

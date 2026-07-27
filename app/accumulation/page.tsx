@@ -291,7 +291,11 @@ const AccumRow = memo(function AccumRow({
               same affordance as the 24h scanner. */}
           <div className="kpi-sub" style={{ whiteSpace: "nowrap" }}>
             {g.outcome}
-            <MarketSlugActions slug={g.slug} eventSlug={g.eventSlug} />
+            <MarketSlugActions
+              slug={g.slug}
+              eventSlug={g.eventSlug}
+              conditionId={g.conditionId}
+            />
           </div>
         </td>
         <td data-label="标记">

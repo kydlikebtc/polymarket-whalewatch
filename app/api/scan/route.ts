@@ -15,6 +15,7 @@ type ScanTrade = {
   usd: number;
   price: number;
   wallet: string;
+  conditionId: string; // powers the 🎯 market-card jump
   eventSlug: string;
   // Market slug (e.g. strait-of-hormuz-…) — not rendered, powers copy-to-clipboard.
   slug: string;
@@ -92,6 +93,7 @@ function toScanTrade(
     usd: notionalUsd(t),
     price: t.price,
     wallet: t.proxyWallet,
+    conditionId: t.conditionId,
     eventSlug: t.eventSlug,
     slug: t.slug,
     txHash: t.transactionHash,

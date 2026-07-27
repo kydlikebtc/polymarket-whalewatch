@@ -11,6 +11,7 @@ const DUST_USD = 1;
 // uses, but here we keep the LIVE (unresolved) rows — the wallet's active book.
 const HoldingRowSchema = z.object({
   title: z.string(),
+  conditionId: z.string().optional().default(""), // powers the 🎯 market-card jump
   slug: z.string().optional().default(""), // per-MARKET slug (gamma /markets?slug=)
   eventSlug: z.string().optional().default(""),
   outcome: z.string(),
@@ -26,6 +27,7 @@ const HoldingRowSchema = z.object({
 
 export interface Holding {
   title: string;
+  conditionId: string; // "" when the upstream row lacked it
   slug: string;
   eventSlug: string;
   outcome: string;
@@ -65,6 +67,7 @@ export function parseHoldings(
     if (r.currentValue < DUST_USD) continue; // dust
     holdings.push({
       title: r.title,
+      conditionId: r.conditionId ?? "",
       slug: r.slug ?? "",
       eventSlug: r.eventSlug ?? "",
       outcome: r.outcome,

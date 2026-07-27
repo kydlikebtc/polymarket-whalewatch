@@ -61,6 +61,7 @@ type RecentTrade = {
 };
 type Holding = {
   title: string;
+  conditionId: string;
   slug: string;
   eventSlug: string;
   outcome: string;
@@ -359,6 +360,7 @@ export default function WalletPage() {
                             <MarketSlugActions
                               slug={h.slug}
                               eventSlug={h.eventSlug}
+                              conditionId={h.conditionId}
                             />
                           </div>
                         </td>

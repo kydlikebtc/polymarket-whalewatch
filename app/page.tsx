@@ -36,6 +36,7 @@ type ScanTrade = {
   usd: number;
   price: number;
   wallet: string;
+  conditionId: string;
   eventSlug: string;
   slug: string;
   txHash: string;
@@ -136,7 +137,11 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
         <div className="kpi-sub" style={{ whiteSpace: "nowrap" }}>
           {t.outcome}
           {t.category ? ` · ${catLabel(t.category)}` : ""}
-          <MarketSlugActions slug={t.slug} eventSlug={t.eventSlug} />
+          <MarketSlugActions
+            slug={t.slug}
+            eventSlug={t.eventSlug}
+            conditionId={t.conditionId}
+          />
         </div>
       </td>
       <td data-label="方向">
