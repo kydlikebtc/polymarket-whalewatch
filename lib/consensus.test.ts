@@ -425,6 +425,25 @@ describe("runConsensusCycle", () => {
     ).toEqual({ n: 0 });
   });
 
+  it("共识推送尾部内嵌共识类型 30d 战绩（P0.14）", async () => {
+    const db = openDb(":memory:");
+    // 既往 6 条已判定共识信号（4 中 2 负）。
+    for (let i = 0; i < 6; i++) {
+      const r = db
+        .prepare(
+          "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES ('consensus', ?, '{}', ?)",
+        )
+        .run(`chist${i}`, 9_000 - i);
+      db.prepare(
+        "INSERT INTO alert_outcomes (alert_id, resolved, won, checked_at) VALUES (?, 1, ?, 9000)",
+      ).run(Number(r.lastInsertRowid), i < 4 ? 1 : 0);
+    }
+    const send = vi.fn().mockResolvedValue(undefined);
+    await runConsensusCycle(deps(db, { send }));
+    const msg = send.mock.calls[0][0] as string;
+    expect(msg).toContain("📐 共识 30d 信号:4/6 中");
+  });
+
   it("落库 payload 冻结当轮共识参数（P0.3 参数快照）", async () => {
     const db = openDb(":memory:");
     await runConsensusCycle(deps(db, { windowSec: 6 * 3600 }));

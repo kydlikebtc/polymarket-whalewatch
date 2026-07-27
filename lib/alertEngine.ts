@@ -8,6 +8,7 @@ import { dedupKey, notionalUsd } from "./trades";
 import { formatLargeTradeAlert, type SmartTagLabel } from "./alert";
 import { esc, usd } from "./tgFormat";
 import { isPermanentSendError } from "./telegram";
+import { formatRecordLine, walletSignalRecord } from "./signalRecord";
 import {
   markSeen,
   markSeenBatch,
@@ -359,13 +360,21 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
         overflow.push({ usd: n, title: t.title });
       } else {
         try {
-          // The format function's output is untouched; the burst summary is a
-          // cooldown-owned suffix composed here in the engine.
+          // The format function's output is untouched; the burst summary and
+          // the track-record footer are engine-owned suffixes composed here.
           let html = formatLargeTradeAlert(t, smart, ctx);
           const burst = burstCount.get(cooldownKey(t)) ?? 1;
           if (burst > 1) {
             html += `\n⏳ 该钱包本轮在此市场共 ${burst} 笔，冷却 ${conditions.cooldownMinutes} 分钟内其余仅入库`;
           }
+          // P0.14: every push carries the wallet's own verifiable 30d record
+          // (worker backfill keeps the denominator complete). No line when
+          // the wallet has no settled signals yet — no info, no theater.
+          const recordLine = formatRecordLine(
+            "该钱包",
+            walletSignalRecord(db, t.proxyWallet, { nowSec }),
+          );
+          if (recordLine) html += `\n${recordLine}`;
           await throttledSend(html);
           pushedThisCycle.add(cooldownKey(t));
         } catch (e) {

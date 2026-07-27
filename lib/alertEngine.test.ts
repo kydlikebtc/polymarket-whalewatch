@@ -86,6 +86,37 @@ describe("runAlertCycle", () => {
     expect(payload.params).toEqual(conditions);
   });
 
+  it("(a3) 推送尾部内嵌该钱包 30d 信号命中率（P0.14）", async () => {
+    const db = openDb(":memory:");
+    // 该钱包既往 5 条已判定信号（3 中 2 负）——推送应带 Wilson 战绩行。
+    for (let i = 0; i < 5; i++) {
+      const r = db
+        .prepare(
+          "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES ('large', ?, ?, ?)",
+        )
+        .run(
+          `hist${i}`,
+          JSON.stringify({ proxyWallet: "0xWALLET" }),
+          1000 - 10 - i,
+        );
+      db.prepare(
+        "INSERT INTO alert_outcomes (alert_id, resolved, won, checked_at) VALUES (?, 1, ?, 900)",
+      ).run(Number(r.lastInsertRowid), i < 3 ? 1 : 0);
+    }
+    const send = vi.fn().mockResolvedValue(undefined);
+    await runAlertCycle({
+      db,
+      fetchTrades: async () => [mk()],
+      conditions: cond(),
+      getAges: noAges,
+      send,
+      minTimestamp: 0,
+      nowSec: 1000,
+    });
+    const msg = send.mock.calls[0][0] as string;
+    expect(msg).toContain("📐 该钱包 30d 信号:3/5 中");
+  });
+
   it("(b) side filter keeps only the matching side", async () => {
     const db = openDb(":memory:");
     const buy = mk({ transactionHash: "0xbuy", side: "BUY" });

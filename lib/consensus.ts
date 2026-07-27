@@ -6,6 +6,7 @@ import { cents, durText, esc, short, urlSeg, usd } from "./tgFormat";
 import { isPermanentSendError } from "./telegram";
 import { DEFAULT_DISAGREEMENT, detectDisagreement } from "./disagreement";
 import { avgBuyPrice, exposureUsd, netShares } from "./netPosition";
+import { formatRecordLine, typeSignalRecord } from "./signalRecord";
 // Runtime-safe despite marketSignals importing FROM this module: that import
 // is type-only (erased at compile), so no require cycle exists.
 import { excludeContestedFromConsensus } from "./marketSignals";
@@ -514,7 +515,15 @@ export async function runConsensusCycle(
     }
     if (send) {
       try {
-        await send(formatConsensusAlert(g, { nowSec, coverage }));
+        // P0.14: the push carries the consensus signal type's own verifiable
+        // 30d record — engine-owned footer, format function untouched.
+        let html = formatConsensusAlert(g, { nowSec, coverage });
+        const recordLine = formatRecordLine(
+          "共识",
+          typeSignalRecord(db, "consensus", { nowSec }),
+        );
+        if (recordLine) html += `\n${recordLine}`;
+        await send(html);
       } catch (e) {
         if (isPermanentSendError(e)) {
           // Poison message (non-429 4xx even after the plain-text downgrade):
