@@ -83,6 +83,7 @@ export async function maybeDailySelfCheck(
   db: DB,
   send: ((html: string) => Promise<void>) | undefined,
   nowSec: number = Math.floor(Date.now() / 1000),
+  opts: { publicUrl?: string } = {},
 ): Promise<void> {
   if (!send) return;
   const day = utcDay(nowSec);
@@ -101,7 +102,10 @@ export async function maybeDailySelfCheck(
   const html =
     `🩺 监控自检 · 过去 24h\n` +
     `${loops || "无循环心跳(引擎未运行?)"}\n` +
-    `告警 ${alerts24h} 条 · 循环最长间隔 ${Math.round(maxGap / 60)} 分钟`;
+    `告警 ${alerts24h} 条 · 循环最长间隔 ${Math.round(maxGap / 60)} 分钟` +
+    (opts.publicUrl
+      ? `\n\n🔗 <a href="${opts.publicUrl}/discovery">看板 · 信号密度</a>`
+      : "");
   // Mark BEFORE sending (mirrors the seed's claim-first pattern): a transient
   // send failure costs one digest, never a duplicate storm.
   db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)").run(

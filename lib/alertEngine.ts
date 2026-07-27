@@ -363,21 +363,22 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
         overflow.push({ usd: n, title: t.title });
       } else {
         try {
-          // The format function's output is untouched; the burst summary and
-          // the track-record footer are engine-owned suffixes composed here.
-          let html = formatLargeTradeAlert(t, smart, ctx, { publicUrl });
+          // Engine-composed extras (need db/cycle state), placed by the
+          // formatter in their proper sections: the wallet's 📐 record joins
+          // the credentials block, the burst note joins the context block.
           const burst = burstCount.get(cooldownKey(t)) ?? 1;
-          if (burst > 1) {
-            html += `\n⏳ 该钱包本轮在此市场共 ${burst} 笔，冷却 ${conditions.cooldownMinutes} 分钟内其余仅入库`;
-          }
-          // P0.14: every push carries the wallet's own verifiable 30d record
-          // (worker backfill keeps the denominator complete). No line when
-          // the wallet has no settled signals yet — no info, no theater.
-          const recordLine = formatRecordLine(
-            "该钱包",
-            walletSignalRecord(db, t.proxyWallet, { nowSec }),
-          );
-          if (recordLine) html += `\n${recordLine}`;
+          const html = formatLargeTradeAlert(t, smart, ctx, {
+            publicUrl,
+            recordLine:
+              formatRecordLine(
+                "该钱包",
+                walletSignalRecord(db, t.proxyWallet, { nowSec }),
+              ) ?? undefined,
+            burstNote:
+              burst > 1
+                ? `⏳ 该钱包本轮在此市场共 ${burst} 笔，冷却 ${conditions.cooldownMinutes} 分钟内其余仅入库`
+                : undefined,
+          });
           await throttledSend(html);
           pushedThisCycle.add(cooldownKey(t));
         } catch (e) {

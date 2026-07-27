@@ -728,14 +728,35 @@ describe("formatConsensusAlert", () => {
     );
   });
 
-  it("meta.publicUrl → 推送带 🎯 线上信号卡链接", () => {
+  it("meta.publicUrl → 推送带 🎯 信号卡链接,钱包行链到站内档案", () => {
     const html = formatConsensusAlert(group(), {
       nowSec: 1060,
       publicUrl: "https://whalewatch.wired.fund",
     });
     expect(html).toContain('href="https://whalewatch.wired.fund/market/0xc"');
+    expect(html).toContain('href="https://whalewatch.wired.fund/wallet/0xa"');
     expect(html).toContain("🎯");
-    expect(formatConsensusAlert(group(), { nowSec: 1060 })).not.toContain("🎯");
+    const noUrl = formatConsensusAlert(group(), { nowSec: 1060 });
+    expect(noUrl).not.toContain("🎯");
+    expect(noUrl).toContain("polymarket.com/profile/0xa"); // 未配置回退
+  });
+
+  it("分区版式:头/数字/钱包/战绩/链接空行隔段,📐 经 meta 归位链接之前", () => {
+    const html = formatConsensusAlert(group(), {
+      nowSec: 1060,
+      publicUrl: "https://whalewatch.wired.fund",
+      recordLine: "📐 共识 30d 信号:17/26 中 · 剔除运气后至少 46%",
+    });
+    const blocks = html.split("\n\n");
+    expect(blocks.length).toBeGreaterThanOrEqual(5);
+    expect(blocks[0]).toContain("聪明钱共识");
+    expect(blocks[1]).toContain("合计净买入");
+    expect(blocks[1]).toContain("⏱");
+    expect(blocks[2]).toContain("🏆");
+    const recIdx = blocks.findIndex((b) => b.includes("📐"));
+    const linkIdx = blocks.findIndex((b) => b.includes("🔗"));
+    expect(recIdx).toBeGreaterThan(2);
+    expect(recIdx).toBeLessThan(linkIdx);
   });
 
   it("meta.latestPrice 渲染现价与较共识均价的偏离（追高成本一眼可见）", () => {

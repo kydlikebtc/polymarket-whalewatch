@@ -42,23 +42,28 @@ const trade = (over: Partial<Trade>): Trade =>
 
 async function main() {
   // 1) 💰 大额买入（带市场上下文 + 命中率尾行）
-  let m1 = formatLargeTradeAlert(trade({}), null, {
+  const PUB = "https://whalewatch.wired.fund";
+  const rec1 = formatRecordLine("该钱包", {
+    settled: 18,
+    wins: 12,
+    wilsonLo: 0.44,
+  });
+  const m1 = formatLargeTradeAlert(trade({}), null, {
     impact24h: 0.18,
     liquidity: 229073,
     hoursToEnd: 5,
     liquidityShare: null,
     volume24hr: null,
     category: null,
-  });
-  const rec1 = formatRecordLine("该钱包", {
-    settled: 18,
-    wins: 12,
-    wilsonLo: 0.44,
-  });
-  if (rec1) m1 += `\n${rec1}`;
+  }, { publicUrl: PUB, recordLine: rec1 ?? undefined });
 
   // 2) 🐳 巨鲸卖出（聪明钱标注 + 冷却折叠后缀）
-  let m2 = formatLargeTradeAlert(
+  const rec2 = formatRecordLine("该钱包", {
+    settled: 3,
+    wins: 2,
+    wilsonLo: 0.2,
+  });
+  const m2 = formatLargeTradeAlert(
     trade({
       side: "SELL",
       size: 250000,
@@ -76,14 +81,12 @@ async function main() {
       volume24hr: null,
       category: null,
     },
+    {
+      publicUrl: PUB,
+      recordLine: rec2 ?? undefined,
+      burstNote: "⏳ 该钱包本轮在此市场共 3 笔，冷却 30 分钟内其余仅入库",
+    },
   );
-  m2 += `\n⏳ 该钱包本轮在此市场共 3 笔，冷却 30 分钟内其余仅入库`;
-  const rec2 = formatRecordLine("该钱包", {
-    settled: 3,
-    wins: 2,
-    wilsonLo: 0.2,
-  });
-  if (rec2) m2 += `\n${rec2}`;
 
   // 3) 🔥 共识（3 钱包 + 凭据 + 类型战绩尾行）
   const g: ConsensusGroup = {
@@ -130,13 +133,17 @@ async function main() {
     lastTs: NOW - 180,
     formationTs: NOW - 1500,
   };
-  let m3 = formatConsensusAlert(g, { nowSec: NOW, latestPrice: 0.397 });
   const rec3 = formatRecordLine("共识", {
     settled: 26,
     wins: 17,
     wilsonLo: 0.46,
   });
-  if (rec3) m3 += `\n${rec3}`;
+  const m3 = formatConsensusAlert(g, {
+    nowSec: NOW,
+    latestPrice: 0.397,
+    publicUrl: PUB,
+    recordLine: rec3 ?? undefined,
+  });
 
   for (const [name, html] of [
     ["💰 大额", m1],

@@ -65,6 +65,18 @@ describe("maybeDailySelfCheck", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it("publicUrl → 自检消息带看板链接", async () => {
+    const db = openDb(":memory:");
+    beat(db, "alert", DAY0);
+    const send = vi.fn().mockResolvedValue(undefined);
+    await maybeDailySelfCheck(db, send, DAY0 + 100, {
+      publicUrl: "https://whalewatch.wired.fund",
+    });
+    const msg = send.mock.calls[0][0] as string;
+    expect(msg).toContain('href="https://whalewatch.wired.fund/discovery"');
+    expect(msg).toContain("🔗");
+  });
+
   it("无 send(Telegram 未配置)→ 不标记不推送,配置后当天仍能补推", async () => {
     const db = openDb(":memory:");
     beat(db, "alert", DAY0);

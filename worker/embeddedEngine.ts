@@ -255,9 +255,9 @@ export function startAlertEngine(): void {
       // self-check digest — cheap config read per tick, same pattern as
       // maybeDailySeed above.
       beat(db, "alert");
-      maybeDailySelfCheck(db, send).catch((e) =>
-        console.error("[heartbeat] self-check push failed", e),
-      );
+      maybeDailySelfCheck(db, send, undefined, {
+        publicUrl: cfg.publicUrl,
+      }).catch((e) => console.error("[heartbeat] self-check push failed", e));
     } catch (e) {
       console.error("[engine] cycle error", e);
     }

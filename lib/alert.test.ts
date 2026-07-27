@@ -66,16 +66,60 @@ describe("headline = decision head (TG 锁屏通知只显示第一行)", () => {
   });
 });
 
-describe("publicUrl → 推送带 🎯 线上信号卡链接", () => {
-  it("链接行追加 /market/<cid>；未配置则不渲染", () => {
+describe("publicUrl → 推送带站内链接（🎯 信号卡 + 👤 钱包档案）", () => {
+  it("链接行含 /market/<cid> 与 /wallet/<addr>；未配置回退 polymarket profile", () => {
     const withUrl = formatLargeTradeAlert(t, null, null, {
       publicUrl: "https://whalewatch.wired.fund",
     });
     expect(withUrl).toContain(
       'href="https://whalewatch.wired.fund/market/0xc"',
     );
+    expect(withUrl).toContain(
+      'href="https://whalewatch.wired.fund/wallet/0x1234567890abcdef"',
+    );
     expect(withUrl).toContain("🎯");
-    expect(formatLargeTradeAlert(t)).not.toContain("🎯");
+    const noUrl = formatLargeTradeAlert(t);
+    expect(noUrl).not.toContain("🎯");
+    expect(noUrl).toContain("polymarket.com/profile/0x1234567890abcdef");
+  });
+});
+
+describe("分区版式（与 bot 卡片同原则:空行隔段,一行一事实）", () => {
+  it("聪明钱凭据与 📐 战绩行同区,上下文独立区,链接行 🔗 收尾", () => {
+    const html = formatLargeTradeAlert(
+      t,
+      { score: 72, winRate: 0.68, netPnl: 1_200_000 },
+      {
+        impact24h: 0.42,
+        liquidity: 88000,
+        hoursToEnd: 26,
+        liquidityShare: null,
+        volume24hr: null,
+        category: null,
+      },
+      {
+        publicUrl: "https://whalewatch.wired.fund",
+        recordLine: "📐 该钱包 30d 信号:12/18 中 · 剔除运气后至少 44%",
+      },
+    );
+    const blocks = html.split("\n\n");
+    expect(blocks.length).toBeGreaterThanOrEqual(4);
+    // 块1:决策头+标题;块2:凭据+战绩;块3:上下文;末块:🔗 链接。
+    expect(blocks[0]).toContain("🟢买入");
+    expect(blocks[1]).toContain("🏆 聪明钱");
+    expect(blocks[1]).toContain("📐 该钱包 30d");
+    expect(blocks[2]).toContain("占24h量");
+    expect(blocks[blocks.length - 1]).toContain("🔗");
+  });
+  it("burstNote 归入上下文区（不悬在链接后）", () => {
+    const html = formatLargeTradeAlert(t, null, null, {
+      burstNote: "⏳ 该钱包本轮在此市场共 3 笔",
+    });
+    const blocks = html.split("\n\n");
+    const linkIdx = blocks.findIndex((b) => b.includes("🔗"));
+    const burstIdx = blocks.findIndex((b) => b.includes("⏳"));
+    expect(burstIdx).toBeGreaterThanOrEqual(0);
+    expect(burstIdx).toBeLessThan(linkIdx);
   });
 });
 
@@ -114,6 +158,8 @@ describe("formatSmartTag（独立凭据行）", () => {
     const lines = html.split("\n");
     expect(lines[0]).toBe("🐳 🏆 🟢买入 <b>$50,000</b> · Yes @ 50¢");
     expect(lines[1]).toBe("<b>Trump &amp; &lt;Biden&gt;</b>");
-    expect(lines[2]).toBe("🏆 聪明钱 72分 · 胜率68% · 盈$1.2M");
+    // 凭据在第二个分区（头块后隔一个空行）。
+    const blocks = html.split("\n\n");
+    expect(blocks[1]).toBe("🏆 聪明钱 72分 · 胜率68% · 盈$1.2M");
   });
 });

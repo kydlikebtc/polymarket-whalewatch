@@ -64,36 +64,58 @@ export function formatMarketCtxLine(
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+// Sectioned layout, same principles as the bot's 🎯 card (blank lines are
+// Telegram's only grouping primitive; one fact per line; bold anchors):
+//   block 1  decision head + title (lock-screen preview reads line 1 alone)
+//   block 2  smart credentials + the wallet's 📐 track record (when either)
+//   block 3  market context + operational notes (burst folding)
+//   block 4  🔗 links — signal card + dossier deep links when a public
+//            deployment URL is configured, polymarket profile as fallback
 export function formatLargeTradeAlert(
   t: Trade,
   smart?: SmartTagLabel | null,
   ctx?: TradeMarketContext | null,
-  opts: { publicUrl?: string } = {},
+  opts: { publicUrl?: string; recordLine?: string; burstNote?: string } = {},
 ): string {
   const n = notionalUsd(t);
   const tag = formatSmartTag(smart);
   const whale = n >= WHALE_TIER_USD ? "🐳" : "💰";
   const side = t.side === "SELL" ? "🔴卖出" : "🟢买入";
-  // Line 1 is the DECISION HEAD — Telegram's lock-screen notification shows
-  // only the first line, so it must carry direction, bolded amount, outcome
-  // and ¢ price by itself (a 🏆 marker flags smart money; the full
-  // credentials get their own line below). The title reads second.
-  const lines = [
-    `${whale} ${tag ? "🏆 " : ""}${side} <b>${usd(n)}</b> · ${esc(t.outcome)} @ ${cents(t.price)}`,
-    `<b>${esc(t.title)}</b>`,
-  ];
-  if (tag) lines.push(tag);
-  const ctxLine = formatMarketCtxLine(ctx);
-  if (ctxLine) lines.push(ctxLine);
-  lines.push(
-    `<a href="https://polymarket.com/event/${urlSeg(t.eventSlug)}">市场</a> · ` +
-      `<a href="https://polymarket.com/profile/${urlSeg(t.proxyWallet)}">${short(t.proxyWallet)}</a> · ` +
-      `<a href="https://polygonscan.com/tx/${urlSeg(t.transactionHash)}">tx</a>` +
-      // Deep link to this tool's own signal card — the push → dashboard
-      // funnel (only when a public deployment URL is configured).
-      (opts.publicUrl
-        ? ` · <a href="${opts.publicUrl}/market/${urlSeg(t.conditionId)}">🎯 信号卡</a>`
-        : ""),
+  const blocks: string[] = [];
+
+  blocks.push(
+    `${whale} ${tag ? "🏆 " : ""}${side} <b>${usd(n)}</b> · ${esc(t.outcome)} @ ${cents(t.price)}\n` +
+      `<b>${esc(t.title)}</b>`,
   );
-  return lines.join("\n");
+
+  const cred: string[] = [];
+  if (tag) cred.push(tag);
+  if (opts.recordLine) cred.push(opts.recordLine);
+  if (cred.length > 0) blocks.push(cred.join("\n"));
+
+  const context: string[] = [];
+  const ctxLine = formatMarketCtxLine(ctx);
+  if (ctxLine) context.push(ctxLine);
+  if (opts.burstNote) context.push(opts.burstNote);
+  if (context.length > 0) blocks.push(context.join("\n"));
+
+  const walletHref = opts.publicUrl
+    ? `${opts.publicUrl}/wallet/${urlSeg(t.proxyWallet.toLowerCase())}`
+    : `https://polymarket.com/profile/${urlSeg(t.proxyWallet)}`;
+  const links: string[] = [];
+  if (opts.publicUrl) {
+    links.push(
+      `<a href="${opts.publicUrl}/market/${urlSeg(t.conditionId)}">🎯 信号卡</a>`,
+    );
+  }
+  links.push(`<a href="${walletHref}">${short(t.proxyWallet)}</a>`);
+  links.push(
+    `<a href="https://polymarket.com/event/${urlSeg(t.eventSlug)}">市场</a>`,
+  );
+  links.push(
+    `<a href="https://polygonscan.com/tx/${urlSeg(t.transactionHash)}">tx</a>`,
+  );
+  blocks.push(`🔗 ${links.join(" · ")}`);
+
+  return blocks.join("\n\n");
 }

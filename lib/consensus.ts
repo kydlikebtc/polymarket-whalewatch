@@ -290,6 +290,10 @@ export interface ConsensusAlertMeta {
   latestPrice?: number;
   // Deployed dashboard base URL → the push's 🎯 signal-card deep link.
   publicUrl?: string;
+  // The consensus signal type's 📐 track-record line (engine-composed, needs
+  // db) — passed IN so the sectioned layout can place it before the links
+  // block instead of dangling after them.
+  recordLine?: string;
 }
 
 export function formatConsensusAlert(
@@ -297,11 +301,17 @@ export function formatConsensusAlert(
   meta: ConsensusAlertMeta = {},
 ): string {
   const nowSec = meta.nowSec ?? Math.floor(Date.now() / 1000);
-  const lines = [
-    // Headline carries the OUTCOME — the lock-screen preview alone answers
-    // "who's buying what".
-    `🔥 <b>聪明钱共识</b> · ${g.walletCount} 个白名单钱包买入 <b>${esc(g.outcome)}</b>`,
-    `<b>${esc(g.title)}</b>`,
+  const blocks: string[] = [];
+
+  // Block 1 — headline carries the OUTCOME (the lock-screen preview alone
+  // answers "who's buying what") + title.
+  blocks.push(
+    `🔥 <b>聪明钱共识</b> · ${g.walletCount} 个白名单钱包买入 <b>${esc(g.outcome)}</b>\n` +
+      `<b>${esc(g.title)}</b>`,
+  );
+
+  // Block 2 — the numbers: total, timing, chase cost.
+  const numbers: string[] = [
     `合计净买入 <b>${usd(g.totalNetUsd)}</b> · 均价 ${cents(g.avgBuyPrice)}`,
     // "15 分钟内集中买入" vs "6 小时里分散各买一笔" are very different signals
     // — and under the rolling window an OLD formation would otherwise push
@@ -312,35 +322,58 @@ export function formatConsensusAlert(
     // Chase cost, stated neutrally (read-only tool — a fact, not a call):
     // positive = the market already moved past the smart money's entry.
     const d = meta.latestPrice - g.avgBuyPrice;
-    lines.push(
+    numbers.push(
       `现价 ${cents(meta.latestPrice)} · 较共识均价 ${d < 0 ? "-" : "+"}${cents(Math.abs(d))}`,
     );
   }
+  blocks.push(numbers.join("\n"));
+
+  // Block 3 — the wallets (dossier deep links when deployed, polymarket
+  // profile as fallback).
+  const walletLines: string[] = [];
   for (const w of g.wallets.slice(0, 3)) {
     const bits: string[] = [];
     if (w.score != null) bits.push(`评分${Math.round(w.score)}`);
     if (w.winRate != null) bits.push(`胜率${Math.round(w.winRate * 100)}%`);
     const cred = bits.length > 0 ? ` (${bits.join("·")})` : "";
-    lines.push(
-      `🏆 <a href="https://polymarket.com/profile/${urlSeg(w.wallet)}">${short(w.wallet)}</a>` +
+    const href = meta.publicUrl
+      ? `${meta.publicUrl}/wallet/${urlSeg(w.wallet)}`
+      : `https://polymarket.com/profile/${urlSeg(w.wallet)}`;
+    walletLines.push(
+      `🏆 <a href="${href}">${short(w.wallet)}</a>` +
         ` 净买 ${usd(w.netUsd)} @${cents(w.avgBuyPrice)}${cred}`,
     );
   }
-  if (g.walletCount > 3) lines.push(`… 及另外 ${g.walletCount - 3} 个钱包`);
+  if (g.walletCount > 3) {
+    walletLines.push(`… 及另外 ${g.walletCount - 3} 个钱包`);
+  }
+  if (walletLines.length > 0) blocks.push(walletLines.join("\n"));
+
+  // Block 4 — the signal type's own verifiable record (engine-composed).
+  if (meta.recordLine) blocks.push(meta.recordLine);
+
+  // Block 5 — links + honesty notes.
+  const tail: string[] = [];
+  const links: string[] = [];
+  if (meta.publicUrl) {
+    links.push(
+      `<a href="${meta.publicUrl}/market/${urlSeg(g.conditionId)}">🎯 信号卡</a>`,
+    );
+  }
+  links.push(
+    `<a href="https://polymarket.com/event/${urlSeg(g.eventSlug)}">市场</a>`,
+  );
+  tail.push(`🔗 ${links.join(" · ")}`);
   if (meta.coverage) {
     const wh = meta.coverage.windowSec / 3600;
-    lines.push(
+    tail.push(
       `⚠️ 窗口仅覆盖 ~${(meta.coverage.coveredSec / 3600).toFixed(1)}h/` +
         `${Number.isInteger(wh) ? wh : wh.toFixed(1)}h，共识金额为下界`,
     );
   }
-  lines.push(
-    `<a href="https://polymarket.com/event/${urlSeg(g.eventSlug)}">市场</a>` +
-      (meta.publicUrl
-        ? ` · <a href="${meta.publicUrl}/market/${urlSeg(g.conditionId)}">🎯 信号卡</a>`
-        : ""),
-  );
-  return lines.join("\n");
+  blocks.push(tail.join("\n"));
+
+  return blocks.join("\n\n");
 }
 
 export interface ConsensusCycleDeps {
@@ -574,20 +607,21 @@ export async function runConsensusCycle(
     if (send) {
       try {
         // P0.14: the push carries the consensus signal type's own verifiable
-        // 30d record — engine-owned footer, format function untouched.
-        let html = formatConsensusAlert(g, {
+        // 30d record — composed here (needs db), placed by the formatter in
+        // its own section before the links.
+        const html = formatConsensusAlert(g, {
           nowSec,
           coverage,
           // Chase-cost line: latest visible price for the group's token from
           // the window this cycle already fetched (zero extra requests).
           latestPrice: latestPrices.get(g.asset),
           publicUrl,
+          recordLine:
+            formatRecordLine(
+              "共识",
+              typeSignalRecord(db, "consensus", { nowSec }),
+            ) ?? undefined,
         });
-        const recordLine = formatRecordLine(
-          "共识",
-          typeSignalRecord(db, "consensus", { nowSec }),
-        );
-        if (recordLine) html += `\n${recordLine}`;
         await send(html);
       } catch (e) {
         if (isPermanentSendError(e)) {
