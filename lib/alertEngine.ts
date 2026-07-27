@@ -392,7 +392,13 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
       db,
       smart ? "smart" : "large",
       k,
-      JSON.stringify(ctx ? { ...t, marketCtx: ctx } : t),
+      // params (P0.3): freeze the conditions that produced this alert —
+      // without the snapshot, every threshold tweak silently re-contextualizes
+      // the whole alert history and hit-rate stats become unattributable.
+      JSON.stringify({
+        ...(ctx ? { ...t, marketCtx: ctx } : t),
+        params: conditions,
+      }),
       t.timestamp,
     );
     fired++;

@@ -493,8 +493,18 @@ export async function runConsensusCycle(
     //      is the TTL-expiry reminder — no new alerts row (matches the old OR
     //      IGNORE semantics), push proceeds. Reminder pushes are the one path
     //      two processes can still rarely both take.
+    // params (P0.3): freeze the qualification thresholds that produced this
+    // consensus — scorecards bucket by rule version off this snapshot.
+    const payloadJson = JSON.stringify({
+      ...g,
+      params: {
+        minWallets: opts.minWallets,
+        minPerWalletUsd: opts.minPerWalletUsd,
+        windowSec,
+      },
+    });
     const claimed =
-      insAlert.run("consensus", dk, JSON.stringify(g), nowSec).changes === 1;
+      insAlert.run("consensus", dk, payloadJson, nowSec).changes === 1;
     if (!claimed) {
       const prior = selAlert.get(dk) as { created_at: number } | undefined;
       if (prior && nowSec - prior.created_at <= stateTtlSec) {

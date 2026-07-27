@@ -425,6 +425,20 @@ describe("runConsensusCycle", () => {
     ).toEqual({ n: 0 });
   });
 
+  it("落库 payload 冻结当轮共识参数（P0.3 参数快照）", async () => {
+    const db = openDb(":memory:");
+    await runConsensusCycle(deps(db, { windowSec: 6 * 3600 }));
+    const row = db
+      .prepare("SELECT payload FROM alerts WHERE type = 'consensus'")
+      .get() as { payload: string };
+    const p = JSON.parse(row.payload) as Record<string, unknown>;
+    expect(p.params).toEqual({
+      minWallets: 2,
+      minPerWalletUsd: 5000,
+      windowSec: 6 * 3600,
+    });
+  });
+
   it("stores the token fields the alert_outcomes validation loop needs in the payload", async () => {
     const db = openDb(":memory:");
     await runConsensusCycle(deps(db));

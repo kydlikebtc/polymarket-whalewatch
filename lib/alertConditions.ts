@@ -63,8 +63,22 @@ export function getAlertConditions(db: DB): AlertConditions {
 }
 
 export function setAlertConditions(db: DB, c: AlertConditions): void {
+  const next = JSON.stringify(c);
+  // config_history (P0.3): every ACTUAL change is journaled before the
+  // overwrite — alert payloads freeze the params that produced them, and this
+  // table answers "when did the rules change" for scorecard rule-version
+  // bucketing. Identical re-saves (dashboard's save button pressed twice)
+  // write nothing, so the journal stays a change log, not an access log.
+  const prev = db
+    .prepare("SELECT value FROM config WHERE key = ?")
+    .get(CONFIG_KEY) as { value: string | null } | undefined;
+  if (prev?.value !== next) {
+    db.prepare(
+      "INSERT INTO config_history (key, value, changed_at) VALUES (?, ?, ?)",
+    ).run(CONFIG_KEY, next, Math.floor(Date.now() / 1000));
+  }
   db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)").run(
     CONFIG_KEY,
-    JSON.stringify(c),
+    next,
   );
 }

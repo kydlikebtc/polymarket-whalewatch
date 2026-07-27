@@ -66,6 +66,26 @@ describe("runAlertCycle", () => {
     expect(seen.c).toBe(2);
   });
 
+  it("(a2) 落库 payload 冻结当轮生效参数（P0.3 参数快照）", async () => {
+    // 调参会改变告警产出分布——不冻结当时参数，历史命中率就没法按
+    // "规则版本"分桶归因，每次调参都在不可逆地污染统计。
+    const db = openDb(":memory:");
+    const conditions = cond({ minUsd: 12345, maxPrice: 0.9 });
+    await runAlertCycle({
+      db,
+      fetchTrades: async () => [mk()],
+      conditions,
+      getAges: noAges,
+      send: vi.fn().mockResolvedValue(undefined),
+      minTimestamp: 0,
+    });
+    const row = db.prepare("SELECT payload FROM alerts").get() as {
+      payload: string;
+    };
+    const payload = JSON.parse(row.payload);
+    expect(payload.params).toEqual(conditions);
+  });
+
   it("(b) side filter keeps only the matching side", async () => {
     const db = openDb(":memory:");
     const buy = mk({ transactionHash: "0xbuy", side: "BUY" });

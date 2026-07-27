@@ -66,4 +66,21 @@ describe("alertConditions", () => {
       side: "SELL",
     });
   });
+
+  it("每次实际变更写一行 config_history，重复保存同值不写（P0.3）", () => {
+    const db = openDb(":memory:");
+    const a = { ...DEFAULT_CONDITIONS, minUsd: 20000 };
+    const b = { ...DEFAULT_CONDITIONS, minUsd: 30000 };
+    setAlertConditions(db, a);
+    setAlertConditions(db, a); // 无变更 → 不重复记录
+    setAlertConditions(db, b);
+    const rows = db
+      .prepare("SELECT key, value, changed_at FROM config_history ORDER BY id")
+      .all() as { key: string; value: string; changed_at: number }[];
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.key === "alert_conditions")).toBe(true);
+    expect(JSON.parse(rows[0].value).minUsd).toBe(20000);
+    expect(JSON.parse(rows[1].value).minUsd).toBe(30000);
+    expect(rows[0].changed_at).toBeGreaterThan(0);
+  });
 });
