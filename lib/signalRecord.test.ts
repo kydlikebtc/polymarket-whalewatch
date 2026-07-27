@@ -90,14 +90,14 @@ describe("formatRecordLine", () => {
     expect(line).toContain("样本不足");
     expect(line).not.toContain("下界");
   });
-  it("样本充足 → 命中 + Wilson 下界百分比", () => {
+  it("样本充足 → 命中 + 自解释的保守估计（不出现统计学术语）", () => {
     const line = formatRecordLine("该钱包", {
       settled: 18,
       wins: 12,
       wilsonLo: 0.44,
     });
-    expect(line).toContain("12/18");
-    expect(line).toContain("44%");
-    expect(line).toContain("下界");
+    expect(line).toBe("📐 该钱包 30d 信号:12/18 中 · 剔除运气后至少 44%");
+    // 频道读者不该需要统计学背景——术语只留在 glossary 里解释。
+    expect(line).not.toContain("Wilson");
   });
 });

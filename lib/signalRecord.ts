@@ -71,6 +71,11 @@ export function typeSignalRecord(
  * One honest line for the push footer, or null when there is nothing to say.
  * Small samples show the raw tally explicitly labeled instead of a bound that
  * would be statistical theater.
+ *
+ * Wording: the bound is the Wilson 95% lower bound, but channel readers must
+ * not need a statistics background — "剔除运气后至少 X%" states exactly what
+ * the number means (small-sample luck discounted, this is the floor we can
+ * defend). The technical term lives in the glossary, not the push.
  */
 export function formatRecordLine(
   label: string,
@@ -80,5 +85,5 @@ export function formatRecordLine(
   if (r.settled < MIN_WILSON_SAMPLE) {
     return `📐 ${label} 30d 信号:${r.wins}/${r.settled} 中（样本不足）`;
   }
-  return `📐 ${label} 30d 信号:${r.wins}/${r.settled} 中 · Wilson 下界 ${Math.round(r.wilsonLo * 100)}%`;
+  return `📐 ${label} 30d 信号:${r.wins}/${r.settled} 中 · 剔除运气后至少 ${Math.round(r.wilsonLo * 100)}%`;
 }
