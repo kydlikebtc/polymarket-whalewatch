@@ -218,6 +218,18 @@ function ConditionsPanel({
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string>("");
   const [err, setErr] = useState<string>("");
+  // Public deployment: saving requires the admin token (x-admin-token). The
+  // flag comes from GET /api/alert-config; the token persists in localStorage
+  // so the operator enters it once per browser.
+  const [readonly, setReadonly] = useState(false);
+  const [token, setToken] = useState<string>("");
+  useEffect(() => {
+    try {
+      setToken(window.localStorage.getItem("adminToken") ?? "");
+    } catch {
+      // storage unavailable (private mode) — token just won't persist
+    }
+  }, []);
   // Local text state for price/age so intermediate typing isn't coerced eagerly.
   const [minPriceText, setMinPriceText] = useState<string>("");
   const [maxPriceText, setMaxPriceText] = useState<string>("");
@@ -241,9 +253,14 @@ function ConditionsPanel({
         const res = await fetch("/api/alert-config", { cache: "no-store" });
         const json = (await res.json()) as Partial<AlertConditions> & {
           error?: string;
+          readonly?: boolean;
         };
         if (!active) return;
-        hydrate({ ...DEFAULT_CONDITIONS, ...json });
+        // Strip the transport-only fields so they never leak into the
+        // conditions state object.
+        const { readonly: ro, error: _ignored, ...cond } = json;
+        setReadonly(!!ro);
+        hydrate({ ...DEFAULT_CONDITIONS, ...cond });
       } catch (e) {
         if (active) setErr(e instanceof Error ? e.message : String(e));
       } finally {
@@ -272,9 +289,16 @@ function ConditionsPanel({
     try {
       const res = await fetch("/api/alert-config", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "x-admin-token": token } : {}),
+        },
         body: JSON.stringify(payload),
       });
+      // 401/403 means this deployment is guarded — reveal the token field even
+      // if the initial GET never told us (a transport failure there leaves
+      // `readonly` false, which would otherwise hide the only way to fix it).
+      if (res.status === 401 || res.status === 403) setReadonly(true);
       const json = (await res.json()) as AlertConditions & { error?: string };
       if (json.error) throw new Error(json.error);
       hydrate(json);
@@ -476,6 +500,32 @@ function ConditionsPanel({
           💡 开启后建议把最低金额降至 $2k–5k：聪明钱大单通常拆小，$10k
           单笔线与白名单的交集近零
         </span>
+      ) : null}
+
+      {readonly ? (
+        <Field label="管理令牌">
+          <input
+            type="password"
+            placeholder="x-admin-token"
+            value={token}
+            onChange={(e) => {
+              const v = e.target.value;
+              setToken(v);
+              try {
+                window.localStorage.setItem("adminToken", v);
+              } catch {
+                // storage unavailable — session-only token
+              }
+            }}
+            className="ds-input ds-input--mono"
+            style={{ width: 220 }}
+            autoComplete="off"
+          />
+          <span className="ds-hint">
+            公开部署为只读 — 保存需服务器 .env 中的
+            ADMIN_TOKEN（仅存本机浏览器）
+          </span>
+        </Field>
       ) : null}
 
       <div

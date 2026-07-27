@@ -5,6 +5,7 @@ import {
   setAlertConditions,
   type AlertConditions,
 } from "../../../lib/alertConditions";
+import { checkWriteAccess, isPublicDeployment } from "../../../lib/apiGuard";
 
 // Node runtime: better-sqlite3 is a native module (no Edge). force-dynamic so the
 // engine and dashboard always see each other's writes without caching.
@@ -14,10 +15,13 @@ export const dynamic = "force-dynamic";
 const DB_PATH = process.env.DASH_DB || "data.sqlite";
 
 export async function GET() {
+  // `readonly` tells the panel whether saving needs an admin token — config
+  // VALUES stay public on purpose (they're part of the record's transparency).
+  const readonly = isPublicDeployment();
   try {
     const db = openDb(DB_PATH);
     try {
-      return Response.json(getAlertConditions(db));
+      return Response.json({ ...getAlertConditions(db), readonly });
     } finally {
       db.close();
     }
@@ -26,6 +30,7 @@ export async function GET() {
     // Degrade to defaults plus an error string — never 500 the UI.
     return Response.json({
       ...DEFAULT_CONDITIONS,
+      readonly,
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -85,6 +90,13 @@ function validate(body: unknown): AlertConditions {
 }
 
 export async function POST(req: Request) {
+  // Auth BEFORE any parsing or db work: on the public deployment this route is
+  // the alert-threshold tamper vector — reject unauthenticated writes with a
+  // real status code (the panel surfaces `error` and keeps its local state).
+  const access = checkWriteAccess(req);
+  if (!access.ok) {
+    return Response.json({ error: access.error }, { status: access.status });
+  }
   try {
     const body = await req.json().catch(() => ({}));
     const conditions = validate(body);

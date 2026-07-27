@@ -29,6 +29,17 @@ export function walletSetKey(wallets: (string | undefined)[]): string {
     .join(",");
 }
 
+/**
+ * A parseable body is NOT the same as a settled answer. The route degrades to
+ * `{ages:{}}` on failure and the public-deployment rate limiter returns that
+ * same envelope with a 429 — merging either would record every wallet in the
+ * batch as "looked up, age unknown" and drop it from the retry set for the
+ * page's whole lifetime. Only a 2xx settles a batch.
+ */
+export function isSettledAgeResponse(status: number): boolean {
+  return status >= 200 && status < 300;
+}
+
 /** Merge one /api/wallet-age response batch: missing wallets resolve to null. */
 export function mergeAgeBatch(
   batch: string[],
@@ -70,6 +81,10 @@ export function useWalletAges(wallets: (string | undefined)[]): WalletAgeMap {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ wallets: batch }),
           });
+          // Throw into the catch below so the batch is released for retry.
+          if (!isSettledAgeResponse(res.status)) {
+            throw new Error(`wallet-age ${res.status}`);
+          }
           const json = (await res.json()) as {
             ages?: Record<string, { ageDays: number | null }>;
           };

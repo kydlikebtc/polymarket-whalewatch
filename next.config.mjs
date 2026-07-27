@@ -21,7 +21,18 @@ const nextConfig = {
   // explicitly for server builds. No effect on the default Turbopack runtime.
   webpack: (config, { isServer }) => {
     if (isServer) {
-      config.externals = [...config.externals, "better-sqlite3"];
+      // Node builtins (fs/path/crypto — used by lib/dbBackup and lib/apiGuard)
+      // hit the same instrumentation-bundle gap as better-sqlite3: webpack
+      // refuses both the "node:" scheme (UnhandledSchemeError) and the bare
+      // names (module-not-found) there. Externalizing maps them back to
+      // runtime require(), which is exactly right for a server bundle.
+      config.externals = [
+        ...config.externals,
+        "better-sqlite3",
+        "fs",
+        "path",
+        "crypto",
+      ];
     }
     return config;
   },

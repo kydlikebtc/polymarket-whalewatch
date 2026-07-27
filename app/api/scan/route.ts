@@ -1,5 +1,6 @@
 import { getTradesWindowDeep } from "../../../lib/polymarket";
 import { createPromiseCache } from "../../../lib/promiseCache";
+import { guardExpensive } from "../../../lib/apiGuard";
 import { getEventCategories } from "../../../lib/gamma";
 import { openDb } from "../../../lib/db";
 import { notionalUsd } from "../../../lib/trades";
@@ -82,6 +83,23 @@ function parseMinUsd(raw: string | null): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 10_000;
 }
 
+// The user's minUsd is applied CLIENT-side, so the only thing the fetch floor
+// controls is how deep the upstream sweep goes. Snapping it to a fixed ladder
+// keeps the promise-cache key space finite: an unquantized floor let a caller
+// mint a brand-new key (and thus a brand-new ~40-page deep fetch, plus a cache
+// entry that never expires) with every distinct minUsd from 1..9999. Same
+// ALLOWED_* discipline /api/accumulation and /api/consensus already use.
+const FLOOR_LADDER: readonly number[] = [500, 1000, 2000, 5000, 10_000];
+
+export function quantizeFloor(minUsd: number): number {
+  // Largest ladder rung at or below the request (never ABOVE it — a higher
+  // floor would hide trades the caller asked to see); below the ladder, use
+  // its lowest rung.
+  let floor = FLOOR_LADDER[0];
+  for (const rung of FLOOR_LADDER) if (rung <= minUsd) floor = rung;
+  return floor;
+}
+
 function toScanTrade(
   t: Trade,
   categories: Record<string, string | null>,
@@ -124,8 +142,21 @@ export async function GET(req: Request) {
   const filters = { minUsd, side, hours };
 
   // Fetch at a fast floor; never ask the origin for a slow high-amount query.
-  const baseFloor = Math.min(minUsd, SAFE_FLOOR);
+  // Quantized so the cache-key space (and therefore the number of distinct
+  // deep fetches a caller can provoke) is bounded to ladder × hours.
+  const baseFloor = quantizeFloor(Math.min(minUsd, SAFE_FLOOR));
   const baseKey = `${baseFloor}:${hours}`;
+
+  // A cache MISS here costs a two-sided multi-page sweep, so charge the
+  // public-deployment budget. Cheap relative to the wallet routes (the key
+  // space is small and warm keys are free), hence the roomier ceiling.
+  const limited = guardExpensive(req, "scan", { perIp: 60, global: 300 }, {
+    filters,
+    stats: EMPTY_STATS,
+    truncated: false,
+    trades: [],
+  } satisfies Omit<ScanResponse, "error">);
+  if (limited) return limited;
 
   try {
     const base = await baseCache(baseKey, async () => {

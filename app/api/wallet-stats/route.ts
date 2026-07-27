@@ -1,5 +1,6 @@
 import { openDb } from "../../../lib/db";
 import { getWalletStats, type WalletStats } from "../../../lib/walletStats";
+import { guardExpensive } from "../../../lib/apiGuard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +17,13 @@ const ADDRESS_RE = /^0x[0-9a-f]{40}$/;
 
 type SmartInfo = { score: number | null; isWhitelist: boolean };
 
+// Public-deployment abuse cap, charged in WALLETS: this is the heaviest fanout
+// route (a cold wallet paginates closed + open positions plus a pnl call), so
+// its budget is the tightest. Shares the "wallet-profile" bucket with
+// /api/wallet/[address], which drives the same getWalletStats fanout — one
+// budget, so neither route can be used to bypass the other's ceiling.
+const LIMITS = { perIp: 120, global: 400 };
+
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const raw: string[] = Array.isArray(body?.wallets) ? body.wallets : [];
@@ -24,6 +32,13 @@ export async function POST(req: Request) {
       raw.map((s) => String(s).toLowerCase()).filter((s) => ADDRESS_RE.test(s)),
     ),
   ].slice(0, MAX);
+  const limited = guardExpensive(
+    req,
+    "wallet-profile",
+    { ...LIMITS, cost: wallets.length },
+    { stats: {}, smart: {} },
+  );
+  if (limited) return limited;
   try {
     const db = openDb(process.env.DASH_DB ?? "data.sqlite");
     try {

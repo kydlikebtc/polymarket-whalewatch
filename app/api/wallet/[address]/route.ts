@@ -7,6 +7,7 @@ import {
 } from "../../../../lib/alertHits";
 import { getWalletAges } from "../../../../lib/walletAge";
 import { getWalletStats } from "../../../../lib/walletStats";
+import { guardExpensive } from "../../../../lib/apiGuard";
 import { fetchPusdBalance } from "../../../../lib/pusdBalance";
 import { getSmartTags } from "../../../../lib/smartWallets";
 import { getWalletTags } from "../../../../lib/walletTags";
@@ -61,7 +62,7 @@ function cacheProfile(
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ address: string }> },
 ) {
   const { address: raw } = await params;
@@ -69,6 +70,18 @@ export async function GET(
   if (!ADDRESS_RE.test(address)) {
     return Response.json({ error: "invalid address" }, { status: 400 });
   }
+  // Same getWalletStats fanout as POST /api/wallet-stats (plus activity pages,
+  // holdings and an RPC call), so it shares that route's "wallet-profile"
+  // budget — otherwise enumerating public leaderboard addresses one GET at a
+  // time would walk straight around the batch route's ceiling. Cost 3: a cold
+  // profile is worth several batch wallets.
+  const limited = guardExpensive(
+    req,
+    "wallet-profile",
+    { perIp: 120, global: 400, cost: 3 },
+    { error: "rate limited" },
+  );
+  if (limited) return limited;
   try {
     const db = openDb(process.env.DASH_DB ?? "data.sqlite");
     try {

@@ -1,5 +1,28 @@
 import { describe, it, expect } from "vitest";
-import { walletSetKey, mergeAgeBatch } from "./useWalletAges";
+import {
+  walletSetKey,
+  mergeAgeBatch,
+  isSettledAgeResponse,
+} from "./useWalletAges";
+
+describe("isSettledAgeResponse", () => {
+  it("only 2xx settles a batch", () => {
+    expect(isSettledAgeResponse(200)).toBe(true);
+    expect(isSettledAgeResponse(204)).toBe(true);
+  });
+
+  it("429 is transient — the rate-limited envelope must not settle wallets", () => {
+    // Regression: the 429 body is a parseable {ages:{}}, so merging it marked
+    // every wallet 'age unknown' permanently (badges gone until a hard reload).
+    expect(isSettledAgeResponse(429)).toBe(false);
+  });
+
+  it("server and gateway errors are transient too", () => {
+    for (const s of [500, 502, 503, 504]) {
+      expect(isSettledAgeResponse(s)).toBe(false);
+    }
+  });
+});
 
 describe("walletSetKey", () => {
   it("dedupes, lowercases and sorts so the key is order-insensitive", () => {
