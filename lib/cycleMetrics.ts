@@ -47,6 +47,11 @@ export interface DailyDensity {
   // comparable across days — a falling perM under stable heat means the
   // thresholds drifted, falling heat with stable perM means the market cooled.
   perM: number;
+  // Discovery-channel daily output: NEW wallet_candidates evidence rows first
+  // inserted that day (created_at survives upserts). Costs zero extra
+  // collection and puts the discovery funnel's pulse on the same trend the
+  // consensus engine uses — the dashboard covers both signal surfaces.
+  evidenceNew: number;
 }
 
 export function dailyDensity(
@@ -77,6 +82,19 @@ export function dailyDensity(
     contested_dropped: number;
     fired: number;
   }[];
+  const evidenceByDay = new Map<string, number>(
+    (
+      db
+        .prepare(
+          `SELECT strftime('%Y-%m-%d', created_at, 'unixepoch') AS day,
+                  COUNT(*) AS n
+           FROM wallet_candidates
+           WHERE created_at >= ?
+           GROUP BY day`,
+        )
+        .all(nowSec - days * 86_400) as { day: string; n: number }[]
+    ).map((r) => [r.day, r.n]),
+  );
   return rows.map((r) => ({
     day: r.day,
     cycles: r.cycles,
@@ -86,5 +104,6 @@ export function dailyDensity(
     contestedDropped: r.contested_dropped,
     fired: r.fired,
     perM: r.avg_usd > 0 ? r.fired / (r.avg_usd / 1_000_000) : 0,
+    evidenceNew: evidenceByDay.get(r.day) ?? 0,
   }));
 }

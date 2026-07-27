@@ -56,6 +56,25 @@ describe("recordConsensusCycle + dailyDensity", () => {
     expect(dailyDensity(db, { days: 14, nowSec: DAY0 + 100 })).toHaveLength(1);
   });
 
+  it("发现渠道日产出并入(wallet_candidates.created_at 零新增采集)", () => {
+    const db = openDb(":memory:");
+    recordConsensusCycle(db, m({ ts: DAY0 }));
+    recordConsensusCycle(db, m({ ts: DAY0 + DAY }));
+    const ins = db.prepare(
+      `INSERT INTO wallet_candidates (address, channel, condition_id, evidence_ts, created_at)
+       VALUES (?, 'echo', ?, ?, ?)`,
+    );
+    ins.run("0xa", "0xc1", DAY0, DAY0 + 100);
+    ins.run("0xb", "0xc2", DAY0, DAY0 + 200);
+    ins.run("0xc", "0xc3", DAY0, DAY0 + DAY + 100); // 次日
+    const [today, yesterday] = dailyDensity(db, {
+      days: 14,
+      nowSec: DAY0 + DAY + 300,
+    });
+    expect(yesterday.evidenceNew).toBe(2);
+    expect(today.evidenceNew).toBe(1);
+  });
+
   it("互斥剔除数与原始组数按日合计(阈值重校的证据列)", () => {
     const db = openDb(":memory:");
     recordConsensusCycle(db, m({ rawGroups: 4, contestedDropped: 2 }));

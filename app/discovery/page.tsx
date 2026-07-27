@@ -80,6 +80,7 @@ interface DailyDensity {
   contestedDropped: number;
   fired: number;
   perM: number;
+  evidenceNew: number;
 }
 
 // ------------------------------------------------------------- formatting
@@ -500,9 +501,9 @@ export default function DiscoveryPage() {
           <div
             className="ds-label"
             style={{ marginBottom: "var(--s-2)" }}
-            title="每日共识推送数 ÷ 当日平均 6h 窗口成交量（$1M 归一）。窗口滚动重叠不能求和，平均窗口量是当日市场热度的无偏代理。密度随热度同跌 = 市场降温；热度稳定密度独跌 = 阈值需重校"
+            title="左侧列 = 共识信号引擎（每日推送 ÷ 当日平均 6h 窗口成交量，$1M 归一——窗口滚动重叠不能求和，平均窗口量是热度的无偏代理）；「新证据」列 = 发现渠道当日首次入账的候选证据行。密度随热度同跌 = 市场降温；热度稳定密度独跌 = 阈值需重校"
           >
-            📈 信号密度（14 天） · 推送 ÷ 平均窗口量
+            📈 信号密度（14 天） · 共识推送 ÷ 平均窗口量 + 发现渠道日产出
           </div>
           <div className="ds-table-wrap">
             <table className="ds-table">
@@ -516,6 +517,12 @@ export default function DiscoveryPage() {
                   <th className="is-right">推送</th>
                   <th className="is-right" title="推送 ÷ 平均窗口量（条/$1M）">
                     密度
+                  </th>
+                  <th
+                    className="is-right"
+                    title="发现渠道（共识同行/拆单建仓/内幕签名/早期赢家）当日首次入账的证据行数"
+                  >
+                    新证据
                   </th>
                 </tr>
               </thead>
@@ -535,6 +542,7 @@ export default function DiscoveryPage() {
                     <td className="mono is-right">
                       {d.perM.toFixed(2)} 条/$1M
                     </td>
+                    <td className="mono is-right">{d.evidenceNew}</td>
                   </tr>
                 ))}
               </tbody>
