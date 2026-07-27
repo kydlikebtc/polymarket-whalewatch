@@ -304,4 +304,65 @@ describe("openDb", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("pool_pnl_reaudit v1：清退『高胜率但净亏损』的发现/分类渠道存量成员，记 purged:pnl（P0.4）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "whaledb-"));
+    const path = join(dir, "t.sqlite");
+    try {
+      const legacy = openDb(path);
+      legacy
+        .prepare(
+          `INSERT INTO smart_wallets (address, is_whitelist, source) VALUES
+             ('0xloser', 0, 'discovered:early_winner'),
+             ('0xearner', 0, 'discovered:splitter'),
+             ('0xboard', 0, 'leaderboard'),
+             ('0xnostats', 0, 'category:finance')`,
+        )
+        .run();
+      legacy
+        .prepare(
+          `INSERT INTO wallet_stats (wallet, win_rate, realized_pnl, roi, settled_count, truncated) VALUES
+             ('0xloser', 0.58, -87000, -0.1, 20, 0),
+             ('0xearner', 0.60, 41000, 0.09, 20, 0),
+             ('0xboard', 0.58, -87000, -0.1, 20, 0)`,
+        )
+        .run();
+      // 模拟『数据先于新代码存在』的老库：首次 openDb 在空库上已写过版本
+      // 标记，删掉它让重开时的门控真正跑在有数据的库上。
+      legacy
+        .prepare("DELETE FROM config WHERE key = 'pool_pnl_reaudit_v'")
+        .run();
+      legacy.close();
+
+      const db = openDb(path);
+      const pool = (
+        db
+          .prepare("SELECT address FROM smart_wallets ORDER BY address")
+          .all() as {
+          address: string;
+        }[]
+      ).map((r) => r.address);
+      // 只清退『经质量闸入池且命中漏洞』的：0xloser 出局；
+      // 0xearner 盈利留下；0xboard 全局榜来源不经此闸不动；
+      // 0xnostats 无统计（证据不足）不动。
+      expect(pool).toEqual(["0xboard", "0xearner", "0xnostats"]);
+      const purge = db
+        .prepare("SELECT reason FROM pool_purges WHERE address = '0xloser'")
+        .get() as { reason: string };
+      expect(purge.reason).toBe("purged:pnl");
+      // 版本门控：重开库不重复执行（0xearner 不会因未来口径漂移被误伤）。
+      db.close();
+      const db2 = openDb(path);
+      expect(
+        (
+          db2.prepare("SELECT COUNT(*) AS n FROM pool_purges").get() as {
+            n: number;
+          }
+        ).n,
+      ).toBe(1);
+      db2.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

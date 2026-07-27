@@ -48,6 +48,22 @@ describe("evaluateAdmission", () => {
       "admit",
     );
   });
+  it("胜率通道要求 netPnl>0：高胜率但净亏损 → hold（P0.4）", () => {
+    // 真机实锤：58% 胜率但 −$87k 的钱包曾经此通道入池——胜率高不代表赚钱
+    //（小赢大亏），准入需要盈利的正面证据。
+    expect(
+      evaluateAdmission(
+        stats({ winRate: 0.58, settledCount: 20, netPnl: -87_000, roi: -0.1 }),
+      ),
+    ).toBe("hold");
+  });
+  it("胜率通道 netPnl 未知（null）同样 hold——准入需要证据，缺数据明天重评", () => {
+    expect(
+      evaluateAdmission(
+        stats({ winRate: 0.6, settledCount: 15, netPnl: null, roi: null }),
+      ),
+    ).toBe("hold");
+  });
   it("admits on positive netPnl with real capital efficiency over enough settled markets", () => {
     expect(
       evaluateAdmission(

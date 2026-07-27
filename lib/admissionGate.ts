@@ -25,7 +25,13 @@ export function evaluateAdmission(stats: WalletStats | null): AdmissionVerdict {
   if (
     stats.winRate != null &&
     stats.settledCount >= ADMIT_MIN_SETTLED &&
-    stats.winRate >= ADMIT_MIN_WIN_RATE
+    stats.winRate >= ADMIT_MIN_WIN_RATE &&
+    // netPnl > 0 (P0.4): a high win rate with a losing book is the
+    // small-wins-big-losses pattern (live catch: 58% win rate, −$87k).
+    // Admission needs POSITIVE profit evidence; unknown netPnl holds for
+    // tomorrow's re-enrichment rather than admitting on faith.
+    stats.netPnl != null &&
+    stats.netPnl > 0
   ) {
     return "admit";
   }
