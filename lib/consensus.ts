@@ -288,6 +288,8 @@ export interface ConsensusAlertMeta {
   // "现价 X¢ · 较共识均价 ±Y¢"; absent when the window holds no trade for the
   // token, and the line stays silent rather than showing a stale number.
   latestPrice?: number;
+  // Deployed dashboard base URL → the push's 🎯 signal-card deep link.
+  publicUrl?: string;
 }
 
 export function formatConsensusAlert(
@@ -333,7 +335,10 @@ export function formatConsensusAlert(
     );
   }
   lines.push(
-    `<a href="https://polymarket.com/event/${urlSeg(g.eventSlug)}">市场</a>`,
+    `<a href="https://polymarket.com/event/${urlSeg(g.eventSlug)}">市场</a>` +
+      (meta.publicUrl
+        ? ` · <a href="${meta.publicUrl}/market/${urlSeg(g.conditionId)}">🎯 信号卡</a>`
+        : ""),
   );
   return lines.join("\n");
 }
@@ -359,6 +364,8 @@ export interface ConsensusCycleDeps {
   // Requested window length (sec) — denominator of the coverage log.
   windowSec?: number;
   nowSec?: number;
+  // Deployed dashboard base URL, forwarded into the push's 🎯 card link.
+  publicUrl?: string;
 }
 
 // With an empty whitelist every consensus cycle silently no-ops on a 5-min
@@ -385,6 +392,7 @@ export async function runConsensusCycle(
     stateTtlSec = 6 * 3600,
     windowSec = 6 * 3600,
     nowSec = Math.floor(Date.now() / 1000),
+    publicUrl,
   } = deps;
   const smartTags = getSmart();
   if (smartTags.size === 0) {
@@ -573,6 +581,7 @@ export async function runConsensusCycle(
           // Chase-cost line: latest visible price for the group's token from
           // the window this cycle already fetched (zero extra requests).
           latestPrice: latestPrices.get(g.asset),
+          publicUrl,
         });
         const recordLine = formatRecordLine(
           "共识",

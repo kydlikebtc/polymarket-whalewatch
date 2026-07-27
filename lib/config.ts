@@ -12,6 +12,10 @@ const Env = z.object({
   TELEGRAM_STARTUP_PING: z.string().default(""),
   LARGE_THRESHOLDS: z.string().default("10000,50000"),
   POLL_INTERVAL_MS: z.string().default("4000"),
+  // Public base URL of the deployed dashboard — powers the 🎯 signal-card
+  // deep links in Telegram pushes and bot replies. Defaults to the production
+  // deployment; point elsewhere for a self-hosted instance.
+  PUBLIC_URL: z.string().default("https://whalewatch.wired.fund"),
 });
 const DEFAULT_POLL_INTERVAL_MS = 4000;
 // Floor, not crash: the engine must survive a bad env edit 7×24. The dangerous
@@ -85,6 +89,7 @@ export function parseConfig(raw: Record<string, string | undefined>) {
     telegramStartupPing: parseBoolEnv(e.TELEGRAM_STARTUP_PING),
     largeThresholds: parseLargeThresholds(e.LARGE_THRESHOLDS),
     pollIntervalMs: parsePollIntervalMs(e.POLL_INTERVAL_MS),
+    publicUrl: e.PUBLIC_URL.replace(/\/+$/, ""),
   };
 }
 export type AppConfig = ReturnType<typeof parseConfig>;

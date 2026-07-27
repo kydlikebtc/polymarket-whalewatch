@@ -98,4 +98,11 @@ describe("parseConfig", () => {
     );
     warnSpy.mockRestore();
   });
+
+  it("PUBLIC_URL 默认生产域名,自定义值去尾斜杠", () => {
+    expect(parseConfig({}).publicUrl).toBe("https://whalewatch.wired.fund");
+    expect(parseConfig({ PUBLIC_URL: "http://my.host:61001/" }).publicUrl).toBe(
+      "http://my.host:61001",
+    );
+  });
 });

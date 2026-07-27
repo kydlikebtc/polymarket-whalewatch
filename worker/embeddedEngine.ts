@@ -247,6 +247,7 @@ export function startAlertEngine(): void {
         getMarketMeta: (conditionIds) => getMarketMeta(db, conditionIds),
         send,
         minTimestamp,
+        publicUrl: cfg.publicUrl,
       });
       if (fired > 0) console.log(`[engine] cycle fired ${fired} alert(s)`);
       // Liveness: beat AFTER a successful cycle (a beat means "this loop
@@ -292,6 +293,7 @@ export function startAlertEngine(): void {
         // Coverage-log denominator: fetchWindow's effectiveSinceSec is
         // measured against this requested window.
         windowSec: CONSENSUS_WINDOW_SEC,
+        publicUrl: cfg.publicUrl,
       });
       if (fired > 0) {
         console.log(`[engine] consensus cycle fired ${fired} alert(s)`);
@@ -408,6 +410,25 @@ export function startAlertEngine(): void {
   // bot in ONE process only (same caution as the startup ping).
   if (cfg.telegramEnabled) {
     const BOT_POLL_GAP_MS = 2000;
+    // Register the bot's menu commands (the ☰ button next to the input box)
+    // — idempotent, fire-and-forget: a registration failure only costs the
+    // menu, DM'ing the bot still works.
+    fetch(`https://api.telegram.org/bot${cfg.telegramBotToken}/setMyCommands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        commands: [
+          { command: "card", description: "🎯 市场信号卡：查询任意市场" },
+          { command: "help", description: "使用说明" },
+        ],
+      }),
+      signal: AbortSignal.timeout(10_000),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error(`setMyCommands ${r.status}`);
+        console.log("[bot] menu commands registered (/card /help)");
+      })
+      .catch((e) => console.error("[bot] setMyCommands failed:", e));
     const getUpdatesFn = async (offset: number): Promise<BotUpdate[]> => {
       const url =
         `https://api.telegram.org/bot${cfg.telegramBotToken}/getUpdates` +
@@ -430,6 +451,7 @@ export function startAlertEngine(): void {
             ),
           buildCard: (cid) => buildMarketCard(db, cid),
           resolve: (input) => resolveMarketInput(input),
+          publicUrl: cfg.publicUrl,
         });
         if (r.cards > 0) {
           console.log(`[bot] answered ${r.cards} market-card query(ies)`);

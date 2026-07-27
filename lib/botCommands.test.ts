@@ -98,6 +98,19 @@ describe("formatMarketCardTg", () => {
     expect(html).toContain("polymarket.com/event/x-ev");
   });
 
+  it("publicUrl → 卡片带完整线上信号卡链接（identity 缺失也照带,cid 已知）", () => {
+    const html = formatMarketCardTg(card(), {
+      publicUrl: "https://whalewatch.wired.fund",
+    });
+    expect(html).toContain('href="https://whalewatch.wired.fund/market/0xc1"');
+    expect(html).toContain("完整信号卡");
+    // identity 为 null 时线上链接仍在（conditionId 永远可用）。
+    const bare = formatMarketCardTg(card({ identity: null }), {
+      publicUrl: "https://whalewatch.wired.fund",
+    });
+    expect(bare).toContain("/market/0xc1");
+  });
+
   it("空窗口/无共识时诚实降级,不编数字", () => {
     const html = formatMarketCardTg(
       card({
@@ -144,6 +157,18 @@ describe("runBotCycle", () => {
     // 下一轮用新 offset 拉取。
     await runBotCycle(db, deps);
     expect(deps.getUpdatesFn).toHaveBeenLastCalledWith(101);
+  });
+
+  it("/card 菜单命令 → 引导提示（下一条消息即查询,无需状态机）", async () => {
+    const db = openDb(":memory:");
+    const deps = cycleDeps({
+      getUpdatesFn: vi.fn(async () => [upd(1, "/card", 55)]),
+    });
+    await runBotCycle(db, deps);
+    expect(deps.buildCard).not.toHaveBeenCalled();
+    const msg = (deps.send.mock.calls[0] as unknown[])[1] as string;
+    expect(msg).toContain("发给我");
+    expect((deps.send.mock.calls[0] as unknown[])[0]).toBe(55);
   });
 
   it("文本查询 → 解析 → 组卡 → 回复到发问的 chat", async () => {

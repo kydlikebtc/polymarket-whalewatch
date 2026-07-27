@@ -68,6 +68,7 @@ export function formatLargeTradeAlert(
   t: Trade,
   smart?: SmartTagLabel | null,
   ctx?: TradeMarketContext | null,
+  opts: { publicUrl?: string } = {},
 ): string {
   const n = notionalUsd(t);
   const tag = formatSmartTag(smart);
@@ -87,7 +88,12 @@ export function formatLargeTradeAlert(
   lines.push(
     `<a href="https://polymarket.com/event/${urlSeg(t.eventSlug)}">市场</a> · ` +
       `<a href="https://polymarket.com/profile/${urlSeg(t.proxyWallet)}">${short(t.proxyWallet)}</a> · ` +
-      `<a href="https://polygonscan.com/tx/${urlSeg(t.transactionHash)}">tx</a>`,
+      `<a href="https://polygonscan.com/tx/${urlSeg(t.transactionHash)}">tx</a>` +
+      // Deep link to this tool's own signal card — the push → dashboard
+      // funnel (only when a public deployment URL is configured).
+      (opts.publicUrl
+        ? ` · <a href="${opts.publicUrl}/market/${urlSeg(t.conditionId)}">🎯 信号卡</a>`
+        : ""),
   );
   return lines.join("\n");
 }

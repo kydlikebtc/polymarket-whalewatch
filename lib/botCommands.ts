@@ -29,12 +29,20 @@ export const BOT_HELP_HTML =
   "· conditionId（0x…64 位）\n" +
   "返回该市场的共识/分歧状态、聪明钱留存敞口、拆单累计、新钱包异常流与本工具告警战绩。";
 
+// The 🎯 menu command's reply: a prompt, not a state machine — ANY next text
+// message is already treated as a query, so the prompt is the whole flow.
+export const BOT_CARD_PROMPT_HTML =
+  "🎯 把 Polymarket <b>市场链接</b> / <b>market slug</b> / <b>conditionId</b> 发给我，立刻返回该市场的信号卡。";
+
 // ---------------------------------------------------------------------------
 // Compact TG rendering of a MarketCard. Honest degradation everywhere: no
 // data → say so or omit the line, never invent numbers.
 // ---------------------------------------------------------------------------
 
-export function formatMarketCardTg(card: MarketCard): string {
+export function formatMarketCardTg(
+  card: MarketCard,
+  opts: { publicUrl?: string } = {},
+): string {
   const lines: string[] = [];
   lines.push(`🎯 <b>${esc(card.identity?.title ?? card.conditionId)}</b>`);
 
@@ -109,11 +117,18 @@ export function formatMarketCardTg(card: MarketCard): string {
     );
   }
 
+  const links: string[] = [];
+  if (opts.publicUrl) {
+    links.push(
+      `<a href="${opts.publicUrl}/market/${urlSeg(card.conditionId)}">完整信号卡</a>`,
+    );
+  }
   if (card.identity) {
-    lines.push(
+    links.push(
       `<a href="https://polymarket.com/event/${urlSeg(card.identity.eventSlug)}">Polymarket</a>`,
     );
   }
+  if (links.length > 0) lines.push(links.join(" · "));
   if (card.window.truncated) {
     lines.push("⚠️ 窗口触顶截断,以上指标为下界");
   }
@@ -137,6 +152,8 @@ export interface BotCycleDeps {
   // Excess queries are NOT dropped: the offset stops before them, so the next
   // cycle picks them up.
   maxCards?: number;
+  // Deployed dashboard base URL → the reply's 完整信号卡 deep link.
+  publicUrl?: string;
 }
 
 export async function runBotCycle(
@@ -166,7 +183,7 @@ export async function runBotCycle(
       processed++;
       continue;
     }
-    const isCommand = /^\/(start|help)\b/.test(text);
+    const isCommand = /^\/(start|help|card)\b/.test(text);
     if (!isCommand && cards >= maxCards) {
       // Budget spent: leave THIS update (and everything after) for the next
       // cycle by pointing the offset at it.
@@ -178,14 +195,19 @@ export async function runBotCycle(
     // simply re-ask.
     try {
       if (isCommand) {
-        await send(chatId, BOT_HELP_HTML);
+        await send(
+          chatId,
+          /^\/card\b/.test(text) ? BOT_CARD_PROMPT_HTML : BOT_HELP_HTML,
+        );
       } else {
         const r = await resolve(text);
         if (r.kind === "cid") {
           cards++;
           await send(
             chatId,
-            formatMarketCardTg(await buildCard(r.conditionId)),
+            formatMarketCardTg(await buildCard(r.conditionId), {
+              publicUrl: deps.publicUrl,
+            }),
           );
         } else if (r.kind === "candidates") {
           const list = r.candidates

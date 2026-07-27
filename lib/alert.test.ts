@@ -66,6 +66,19 @@ describe("headline = decision head (TG 锁屏通知只显示第一行)", () => {
   });
 });
 
+describe("publicUrl → 推送带 🎯 线上信号卡链接", () => {
+  it("链接行追加 /market/<cid>；未配置则不渲染", () => {
+    const withUrl = formatLargeTradeAlert(t, null, null, {
+      publicUrl: "https://whalewatch.wired.fund",
+    });
+    expect(withUrl).toContain(
+      'href="https://whalewatch.wired.fund/market/0xc"',
+    );
+    expect(withUrl).toContain("🎯");
+    expect(formatLargeTradeAlert(t)).not.toContain("🎯");
+  });
+});
+
 describe("formatSmartTag（独立凭据行）", () => {
   it("renders score · win rate · realized pnl when all present", () => {
     expect(

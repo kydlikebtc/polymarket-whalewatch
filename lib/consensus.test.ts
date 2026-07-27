@@ -728,6 +728,16 @@ describe("formatConsensusAlert", () => {
     );
   });
 
+  it("meta.publicUrl → 推送带 🎯 线上信号卡链接", () => {
+    const html = formatConsensusAlert(group(), {
+      nowSec: 1060,
+      publicUrl: "https://whalewatch.wired.fund",
+    });
+    expect(html).toContain('href="https://whalewatch.wired.fund/market/0xc"');
+    expect(html).toContain("🎯");
+    expect(formatConsensusAlert(group(), { nowSec: 1060 })).not.toContain("🎯");
+  });
+
   it("meta.latestPrice 渲染现价与较共识均价的偏离（追高成本一眼可见）", () => {
     // 共识均价 50¢，现价 53.2¢ → +3.2¢
     const up = formatConsensusAlert(group(), {

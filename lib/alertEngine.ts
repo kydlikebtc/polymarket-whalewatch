@@ -66,6 +66,8 @@ export interface EngineDeps {
   minTimestamp: number;
   // Injectable clock (unix sec) for hoursToEnd math; defaults to Date.now().
   nowSec?: number;
+  // Deployed dashboard base URL, forwarded into the push's 🎯 card link.
+  publicUrl?: string;
   // Push-throttle knobs (defaults SEND_MIN_GAP_MS / MAX_PUSHES_PER_CYCLE) and
   // an injectable sleep — tests override these to avoid real multi-second waits.
   sendMinGapMs?: number;
@@ -115,6 +117,7 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
     send,
     minTimestamp,
     nowSec = Math.floor(Date.now() / 1000),
+    publicUrl,
     sendMinGapMs = SEND_MIN_GAP_MS,
     maxPushesPerCycle = MAX_PUSHES_PER_CYCLE,
     sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
@@ -362,7 +365,7 @@ export async function runAlertCycle(deps: EngineDeps): Promise<number> {
         try {
           // The format function's output is untouched; the burst summary and
           // the track-record footer are engine-owned suffixes composed here.
-          let html = formatLargeTradeAlert(t, smart, ctx);
+          let html = formatLargeTradeAlert(t, smart, ctx, { publicUrl });
           const burst = burstCount.get(cooldownKey(t)) ?? 1;
           if (burst > 1) {
             html += `\n⏳ 该钱包本轮在此市场共 ${burst} 笔，冷却 ${conditions.cooldownMinutes} 分钟内其余仅入库`;
