@@ -29,6 +29,8 @@ import {
   runOutcomeBackfillCycle,
 } from "../lib/outcomeBackfill";
 import { beat, maybeDailySelfCheck } from "../lib/heartbeat";
+import { runBotCycle, type BotUpdate } from "../lib/botCommands";
+import { buildMarketCard, resolveMarketInput } from "../lib/marketCard";
 
 // Guarded singleton PER PROCESS: instrumentation may call this more than once
 // within a runtime, and the flag makes repeat calls no-ops. It does NOT guard
@@ -396,4 +398,47 @@ export function startAlertEngine(): void {
   // also carries firehose + follow on its shared window) and the evidence
   // backfill (60s) so startup doesn't stack fetches.
   setTimeout(outcomeBackfillLoop, 90_000);
+
+  // --- Bot query loop (🎯 市场信号卡) ------------------------------------
+  // DM the bot a Polymarket link / slug / conditionId → the market signal
+  // card comes back as a reply (composition shared with /api/market, so bot
+  // and dashboard can never disagree). Long-poll getUpdates; replies are
+  // best-effort. SINGLE-POLLER: Telegram 409s a second concurrent getUpdates
+  // consumer per token — in the documented dual-engine deployment run the
+  // bot in ONE process only (same caution as the startup ping).
+  if (cfg.telegramEnabled) {
+    const BOT_POLL_GAP_MS = 2000;
+    const getUpdatesFn = async (offset: number): Promise<BotUpdate[]> => {
+      const url =
+        `https://api.telegram.org/bot${cfg.telegramBotToken}/getUpdates` +
+        `?offset=${offset}&timeout=20&allowed_updates=%5B%22message%22%5D`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(25_000) });
+      if (!res.ok) throw new Error(`getUpdates ${res.status}`);
+      const j = (await res.json()) as { ok: boolean; result?: BotUpdate[] };
+      return j.ok && Array.isArray(j.result) ? j.result : [];
+    };
+    async function botLoop() {
+      try {
+        const r = await runBotCycle(db, {
+          getUpdatesFn,
+          // Reply goes to the ASKING chat, not the alert channel — fresh
+          // creds per send with the chat id swapped in.
+          send: (chatId, html) =>
+            sendMessage(
+              { botToken: cfg.telegramBotToken, chatId: String(chatId) },
+              html,
+            ),
+          buildCard: (cid) => buildMarketCard(db, cid),
+          resolve: (input) => resolveMarketInput(input),
+        });
+        if (r.cards > 0) {
+          console.log(`[bot] answered ${r.cards} market-card query(ies)`);
+        }
+      } catch (e) {
+        console.error("[bot] cycle error", e);
+      }
+      setTimeout(botLoop, BOT_POLL_GAP_MS);
+    }
+    setTimeout(botLoop, 10_000);
+  }
 }
