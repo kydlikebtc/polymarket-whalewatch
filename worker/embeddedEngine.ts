@@ -28,6 +28,7 @@ import {
   createBackfillState,
   runOutcomeBackfillCycle,
 } from "../lib/outcomeBackfill";
+import { beat, maybeDailySelfCheck } from "../lib/heartbeat";
 
 // Guarded singleton PER PROCESS: instrumentation may call this more than once
 // within a runtime, and the flag makes repeat calls no-ops. It does NOT guard
@@ -246,6 +247,14 @@ export function startAlertEngine(): void {
         minTimestamp,
       });
       if (fired > 0) console.log(`[engine] cycle fired ${fired} alert(s)`);
+      // Liveness: beat AFTER a successful cycle (a beat means "this loop
+      // completed", not "this loop was scheduled"), then the day-gated
+      // self-check digest — cheap config read per tick, same pattern as
+      // maybeDailySeed above.
+      beat(db, "alert");
+      maybeDailySelfCheck(db, send).catch((e) =>
+        console.error("[heartbeat] self-check push failed", e),
+      );
     } catch (e) {
       console.error("[engine] cycle error", e);
     }
@@ -321,6 +330,7 @@ export function startAlertEngine(): void {
       } catch (e) {
         console.error("[engine] follow cycle error", e);
       }
+      beat(db, "consensus");
     } catch (e) {
       console.error("[engine] consensus cycle error", e);
     }
@@ -376,6 +386,7 @@ export function startAlertEngine(): void {
             (r.wrapped ? " · sweep complete" : " · sweep continues next cycle"),
         );
       }
+      beat(db, "outcome_backfill");
     } catch (e) {
       console.error("[engine] outcome backfill failed", e);
     }

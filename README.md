@@ -130,13 +130,35 @@ No trade-feed archival. Wallet history, track records, price history, and settle
 
 ## ⚡ Quick start
 
+### Production (server, the default) — Docker Compose
+
+This is a 7×24 monitor: signals fire around the clock, the validation loop's
+statistics assume no blind windows, and a paper-trading experiment with
+wake-hours-only coverage is statistically polluted. **The canonical deployment
+is a small always-on server** (any $5 VPS) running the bundled Compose setup —
+dashboard + embedded engine in one container, SQLite on a named volume,
+`restart: unless-stopped`.
+
+```bash
+git clone https://github.com/kydlikebtc/polymarket-whalewatch && cd polymarket-whalewatch
+cp .env.example .env       # optional: add TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL_ID
+docker compose up -d --build
+# dashboard → http://<server>:61001  (host port set in docker-compose.yml)
+docker compose logs -f     # engine heartbeat: [engine] starting · [consensus] window …
+```
+
+The engine sends a daily 🩺 self-check to Telegram (cycles per loop · alerts
+fired · longest within-day stall) — silence from a loop becomes a visible
+fact instead of an invisible gap.
+
+### Local development
+
 Requirements: **Node 20+**.
 
 ```bash
 npm install
 
-# Web dashboard → http://localhost:3000
-# (set PORT in .env — or `PORT=8080 npm run dev` — to change the port)
+# Web dashboard + embedded engine → http://localhost:3000
 npm run dev
 
 # Run tests
@@ -144,23 +166,16 @@ npm run test
 
 # Zero-credential live smoke test of the whole pipeline (no Telegram needed)
 npx tsx scripts/dry-run.ts
-
-# Live console monitor (no credentials; prints alerts instead of Telegram)
-npx tsx scripts/watch.ts
 ```
 
-### Enable Telegram alerts (worker)
+### Enable Telegram alerts
 
 ```bash
-cp .env.example .env
-# edit .env:
+# in .env:
 #   TELEGRAM_BOT_TOKEN=...               (from @BotFather)
 #   TELEGRAM_CHANNEL_ID=@yourchannel     (bot must be an admin of the channel)
-#   LARGE_THRESHOLDS=10000,50000
-#   POLL_INTERVAL_MS=4000
 
 npx tsx scripts/test-telegram.ts   # send a test message
-npm run worker                     # start the 7×24 worker
 ```
 
 ---

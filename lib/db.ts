@@ -19,6 +19,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS early_winner_scans (condition_id TEXT PRIMARY KEY, scanned_at INTEGER, trades_scanned INTEGER, truncated INTEGER);
     CREATE TABLE IF NOT EXISTS config_history (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, value TEXT, changed_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS pool_purges (address TEXT PRIMARY KEY, reason TEXT NOT NULL, purged_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS heartbeats (loop TEXT PRIMARY KEY, last_ts INTEGER NOT NULL, day TEXT NOT NULL, cycles INTEGER NOT NULL, max_gap_sec INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS follow_strategies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, enabled INTEGER DEFAULT 1, params_json TEXT, created_at INTEGER);
     CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, formation_ts INTEGER, formation_price REAL, markout_30m REAL, markout_2h REAL, UNIQUE(strategy_id, condition_id, outcome));
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
