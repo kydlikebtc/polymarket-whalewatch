@@ -7,6 +7,7 @@ import { isPermanentSendError } from "./telegram";
 import { DEFAULT_DISAGREEMENT, detectDisagreement } from "./disagreement";
 import { avgBuyPrice, exposureUsd, netShares } from "./netPosition";
 import { formatRecordLine, typeSignalRecord } from "./signalRecord";
+import { recordConsensusCycle } from "./cycleMetrics";
 // Runtime-safe despite marketSignals importing FROM this module: that import
 // is type-only (erased at compile), so no require cycle exists.
 import { excludeContestedFromConsensus } from "./marketSignals";
@@ -430,8 +431,39 @@ export async function runConsensusCycle(
       `[consensus] window truncated at the page cap (${trades.length} rows) — detection runs on the shortened window`,
     );
   }
+  // Cycle metric (P0.9): decision metadata for every cycle that fetched a
+  // window — every exit path below records through `finish`, so "no groups"
+  // days are data, not gaps. Window volume is deduped (offset pagination
+  // re-serves boundary rows; summing raw rows would inflate the heat proxy).
+  const windowUsd = (() => {
+    const seenKeys = new Set<string>();
+    let sum = 0;
+    for (const t of trades) {
+      const dk = dedupKey(t);
+      if (seenKeys.has(dk)) continue;
+      seenKeys.add(dk);
+      sum += notionalUsd(t);
+    }
+    return sum;
+  })();
+  const finish = (
+    rawCount: number,
+    contestedDropped: number,
+    fired: number,
+  ): number => {
+    recordConsensusCycle(db, {
+      ts: nowSec,
+      windowTrades: trades.length,
+      windowUsd,
+      rawGroups: rawCount,
+      contestedDropped,
+      fired,
+    });
+    return fired;
+  };
+
   const rawGroups = detectConsensus(trades, smartTags, opts);
-  if (rawGroups.length === 0) return 0;
+  if (rawGroups.length === 0) return finish(0, 0, 0);
   // Disagreement mutex (P0.7): detectConsensus keys by (conditionId, outcome),
   // so a market with smart money on BOTH opposing outcomes yields two
   // one-sided "consensus" groups — and this push path used to alert on each,
@@ -450,7 +482,8 @@ export async function runConsensusCycle(
       `[consensus] disagreement mutex: dropped ${rawGroups.length - groups.length} contested group(s) from the push path`,
     );
   }
-  if (groups.length === 0) return 0;
+  if (groups.length === 0)
+    return finish(rawGroups.length, rawGroups.length - groups.length, 0);
   // Per qualified wallet: the smallest single visible BUY fill (lower bound —
   // fills under the fetch floor are invisible). Minima hugging the floor mean
   // the wallet's real chunks are likely smaller and the floor is masking them
@@ -569,5 +602,5 @@ export async function runConsensusCycle(
     ups.run(g.conditionId, g.outcome, g.walletCount, g.totalNetUsd, nowSec);
     fired++;
   }
-  return fired;
+  return finish(rawGroups.length, rawGroups.length - groups.length, fired);
 }

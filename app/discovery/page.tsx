@@ -69,6 +69,19 @@ interface DiscoveryPayload {
 
 type View = "candidates" | "members";
 
+// Daily consensus-cycle aggregates from /api/cycle-metrics (P0.9): the
+// signal-density dial that separates "market cooled" from "thresholds drifted".
+interface DailyDensity {
+  day: string;
+  cycles: number;
+  avgWindowTrades: number;
+  avgWindowUsd: number;
+  rawGroups: number;
+  contestedDropped: number;
+  fired: number;
+  perM: number;
+}
+
 // ------------------------------------------------------------- formatting
 
 const CHANNEL_META: Record<string, { icon: string; label: string }> = {
@@ -251,6 +264,7 @@ export default function DiscoveryPage() {
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [tagHelpOpen, setTagHelpOpen] = useState(false);
+  const [density, setDensity] = useState<DailyDensity[] | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -270,6 +284,23 @@ export default function DiscoveryPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Signal-density trend (P0.9) — independent fetch so a metrics failure
+  // never blocks the funnel view.
+  useEffect(() => {
+    let active = true;
+    fetch("/api/cycle-metrics")
+      .then((r) => r.json())
+      .then((j) => {
+        if (active) setDensity((j.days as DailyDensity[]) ?? []);
+      })
+      .catch(() => {
+        if (active) setDensity([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Tag filter chips for the ACTIVE view: union of row tag keys with the
   // number of wallets carrying each. Selecting several = AND (a wallet must
@@ -460,6 +491,57 @@ export default function DiscoveryPage() {
           </div>
         </div>
       </section>
+
+      {/* Signal-density trend (P0.9): fired ÷ avg window volume per day.
+          Falling density under stable heat = thresholds drifted out of tune;
+          falling heat with stable density = the market itself cooled. */}
+      {density && density.length > 0 && (
+        <section aria-label="信号密度" style={{ marginBottom: "var(--s-4)" }}>
+          <div
+            className="ds-label"
+            style={{ marginBottom: "var(--s-2)" }}
+            title="每日共识推送数 ÷ 当日平均 6h 窗口成交量（$1M 归一）。窗口滚动重叠不能求和，平均窗口量是当日市场热度的无偏代理。密度随热度同跌 = 市场降温；热度稳定密度独跌 = 阈值需重校"
+          >
+            📈 信号密度（14 天） · 推送 ÷ 平均窗口量
+          </div>
+          <div className="ds-table-wrap">
+            <table className="ds-table">
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th className="is-right">共识轮</th>
+                  <th className="is-right">平均窗口量</th>
+                  <th className="is-right">原始组</th>
+                  <th className="is-right">分歧剔除</th>
+                  <th className="is-right">推送</th>
+                  <th className="is-right" title="推送 ÷ 平均窗口量（条/$1M）">
+                    密度
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {density.map((d) => (
+                  <tr key={d.day}>
+                    <td className="mono">{d.day}</td>
+                    <td className="mono is-right">{d.cycles}</td>
+                    <td className="mono is-right">
+                      ${(d.avgWindowUsd / 1_000_000).toFixed(2)}M
+                    </td>
+                    <td className="mono is-right">{d.rawGroups}</td>
+                    <td className="mono is-right muted">
+                      {d.contestedDropped}
+                    </td>
+                    <td className="mono is-right">{d.fired}</td>
+                    <td className="mono is-right">
+                      {d.perM.toFixed(2)} 条/$1M
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
       <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
         🏅 分类榜旁路：六类 × 周/月榜前 25
         直接进闸门（榜单排名即复发证据，仅过战绩审查） · ↺

@@ -425,6 +425,56 @@ describe("runConsensusCycle", () => {
     ).toEqual({ n: 0 });
   });
 
+  it("每轮落库 cycle_metrics 决策元数据（P0.9），contested 轮次也记录", async () => {
+    const db = openDb(":memory:");
+    // 正常轮：1 组成立并推送。
+    await runConsensusCycle(deps(db));
+    // contested 轮：对立结果都有聪明钱 → 原始 1 组、互斥剔 1、推 0。
+    await runConsensusCycle(
+      deps(db, {
+        nowSec: 10_300,
+        fetchWindow: async () => ({
+          trades: [
+            mk({ proxyWallet: "0xA", transactionHash: "0x1" }),
+            mk({ proxyWallet: "0xB", transactionHash: "0x2" }),
+            mk({
+              proxyWallet: "0xC",
+              transactionHash: "0x3",
+              asset: "asset2",
+              outcome: "No",
+              outcomeIndex: 1,
+            }),
+          ],
+          truncated: false,
+        }),
+      }),
+    );
+    const rows = db
+      .prepare(
+        "SELECT ts, window_trades, raw_groups, contested_dropped, fired FROM cycle_metrics WHERE loop='consensus' ORDER BY id",
+      )
+      .all() as {
+      ts: number;
+      window_trades: number;
+      raw_groups: number;
+      contested_dropped: number;
+      fired: number;
+    }[];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      ts: 10_000,
+      window_trades: 2,
+      raw_groups: 1,
+      contested_dropped: 0,
+      fired: 1,
+    });
+    expect(rows[1]).toMatchObject({
+      raw_groups: 1,
+      contested_dropped: 1,
+      fired: 0,
+    });
+  });
+
   it("共识推送尾部内嵌共识类型 30d 战绩（P0.14）", async () => {
     const db = openDb(":memory:");
     // 既往 6 条已判定共识信号（4 中 2 负）。
