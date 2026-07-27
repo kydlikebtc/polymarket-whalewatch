@@ -89,6 +89,25 @@ export function TopNav() {
           ))}
         </div>
         <span style={{ flex: 1 }} />
+        {/* External channel link — same explicit window.open fallback as
+            WalletLink (the webview ignores target=_blank on its own). */}
+        <a
+          className="nav-link"
+          href="https://t.me/Polymarket_WhaleWatch"
+          target="_blank"
+          rel="noreferrer"
+          title="Telegram 频道：实时信号推送，每条自带 30 天可验证命中率"
+          onClick={(e) => {
+            e.preventDefault();
+            window.open(
+              "https://t.me/Polymarket_WhaleWatch",
+              "_blank",
+              "noopener,noreferrer",
+            );
+          }}
+        >
+          📣 TG 频道
+        </a>
         <Tag>只读监控</Tag>
       </div>
     </nav>
