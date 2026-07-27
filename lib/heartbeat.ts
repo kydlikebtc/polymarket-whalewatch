@@ -73,6 +73,27 @@ export function getHeartbeats(db: DB): LoopHealth[] {
 }
 
 const SELFCHECK_DAY_KEY = "heartbeat_selfcheck_last_day";
+const ENGINE_STARTED_KEY = "engine_started_at";
+
+/** Record this engine process's start time (drives health's grace period). */
+export function markEngineStart(
+  db: DB,
+  nowSec: number = Math.floor(Date.now() / 1000),
+): void {
+  db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)").run(
+    ENGINE_STARTED_KEY,
+    String(nowSec),
+  );
+}
+
+/** Engine start time, or null if no engine has ever run against this db. */
+export function getEngineStart(db: DB): number | null {
+  const row = db
+    .prepare("SELECT value FROM config WHERE key = ?")
+    .get(ENGINE_STARTED_KEY) as { value: string | null } | undefined;
+  const n = Number(row?.value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 /**
  * Once per UTC day, push a liveness digest through the (health-wrapped) send.

@@ -28,7 +28,15 @@ import {
   createBackfillState,
   runOutcomeBackfillCycle,
 } from "../lib/outcomeBackfill";
-import { beat, maybeDailySelfCheck } from "../lib/heartbeat";
+import {
+  beat,
+  getEngineStart,
+  getHeartbeats,
+  markEngineStart,
+  maybeDailySelfCheck,
+} from "../lib/heartbeat";
+import { createBackupState, maybeDailyBackup } from "../lib/dbBackup";
+import { evaluateHealth } from "../lib/health";
 import { runBotCycle, type BotUpdate } from "../lib/botCommands";
 import { buildMarketCard, resolveMarketInput } from "../lib/marketCard";
 
@@ -193,6 +201,12 @@ export function startAlertEngine(): void {
       cfg.telegramEnabled ? "on" : "off (records to SQLite only)"
     } · interval=${cfg.pollIntervalMs}ms`,
   );
+
+  // Start marker for the health grace period: a loop that throws on EVERY
+  // pass never writes a heartbeat row, so "rows we have are fresh" would rate
+  // the worst failure as healthy. evaluateHealth compares this against the
+  // per-loop thresholds to call an expected-but-absent loop stale.
+  markEngineStart(db, nowStartSec);
 
   maybeStartupPing(send, cfg.telegramStartupPing);
 
@@ -375,6 +389,7 @@ export function startAlertEngine(): void {
   // null-retry backoff, cached gamma meta); the cycle only picks candidates.
   const OUTCOME_BACKFILL_INTERVAL_MS = 10 * 60_000;
   const outcomeBackfillState = createBackfillState();
+  const backupState = createBackupState();
   async function outcomeBackfillLoop() {
     try {
       const r = await runOutcomeBackfillCycle(db, outcomeBackfillState, {
@@ -391,6 +406,20 @@ export function startAlertEngine(): void {
         );
       }
       beat(db, "outcome_backfill");
+      // Daily SQLite snapshot rides this 10-minute carrier (same piggyback
+      // pattern as the self-check on the alert loop). Fire and forget: the
+      // online-backup API never blocks the engine's writes, and a backup
+      // failure must never disturb the backfill cadence.
+      maybeDailyBackup(db, backupState)
+        .then((r) => {
+          if (r) {
+            console.log(
+              `[backup] daily snapshot ${r.file}` +
+                (r.pruned.length ? ` · pruned ${r.pruned.length} old` : ""),
+            );
+          }
+        })
+        .catch((e) => console.error("[backup] daily snapshot failed", e));
     } catch (e) {
       console.error("[engine] outcome backfill failed", e);
     }
@@ -462,5 +491,48 @@ export function startAlertEngine(): void {
       setTimeout(botLoop, BOT_POLL_GAP_MS);
     }
     setTimeout(botLoop, 10_000);
+  }
+
+  // --- Dead-man's switch: outbound health ping ---------------------------
+  // The heartbeat digest and /api/health both go SILENT when the engine dies
+  // — by design an external service must notice the silence. With
+  // HEALTHCHECK_PING_URL set (healthchecks.io / Uptime Kuma push monitor),
+  // the engine GETs the URL every minute while every loop is fresh; a hang or
+  // death stops the pings and the service alerts the operator through a
+  // channel independent of this process AND of Telegram. Skipping the ping on
+  // stale loops (instead of pinging "I'm half alive") is what turns a silent
+  // loop hang into the same alarm as full process death.
+  if (cfg.healthcheckPingUrl) {
+    const HEALTH_PING_INTERVAL_MS = 60_000;
+    async function healthPingLoop() {
+      try {
+        const report = evaluateHealth(
+          getHeartbeats(db),
+          Math.floor(Date.now() / 1000),
+          getEngineStart(db),
+        );
+        if (report.ok) {
+          const res = await fetch(cfg.healthcheckPingUrl, {
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!res.ok) throw new Error(`ping ${res.status}`);
+        } else {
+          console.warn(
+            `[health] skip external ping — ${
+              report.staleLoops.length
+                ? `stale loops: ${report.staleLoops.join(",")}`
+                : (report.reason ?? "unhealthy")
+            }`,
+          );
+        }
+      } catch (e) {
+        console.error("[health] external ping failed", e);
+      }
+      setTimeout(healthPingLoop, HEALTH_PING_INTERVAL_MS);
+    }
+    // First ping after the startup stagger (consensus 30s, backfill 90s) so a
+    // fresh boot doesn't spend its first minutes "unhealthy" for no reason.
+    setTimeout(healthPingLoop, 120_000);
+    console.log("[health] dead-man's switch ping enabled (60s cadence)");
   }
 }

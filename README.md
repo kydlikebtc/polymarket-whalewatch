@@ -152,6 +152,23 @@ The engine sends a daily 🩺 self-check to Telegram (cycles per loop · alerts
 fired · longest within-day stall) — silence from a loop becomes a visible
 fact instead of an invisible gap.
 
+Production hardening (all on by default in the docker image):
+
+- **Public read-only guard** — with `NODE_ENV=production` the dashboard is
+  read-only for visitors: config writes require `ADMIN_TOKEN` (`.env`) via the
+  `x-admin-token` header (the 告警条件 panel has a token field), and the
+  expensive lookup routes are per-IP rate limited. Override either way with
+  `PUBLIC_READONLY=1|0`.
+- **Daily SQLite snapshot** — the engine snapshots the live db to
+  `<data dir>/backups/data-<utc-day>.sqlite` once per UTC day (SQLite online
+  backup, WAL-safe, keeps the newest 7). Copy them off-host for real disaster
+  cover.
+- **Liveness** — `GET /api/health` returns 503 whenever an engine loop stops
+  beating (the compose healthcheck uses it, so `docker ps` shows
+  `(unhealthy)` on hangs), and an optional `HEALTHCHECK_PING_URL`
+  (healthchecks.io / Uptime Kuma) gets a ping every minute while all loops
+  are fresh — pings stopping alerts you even if the whole host dies.
+
 ### Local development
 
 Requirements: **Node 20+**.

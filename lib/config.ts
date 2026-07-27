@@ -16,6 +16,11 @@ const Env = z.object({
   // deep links in Telegram pushes and bot replies. Defaults to the production
   // deployment; point elsewhere for a self-hosted instance.
   PUBLIC_URL: z.string().default("https://whalewatch.wired.fund"),
+  // Dead-man's switch (optional): a healthchecks.io/uptime-kuma style ping
+  // URL. The engine GETs it every minute WHILE ALL LOOPS ARE FRESH — so the
+  // ping service's "no ping received" alarm covers process death AND silent
+  // loop hangs, through a channel independent of this process and of Telegram.
+  HEALTHCHECK_PING_URL: z.string().default(""),
 });
 const DEFAULT_POLL_INTERVAL_MS = 4000;
 // Floor, not crash: the engine must survive a bad env edit 7×24. The dangerous
@@ -90,6 +95,7 @@ export function parseConfig(raw: Record<string, string | undefined>) {
     largeThresholds: parseLargeThresholds(e.LARGE_THRESHOLDS),
     pollIntervalMs: parsePollIntervalMs(e.POLL_INTERVAL_MS),
     publicUrl: e.PUBLIC_URL.replace(/\/+$/, ""),
+    healthcheckPingUrl: e.HEALTHCHECK_PING_URL.trim(),
   };
 }
 export type AppConfig = ReturnType<typeof parseConfig>;
