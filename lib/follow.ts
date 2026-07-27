@@ -6,6 +6,7 @@ import type { MarketMeta } from "./gamma";
 import { excludeContestedFromConsensus } from "./marketSignals";
 import { wilsonInterval } from "./outcomeStats";
 import type { SmartTag } from "./smartWallets";
+import { latestPriceByAsset } from "./trades";
 import type { Trade } from "./types";
 
 // 纸面跟单的单仓 / 策略 / 价格纯函数。全部无副作用,便于 TDD 与复用。
@@ -76,18 +77,10 @@ export function qualifyingGroups(
  * 「取数组末元素/last-wins」(那会返回最旧价)。严格 `>` ⇒ 时间戳相等时先见者胜
  * (与 newest-first 顺序一致,保留最先出现即最新的那笔)。
  */
-export function latestPriceByAsset(trades: Trade[]): Map<string, number> {
-  const latestTs = new Map<string, number>();
-  const price = new Map<string, number>();
-  for (const t of trades) {
-    const prev = latestTs.get(t.asset);
-    if (prev == null || t.timestamp > prev) {
-      latestTs.set(t.asset, t.timestamp);
-      price.set(t.asset, t.price);
-    }
-  }
-  return price;
-}
+// Moved to lib/trades.ts so the consensus push (chase-cost line) can share it
+// without a follow ↔ consensus require cycle; re-exported to keep existing
+// imports/tests stable.
+export { latestPriceByAsset };
 
 // ---------------------------------------------------------------------------
 // Task 5: runFollowCycle —— 纸面「共识跟单」一轮。开仓 + 结算,注入式依赖(同

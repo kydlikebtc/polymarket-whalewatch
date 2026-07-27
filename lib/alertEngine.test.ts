@@ -358,10 +358,10 @@ describe("runAlertCycle", () => {
     expect(fired).toBe(2);
     const sent = send.mock.calls.map((c) => c[0] as string);
     // The full credential label (score · win rate · realized pnl) flows from
-    // getSmart straight into the pushed headline.
-    expect(sent.some((m) => m.includes("🏆 聪明钱 82分·胜率68%·盈$1.2M"))).toBe(
-      true,
-    );
+    // getSmart into the pushed message as its own credentials line.
+    expect(
+      sent.some((m) => m.includes("🏆 聪明钱 82分 · 胜率68% · 盈$1.2M")),
+    ).toBe(true);
     const types = db
       .prepare("SELECT type, dedup_key FROM alerts ORDER BY id")
       .all() as { type: string; dedup_key: string }[];

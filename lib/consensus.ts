@@ -1,7 +1,7 @@
 import type { DB } from "./db";
 import type { Trade } from "./types";
 import type { SmartTag } from "./smartWallets";
-import { dedupKey, notionalUsd } from "./trades";
+import { dedupKey, latestPriceByAsset, notionalUsd } from "./trades";
 import { cents, durText, esc, short, urlSeg, usd } from "./tgFormat";
 import { isPermanentSendError } from "./telegram";
 import { DEFAULT_DISAGREEMENT, detectDisagreement } from "./disagreement";
@@ -282,6 +282,11 @@ export interface ConsensusAlertMeta {
   // full requested window (the dashboard has shown this for a while — Telegram
   // readers were the ones left uninformed).
   coverage?: { coveredSec: number; windowSec: number };
+  // Latest visible trade price for the group's token (from the SAME window the
+  // cycle already fetched — zero extra requests). Renders the chase-cost line
+  // "现价 X¢ · 较共识均价 ±Y¢"; absent when the window holds no trade for the
+  // token, and the line stays silent rather than showing a stale number.
+  latestPrice?: number;
 }
 
 export function formatConsensusAlert(
@@ -290,14 +295,24 @@ export function formatConsensusAlert(
 ): string {
   const nowSec = meta.nowSec ?? Math.floor(Date.now() / 1000);
   const lines = [
-    `🔥 <b>聪明钱共识</b> · ${g.walletCount} 个白名单钱包同向买入`,
+    // Headline carries the OUTCOME — the lock-screen preview alone answers
+    // "who's buying what".
+    `🔥 <b>聪明钱共识</b> · ${g.walletCount} 个白名单钱包买入 <b>${esc(g.outcome)}</b>`,
     `<b>${esc(g.title)}</b>`,
-    `${esc(g.outcome)} · 合计净买入 <b>${usd(g.totalNetUsd)}</b> · 均价 ${cents(g.avgBuyPrice)}`,
+    `合计净买入 <b>${usd(g.totalNetUsd)}</b> · 均价 ${cents(g.avgBuyPrice)}`,
     // "15 分钟内集中买入" vs "6 小时里分散各买一笔" are very different signals
     // — and under the rolling window an OLD formation would otherwise push
     // with the same face as a fresh one.
     `⏱ 集中于 ${durText(g.lastTs - g.firstTs)}内 · 最近一笔 ${durText(nowSec - g.lastTs)}前`,
   ];
+  if (meta.latestPrice != null && g.avgBuyPrice > 0) {
+    // Chase cost, stated neutrally (read-only tool — a fact, not a call):
+    // positive = the market already moved past the smart money's entry.
+    const d = meta.latestPrice - g.avgBuyPrice;
+    lines.push(
+      `现价 ${cents(meta.latestPrice)} · 较共识均价 ${d < 0 ? "-" : "+"}${cents(Math.abs(d))}`,
+    );
+  }
   for (const w of g.wallets.slice(0, 3)) {
     const bits: string[] = [];
     if (w.score != null) bits.push(`评分${Math.round(w.score)}`);
@@ -477,6 +492,8 @@ export async function runConsensusCycle(
     "DELETE FROM alerts WHERE type = 'consensus' AND dedup_key = ?",
   );
   let fired = 0;
+  // One pass over the window for every group's chase-cost line.
+  const latestPrices = latestPriceByAsset(trades);
   for (const g of groups) {
     const row = sel.get(g.conditionId, g.outcome) as
       { wallet_count: number; last_alert_ts: number } | undefined;
@@ -517,7 +534,13 @@ export async function runConsensusCycle(
       try {
         // P0.14: the push carries the consensus signal type's own verifiable
         // 30d record — engine-owned footer, format function untouched.
-        let html = formatConsensusAlert(g, { nowSec, coverage });
+        let html = formatConsensusAlert(g, {
+          nowSec,
+          coverage,
+          // Chase-cost line: latest visible price for the group's token from
+          // the window this cycle already fetched (zero extra requests).
+          latestPrice: latestPrices.get(g.asset),
+        });
         const recordLine = formatRecordLine(
           "共识",
           typeSignalRecord(db, "consensus", { nowSec }),

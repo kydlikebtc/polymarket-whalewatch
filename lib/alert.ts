@@ -20,8 +20,10 @@ export interface SmartTagLabel {
   netPnl?: number | null; // net P/L (realized + unrealized)
 }
 
-// "🏆 聪明钱 72分·胜率68%·盈$1.2M " (trailing space; null segments omitted —
-// an all-null tag degrades to the bare "🏆 聪明钱 ").
+// Standalone credentials line: "🏆 聪明钱 72分 · 胜率68% · 盈$1.2M" (null
+// segments omitted — an all-null tag degrades to the bare "🏆 聪明钱"). Used
+// as its own message line; the headline carries only a compact 🏆 marker so
+// the decision head stays scannable.
 export function formatSmartTag(
   smart: SmartTagLabel | null | undefined,
 ): string {
@@ -37,7 +39,7 @@ export function formatSmartTag(
         : `盈${usdCompact(smart.netPnl)}`,
     );
   }
-  return parts.length > 0 ? `🏆 聪明钱 ${parts.join("·")} ` : "🏆 聪明钱 ";
+  return parts.length > 0 ? `🏆 聪明钱 ${parts.join(" · ")}` : "🏆 聪明钱";
 }
 
 // "占24h量 18% · 流动性 $229,073 · 距结算 5h" — whichever parts are known.
@@ -51,7 +53,7 @@ export function formatMarketCtxLine(
     const pct = ctx.impact24h * 100;
     parts.push(`占24h量 ${pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)}%`);
   }
-  if (ctx.liquidity != null) parts.push(`流动性 ${usd(ctx.liquidity)}`);
+  if (ctx.liquidity != null) parts.push(`流动性 ${usdCompact(ctx.liquidity)}`);
   if (ctx.hoursToEnd != null) {
     parts.push(
       ctx.hoursToEnd < 48
@@ -69,14 +71,17 @@ export function formatLargeTradeAlert(
 ): string {
   const n = notionalUsd(t);
   const tag = formatSmartTag(smart);
-  const whale = n >= WHALE_TIER_USD ? "🐳 " : "💰 ";
-  // Decision essentials first: direction (color-coded), bolded amount, then
-  // outcome @ price in Polymarket's ¢ notation.
+  const whale = n >= WHALE_TIER_USD ? "🐳" : "💰";
   const side = t.side === "SELL" ? "🔴卖出" : "🟢买入";
+  // Line 1 is the DECISION HEAD — Telegram's lock-screen notification shows
+  // only the first line, so it must carry direction, bolded amount, outcome
+  // and ¢ price by itself (a 🏆 marker flags smart money; the full
+  // credentials get their own line below). The title reads second.
   const lines = [
-    `${whale}${tag}<b>${esc(t.title)}</b>`,
-    `${side} <b>${usd(n)}</b> · ${esc(t.outcome)} @ ${cents(t.price)}`,
+    `${whale} ${tag ? "🏆 " : ""}${side} <b>${usd(n)}</b> · ${esc(t.outcome)} @ ${cents(t.price)}`,
+    `<b>${esc(t.title)}</b>`,
   ];
+  if (tag) lines.push(tag);
   const ctxLine = formatMarketCtxLine(ctx);
   if (ctxLine) lines.push(ctxLine);
   lines.push(

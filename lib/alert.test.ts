@@ -53,52 +53,54 @@ describe("🐳/💰 tier by NOTIONAL, not configuration", () => {
   });
 });
 
-describe("second line: direction + bold amount + ¢ price", () => {
-  it("BUY renders 🟢买入 <b>$…</b> · Outcome @ XX.X¢", () => {
+describe("headline = decision head (TG 锁屏通知只显示第一行)", () => {
+  it("BUY 首行 = tier + 方向 + 加粗金额 + 结果 @ ¢，标题退居第二行", () => {
     // 50,000 shares at 53.2¢ → $26,600
     const html = formatLargeTradeAlert({ ...t, size: 50000, price: 0.532 });
-    expect(html.split("\n")[1]).toBe("🟢买入 <b>$26,600</b> · Yes @ 53.2¢");
+    expect(html.split("\n")[0]).toBe("💰 🟢买入 <b>$26,600</b> · Yes @ 53.2¢");
+    expect(html.split("\n")[1]).toBe("<b>Trump &amp; &lt;Biden&gt;</b>");
   });
   it("SELL renders 🔴卖出 and trims a whole-cent price to 50¢", () => {
     const html = formatLargeTradeAlert({ ...t, side: "SELL" });
-    expect(html.split("\n")[1]).toBe("🔴卖出 <b>$50,000</b> · Yes @ 50¢");
+    expect(html.split("\n")[0]).toBe("🐳 🔴卖出 <b>$50,000</b> · Yes @ 50¢");
   });
 });
 
-describe("formatSmartTag", () => {
+describe("formatSmartTag（独立凭据行）", () => {
   it("renders score · win rate · realized pnl when all present", () => {
     expect(
       formatSmartTag({ score: 72, winRate: 0.68, netPnl: 1_200_000 }),
-    ).toBe("🏆 聪明钱 72分·胜率68%·盈$1.2M ");
+    ).toBe("🏆 聪明钱 72分 · 胜率68% · 盈$1.2M");
   });
   it("omits null segments individually", () => {
     expect(formatSmartTag({ score: null, winRate: 0.68, netPnl: null })).toBe(
-      "🏆 聪明钱 胜率68% ",
+      "🏆 聪明钱 胜率68%",
     );
-    expect(formatSmartTag({ score: 82 })).toBe("🏆 聪明钱 82分 ");
+    expect(formatSmartTag({ score: 82 })).toBe("🏆 聪明钱 82分");
   });
   it("degrades to the bare label when every segment is null", () => {
     expect(formatSmartTag({ score: null, winRate: null, netPnl: null })).toBe(
-      "🏆 聪明钱 ",
+      "🏆 聪明钱",
     );
   });
   it("a negative realized pnl reads 亏, not 盈", () => {
     expect(formatSmartTag({ score: null, netPnl: -250_000 })).toBe(
-      "🏆 聪明钱 亏$250K ",
+      "🏆 聪明钱 亏$250K",
     );
   });
   it("no tag at all renders nothing", () => {
     expect(formatSmartTag(undefined)).toBe("");
     expect(formatSmartTag(null)).toBe("");
   });
-  it("flows into the alert headline", () => {
+  it("聪明钱：首行带 🏆 标记，凭据独立成行（首行不再拥挤）", () => {
     const html = formatLargeTradeAlert(t, {
       score: 72,
       winRate: 0.68,
       netPnl: 1_200_000,
     });
-    expect(html.split("\n")[0]).toContain(
-      "🏆 聪明钱 72分·胜率68%·盈$1.2M <b>Trump",
-    );
+    const lines = html.split("\n");
+    expect(lines[0]).toBe("🐳 🏆 🟢买入 <b>$50,000</b> · Yes @ 50¢");
+    expect(lines[1]).toBe("<b>Trump &amp; &lt;Biden&gt;</b>");
+    expect(lines[2]).toBe("🏆 聪明钱 72分 · 胜率68% · 盈$1.2M");
   });
 });

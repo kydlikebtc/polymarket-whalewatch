@@ -671,6 +671,32 @@ describe("formatConsensusAlert", () => {
     expect(html).toContain("净买 $10,000 @50¢ (评分80·胜率70%)");
   });
 
+  it("首行带买入结果（锁屏通知即读懂方向）", () => {
+    const html = formatConsensusAlert(group(), { nowSec: 1060 });
+    expect(html.split("\n")[0]).toBe(
+      "🔥 <b>聪明钱共识</b> · 2 个白名单钱包买入 <b>Yes</b>",
+    );
+  });
+
+  it("meta.latestPrice 渲染现价与较共识均价的偏离（追高成本一眼可见）", () => {
+    // 共识均价 50¢，现价 53.2¢ → +3.2¢
+    const up = formatConsensusAlert(group(), {
+      nowSec: 1060,
+      latestPrice: 0.532,
+    });
+    expect(up).toContain("现价 53.2¢ · 较共识均价 +3.2¢");
+    // 现价低于均价 → 负号（还比聪明钱买得便宜）
+    const down = formatConsensusAlert(group(), {
+      nowSec: 1060,
+      latestPrice: 0.48,
+    });
+    expect(down).toContain("现价 48¢ · 较共识均价 -2¢");
+    // 不传 → 无现价行（窗口里没有该 token 的成交时保持诚实沉默）
+    expect(formatConsensusAlert(group(), { nowSec: 1060 })).not.toContain(
+      "现价",
+    );
+  });
+
   it("appends the time-span line computed from firstTs/lastTs (<60min in minutes)", () => {
     const g = group({ timestamp: 1000 }, { timestamp: 1900 });
     const html = formatConsensusAlert(g, { nowSec: 2080 });
