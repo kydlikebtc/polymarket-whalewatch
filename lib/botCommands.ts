@@ -35,88 +35,110 @@ export const BOT_CARD_PROMPT_HTML =
   "🎯 把 Polymarket <b>市场链接</b> / <b>market slug</b> / <b>conditionId</b> 发给我，立刻返回该市场的信号卡。";
 
 // ---------------------------------------------------------------------------
-// Compact TG rendering of a MarketCard. Honest degradation everywhere: no
-// data → say so or omit the line, never invent numbers.
+// Sectioned TG rendering of a MarketCard. Layout principles (born from a live
+// readability complaint — everything used to pile into one undifferentiated
+// stack of lines):
+//  1. BLANK LINES between sections — Telegram's only real grouping primitive.
+//  2. Bold section headers (聪明钱动向 / 本工具战绩) so the eye can jump.
+//  3. Prices/amounts in bold as scan anchors; names stay plain.
+//  4. One fact per line — no more gluing amount+count+price into one string.
+//  5. Honest degradation: an empty section disappears whole (no orphan
+//     headers), missing data says so — never invented numbers.
 // ---------------------------------------------------------------------------
 
 export function formatMarketCardTg(
   card: MarketCard,
   opts: { publicUrl?: string } = {},
 ): string {
-  const lines: string[] = [];
-  lines.push(`🎯 <b>${esc(card.identity?.title ?? card.conditionId)}</b>`);
+  const blocks: string[] = [];
 
+  // -- Header: title / bold prices / volume ------------------------------
+  const head: string[] = [
+    `🎯 <b>${esc(card.identity?.title ?? card.conditionId)}</b>`,
+  ];
   if (card.meta && card.meta.outcomes.length > 0) {
     const prices = card.meta.outcomes
       .slice(0, 4)
       .map((o, i) => {
         const p = card.meta?.outcomePrices[i];
-        return p != null ? `${esc(o)} ${cents(p)}` : null;
+        return p != null ? `${esc(o)} <b>${cents(p)}</b>` : null;
       })
       .filter(Boolean)
       .join(" · ");
-    lines.push(
-      `现价 ${prices}${card.meta.closed ? " · 已结算" : ""}` +
-        (card.meta.volume24hr != null
-          ? ` · 24h 量 ${usd(card.meta.volume24hr)}`
-          : ""),
-    );
+    head.push(`${prices}${card.meta.closed ? " · 已结算" : ""}`);
+    if (card.meta.volume24hr != null) {
+      head.push(`24h 量 ${usd(card.meta.volume24hr)}`);
+    }
   }
+  blocks.push(head.join("\n"));
 
+  // -- Signal state -------------------------------------------------------
   const cls = card.brief.classification;
   if (cls.kind === "consensus") {
-    lines.push(
-      `🔥 共识:${cls.group.walletCount} 钱包买入 <b>${esc(cls.group.outcome)}</b>` +
-        ` · 净买 ${usd(cls.group.totalNetUsd)} @${cents(cls.group.avgBuyPrice)}`,
+    blocks.push(
+      `🔥 <b>共识</b> · ${cls.group.walletCount} 钱包买入 <b>${esc(cls.group.outcome)}</b>\n` +
+        `净买 ${usd(cls.group.totalNetUsd)} @${cents(cls.group.avgBuyPrice)}`,
     );
   } else if (cls.kind === "disagreement") {
     const sides = cls.market.sides
       .map((s) => `${esc(s.outcome)} ${s.walletCount} 钱包 ${usd(s.netUsd)}`)
       .join(" vs ");
-    lines.push(`⚖️ 分歧:${sides}`);
+    blocks.push(`⚖️ <b>分歧</b>\n${sides}`);
   } else {
-    lines.push(`窗口内无共识/分歧（近 ${card.window.hours}h）`);
+    blocks.push(`⚪️ 近 ${card.window.hours}h 无共识/分歧`);
   }
 
-  if (card.brief.smartFlow.length > 0) {
-    const flow = card.brief.smartFlow
-      .map(
-        (f) =>
-          `${esc(f.outcome)} ${usd(f.totalExposureUsd)}(${f.wallets.length} 钱包)`,
-      )
-      .join(" · ");
-    lines.push(`🏆 聪明钱敞口:${flow}`);
-  }
-
-  if (card.brief.accum.length > 0) {
-    const top = card.brief.accum[0];
-    lines.push(
-      `🧩 拆单:${card.brief.accum.length} 个累计者 · 最大 ${usd(top.exposureUsd)} @${cents(top.avgBuyPrice)}`,
+  // -- Smart-money activity (one fact per line; whole block omitted when
+  //    the window carried nothing) ---------------------------------------
+  const activity: string[] = [];
+  for (const f of card.brief.smartFlow.slice(0, 2)) {
+    // Outcome-level entry price = exposure-weighted mean of wallet averages.
+    const totalExposure = f.wallets.reduce((s, w) => s + w.exposureUsd, 0);
+    const wavg =
+      totalExposure > 0
+        ? f.wallets.reduce((s, w) => s + w.avgBuyPrice * w.exposureUsd, 0) /
+          totalExposure
+        : 0;
+    activity.push(
+      `🏆 ${esc(f.outcome)} 留仓 <b>${usd(f.totalExposureUsd)}</b>（${f.wallets.length} 钱包 · 均价 ${cents(wavg)}）`,
     );
   }
-
+  if (card.brief.accum.length > 0) {
+    const top = card.brief.accum[0];
+    activity.push(
+      `🧩 拆单 ${card.brief.accum.length} 人 · 最大 ${usd(top.exposureUsd)} @${cents(top.avgBuyPrice)}`,
+    );
+  }
   if (card.freshFlow.length > 0) {
     const top = card.freshFlow[0];
     const age =
       top.ageDays < 1
         ? `${Math.round(top.ageDays * 24)}小时`
         : `${Math.round(top.ageDays)}天`;
-    lines.push(
-      `🆕 新钱包:${card.freshFlow.length} 笔 · 最大 ${usd(top.usd)} @${cents(top.price)}（账龄 ${age}）`,
+    activity.push(
+      `🆕 新钱包 ${card.freshFlow.length} 笔 · 最大 ${usd(top.usd)} @${cents(top.price)}（账龄 ${age}）`,
     );
   }
+  if (activity.length > 0) {
+    blocks.push(`<b>聪明钱动向</b>\n${activity.join("\n")}`);
+  }
 
+  // -- The tool's own record ---------------------------------------------
+  let record: string;
   if (card.history.length === 0) {
-    lines.push("📐 暂无本工具告警");
+    record = "📐 90d 暂无告警";
   } else {
     const judged = card.history.filter((h) => h.won != null);
     const wins = judged.filter((h) => h.won === 1).length;
-    lines.push(
-      `📐 告警史 90d:${card.history.length} 条` +
-        (judged.length > 0 ? ` · 已判定 ${wins}/${judged.length} 中` : ""),
-    );
+    record =
+      `📐 90d ${card.history.length} 条告警` +
+      (judged.length > 0
+        ? ` · 已判定 ${wins}/${judged.length} 中`
+        : " · 尚未判定");
   }
+  blocks.push(`<b>本工具战绩</b>\n${record}`);
 
+  // -- Links + honesty footer --------------------------------------------
   const links: string[] = [];
   if (opts.publicUrl) {
     links.push(
@@ -128,11 +150,12 @@ export function formatMarketCardTg(
       `<a href="https://polymarket.com/event/${urlSeg(card.identity.eventSlug)}">Polymarket</a>`,
     );
   }
-  if (links.length > 0) lines.push(links.join(" · "));
-  if (card.window.truncated) {
-    lines.push("⚠️ 窗口触顶截断,以上指标为下界");
-  }
-  return lines.join("\n");
+  const tail: string[] = [];
+  if (links.length > 0) tail.push(`🔗 ${links.join(" · ")}`);
+  if (card.window.truncated) tail.push("⚠️ 窗口触顶截断,以上指标为下界");
+  if (tail.length > 0) blocks.push(tail.join("\n"));
+
+  return blocks.join("\n\n");
 }
 
 // ---------------------------------------------------------------------------

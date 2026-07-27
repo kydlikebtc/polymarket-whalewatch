@@ -86,32 +86,41 @@ const card = (over: Partial<MarketCard> = {}): MarketCard => ({
 });
 
 describe("formatMarketCardTg", () => {
-  it("渲染标题/现价/共识/敞口/新钱包/告警战绩为紧凑 TG 卡", () => {
+  it("分区版式:空行隔段,价格加粗做锚点,三个小节可扫读", () => {
     const html = formatMarketCardTg(card());
+    // 头部块:标题 + 现价(价格加粗) + 量。
     expect(html).toContain("🎯 <b>Will X happen?</b>");
-    expect(html).toContain("Yes 40¢");
-    expect(html).toContain("🔥 共识:3 钱包买入 <b>Yes</b>");
-    expect(html).toContain("$45,000");
-    expect(html).toContain("🏆 聪明钱敞口:Yes $34,855(1 钱包)");
-    expect(html).toContain("🆕 新钱包:1 笔");
-    expect(html).toContain("📐 告警史 90d:1 条 · 已判定 1/1 中");
+    expect(html).toContain("Yes <b>40¢</b> · No <b>60¢</b>");
+    expect(html).toContain("24h 量 $120,000");
+    // 空行分区(TG 可读性的关键)。
+    expect(html).toContain("\n\n");
+    // 信号区:共识醒目,金额与均价独立行。
+    expect(html).toContain("🔥 <b>共识</b> · 3 钱包买入 <b>Yes</b>");
+    expect(html).toContain("净买 $45,000 @37.9¢");
+    // 聪明钱动向区:小节标题 + 每行一个事实。
+    expect(html).toContain("<b>聪明钱动向</b>");
+    expect(html).toContain("🏆 Yes 留仓 <b>$34,855</b>（1 钱包 · 均价 50¢）");
+    expect(html).toContain("🆕 新钱包 1 笔 · 最大 $9,971 @68.4¢（账龄 5小时）");
+    // 战绩区。
+    expect(html).toContain("<b>本工具战绩</b>");
+    expect(html).toContain("📐 90d 1 条告警 · 已判定 1/1 中");
     expect(html).toContain("polymarket.com/event/x-ev");
   });
 
-  it("publicUrl → 卡片带完整线上信号卡链接（identity 缺失也照带,cid 已知）", () => {
+  it("publicUrl → 链接区带 🔗 完整信号卡（identity 缺失也照带,cid 已知）", () => {
     const html = formatMarketCardTg(card(), {
       publicUrl: "https://whalewatch.wired.fund",
     });
     expect(html).toContain('href="https://whalewatch.wired.fund/market/0xc1"');
+    expect(html).toContain("🔗");
     expect(html).toContain("完整信号卡");
-    // identity 为 null 时线上链接仍在（conditionId 永远可用）。
     const bare = formatMarketCardTg(card({ identity: null }), {
       publicUrl: "https://whalewatch.wired.fund",
     });
     expect(bare).toContain("/market/0xc1");
   });
 
-  it("空窗口/无共识时诚实降级,不编数字", () => {
+  it("空窗口/无共识时诚实降级:⚪️ 状态行,空节整段消失,不编数字", () => {
     const html = formatMarketCardTg(
       card({
         identity: null,
@@ -122,9 +131,17 @@ describe("formatMarketCardTg", () => {
       }),
     );
     expect(html).toContain("0xc1"); // 无 identity 退回 cid
-    expect(html).toContain("窗口内无共识/分歧");
+    expect(html).toContain("⚪️ 近 24h 无共识/分歧");
     expect(html).not.toContain("🆕");
-    expect(html).toContain("暂无本工具告警");
+    expect(html).not.toContain("聪明钱动向"); // 空节不留孤儿标题
+    expect(html).toContain("📐 90d 暂无告警");
+  });
+
+  it("拆单与新钱包挂在聪明钱动向节下,各占一行", () => {
+    const html = formatMarketCardTg(card());
+    const section = html.split("<b>聪明钱动向</b>")[1].split("\n\n")[0];
+    expect(section).toContain("🏆");
+    expect(section).toContain("🆕");
   });
 });
 
