@@ -30,8 +30,60 @@ describe("settleWon", () => {
     expect(settleWon("BUY", 0.9, 0.5)).toBeNull();
     expect(settleWon("SELL", 0.1, 0.5)).toBeNull();
     // Settle inside the deadband around the fill: P&L noise, not a verdict.
+    // (Fractional/scalar settlements only — see the binary cases below.)
     expect(settleWon("BUY", 0.6, 0.6 + OUTCOME_EPSILON / 2)).toBeNull();
     expect(settleWon("SELL", 0.6, 0.6 - OUTCOME_EPSILON / 2)).toBeNull();
+  });
+
+  // Regression: the ε-near-fill push used to apply to 0/1 settlements too,
+  // which made the deadband one-sided — an extreme fill could only ever lose
+  // (or, at the low end, only ever win). Smart money loading up at 0.997 is
+  // exactly the signal shape this tool exists to catch, so the record must
+  // grade it both ways.
+  describe("binary settlements stay decisive at extreme fills", () => {
+    const EXTREME_HIGH = [0.996, 0.997, 0.999];
+    const EXTREME_LOW = [0.001, 0.003, 0.004];
+
+    it("a high fill that settles at 1 is a WIN, at 0 a LOSS", () => {
+      for (const entry of EXTREME_HIGH) {
+        expect(settleWon("BUY", entry, 1)).toBe(true);
+        expect(settleWon("BUY", entry, 0)).toBe(false);
+      }
+    });
+
+    it("a low fill that settles at 1 is a WIN, at 0 a LOSS", () => {
+      for (const entry of EXTREME_LOW) {
+        expect(settleWon("BUY", entry, 1)).toBe(true);
+        expect(settleWon("BUY", entry, 0)).toBe(false);
+      }
+    });
+
+    it("SELL mirrors it at both extremes", () => {
+      for (const entry of [...EXTREME_HIGH, ...EXTREME_LOW]) {
+        expect(settleWon("SELL", entry, 0)).toBe(true);
+        expect(settleWon("SELL", entry, 1)).toBe(false);
+      }
+    });
+
+    it("the deadband is symmetric: no fill can be verdict-free in only one direction", () => {
+      // For every fill price, a 0-settle and a 1-settle must either BOTH
+      // produce a verdict or BOTH be pushes. A one-sided null is the bug.
+      for (let e = 0.001; e < 1; e += 0.001) {
+        const entry = Number(e.toFixed(3));
+        const atOne = settleWon("BUY", entry, 1);
+        const atZero = settleWon("BUY", entry, 0);
+        expect(
+          [atOne === null, atZero === null],
+          `entry=${entry} → settle1=${atOne} settle0=${atZero}`,
+        ).toEqual([false, false]);
+      }
+    });
+
+    it("zero P&L is still a push (fill exactly at the settle)", () => {
+      expect(settleWon("BUY", 1, 1)).toBeNull();
+      expect(settleWon("BUY", 0, 0)).toBeNull();
+      expect(settleWon("SELL", 1, 1)).toBeNull();
+    });
   });
 });
 

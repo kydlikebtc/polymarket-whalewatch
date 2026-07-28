@@ -40,8 +40,24 @@ export function settleWon(
   entry: number,
   resolutionPrice: number,
 ): boolean | null {
+  // A ≈50/50 resolution (cancelled event / draw ruling) carries no verdict.
   if (Math.abs(resolutionPrice - 0.5) < OUTCOME_EPSILON) return null;
-  if (Math.abs(resolutionPrice - entry) < OUTCOME_EPSILON) return null;
+  // Exactly zero P&L is a push at any fill price.
+  if (resolutionPrice === entry) return null;
+  // The ε-near-the-fill push is only meaningful for FRACTIONAL (scalar)
+  // settlements, where landing within half a cent of the fill really is a
+  // wash. Applying it to standard 0/1 settlements made the deadband
+  // ASYMMETRIC: a 0.997 fill settling at 1 was discarded as a push while the
+  // SAME fill settling at 0 counted as a loss — so extreme-conviction alerts
+  // could only ever lose (mirrored at the low end: sub-0.005 fills could only
+  // ever win). A binary settlement is decisive however extreme the fill was;
+  // the call was either right or wrong.
+  const isBinary =
+    resolutionPrice <= OUTCOME_EPSILON ||
+    resolutionPrice >= 1 - OUTCOME_EPSILON;
+  if (!isBinary && Math.abs(resolutionPrice - entry) < OUTCOME_EPSILON) {
+    return null;
+  }
   return side === "BUY" ? resolutionPrice > entry : resolutionPrice < entry;
 }
 
