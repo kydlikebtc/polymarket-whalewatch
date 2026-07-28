@@ -4,6 +4,7 @@ import {
   formatRecordLine,
   typeSignalRecord,
   walletSignalRecord,
+  type SignalRecord,
 } from "./signalRecord";
 
 const NOW = 1_700_000_000;
@@ -18,6 +19,8 @@ function insertSignal(
     createdAt?: number;
     won?: number | null; // null = push 或未结算(见 resolved)
     resolved?: number;
+    price?: number | null; // 成交价 = 市场隐含概率（评分基准）
+    priceKey?: "price" | "avgBuyPrice"; // consensus 用后者
   } = {},
 ): void {
   const {
@@ -26,12 +29,16 @@ function insertSignal(
     createdAt = NOW - DAY,
     won = 1,
     resolved = 1,
+    price = 0.5,
+    priceKey = "price",
   } = over;
+  const payload: Record<string, unknown> = { proxyWallet: wallet };
+  if (price != null) payload[priceKey] = price;
   const r = db
     .prepare(
       "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, ?, ?)",
     )
-    .run(type, `k${seq++}`, JSON.stringify({ proxyWallet: wallet }), createdAt);
+    .run(type, `k${seq++}`, JSON.stringify(payload), createdAt);
   db.prepare(
     "INSERT INTO alert_outcomes (alert_id, resolved, won, checked_at) VALUES (?, ?, ?, ?)",
   ).run(Number(r.lastInsertRowid), resolved, won, createdAt);
@@ -51,8 +58,39 @@ describe("walletSignalRecord", () => {
     const r = walletSignalRecord(db, "0xaaa", { nowSec: NOW });
     expect(r.settled).toBe(3);
     expect(r.wins).toBe(2);
-    expect(r.wilsonLo).toBeGreaterThan(0);
-    expect(r.wilsonLo).toBeLessThan(2 / 3);
+    // 三笔都成交在 0.5：市场自己预期赢 1.5 次，实际 2 次 → 超额 +0.5
+    expect(r.implied).toBeCloseTo(1.5);
+    expect(r.excess).toBeCloseTo(0.5);
+  });
+
+  it("超额以成交价为基准，而非 50% —— 原始胜率会把两类钱包排反", () => {
+    // 全买大热门 0.9，10 战 9 胜：原始胜率 90% 唬人，但市场本就预期 9 胜。
+    const db = openDb(":memory:");
+    for (let i = 0; i < 9; i++) insertSignal(db, { won: 1, price: 0.9 });
+    insertSignal(db, { won: 0, price: 0.9 });
+    const fav = walletSignalRecord(db, "0xaaa", { nowSec: NOW });
+    expect(fav.wins).toBe(9);
+    expect(fav.implied).toBeCloseTo(9);
+    expect(fav.excess).toBeCloseTo(0); // 毫无信息量
+
+    // 全买冷门 0.2，10 战 3 胜：原始胜率 30% 难看，实则跑赢市场。
+    const db2 = openDb(":memory:");
+    for (let i = 0; i < 3; i++) insertSignal(db2, { won: 1, price: 0.2 });
+    for (let i = 0; i < 7; i++) insertSignal(db2, { won: 0, price: 0.2 });
+    const dog = walletSignalRecord(db2, "0xaaa", { nowSec: NOW });
+    expect(dog.excess).toBeCloseTo(1); // 比市场预期多赢 1 次
+    expect(dog.wins / dog.settled).toBeLessThan(fav.wins / fav.settled);
+    expect(dog.excess).toBeGreaterThan(fav.excess);
+  });
+
+  it("无成交价的行两侧都不计（没有基准就无法评分）", () => {
+    const db = openDb(":memory:");
+    insertSignal(db, { won: 1, price: 0.5 });
+    insertSignal(db, { won: 1, price: null });
+    const r = walletSignalRecord(db, "0xaaa", { nowSec: NOW });
+    expect(r.settled).toBe(1);
+    expect(r.wins).toBe(1);
+    expect(r.implied).toBeCloseTo(0.5);
   });
 
   it("大小写不敏感（payload 里的地址可能是混合大小写）", () => {
@@ -72,32 +110,78 @@ describe("typeSignalRecord", () => {
     expect(r.settled).toBe(2);
     expect(r.wins).toBe(1);
   });
+
+  it("共识的成交价在 avgBuyPrice 键下，同样能取到基准", () => {
+    const db = openDb(":memory:");
+    const o = {
+      type: "consensus",
+      price: 0.4,
+      priceKey: "avgBuyPrice" as const,
+    };
+    insertSignal(db, { ...o, won: 1 });
+    insertSignal(db, { ...o, won: 0 });
+    const r = typeSignalRecord(db, "consensus", { nowSec: NOW });
+    expect(r.settled).toBe(2);
+    expect(r.implied).toBeCloseTo(0.8);
+    expect(r.excess).toBeCloseTo(0.2);
+  });
 });
+
+// 构造 formatRecordLine 的输入：给定笔数/胜数/统一成交价。
+function rec(settled: number, wins: number, price: number): SignalRecord {
+  return {
+    settled,
+    wins,
+    implied: settled * price,
+    excess: wins - settled * price,
+    sd: Math.sqrt(settled * price * (1 - price)),
+  };
+}
 
 describe("formatRecordLine", () => {
   it("零样本 → null（无信息不占版面）", () => {
-    expect(
-      formatRecordLine("该钱包", { settled: 0, wins: 0, wilsonLo: 0 }),
-    ).toBeNull();
+    expect(formatRecordLine("该钱包", rec(0, 0, 0.5))).toBeNull();
   });
-  it("样本不足（<5）→ 如实标注，不给 Wilson", () => {
-    const line = formatRecordLine("该钱包", {
-      settled: 3,
-      wins: 2,
-      wilsonLo: 0.2,
-    });
+
+  it("样本不足（<5）→ 只报原始战绩并如实标注", () => {
+    const line = formatRecordLine("该钱包", rec(3, 2, 0.5))!;
     expect(line).toContain("2/3");
     expect(line).toContain("样本不足");
-    expect(line).not.toContain("下界");
+    expect(line).not.toContain("超额");
   });
-  it("样本充足 → 命中 + 自解释的保守估计（不出现统计学术语）", () => {
-    const line = formatRecordLine("该钱包", {
-      settled: 18,
-      wins: 12,
-      wilsonLo: 0.44,
-    });
-    expect(line).toBe("📐 该钱包 30d 信号:12/18 中 · 剔除运气后至少 44%");
+
+  it("样本充足 → 命中数、市场同价位预期、超额、噪音判定 四件同框", () => {
+    const line = formatRecordLine("该钱包", rec(18, 12, 0.5))!;
+    expect(line).toBe(
+      "📐 该钱包 30d 信号:12/18 中 · 市场同价位预期 9.0 中 · 超额 +3.0（仍在运气范围内）",
+    );
     // 频道读者不该需要统计学背景——术语只留在 glossary 里解释。
     expect(line).not.toContain("Wilson");
+  });
+
+  it("超额永不脱离噪音判定单独出现（防被截图当结论）", () => {
+    for (const r of [rec(18, 12, 0.5), rec(40, 30, 0.5), rec(20, 6, 0.5)]) {
+      const line = formatRecordLine("该钱包", r)!;
+      expect(line).toContain("超额");
+      expect(line).toMatch(/（(已超运气范围|仍在运气范围内)）/);
+    }
+  });
+
+  it("超过 2σ 才敢说已超运气范围", () => {
+    // 40 笔 @0.5：sd≈3.16，2σ≈6.3。30 胜 → 超额 +10，越线。
+    expect(formatRecordLine("该钱包", rec(40, 30, 0.5))!).toContain(
+      "已超运气范围",
+    );
+    // 同样 40 笔，24 胜 → 超额 +4，未越线。
+    expect(formatRecordLine("该钱包", rec(40, 24, 0.5))!).toContain(
+      "仍在运气范围内",
+    );
+  });
+
+  it("跑输市场时超额为负，不会被包装成正面数字", () => {
+    // 旧文案的病灶：20 笔 @0.9 只中 16（比市场预期少 2 次）会印「至少 58%」。
+    const line = formatRecordLine("该钱包", rec(20, 16, 0.9))!;
+    expect(line).toContain("超额 −2.0");
+    expect(line).not.toMatch(/至少/);
   });
 });

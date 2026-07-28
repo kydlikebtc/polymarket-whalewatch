@@ -46,7 +46,9 @@ async function main() {
   const rec1 = formatRecordLine("该钱包", {
     settled: 18,
     wins: 12,
-    wilsonLo: 0.44,
+    implied: 9,
+    excess: 3,
+    sd: Math.sqrt(18 * 0.25),
   });
   const m1 = formatLargeTradeAlert(trade({}), null, {
     impact24h: 0.18,
@@ -61,7 +63,9 @@ async function main() {
   const rec2 = formatRecordLine("该钱包", {
     settled: 3,
     wins: 2,
-    wilsonLo: 0.2,
+    implied: 1.5,
+    excess: 0.5,
+    sd: Math.sqrt(3 * 0.25),
   });
   const m2 = formatLargeTradeAlert(
     trade({
@@ -136,7 +140,9 @@ async function main() {
   const rec3 = formatRecordLine("共识", {
     settled: 26,
     wins: 17,
-    wilsonLo: 0.46,
+    implied: 13,
+    excess: 4,
+    sd: Math.sqrt(26 * 0.25),
   });
   const m3 = formatConsensusAlert(g, {
     nowSec: NOW,

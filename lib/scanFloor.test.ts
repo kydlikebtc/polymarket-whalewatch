@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { quantizeFloor } from "./api/scan/route";
+import { quantizeFloor } from "./scanFloor";
 
 // The scan cache key is (fetch floor : hours). An unquantized floor let a
 // caller mint a fresh key — and therefore a fresh two-sided multi-page deep

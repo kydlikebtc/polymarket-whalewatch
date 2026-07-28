@@ -477,13 +477,14 @@ describe("runConsensusCycle", () => {
 
   it("共识推送尾部内嵌共识类型 30d 战绩（P0.14）", async () => {
     const db = openDb(":memory:");
-    // 既往 6 条已判定共识信号（4 中 2 负）。
+    // 既往 6 条已判定共识信号（4 中 2 负）。共识的成交价存在 avgBuyPrice 键下
+    // （组内 usd 加权均价），它是战绩的评分基准。
     for (let i = 0; i < 6; i++) {
       const r = db
         .prepare(
-          "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES ('consensus', ?, '{}', ?)",
+          "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES ('consensus', ?, ?, ?)",
         )
-        .run(`chist${i}`, 9_000 - i);
+        .run(`chist${i}`, JSON.stringify({ avgBuyPrice: 0.5 }), 9_000 - i);
       db.prepare(
         "INSERT INTO alert_outcomes (alert_id, resolved, won, checked_at) VALUES (?, 1, ?, 9000)",
       ).run(Number(r.lastInsertRowid), i < 4 ? 1 : 0);
@@ -492,6 +493,7 @@ describe("runConsensusCycle", () => {
     await runConsensusCycle(deps(db, { send }));
     const msg = send.mock.calls[0][0] as string;
     expect(msg).toContain("📐 共识 30d 信号:4/6 中");
+    expect(msg).toContain("市场同价位预期 3.0 中");
   });
 
   it("落库 payload 冻结当轮共识参数（P0.3 参数快照）", async () => {

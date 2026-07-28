@@ -1,6 +1,7 @@
 import { getTradesWindowDeep } from "../../../lib/polymarket";
 import { createPromiseCache } from "../../../lib/promiseCache";
 import { guardExpensive } from "../../../lib/apiGuard";
+import { quantizeFloor } from "../../../lib/scanFloor";
 import { getEventCategories } from "../../../lib/gamma";
 import { openDb } from "../../../lib/db";
 import { notionalUsd } from "../../../lib/trades";
@@ -81,23 +82,6 @@ function parseSide(raw: string | null): "BUY" | "SELL" | "ALL" {
 function parseMinUsd(raw: string | null): number {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 10_000;
-}
-
-// The user's minUsd is applied CLIENT-side, so the only thing the fetch floor
-// controls is how deep the upstream sweep goes. Snapping it to a fixed ladder
-// keeps the promise-cache key space finite: an unquantized floor let a caller
-// mint a brand-new key (and thus a brand-new ~40-page deep fetch, plus a cache
-// entry that never expires) with every distinct minUsd from 1..9999. Same
-// ALLOWED_* discipline /api/accumulation and /api/consensus already use.
-const FLOOR_LADDER: readonly number[] = [500, 1000, 2000, 5000, 10_000];
-
-export function quantizeFloor(minUsd: number): number {
-  // Largest ladder rung at or below the request (never ABOVE it — a higher
-  // floor would hide trades the caller asked to see); below the ladder, use
-  // its lowest rung.
-  let floor = FLOOR_LADDER[0];
-  for (const rung of FLOOR_LADDER) if (rung <= minUsd) floor = rung;
-  return floor;
 }
 
 function toScanTrade(

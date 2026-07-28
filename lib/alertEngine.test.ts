@@ -88,7 +88,8 @@ describe("runAlertCycle", () => {
 
   it("(a3) 推送尾部内嵌该钱包 30d 信号命中率（P0.14）", async () => {
     const db = openDb(":memory:");
-    // 该钱包既往 5 条已判定信号（3 中 2 负）——推送应带 Wilson 战绩行。
+    // 该钱包既往 5 条已判定信号（3 中 2 负），全部成交在 0.5——推送应带战绩行。
+    // 成交价是评分基准（市场同价位预期 2.5 中），无价的行不计分。
     for (let i = 0; i < 5; i++) {
       const r = db
         .prepare(
@@ -96,7 +97,7 @@ describe("runAlertCycle", () => {
         )
         .run(
           `hist${i}`,
-          JSON.stringify({ proxyWallet: "0xWALLET" }),
+          JSON.stringify({ proxyWallet: "0xWALLET", price: 0.5 }),
           1000 - 10 - i,
         );
       db.prepare(
@@ -115,6 +116,8 @@ describe("runAlertCycle", () => {
     });
     const msg = send.mock.calls[0][0] as string;
     expect(msg).toContain("📐 该钱包 30d 信号:3/5 中");
+    // 命中数旁边必须同时印出市场基准，否则 3/5 无从解读。
+    expect(msg).toContain("市场同价位预期 2.5 中");
   });
 
   it("(b) side filter keeps only the matching side", async () => {
