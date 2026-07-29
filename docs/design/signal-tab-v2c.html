@@ -1,0 +1,1589 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MM Mobile · 信号 Tab · V2-C 炭黑</title>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap");
+
+      /* ══ V2-C Tokens（tokens/colors.css · typography.css · shape.css · motion.css）══ */
+      :root {
+        --bg-page: #1b1d1e;
+        --bg-nav: #161819;
+        --bg-card: #242627;
+        --bg-inner: #2c2f30;
+        --bg-hover: #333637;
+        --line: #313435;
+        --border-strong: #3f4345;
+        --text-primary: #ffffff;
+        --text-secondary: #a8aeb0;
+        --text-muted: #7a8082;
+        --text-disabled: #4a4e50;
+        --green: #3fe065;
+        --green-tint: rgba(63, 224, 101, 0.12);
+        --on-green: #0b2213;
+        --red: #ff5a65;
+        --red-tint: rgba(255, 90, 101, 0.12);
+        --amber: #f0a93c;
+        --amber-tint: rgba(240, 169, 60, 0.18);
+        --tab-bar-bg: rgba(22, 24, 25, 0.92);
+        --font-sans:
+          "Montserrat", -apple-system, "PingFang SC", "Microsoft YaHei",
+          sans-serif;
+        --radius-card: 16px;
+        --radius-inner: 12px;
+        --radius-btn: 14px;
+        --radius-btn-sm: 12px;
+        --radius-pill: 999px;
+        --radius-sheet: 24px;
+        --btn-h: 52px;
+        --btn-h-sm: 44px;
+        --dur-enter: 120ms;
+        --dur-sheet-in: 300ms;
+        --dur-sheet-out: 200ms;
+        --press-scale: 0.97;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+      }
+      body {
+        background: #0e0f10;
+        font-family: var(--font-sans);
+        color: var(--text-primary);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 24px 12px 56px;
+        min-height: 100vh;
+      }
+      .num {
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* 开发用状态切换（交付时删除整块 .dev） */
+      .dev {
+        display: flex;
+        gap: 5px;
+        background: var(--bg-nav);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-pill);
+        padding: 4px;
+      }
+      .dev button {
+        border: 0;
+        background: transparent;
+        color: var(--text-muted);
+        font: 700 11px/1 var(--font-sans);
+        padding: 8px 13px;
+        border-radius: var(--radius-pill);
+        cursor: pointer;
+      }
+      .dev button.on {
+        background: var(--green-tint);
+        color: var(--green);
+        font-weight: 800;
+      }
+      .dev-note {
+        font-size: 10.5px;
+        color: var(--text-disabled);
+      }
+
+      .phone {
+        width: 390px;
+        height: 844px;
+        background: var(--bg-page);
+        border-radius: 30px;
+        border: 1px solid #2a2c2d;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+        overflow: hidden;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+      }
+      .sb {
+        height: 44px;
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 20px;
+        font-size: 13.5px;
+        font-weight: 800;
+      }
+      .sb .r {
+        display: flex;
+        gap: 5px;
+        align-items: center;
+        font-size: 10.5px;
+        font-weight: 600;
+        color: var(--text-secondary);
+      }
+      .scroll {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding-bottom: 96px;
+        scrollbar-width: none;
+      }
+      .scroll::-webkit-scrollbar {
+        display: none;
+      }
+
+      .hd {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 16px 0;
+      }
+      .hd h1 {
+        font-size: 17px;
+        font-weight: 800;
+        letter-spacing: 0.3px;
+      }
+      .hd .sync {
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--text-muted);
+      }
+      .hd .sync.bad {
+        color: var(--red);
+      }
+
+      /* ══ 轴 1：类型 chips（Chip.jsx 规范）══ */
+      .chips-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        padding: 10px 16px 0;
+      }
+      .chips {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        gap: 7px;
+        overflow-x: auto;
+        scrollbar-width: none;
+        padding: 1px 0;
+      }
+      .chips::-webkit-scrollbar {
+        display: none;
+      }
+      .chip {
+        flex: none;
+        height: 30px;
+        padding: 0 13px;
+        border-radius: var(--radius-pill);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        font-weight: 700;
+        border: 1px solid var(--border-strong);
+        background: transparent;
+        color: var(--text-secondary);
+        transition: background var(--dur-enter) ease-out;
+      }
+      .chip:active {
+        transform: scale(var(--press-scale));
+      }
+      .chip.on {
+        border: none;
+        background: var(--green-tint);
+        color: var(--green);
+        font-weight: 800;
+      }
+      .chip .n {
+        font-variant-numeric: tabular-nums;
+        opacity: 0.8;
+      }
+
+      /* ══ 轴 2：筛选（与 MarketsScreen 同款控件）══ */
+      .filt {
+        flex: none;
+        height: 30px;
+        padding: 0 11px;
+        background: var(--bg-card);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-pill);
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--text-primary);
+      }
+      .filt.active {
+        border-color: var(--green);
+        color: var(--green);
+      }
+      .filt:active {
+        transform: scale(var(--press-scale));
+      }
+      .filt-echo {
+        display: none;
+        padding: 7px 16px 0;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .filt-echo.on {
+        display: flex;
+      }
+      .echo {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        height: 24px;
+        padding: 0 9px;
+        border-radius: var(--radius-pill);
+        background: var(--green-tint);
+        color: var(--green);
+        font-size: 10px;
+        font-weight: 800;
+      }
+      .echo .x {
+        cursor: pointer;
+        opacity: 0.8;
+        font-size: 12px;
+        line-height: 1;
+      }
+
+      .lbl {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        padding: 16px 18px 0;
+      }
+      .lbl .t {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 1.2px;
+        color: var(--text-muted);
+      }
+      .lbl .s {
+        font-size: 9.5px;
+        font-weight: 600;
+        color: var(--text-disabled);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .warn {
+        display: none;
+        margin: 12px 16px 0;
+        background: var(--amber-tint);
+        border-radius: var(--radius-inner);
+        padding: 11px 13px;
+        gap: 10px;
+        align-items: flex-start;
+      }
+      body.is-outage .warn {
+        display: flex;
+      }
+      .warn svg {
+        flex: none;
+        margin-top: 1px;
+      }
+      .warn b {
+        display: block;
+        font-size: 12px;
+        font-weight: 800;
+        color: var(--amber);
+      }
+      .warn span {
+        display: block;
+        font-size: 10.5px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        margin-top: 2px;
+      }
+
+      /* ══ 信号卡 ══ */
+      .list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 8px 16px 0;
+      }
+      .card {
+        background: var(--bg-card);
+        border-radius: var(--radius-card);
+        padding: 13px 14px;
+        animation: enter var(--dur-enter) ease-out both;
+      }
+      .card:nth-child(2) {
+        animation-delay: 40ms;
+      }
+      .card:nth-child(3) {
+        animation-delay: 80ms;
+      }
+      .card:nth-child(4) {
+        animation-delay: 120ms;
+      }
+      .card:nth-child(5) {
+        animation-delay: 160ms;
+      }
+      @keyframes enter {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      .card.ran {
+        opacity: 0.62;
+      }
+      body.is-outage .card {
+        opacity: 0.45;
+      }
+
+      .c-top {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+      }
+      .ico {
+        width: 32px;
+        height: 32px;
+        border-radius: 9px;
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 9px;
+        font-weight: 900;
+        letter-spacing: 0.3px;
+        background: var(--bg-inner);
+        color: var(--text-secondary);
+      }
+      .ico.pol {
+        background: var(--green-tint);
+        color: var(--green);
+      }
+      .c-title {
+        flex: 1;
+        min-width: 0;
+      }
+      .c-title .q {
+        font-size: 12.5px;
+        font-weight: 700;
+        line-height: 1.4;
+        display: flex;
+        gap: 6px;
+        align-items: baseline;
+      }
+      .c-title .q .hold {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: var(--green);
+        flex: none;
+        transform: translateY(-2px);
+      }
+      .c-title .meta {
+        font-size: 9.5px;
+        font-weight: 600;
+        color: var(--text-muted);
+        margin-top: 3px;
+        letter-spacing: 0.2px;
+      }
+
+      /* 类型 pill：共识=绿 tint（最强）· 分歧=琥珀 tint（警示）· 重仓/异动=描边（中性事实） */
+      .tp {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 9px;
+        border-radius: var(--radius-pill);
+        font-size: 9.5px;
+        font-weight: 800;
+        letter-spacing: 0.4px;
+        white-space: nowrap;
+      }
+      .tp.consensus {
+        background: var(--green-tint);
+        color: var(--green);
+      }
+      .tp.split {
+        background: var(--amber-tint);
+        color: var(--amber);
+      }
+      .tp.heavy {
+        border: 1px solid var(--border-strong);
+        color: var(--text-secondary);
+      }
+      .tp.anon {
+        border: 1px solid var(--border-strong);
+        color: var(--text-muted);
+      }
+      /* 堆叠标签：同一市场同时命中多类型时并列 */
+      .stack {
+        display: flex;
+        gap: 5px;
+        margin-top: 9px;
+        flex-wrap: wrap;
+      }
+      .stack .st {
+        padding: 2px 8px;
+        border-radius: var(--radius-pill);
+        border: 1px solid var(--border-strong);
+        font-size: 9px;
+        font-weight: 700;
+        color: var(--text-secondary);
+      }
+
+      .boxes {
+        display: flex;
+        gap: 8px;
+        margin-top: 11px;
+      }
+      .box {
+        flex: 1;
+        background: var(--bg-inner);
+        border-radius: 10px;
+        padding: 8px 10px;
+      }
+      .box .k {
+        font-size: 8px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+      }
+      .box .v {
+        font-size: 14px;
+        font-weight: 800;
+        color: var(--green);
+        margin-top: 3px;
+        font-variant-numeric: tabular-nums;
+      }
+      .box .v.neutral {
+        color: var(--text-primary);
+      }
+      .box .v.red {
+        color: var(--red);
+      }
+      .box .sub {
+        font-size: 9px;
+        font-weight: 600;
+        color: var(--text-muted);
+        margin-top: 1px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .gate {
+        margin-top: 11px;
+        background: var(--bg-inner);
+        border-radius: 10px;
+        padding: 9px 11px;
+      }
+      .gate .row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 9.5px;
+        font-weight: 600;
+        color: var(--text-muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .gate .bar {
+        position: relative;
+        height: 5px;
+        background: #232526;
+        border-radius: 3px;
+        margin: 7px 0 6px;
+      }
+      .gate .fill {
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 5px;
+        border-radius: 3px;
+        background: var(--green);
+      }
+      .gate .fill.over {
+        background: var(--red);
+      }
+      .gate .mark {
+        position: absolute;
+        top: -3px;
+        width: 1.5px;
+        height: 11px;
+        background: var(--border-strong);
+        border-radius: 1px;
+      }
+      .gate .verdict {
+        font-size: 11px;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+      }
+      .gate .verdict.ok {
+        color: var(--green);
+      }
+      .gate .verdict.no {
+        color: var(--red);
+      }
+
+      .bi {
+        margin-top: 11px;
+        background: var(--bg-inner);
+        border-radius: 10px;
+        padding: 9px 11px;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      .bi .s {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 11px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      .bi .s .nm {
+        color: var(--text-secondary);
+      }
+      .bi .s .amt {
+        color: var(--text-primary);
+        font-weight: 800;
+      }
+      .bi .note {
+        font-size: 9.5px;
+        font-weight: 600;
+        color: var(--amber);
+      }
+
+      .acts {
+        display: flex;
+        gap: 8px;
+        margin-top: 11px;
+      }
+      .btn {
+        flex: 1;
+        height: var(--btn-h-sm);
+        border-radius: var(--radius-btn-sm);
+        cursor: pointer;
+        border: 1px solid var(--border-strong);
+        background: var(--bg-card);
+        color: var(--text-primary);
+        font: 800 12.5px/1 var(--font-sans);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform var(--dur-enter) ease-out;
+      }
+      .btn:active {
+        transform: scale(var(--press-scale));
+      }
+      .btn.pri {
+        background: var(--green);
+        color: var(--on-green);
+        border: none;
+      }
+      body.is-outage .btn.pri {
+        display: none;
+      }
+
+      .empty {
+        display: none;
+        margin: 8px 16px 0;
+        background: var(--bg-card);
+        border-radius: var(--radius-card);
+        padding: 26px 18px;
+        text-align: center;
+      }
+      body.is-quiet .empty {
+        display: block;
+      }
+      body.is-quiet .list {
+        display: none;
+      }
+      .empty .ring {
+        width: 44px;
+        height: 44px;
+        border-radius: 999px;
+        border: 1.5px solid var(--border-strong);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 12px;
+      }
+      .empty .t1 {
+        font-size: 13px;
+        font-weight: 800;
+      }
+      .empty .t2 {
+        font-size: 10.5px;
+        font-weight: 500;
+        color: var(--text-muted);
+        margin-top: 7px;
+        line-height: 1.75;
+      }
+
+      .settled {
+        margin: 8px 16px 0;
+        background: var(--bg-card);
+        border-radius: var(--radius-card);
+        padding: 2px 14px;
+      }
+      .srow {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .srow:last-child {
+        border-bottom: none;
+      }
+      .srow.more {
+        display: none;
+      }
+      body.is-quiet .srow.more {
+        display: flex;
+      }
+      .srow .m {
+        font-size: 11.5px;
+        font-weight: 700;
+        color: var(--text-secondary);
+        line-height: 1.35;
+      }
+      .srow .d {
+        font-size: 9.5px;
+        font-weight: 600;
+        color: var(--text-muted);
+        margin-top: 3px;
+        font-variant-numeric: tabular-nums;
+      }
+      .srow .res {
+        font-size: 11px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+      .srow .res.w {
+        color: var(--green);
+      }
+      .srow .res.l {
+        color: var(--red);
+      }
+
+      .fine {
+        padding: 14px 18px 0;
+        font-size: 9.5px;
+        font-weight: 500;
+        line-height: 1.8;
+        color: var(--text-disabled);
+      }
+
+      .nav {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: var(--tab-bar-bg);
+        backdrop-filter: blur(16px);
+        border-top: 1px solid var(--line);
+        display: flex;
+        padding: 7px 0 14px;
+      }
+      .nav .it {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        cursor: pointer;
+      }
+      .nav .ring {
+        width: 26px;
+        height: 26px;
+        border-radius: 999px;
+        border: 1.5px solid transparent;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+      }
+      .nav .it.on .ring {
+        border-color: var(--green);
+      }
+      .nav .it .lb {
+        font-size: 9.5px;
+        font-weight: 400;
+        color: var(--text-muted);
+      }
+      .nav .it.on .lb {
+        font-weight: 700;
+        color: var(--green);
+      }
+      .nav .badge {
+        position: absolute;
+        top: -2px;
+        right: -3px;
+        min-width: 13px;
+        height: 13px;
+        border-radius: 999px;
+        background: var(--red);
+        color: #fff;
+        font-size: 8px;
+        font-weight: 800;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 3px;
+        border: 1.5px solid var(--bg-nav);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* Sheet：详情 + 筛选共用 */
+      .mask {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity var(--dur-sheet-out) ease-out;
+        z-index: 30;
+      }
+      .sheet {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        max-height: 88%;
+        overflow-y: auto;
+        scrollbar-width: none;
+        background: var(--bg-nav);
+        border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+        padding: 12px 16px 28px;
+        transform: translateY(102%);
+        transition: transform var(--dur-sheet-out) ease-out;
+        z-index: 31;
+      }
+      .sheet::-webkit-scrollbar {
+        display: none;
+      }
+      .phone.open-detail .mask,
+      .phone.open-filter .mask {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .phone.open-detail #sheetDetail,
+      .phone.open-filter #sheetFilter {
+        transform: none;
+        transition-duration: var(--dur-sheet-in);
+      }
+      .grab {
+        width: 36px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--border-strong);
+        margin: 0 auto 14px;
+      }
+      .sheet h2 {
+        font-size: 14px;
+        font-weight: 800;
+        line-height: 1.4;
+      }
+      .sheet .sub {
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--text-muted);
+        margin-top: 4px;
+      }
+      .sec-l {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 1.2px;
+        color: var(--text-muted);
+        margin: 16px 0 8px;
+      }
+      .wrow {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--line);
+        font-size: 11.5px;
+        font-variant-numeric: tabular-nums;
+      }
+      .wrow:last-of-type {
+        border-bottom: none;
+      }
+      .wrow .ad {
+        font-weight: 700;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .wrow .vv {
+        font-weight: 700;
+        color: var(--text-primary);
+      }
+      .rec {
+        background: var(--bg-card);
+        border-radius: var(--radius-inner);
+        padding: 11px 12px;
+      }
+      .rec .line {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--text-secondary);
+        line-height: 1.65;
+        font-variant-numeric: tabular-nums;
+      }
+      .rec .line b {
+        color: var(--text-primary);
+        font-weight: 800;
+      }
+      .rec .cav {
+        font-size: 9.5px;
+        font-weight: 600;
+        color: var(--text-muted);
+        margin-top: 6px;
+        line-height: 1.6;
+      }
+      .sheet .btn.pri {
+        width: 100%;
+        height: var(--btn-h);
+        border-radius: var(--radius-btn);
+        margin-top: 16px;
+        font-size: 14px;
+      }
+      .opts {
+        display: flex;
+        gap: 7px;
+        flex-wrap: wrap;
+      }
+      .opt {
+        height: 34px;
+        padding: 0 14px;
+        border-radius: var(--radius-pill);
+        border: 1px solid var(--border-strong);
+        background: transparent;
+        color: var(--text-secondary);
+        font: 700 11.5px/1 var(--font-sans);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+      }
+      .opt.on {
+        border: none;
+        background: var(--green-tint);
+        color: var(--green);
+        font-weight: 800;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="dev" id="dev">
+      <button class="on" data-s="">正常</button>
+      <button data-s="quiet">安静日</button>
+      <button data-s="outage">断更</button>
+    </div>
+    <div class="dev-note">开发用状态切换 · 交付时删除 .dev 块</div>
+
+    <div class="phone" id="phone">
+      <div class="sb">
+        <span class="num">23:34</span
+        ><span class="r"><span>5G</span><span class="num">54</span></span>
+      </div>
+
+      <div class="scroll">
+        <div class="hd">
+          <h1>信号</h1>
+          <span class="sync">更新于 2 分钟前</span>
+          <span class="sync bad" style="display: none">已停止更新</span>
+        </div>
+
+        <!-- 轴 1：信号类型（这是什么事） -->
+        <div class="chips-row">
+          <div class="chips" id="chips">
+            <button class="chip on" data-t="all">
+              全部<span class="n">5</span>
+            </button>
+            <button class="chip" data-t="consensus">
+              共识<span class="n">2</span>
+            </button>
+            <button class="chip" data-t="split">
+              分歧<span class="n">1</span>
+            </button>
+            <button class="chip" data-t="heavy">
+              重仓<span class="n">1</span>
+            </button>
+          </div>
+          <!-- 轴 2：与我相关（要不要给我看） -->
+          <div class="filt" id="filtBtn">
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="4" y1="7" x2="20" y2="7" />
+              <line x1="7" y1="12" x2="17" y2="12" />
+              <line x1="10" y1="17" x2="14" y2="17" />
+            </svg>
+            <span>筛选</span>
+          </div>
+        </div>
+        <div class="filt-echo" id="echo"></div>
+
+        <div class="warn">
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--amber)"
+            stroke-width="2.2"
+            stroke-linecap="round"
+          >
+            <path d="M12 9v4" />
+            <path d="M12 17h.01" />
+            <path
+              d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"
+            />
+          </svg>
+          <div>
+            <b>数据流已中断 47 分钟</b
+            ><span>以下内容截至 23:12，不代表现在 · 恢复后自动解除</span>
+          </div>
+        </div>
+
+        <div class="lbl">
+          <span class="t">进行中 · <span id="cnt">5</span></span
+          ><span class="s">按市场折叠 · 单笔 ≥$50k</span>
+        </div>
+
+        <div class="list" id="list">
+          <div
+            class="card sig"
+            data-t="consensus"
+            data-hold="1"
+            data-big="1"
+            data-cat="pol"
+          >
+            <div class="c-top">
+              <div class="ico pol">POL</div>
+              <div class="c-title">
+                <div class="q">
+                  <span class="hold"></span
+                  ><span>US announces halt in Iran offensive operations?</span>
+                </div>
+                <div class="meta">政治 · 3 个白名单钱包 · 47 分钟前</div>
+              </div>
+              <span class="tp consensus">共识</span>
+            </div>
+            <div class="stack">
+              <span class="st">拆单 2 人</span><span class="st">新钱包 1</span>
+            </div>
+            <div class="boxes">
+              <div class="box">
+                <div class="k">方向</div>
+                <div class="v">Yes</div>
+                <div class="sub">3 个钱包</div>
+              </div>
+              <div class="box">
+                <div class="k">净买入</div>
+                <div class="v neutral">$169,830</div>
+                <div class="sub">均价 61¢</div>
+              </div>
+              <div class="box">
+                <div class="k">现价</div>
+                <div class="v neutral">64¢</div>
+                <div class="sub live">3 分钟前</div>
+                <div class="sub frz" style="display: none">截至 23:12</div>
+              </div>
+            </div>
+            <div class="gate">
+              <div class="row"><span>成本 61¢</span><span>红线 71¢</span></div>
+              <div class="bar">
+                <div class="fill" style="width: 30%"></div>
+                <div class="mark" style="left: calc(100% - 1.5px)"></div>
+              </div>
+              <div class="verdict ok">高出成本 3¢ · 仍在 10¢ 区间内</div>
+            </div>
+            <div class="acts">
+              <button class="btn pri">去交易</button
+              ><button class="btn detail">详情</button>
+            </div>
+          </div>
+
+          <div class="card sig" data-t="consensus" data-cat="spo">
+            <div class="c-top">
+              <div class="ico">MLB</div>
+              <div class="c-title">
+                <div class="q"><span>MLB: Blue Jays vs Nationals</span></div>
+                <div class="meta">体育 · 2 个白名单钱包 · 25 分钟前</div>
+              </div>
+              <span class="tp consensus">共识</span>
+            </div>
+            <div class="boxes">
+              <div class="box">
+                <div class="k">方向</div>
+                <div class="v">Nationals</div>
+                <div class="sub">2 个钱包</div>
+              </div>
+              <div class="box">
+                <div class="k">净买入</div>
+                <div class="v neutral">$62,832</div>
+                <div class="sub">均价 44¢</div>
+              </div>
+              <div class="box">
+                <div class="k">现价</div>
+                <div class="v neutral">46¢</div>
+                <div class="sub live">1 分钟前</div>
+                <div class="sub frz" style="display: none">截至 23:12</div>
+              </div>
+            </div>
+            <div class="gate">
+              <div class="row"><span>成本 44¢</span><span>红线 54¢</span></div>
+              <div class="bar">
+                <div class="fill" style="width: 20%"></div>
+                <div class="mark" style="left: calc(100% - 1.5px)"></div>
+              </div>
+              <div class="verdict ok">高出成本 2¢ · 仍在 10¢ 区间内</div>
+            </div>
+            <div class="acts">
+              <button class="btn detail" style="flex: 1">详情</button>
+            </div>
+          </div>
+
+          <div class="card sig" data-t="split" data-big="1" data-cat="spo">
+            <div class="c-top">
+              <div class="ico">WTA</div>
+              <div class="c-title">
+                <div class="q"><span>WTA: Samsonova vs Keys</span></div>
+                <div class="meta">体育 · 两侧共 4 个钱包 · 2 小时前</div>
+              </div>
+              <span class="tp split">分歧</span>
+            </div>
+            <div class="bi">
+              <div class="s">
+                <span class="nm">Samsonova @43¢</span
+                ><span class="amt">$94,400</span>
+              </div>
+              <div class="s">
+                <span class="nm">Keys @58¢</span
+                ><span class="amt">$10,918</span>
+              </div>
+              <div class="note">聪明钱两侧都有，不构成方向信号</div>
+            </div>
+            <div class="acts">
+              <button class="btn detail" style="flex: 1">详情</button>
+            </div>
+          </div>
+
+          <div class="card sig ran" data-t="heavy" data-cat="spo">
+            <div class="c-top">
+              <div class="ico">MLB</div>
+              <div class="c-title">
+                <div class="q"><span>MLB: Orioles vs Tigers</span></div>
+                <div class="meta">体育 · 0xf5fa…62df · 3 小时前</div>
+              </div>
+              <span class="tp heavy">重仓</span>
+            </div>
+            <div class="boxes">
+              <div class="box">
+                <div class="k">方向</div>
+                <div class="v neutral">Orioles</div>
+                <div class="sub">单个钱包</div>
+              </div>
+              <div class="box">
+                <div class="k">买入</div>
+                <div class="v neutral">$79,492</div>
+                <div class="sub">均价 38¢</div>
+              </div>
+              <div class="box">
+                <div class="k">现价</div>
+                <div class="v red">52¢</div>
+                <div class="sub live">6 分钟前</div>
+                <div class="sub frz" style="display: none">截至 23:12</div>
+              </div>
+            </div>
+            <div class="gate">
+              <div class="row"><span>成本 38¢</span><span>红线 48¢</span></div>
+              <div class="bar">
+                <div class="fill over" style="width: 100%"></div>
+                <div class="mark" style="left: 71%"></div>
+              </div>
+              <div class="verdict no">高出成本 14¢ · 已超 10¢ 红线</div>
+            </div>
+            <div class="acts">
+              <button class="btn detail" style="flex: 1">详情</button>
+            </div>
+          </div>
+
+          <div class="card sig" data-t="anon" data-big="1" data-cat="cry">
+            <div class="c-top">
+              <div class="ico">CRY</div>
+              <div class="c-title">
+                <div class="q">
+                  <span>Will BTC close above $120k in July?</span>
+                </div>
+                <div class="meta">加密 · 非白名单地址 · 18 分钟前</div>
+              </div>
+              <span class="tp anon">异动</span>
+            </div>
+            <div class="stack"><span class="st">账龄 4 天</span></div>
+            <div class="boxes">
+              <div class="box">
+                <div class="k">方向</div>
+                <div class="v neutral">No</div>
+                <div class="sub">单笔</div>
+              </div>
+              <div class="box">
+                <div class="k">买入</div>
+                <div class="v neutral">$304,722</div>
+                <div class="sub">@40¢</div>
+              </div>
+              <div class="box">
+                <div class="k">现价</div>
+                <div class="v neutral">41¢</div>
+                <div class="sub live">2 分钟前</div>
+                <div class="sub frz" style="display: none">截至 23:12</div>
+              </div>
+            </div>
+            <div class="acts">
+              <button class="btn detail" style="flex: 1">详情</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="empty">
+          <div class="ring">
+            <svg
+              width="19"
+              height="19"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--text-muted)"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            >
+              <path d="M2 12h4l3-8 4 16 3-8h6" />
+            </svg>
+          </div>
+          <div class="t1">今日暂无新信号</div>
+          <div class="t2">
+            上一条 · 昨天 21:40 · Orioles $79,492<br />只统计按市场折叠后单笔
+            ≥$50k 的动作
+          </div>
+        </div>
+
+        <div class="lbl">
+          <span class="t" id="settledWin">已结算 · 认账</span
+          ><span class="s">30d 41 中 / 市场预期 43.5 · 超额 −2.5</span>
+        </div>
+
+        <div class="settled">
+          <div class="srow">
+            <div>
+              <div class="m">Fed no change in July · Yes</div>
+              <div class="d">共识 @73¢ · 结算 1</div>
+            </div>
+            <span class="res w">✓ 对</span>
+          </div>
+          <div class="srow">
+            <div>
+              <div class="m">MLB: Red Sox vs Athletics · Red Sox</div>
+              <div class="d">共识 @54¢ · 结算 1</div>
+            </div>
+            <span class="res w">✓ 对</span>
+          </div>
+          <div class="srow">
+            <div>
+              <div class="m">MLB: Phillies vs Marlins · Phillies</div>
+              <div class="d">重仓 @62¢ · 结算 0</div>
+            </div>
+            <span class="res l">✕ 错</span>
+          </div>
+          <div class="srow more">
+            <div>
+              <div class="m">MLB: Yankees vs White Sox · Yankees</div>
+              <div class="d">共识 @58¢ · 结算 1</div>
+            </div>
+            <span class="res w">✓ 对</span>
+          </div>
+          <div class="srow more">
+            <div>
+              <div class="m">Israel–Iran ceasefire · Yes</div>
+              <div class="d">共识 @67¢ · 结算 1</div>
+            </div>
+            <span class="res w">✓ 对</span>
+          </div>
+          <div class="srow more">
+            <div>
+              <div class="m">MLB: Astros vs Angels · Angels</div>
+              <div class="d">重仓 @41¢ · 结算 0</div>
+            </div>
+            <span class="res l">✕ 错</span>
+          </div>
+        </div>
+
+        <div class="fine">
+          共识 = ≥2 个白名单钱包同向净买 ≥$5k · 重仓 = 单个白名单钱包 ≥$50k ·
+          异动 = 非白名单 ≥$50k<br />
+          「已超红线」= 现价高于其成本 10¢ · 成交价即市场隐含概率 ·
+          信息仅供参考，不构成投资建议
+        </div>
+      </div>
+
+      <div class="nav">
+        <div class="it">
+          <span class="ring"
+            ><svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--text-muted)"
+              stroke-width="1.8"
+            >
+              <path d="M3 10.5 12 3l9 7.5" />
+              <path d="M5 9.5V21h14V9.5" /></svg></span
+          ><span class="lb">首页</span>
+        </div>
+        <div class="it">
+          <span class="ring"
+            ><svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--text-muted)"
+              stroke-width="1.8"
+            >
+              <polyline points="3 17 9 11 13 15 21 7" />
+              <polyline points="15 7 21 7 21 13" /></svg></span
+          ><span class="lb">市场</span>
+        </div>
+        <div class="it on">
+          <span class="ring"
+            ><svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--green)"
+              stroke-width="2.2"
+              stroke-linecap="round"
+            >
+              <path d="M2 12h4l3-8 4 16 3-8h6" /></svg
+            ><span class="badge num">1</span></span
+          ><span class="lb">信号</span>
+        </div>
+        <div class="it">
+          <span class="ring"
+            ><svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--text-muted)"
+              stroke-width="1.8"
+            >
+              <line x1="7" y1="3" x2="7" y2="8" />
+              <rect x="5" y="8" width="4" height="9" rx="1" />
+              <line x1="7" y1="17" x2="7" y2="21" />
+              <line x1="17" y1="3" x2="17" y2="6" />
+              <rect x="15" y="6" width="4" height="8" rx="1" />
+              <line x1="17" y1="14" x2="17" y2="21" /></svg></span
+          ><span class="lb">交易</span>
+        </div>
+        <div class="it">
+          <span class="ring"
+            ><svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--text-muted)"
+              stroke-width="1.8"
+            >
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 21c1-4 4.5-6 8-6s7 2 8 6" /></svg></span
+          ><span class="lb">我的</span>
+        </div>
+      </div>
+
+      <div class="mask" id="mask"></div>
+
+      <div class="sheet" id="sheetDetail">
+        <div class="grab"></div>
+        <h2>US announces halt in Iran offensive operations?</h2>
+        <div class="sub">政治 · 共识形成于 47 分钟前</div>
+        <div class="boxes" style="margin-top: 14px">
+          <div class="box">
+            <div class="k">方向</div>
+            <div class="v">Yes</div>
+            <div class="sub">3 个钱包</div>
+          </div>
+          <div class="box">
+            <div class="k">净买入</div>
+            <div class="v neutral">$169,830</div>
+            <div class="sub">均价 61¢</div>
+          </div>
+          <div class="box">
+            <div class="k">现价</div>
+            <div class="v neutral">64¢</div>
+            <div class="sub">3 分钟前</div>
+          </div>
+        </div>
+        <div class="gate" style="margin-top: 10px">
+          <div class="row">
+            <span>他们的成本 61¢</span><span>红线 71¢</span>
+          </div>
+          <div class="bar">
+            <div class="fill" style="width: 30%"></div>
+            <div class="mark" style="left: calc(100% - 1.5px)"></div>
+          </div>
+          <div class="verdict ok">现价高出成本 3¢ · 仍在 10¢ 区间内</div>
+        </div>
+        <div class="sec-l">参与钱包</div>
+        <div class="wrow">
+          <span class="ad"
+            ><span
+              class="tp consensus"
+              style="padding: 1px 7px; font-size: 8.5px"
+              >白名单</span
+            >0xf5fa…62df</span
+          ><span class="vv">$121,400 @60¢</span>
+        </div>
+        <div class="wrow">
+          <span class="ad"
+            ><span
+              class="tp consensus"
+              style="padding: 1px 7px; font-size: 8.5px"
+              >白名单</span
+            >0x2c33…0563</span
+          ><span class="vv">$31,210 @62¢</span>
+        </div>
+        <div class="wrow">
+          <span class="ad"
+            ><span class="tp split" style="padding: 1px 7px; font-size: 8.5px"
+              >新 6 天</span
+            >0x9a1e…77b0</span
+          ><span class="vv">$17,220 @63¢</span>
+        </div>
+        <div class="sec-l">共识信号 30 天战绩</div>
+        <div class="rec">
+          <div class="line">
+            <b>41/85 中</b> · 市场同价位预期 <b>43.5</b> 中 · 超额 <b>−2.5</b>
+          </div>
+          <div class="cav">
+            仍在运气范围内 · 样本以体育盘为主，政治盘尚无足量前向验证样本
+          </div>
+        </div>
+        <button class="btn pri">在 Polymarket 打开</button>
+      </div>
+
+      <div class="sheet" id="sheetFilter">
+        <div class="grab"></div>
+        <h2>筛选</h2>
+        <div class="sub">与信号类型是两个独立的轴，可叠加</div>
+        <div class="sec-l">信号来源</div>
+        <div class="opts">
+          <button class="opt" data-k="anon">包含非白名单大额</button>
+        </div>
+        <div class="sec-l">与我相关</div>
+        <div class="opts">
+          <button class="opt" data-k="hold">我的持仓</button>
+        </div>
+        <div class="sec-l">金额下限</div>
+        <div class="opts"><button class="opt" data-k="big">≥$100k</button></div>
+        <div class="sec-l">品类</div>
+        <div class="opts">
+          <button class="opt" data-k="cat:pol">政治</button>
+          <button class="opt" data-k="cat:spo">体育</button>
+          <button class="opt" data-k="cat:cry">加密</button>
+        </div>
+        <button class="btn pri" id="filtDone">完成</button>
+      </div>
+    </div>
+
+    <script>
+      const phone = document.getElementById("phone");
+      const dev = document.getElementById("dev");
+      const chips = document.getElementById("chips");
+      const cards = [...document.querySelectorAll(".card.sig")];
+      const echo = document.getElementById("echo");
+      let type = "all";
+      const filters = new Set();
+
+      const LABEL = {
+        anon: "含非白名单",
+        hold: "我的持仓",
+        big: "≥$100k",
+        "cat:pol": "政治",
+        "cat:spo": "体育",
+        "cat:cry": "加密",
+      };
+
+      // 轴 1（类型）与轴 2（筛选）互相独立、可叠加 —— 这正是把它们拆成两处控件的理由：
+      // 混在同一行 chips 里时，「我持仓 1」和「≥$100k 1」是不是同一条，用户无从判断。
+      function matchType(c) {
+        return type === "all" || c.dataset.t === type;
+      }
+      function matchFilters(c) {
+        // 「异动」= 非白名单地址的大额，默认不进这个 tab：它不是聪明钱信号，
+        // 只是「有不认识的人买了很多」，而这个 tab 的差异化恰恰是「我们知道是谁」。
+        // 需要的人可在筛选里显式打开。
+        if (c.dataset.t === "anon" && !filters.has("anon")) return false;
+        const cats = [...filters].filter((f) => f.startsWith("cat:"));
+        const others = [...filters].filter(
+          (f) => !f.startsWith("cat:") && f !== "anon",
+        );
+        // 品类内部是「或」，跨维度是「且」——选了政治+加密应该两者都看到。
+        if (cats.length && !cats.includes("cat:" + c.dataset.cat)) return false;
+        return others.every((f) => c.dataset[f] === "1");
+      }
+
+      function renderEcho() {
+        echo.textContent = "";
+        filters.forEach((f) => {
+          const pill = document.createElement("span");
+          pill.className = "echo";
+          pill.append(LABEL[f]);
+          const x = document.createElement("span");
+          x.className = "x";
+          x.dataset.rm = f;
+          x.textContent = "×";
+          pill.append(x);
+          echo.append(pill);
+        });
+      }
+
+      function render() {
+        const quiet = document.body.classList.contains("is-quiet");
+        const outage = document.body.classList.contains("is-outage");
+        let n = 0;
+        cards.forEach((c) => {
+          const ok = !quiet && matchType(c) && matchFilters(c);
+          c.style.display = ok ? "" : "none";
+          if (ok) n++;
+        });
+        document.getElementById("cnt").textContent = quiet ? 0 : n;
+
+        // chip 计数在当前筛选条件下重算 —— 计数必须与点下去看到的条数一致，
+        // 否则「共识 2」点进去只有 1 条会立刻毁掉数字的可信度。
+        chips.querySelectorAll(".chip").forEach((ch) => {
+          const el = ch.querySelector(".n");
+          if (!el) return;
+          const t = ch.dataset.t;
+          el.textContent = quiet
+            ? 0
+            : cards.filter(
+                (c) => (t === "all" || c.dataset.t === t) && matchFilters(c),
+              ).length;
+        });
+
+        document
+          .getElementById("filtBtn")
+          .classList.toggle("active", filters.size > 0);
+        echo.classList.toggle("on", filters.size > 0);
+        renderEcho();
+
+        document
+          .querySelectorAll(".sub.live")
+          .forEach((e) => (e.style.display = outage ? "none" : ""));
+        document
+          .querySelectorAll(".sub.frz")
+          .forEach((e) => (e.style.display = outage ? "" : "none"));
+        document.querySelector(".hd .sync:not(.bad)").style.display = outage
+          ? "none"
+          : "";
+        document.querySelector(".hd .sync.bad").style.display = outage
+          ? ""
+          : "none";
+
+        // tab 角标只在「新信号命中你的持仓」时亮 —— 全量信号亮角标会把用户训练成无视它。
+        const holds = quiet
+          ? 0
+          : cards.filter((c) => c.dataset.hold === "1").length;
+        const badge = document.querySelector(".nav .badge");
+        badge.style.display = holds ? "" : "none";
+        badge.textContent = holds;
+
+        // 安静日把认账窗口放宽到近 3 日：无新信号时用已结算记录承载版面（也避免 >120px 空区）。
+        document.getElementById("settledWin").textContent = quiet
+          ? "已结算 · 近 3 日"
+          : "已结算 · 认账";
+      }
+
+      dev.addEventListener("click", (e) => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        dev
+          .querySelectorAll("button")
+          .forEach((x) => x.classList.toggle("on", x === b));
+        document.body.className = b.dataset.s ? "is-" + b.dataset.s : "";
+        render();
+      });
+
+      chips.addEventListener("click", (e) => {
+        const b = e.target.closest(".chip");
+        if (!b) return;
+        chips
+          .querySelectorAll(".chip")
+          .forEach((x) => x.classList.toggle("on", x === b));
+        type = b.dataset.t;
+        render();
+      });
+
+      echo.addEventListener("click", (e) => {
+        const x = e.target.closest("[data-rm]");
+        if (!x) return;
+        filters.delete(x.dataset.rm);
+        document
+          .querySelectorAll(".opt")
+          .forEach((o) => o.classList.toggle("on", filters.has(o.dataset.k)));
+        render();
+      });
+
+      document.querySelectorAll(".opt").forEach((o) =>
+        o.addEventListener("click", () => {
+          filters.has(o.dataset.k)
+            ? filters.delete(o.dataset.k)
+            : filters.add(o.dataset.k);
+          o.classList.toggle("on", filters.has(o.dataset.k));
+          render();
+        }),
+      );
+
+      document
+        .querySelectorAll(".btn.detail")
+        .forEach((b) =>
+          b.addEventListener("click", () => phone.classList.add("open-detail")),
+        );
+      document
+        .getElementById("filtBtn")
+        .addEventListener("click", () => phone.classList.add("open-filter"));
+      document
+        .getElementById("filtDone")
+        .addEventListener("click", () => phone.classList.remove("open-filter"));
+      document
+        .getElementById("mask")
+        .addEventListener("click", () =>
+          phone.classList.remove("open-detail", "open-filter"),
+        );
+
+      render();
+    </script>
+  </body>
+</html>
