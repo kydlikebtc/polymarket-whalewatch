@@ -1,5 +1,6 @@
 import { openDb } from "../../../lib/db";
 import { createPromiseCache } from "../../../lib/promiseCache";
+import { guardExpensive } from "../../../lib/apiGuard";
 import { getTradesWindowDeep } from "../../../lib/polymarket";
 import { getAllSmartTags } from "../../../lib/smartWallets";
 import { detectConsensus, type ConsensusGroup } from "../../../lib/consensus";
@@ -78,6 +79,25 @@ export async function GET(req: Request) {
       ? Math.floor(rawPerWallet)
       : 5000;
   const filters = { hours, minWallets, minPerWalletUsd };
+
+  // A cache MISS is a two-sided multi-page window pull sharing the engine's
+  // data-api budget. The 30s promise cache collapses concurrent misses but
+  // does nothing against a client walking distinct parameter combinations,
+  // so the public-deployment limiter is the actual ceiling.
+  const limited = guardExpensive(
+    req,
+    "consensus",
+    { perIp: 60, global: 300 },
+    {
+      filters,
+      smartCount: 0,
+      truncated: false,
+      effectiveSinceSec: null,
+      groups: [],
+      disagreement: [],
+    },
+  );
+  if (limited) return limited;
 
   try {
     const db = openDb(process.env.DASH_DB ?? "data.sqlite");

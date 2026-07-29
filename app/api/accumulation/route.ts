@@ -1,5 +1,6 @@
 import { getTradesWindowDeep } from "../../../lib/polymarket";
 import { createPromiseCache } from "../../../lib/promiseCache";
+import { guardExpensive } from "../../../lib/apiGuard";
 import { aggregate, type AccumGroup } from "../../../lib/accumulate";
 import type { Trade } from "../../../lib/types";
 
@@ -93,6 +94,22 @@ export async function GET(req: Request) {
   const floor = clampFloor(url.searchParams.get("floor"));
   const minNetUsd = parseMinNetUsd(url.searchParams.get("minNetUsd"));
   const filters = { floor, hours, minNetUsd };
+
+  // Same shape as /api/consensus: a miss is a deep window pull on the shared
+  // upstream budget, and the promise cache only merges CONCURRENT misses.
+  const limited = guardExpensive(
+    req,
+    "accumulation",
+    { perIp: 60, global: 300 },
+    {
+      filters,
+      stats: { groupCount: 0, totalExposureUsd: 0, topExposureUsd: 0 },
+      truncated: false,
+      oldestTs: null,
+      groups: [],
+    },
+  );
+  if (limited) return limited;
 
   // Cache key includes the floor: different precision floors are different pulls.
   const baseKey = `${floor}:${hours}`;
