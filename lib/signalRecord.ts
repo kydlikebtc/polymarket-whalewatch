@@ -45,10 +45,22 @@ const SIGNIFICANCE_SD = 2;
 // 100% of rows of all three types.
 const ENTRY_PRICE_SQL = `COALESCE(json_extract(a.payload, '$.price'), json_extract(a.payload, '$.avgBuyPrice'))`;
 
-interface Row {
+export interface GradedRow {
   won: number;
   price: number | null;
 }
+
+/**
+ * The one place the price-adjusted grade is computed. Exported so every
+ * surface (push footer, signal feed, dashboard) reports the SAME number from
+ * the SAME rule — a second implementation is how "16/20 中" ends up meaning
+ * two different things in two places.
+ */
+export function gradeRows(rows: GradedRow[]): SignalRecord {
+  return record(rows);
+}
+
+type Row = GradedRow;
 
 function record(rows: Row[]): SignalRecord {
   // A row with no fill price has no benchmark and so cannot be graded — it
