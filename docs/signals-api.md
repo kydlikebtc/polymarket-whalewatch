@@ -1,0 +1,174 @@
+# `GET /api/signals` — 信号 feed 接口契约
+
+供 **mm-mobile 后端** 定时拉取，再由它缓存 + 鉴权后转给 App。
+
+## 拓扑（重要）
+
+```
+whalewatch  ──1 次/分钟──▶  mm-mobile 后端  ──▶  App 客户端
+（本服务）                  （缓存 + JWT）
+```
+
+**不要让 App 客户端直连本服务。** 本服务是单机 Next + SQLite 的研究服务，限流是进程内 Map，
+不具备承接 App 流量的能力，也不需要——一个消费者每分钟拉一次是它本来就承受得住的负载。
+这也是为什么接入这个 tab **不需要改本服务的架构**。
+
+## 鉴权
+
+服务器 `.env` 配置 `SIGNAL_FEED_TOKEN`，请求带其一即可：
+
+```
+x-feed-token: <token>
+authorization: Bearer <token>
+```
+
+- 与 `ADMIN_TOKEN` **分开**：这个是只读的、放在合作方配置里，必须能独立吊销
+- 公开部署下未配置 `SIGNAL_FEED_TOKEN` → `403`（fail closed，与写接口同一规则）
+- 令牌错误/缺失 → `401`
+
+## 请求
+
+```
+GET /api/signals?windowHours=24
+```
+
+| 参数          | 取值             | 默认 | 说明                                   |
+| ------------- | ---------------- | ---- | -------------------------------------- |
+| `windowHours` | 6 / 12 / 24 / 48 | 24   | 「进行中」列表的时间窗，非法值回落默认 |
+
+服务端 30 秒缓存；**全部字段来自已持久化状态，零上游调用**，所以突发流量不会挤占引擎的 data-api 预算。
+
+## 响应
+
+```jsonc
+{
+  "updatedAt": 1785294147, // 服务端生成时刻（秒）
+  "windowHours": 24,
+  "heavyMinUsd": 50000, // 重仓门槛，客户端用于文案自解释
+  "healthy": true, // false = 引擎有循环停跳，见下
+  "staleLoops": [], // 停跳的循环名
+  "active": [/* 见下 */],
+  "settled": [/* 见下 */],
+  "record30d": {
+    "settled": 1799,
+    "wins": 1066,
+    "implied": 1051.3,
+    "excess": 14.7,
+    "sd": 19.3,
+  },
+}
+```
+
+### `active[]` — 进行中信号（已按「市场 × 方向」折叠）
+
+```jsonc
+{
+  "key": "0xabc…|Yes", // 稳定标识，客户端去重用；split 时为 conditionId
+  "kind": "consensus", // consensus | split | heavy
+  "conditionId": "0xabc…",
+  "title": "US announces halt in Iran offensive operations?",
+  "eventSlug": "us-announces-halt…",
+  "category": "Politics", // 可能为 null
+  "formationTs": 1785291000,
+
+  "outcome": "Yes", // split 时恒为 null —— 分歧不给方向
+  "outcomeIndex": 0,
+  "asset": "7201325…", // token id，客户端可用它订阅 CLOB WS 取实时价
+  "walletCount": 3,
+  "netUsd": 169830,
+  "avgPrice": 0.61, // 他们的成本基准 —— 客户端据此算追高闸门
+  "wallets": [{ "wallet": "0x…", "netUsd": 121400, "avgPrice": 0.6 }],
+
+  "sides": [
+    // 仅 split：两侧都在，一张卡渲染
+    {
+      "outcome": "Samsonova",
+      "outcomeIndex": 0,
+      "asset": "…",
+      "walletCount": 2,
+      "netUsd": 94400,
+      "avgPrice": 0.43,
+    },
+    {
+      "outcome": "Keys",
+      "outcomeIndex": 1,
+      "asset": "…",
+      "walletCount": 2,
+      "netUsd": 10918,
+      "avgPrice": 0.58,
+    },
+  ],
+}
+```
+
+**三种 kind 的定义与读法：**
+
+| kind        | 规则                           | 交易者怎么读                              |
+| ----------- | ------------------------------ | ----------------------------------------- |
+| `consensus` | ≥2 个白名单钱包净买同一结果    | 最强方向信号                              |
+| `split`     | 同一市场**两侧**都有白名单钱包 | **警告，不构成方向**；`outcome` 恒为 null |
+| `heavy`     | 单个白名单钱包 ≥ `heavyMinUsd` | 单人观点，弱于共识                        |
+
+**已在服务端处理好、客户端不必重做的事：**
+
+- **按市场 × 方向折叠**：同一仓位的多笔成交只出一张卡（原始告警约 245 条/天 → 折叠后约 8–24 张）
+- **共识升级合并**：保留最新金额，但 `formationTs` 是**最初**形成时刻（判断新鲜度用它）
+- **双边合并**：绝不能拆成两张卡——「聪明钱看好 A」紧接「聪明钱看好 B」会让整页可信度崩塌
+- **heavy 抑制**：同一市场 × 方向已有共识时不再出 heavy 卡
+- **排序**：按 `formationTs` 倒序。客户端应按自己的相关性重排（自己的持仓优先）
+
+### `settled[]` — 已结算（认账区）
+
+```jsonc
+{
+  "title": "…",
+  "outcome": "Yes",
+  "kind": "consensus",
+  "entryPrice": 0.73,
+  "won": true,
+  "settledAt": 1785200000,
+}
+```
+
+近 3 天，同一市场 × 方向只取最新一条，最多 20 条。
+
+### `record30d` — 30 天价格调整战绩
+
+| 字段      | 含义                                        |
+| --------- | ------------------------------------------- |
+| `settled` | 已判定信号数（分母）                        |
+| `wins`    | 命中数                                      |
+| `implied` | **市场在同样价位下预期的命中数** = Σ 成交价 |
+| `excess`  | `wins - implied`，正数 = 跑赢市场自己的定价 |
+| `sd`      | 市场有效零假设下的标准差 = √Σp(1−p)         |
+
+**展示铁律**（与推送尾行同源，`lib/signalRecord.ts` 的 `gradeRows` 是唯一实现）：
+
+- **命中数旁边必须同时印出 `implied`**，否则 `1066/1799` 无从解读——它的基准是 58.4% 而不是 50%
+- **`excess` 绝不能脱离噪音判定单独出现**：`|excess| ≥ 2×sd` 才可以说「已超运气范围」，否则必须写「仍在运气范围内」
+- **禁止**任何「今日/昨日胜率」「连对 N 天」「分组冠军」——单日样本 95% 误差带 ±14pp，零技能下 30 天内有 73% 概率打印出一个 ≥65% 的「神日」
+
+## `healthy: false` 时客户端必须做的事
+
+引擎有循环停跳时本字段为 `false`（`staleLoops` 给出是哪个）。此时：
+
+1. 顶部展示中断提示
+2. **冻结时间戳**，把「3 分钟前」改成「截至 HH:MM」
+3. **隐藏「去交易」等行动入口**——绝不能让用户对着旧价下单
+
+这是「安静」和「死了」不长得一样的唯一保证。
+
+## 现价从哪来
+
+**不要用本接口取现价。** App 已直连 `ws-subscriptions-clob.polymarket.com`，用 `asset`（token id）订阅即可拿到毫秒级实时价。
+本服务只提供**成本基准**（`avgPrice`）；追高闸门 = 客户端实时价 − `avgPrice`，红线 10¢（该阈值来自本项目纸面跟单的实测结论）。
+
+## 错误行为
+
+任何内部失败都返回 `200` + 结构完整的空 feed，并带 `healthy: false` 与 `error` 字段——
+消费方**绝不会**把「服务挂了」误读成「今天没有信号」。
+
+## 尚未产出的信号类型
+
+- **拆单累计**（同钱包分散建仓）：引擎侧尚未产出告警，需要先做聚合
+- **异动**（非白名单大额）：数据有（`large` 类型），但按产品决策默认不进 tab，需要时再开
