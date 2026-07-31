@@ -748,6 +748,9 @@ export interface AccountSimRow {
 export interface AccountPlan {
   rows: AccountSimRow[]; // 0.25/0.5/0.75/1/1.25 × 峰值 的档位阶梯
   recommendedUsd: number | null; // 恰好接住全部历史信号的最小资金 = 峰值占用
+  // 建议跟单额度 = 峰值 × 1.25(按最小仓量向上取整,恒等于阶梯最高档)。
+  // 峰值是「历史恰好够」的下限,~25% 冗余吸收未来峰值抬升;历史口径,非承诺。
+  suggestedUsd: number | null;
   avgOccupiedUsd: number; // 全接住时的时间加权平均占用(含零仓闲置期)
   utilization: number | null; // avgOccupiedUsd ÷ recommendedUsd
   annualizedOnRecommended: number | null; // 峰值档年化(与 fund.annualizedRoi 同口径)
@@ -849,6 +852,7 @@ export function computeAccountPlan(
     return {
       rows: [],
       recommendedUsd: null,
+      suggestedUsd: null,
       avgOccupiedUsd: 0,
       utilization: null,
       annualizedOnRecommended: null,
@@ -856,6 +860,9 @@ export function computeAccountPlan(
   }
   const minSize = Math.min(...sizes);
   const roundUp = (x: number) => Math.ceil(x / minSize) * minSize;
+  // 建议跟单额度:1.25 冗余档。suggested ≥ roundUp(peak) ≥ peak,必然存活于
+  // 阶梯(dedupe 只合并等值、filter 不会滤掉 ≥ minSize 的它)。
+  const suggestedUsd = roundUp(peak * 1.25);
   const ladder = [
     ...new Set(
       [0.25, 0.5, 0.75, 1, 1.25].map((f) =>
@@ -896,6 +903,7 @@ export function computeAccountPlan(
   return {
     rows,
     recommendedUsd: peak,
+    suggestedUsd,
     avgOccupiedUsd,
     utilization: recRow?.utilization ?? null,
     annualizedOnRecommended: recRow?.annualizedRoi ?? null,

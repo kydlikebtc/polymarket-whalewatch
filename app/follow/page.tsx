@@ -12,7 +12,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { Segmented, Tag } from "../ui";
+import { Modal, Segmented, Tag } from "../ui";
 
 /* ------------------------------------------------------------- API types */
 // 客户端本地类型:镜像 lib/follow 的视图结构,但独立声明,避免把 server 侧
@@ -81,6 +81,7 @@ type AccountSimRow = {
 type AccountPlan = {
   rows: AccountSimRow[];
   recommendedUsd: number | null;
+  suggestedUsd: number | null;
   avgOccupiedUsd: number;
   utilization: number | null;
   annualizedOnRecommended: number | null;
@@ -327,6 +328,42 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
 
   const yZero = sy(0);
 
+  // x 轴时间刻度:端点 + 两个三分点(等距,不追求整点对齐——结算是离散事件,
+  // 完整覆盖首尾比整点更重要)。跨度 ≥3 天只标日期,更短带时分;相邻重复标签
+  // 去重(极短窗口下四个刻度会格式化成同一串)。
+  const fmtTick = (ts: number) => {
+    const d = new Date(ts * 1000);
+    const md = `${d.getMonth() + 1}/${d.getDate()}`;
+    if (tSpan >= 3 * 86400) return md;
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
+    return `${md} ${hh}:${mi}`;
+  };
+  const tickTs =
+    tSpan === 0 ? [tMin] : [0, 1 / 3, 2 / 3, 1].map((f) => tMin + f * tSpan);
+  const ticks: {
+    x: number;
+    label: string;
+    anchor: "start" | "middle" | "end";
+  }[] = [];
+  for (let i = 0; i < tickTs.length; i++) {
+    const label = fmtTick(tickTs[i]);
+    if (ticks.length > 0 && ticks[ticks.length - 1].label === label) continue;
+    ticks.push({
+      x: sx(tickTs[i]),
+      label,
+      // 端点标签朝内锚定,避免溢出绘图区(左端撞 y 轴刻度、右端出画布)。
+      anchor:
+        tSpan === 0
+          ? "middle"
+          : i === 0
+            ? "start"
+            : i === tickTs.length - 1
+              ? "end"
+              : "middle",
+    });
+  }
+
   return (
     <div>
       <svg
@@ -380,6 +417,30 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
         >
           {axisFmt(cMin)}
         </text>
+        {/* x 轴时间刻度:浅色竖网格线 + 底部时间标签 */}
+        {ticks.map((t) => (
+          <g key={t.x}>
+            <line
+              x1={t.x}
+              y1={y0}
+              x2={t.x}
+              y2={y1}
+              stroke="var(--n-200)"
+              strokeWidth={1}
+              strokeDasharray="2 4"
+            />
+            <text
+              x={t.x}
+              y={y1 + 15}
+              textAnchor={t.anchor}
+              fontSize={10}
+              fill="var(--n-500)"
+              className="mono"
+            >
+              {t.label}
+            </text>
+          </g>
+        ))}
         {/* 各策略阶梯线 + 结算点 */}
         {withData.map((s) => {
           const st = strokeFor(s.strokeIdx);
@@ -680,39 +741,108 @@ function StrategyCard({
           平均持有 {m.avgHoldingDays.toFixed(1)} 天
         </div>
       ) : null}
-      <AccountPlanBlock acct={s.account} />
+      <AccountPlanBlock name={s.name} acct={s.account} />
     </div>
   );
 }
 
-// 账户推演块:反事实精确回放「若账户只备 $X」。固定 $/仓 + 仓位独立 ⇒ 回放
-// 无路径耦合,错过哪几仓/少赚多少是精确值而非估计。仅展示,不参与任何决策。
-function AccountPlanBlock({ acct }: { acct?: AccountPlan }) {
-  if (!acct || acct.rows.length === 0) return null;
-  const fmtPct = (u: number | null) =>
-    u == null ? "—" : `${(u * 100).toFixed(0)}%`;
+const fmtPct = (u: number | null) =>
+  u == null ? "—" : `${(u * 100).toFixed(0)}%`;
+
+// 账户推演入口:卡片只露「建议跟单额度」一个数字 + 入口按钮,额度依据与五档
+// 推演表收进弹窗,卡片保持紧凑。仅展示,不参与任何决策。
+function AccountPlanBlock({
+  name,
+  acct,
+}: {
+  name: string;
+  acct?: AccountPlan;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!acct || acct.rows.length === 0 || acct.suggestedUsd == null) return null;
   return (
     <div
       style={{
         marginTop: "var(--s-3)",
         borderTop: "1px solid var(--n-200)",
         paddingTop: "var(--s-3)",
+        display: "flex",
+        alignItems: "center",
+        gap: "var(--s-2)",
+        flexWrap: "wrap",
       }}
     >
-      <div
-        className="ds-label"
-        style={{ marginBottom: "var(--s-2)" }}
-        title="把历史仓位按开仓顺序重演:账户资金不够就错过、结算即释放。固定 $/信号且仓位互相独立,回放是精确反事实而非估计。建议账户额 = 恰好接住全部历史信号的峰值资金;历史窗口口径,未来峰值可能更高"
+      <span className="ds-hint">建议跟单额度</span>
+      <span className="mono" style={{ fontWeight: 600 }}>
+        ${fmtUsd0(acct.suggestedUsd)}
+      </span>
+      <button
+        type="button"
+        className="ds-btn"
+        onClick={() => setOpen(true)}
+        title="额度依据与「若账户只备 $X」五档精确回放"
       >
+        账户推演 · 该备多少钱
+      </button>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={`${name} · 建议跟单额度与账户推演`}
+        width={680}
+      >
+        <AccountPlanDialog acct={acct} />
+      </Modal>
+    </div>
+  );
+}
+
+// 弹窗内容:建议跟单额度(含推导)+ 平均占用/效率 + 五档推演表 + 口径说明。
+// 反事实精确回放:固定 $/仓 + 仓位独立 ⇒「若账户只备 $X」按开仓顺序重演是
+// 精确值(资金不够即错过、结算即释放),不是估计。
+function AccountPlanDialog({ acct }: { acct: AccountPlan }) {
+  const suggestedRow =
+    acct.rows.find((r) => r.accountUsd === acct.suggestedUsd) ?? null;
+  return (
+    <div>
+      <div className="ds-hint">
+        建议跟单额度(账户备付现金 · Polymarket 无杠杆)
+      </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: "var(--s-3)",
+          flexWrap: "wrap",
+          margin: "4px 0 var(--s-1)",
+        }}
+      >
+        <span className="mono" style={{ fontSize: 24, fontWeight: 700 }}>
+          ${fmtUsd0(acct.suggestedUsd!)}
+        </span>
+        {suggestedRow?.annualizedRoi != null ? (
+          <span className="ds-hint">
+            按此额度年化{" "}
+            <span className={`mono ${pnlTone(suggestedRow.annualizedRoi)}`}>
+              {fmtAnnualized(suggestedRow.annualizedRoi)}
+            </span>
+            {suggestedRow.utilization != null
+              ? ` · 使用效率 ${fmtPct(suggestedRow.utilization)}`
+              : ""}
+          </span>
+        ) : null}
+      </div>
+      <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+        = 历史峰值占用 ${fmtUsd0(acct.recommendedUsd ?? 0)}
+        (恰好接住全部历史信号的最小资金)+ ~25% 冗余,按单仓金额向上取整。
+        历史窗口口径,未来峰值可能更高。
+      </div>
+      <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
         账户推演 · 该备多少钱
       </div>
       <div className="ds-hint" style={{ marginBottom: "var(--s-2)" }}>
-        {acct.recommendedUsd != null
-          ? `建议账户 ≥ $${fmtUsd0(acct.recommendedUsd)}(恰接住全部历史信号 · 实盘宜上浮 20–30%)`
-          : ""}
-        {` · 平均占用 $${fmtUsd0(acct.avgOccupiedUsd)}`}
+        {`平均占用 $${fmtUsd0(acct.avgOccupiedUsd)}`}
         {acct.utilization != null
-          ? ` · 使用效率 ${fmtPct(acct.utilization)}`
+          ? ` · 峰值额度下使用效率 ${fmtPct(acct.utilization)}`
           : ""}
       </div>
       <div className="ds-table-wrap">
@@ -735,12 +865,26 @@ function AccountPlanBlock({ acct }: { acct?: AccountPlan }) {
               <tr
                 key={r.accountUsd}
                 style={
+                  r.accountUsd === acct.suggestedUsd ||
                   r.accountUsd === acct.recommendedUsd
                     ? { background: "var(--n-100)" }
                     : undefined
                 }
               >
-                <td className="mono">${fmtUsd0(r.accountUsd)}</td>
+                <td className="mono">
+                  ${fmtUsd0(r.accountUsd)}
+                  {r.accountUsd === acct.suggestedUsd ? (
+                    <>
+                      {" "}
+                      <Tag variant="brand">建议</Tag>
+                    </>
+                  ) : r.accountUsd === acct.recommendedUsd ? (
+                    <>
+                      {" "}
+                      <span className="ds-tag">恰接住</span>
+                    </>
+                  ) : null}
+                </td>
                 <td className="mono">
                   {r.taken} ·{" "}
                   {r.missed > 0 ? (
@@ -768,6 +912,11 @@ function AccountPlanBlock({ acct }: { acct?: AccountPlan }) {
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+        回放口径:把历史仓位按开仓顺序重演——账户资金不够就错过该信号、市场结算
+        即释放资金。每仓固定 $/信号且互相独立,因此错过哪几仓、少赚/少亏多少是
+        精确值而非估计。效率 = 时间加权平均占用 ÷ 账户额(含零仓闲置期)。
       </div>
     </div>
   );

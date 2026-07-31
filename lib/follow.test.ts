@@ -502,10 +502,11 @@ describe("computeAccountPlan", () => {
       nowSec,
     );
 
-  it("空仓 → rows 空、recommended null、平均占用 0", () => {
+  it("空仓 → rows 空、recommended/suggested null、平均占用 0", () => {
     const p = plan([], 0, 10 * DAY);
     expect(p.rows).toEqual([]);
     expect(p.recommendedUsd).toBeNull();
+    expect(p.suggestedUsd).toBeNull();
     expect(p.avgOccupiedUsd).toBe(0);
     expect(p.utilization).toBeNull();
     expect(p.annualizedOnRecommended).toBeNull();
@@ -537,6 +538,33 @@ describe("computeAccountPlan", () => {
     expect(rec.taken).toBe(2);
     expect(rec.missed).toBe(0);
     expect(rec.realizedPnl).toBeCloseTo(60);
+  });
+
+  it("建议跟单额度 = 峰值 × 1.25 按最小仓量向上取整,且必在档位表中", () => {
+    const p = plan(
+      [
+        pos({
+          condition_id: "a",
+          entry_ts: 0,
+          exit_ts: 100,
+          size_usd: 500,
+          realized_pnl: 100,
+        }),
+        pos({
+          condition_id: "b",
+          entry_ts: 50,
+          exit_ts: 150,
+          size_usd: 500,
+          realized_pnl: -40,
+        }),
+      ],
+      0,
+      30 * DAY,
+    );
+    // 峰值 1000 → 1.25 × 1000 = 1250 → 按 500 向上取整 = 1500
+    expect(p.suggestedUsd).toBe(1500);
+    expect(p.suggestedUsd! > p.recommendedUsd!).toBe(true);
+    expect(p.rows.some((r) => r.accountUsd === p.suggestedUsd)).toBe(true);
   });
 
   it("账户 < 峰值 → 按开仓顺序精确错过,错过仓的盈亏进 missedPnl 不进落袋", () => {
