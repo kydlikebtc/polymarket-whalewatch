@@ -35,8 +35,10 @@ export function positionRealizedPnl(
 }
 
 /**
- * 跟单滑点(美元)= 份额 * (自己入场价 - 聪明钱均价)。
+ * 追价成本(展示旧称「跟单滑点」,美元)= 份额 * (自己入场价 - 聪明钱均价)。
  * 我们跟进时比聪明钱买得更贵(entryPrice>smartAvgPrice)为正 —— 即多付出的成本。
+ * 注意:这不是盘口执行滑点 —— entryPrice 是报价快照(prices-history 最近点),
+ * 价差/深度等执行成本未建模,纸面盈亏相对实盘系统性偏乐观。
  */
 export function positionSlippage(
   entryPrice: number,

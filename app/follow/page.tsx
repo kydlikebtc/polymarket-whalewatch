@@ -174,14 +174,14 @@ function pnlTone(n: number): "up" | "down" {
   return n >= 0 ? "up" : "down";
 }
 
-// 单仓跟单滑点(美元)= 份额 ×(自己入场价 − 聪明钱建仓均价)。与 lib/follow 的
-// positionSlippage 同口径,此处就地计算,避免把 server lib 引入客户端。
+// 单仓追价成本(旧称跟单滑点,美元)= 份额 ×(自己入场价 − 聪明钱建仓均价)。
+// 与 lib/follow 的 positionSlippage 同口径,此处就地计算,避免把 server lib 引入客户端。
 function rowSlippage(p: FollowPositionRow): number {
   return p.shares * (p.entry_price - p.smart_avg_price);
 }
 
-// 单仓滑点 ¢ 差 =(自己入场价 − 聪明钱建仓均价)× 100 —— 看板主显示口径。
-// 美元滑点受份额膨胀影响(入场价越低份额越大,绝对值可超本金),¢ 差才可跨仓横比。
+// 单仓追价 ¢ 差 =(自己入场价 − 聪明钱建仓均价)× 100 —— 看板主显示口径。
+// 美元口径受份额膨胀影响(入场价越低份额越大,绝对值可超本金),¢ 差才可跨仓横比。
 function rowSlipCents(p: FollowPositionRow): number {
   return (p.entry_price - p.smart_avg_price) * 100;
 }
@@ -218,8 +218,8 @@ function fmtSignedCents(c: number): string {
   return `${sign}${Math.abs(c).toFixed(1)}¢`;
 }
 
-// 滑点着色原则:一律中性 —— 负滑点绝不标绿(它常意味着「价格已反向/接飞刀」,
-// 不是捡便宜);正滑点也不标红(不是亏损,是成本)。仅 |¢差| 超过警示线时用琥珀
+// 追价成本着色原则:一律中性 —— 负值绝不标绿(它常意味着「价格已反向/接飞刀」,
+// 不是捡便宜);正值也不标红(不是亏损,是成本)。仅 |¢差| 超过警示线时用琥珀
 // (全站琥珀=警示语义),与开仓侧默认护栏 10¢ 同一分界。
 const SLIP_WARN_CENTS = 10;
 function slipWarnStyle(cents: number): CSSProperties | undefined {
@@ -551,7 +551,7 @@ function StrategyCard({
   const m = s.metrics;
   const fund = s.fund; // 旧响应可能缺失 → 档案各项显示「—」
   const slip = m.slippageCost;
-  // 均 ¢ 差/仓:所有仓位(open+settled,滑点在进场即产生)的单仓 ¢ 差算术平均。
+  // 均 ¢ 差/仓:所有仓位(open+settled,追价成本在进场即产生)的单仓 ¢ 差算术平均。
   // 简单口径 —— 每仓等权、不按 usd 加权;目的只是把美元合计还原成可横比的偏离度。
   const allPos = [...s.open, ...s.settled];
   const avgSlipCents =
@@ -668,11 +668,11 @@ function StrategyCard({
           }
         />
         <Metric
-          label="累计滑点"
-          title="份额 ×(自己入场价 − 聪明钱建仓均价)之和(美元)。正=追高多付的成本;负≠捡便宜(常是行情已反向/接飞刀)。中性展示,请结合单仓 ¢ 差与已实现盈亏一起看"
+          label="累计追价成本"
+          title="旧称「累计滑点」。份额 ×(自己入场价 − 聪明钱建仓均价)之和(美元)。正=追高多付的成本;负≠捡便宜(常是行情已反向/接飞刀)。注意:这不是盘口执行滑点——纸面按报价快照成交,价差/深度等执行成本未计入。中性展示,请结合单仓 ¢ 差与已实现盈亏一起看"
           value={
             <>
-              {/* 配色中性:滑点不是盈亏,不用涨绿跌红。 */}
+              {/* 配色中性:追价成本不是盈亏,不用涨绿跌红。 */}
               <span className="mono">
                 {slip >= 0 ? `$${fmtUsd0(slip)}` : `${MINUS}$${fmtUsd0(-slip)}`}
               </span>
@@ -686,7 +686,7 @@ function StrategyCard({
         />
         <Metric
           label="均延迟成本"
-          title="有形成价的仓位的(进场价 − 形成价)¢ 算术平均。正=共识形成后我们追贵了 —— 检测+执行延迟造成的可优化成本;与「累计滑点」(vs 聪明钱均价、含拿不到的信息租金)口径不同。老仓位无形成价,不进样本"
+          title="有形成价的仓位的(进场价 − 形成价)¢ 算术平均。正=共识形成后我们追贵了 —— 检测+执行延迟造成的可优化成本;与「累计追价成本」(vs 聪明钱均价、含拿不到的信息租金)口径不同。老仓位无形成价,不进样本"
           value={
             avgDelayCents == null ? (
               <span className="muted">—</span>
@@ -1143,13 +1143,13 @@ function SettledTable({
             </th>
             <th
               className="is-right"
-              title="入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示。口径含聪明钱的信息租金(他们买得早/便宜,拿不到别追)—— 与「延迟成本」(vs 形成价)不同"
+              title="旧称「滑点」。入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示。口径含聪明钱的信息租金(他们买得早/便宜,拿不到别追)—— 与「延迟成本」(vs 形成价)不同;也不是盘口执行滑点(纸面按报价快照成交,不吃盘口)"
             >
-              滑点
+              追价成本
             </th>
             <th
               className="is-right"
-              title="进场价 − 形成价(¢)。形成价=第 N 个白名单钱包到位那一刻的市价;正=共识形成后追贵了,是系统检测+执行延迟造成的可优化成本(不含信息租金,与「滑点」口径不同)。老仓位/取价失败显示 —;|¢|>10 琥珀,与进场偏离护栏阈一致"
+              title="进场价 − 形成价(¢)。形成价=第 N 个白名单钱包到位那一刻的市价;正=共识形成后追贵了,是系统检测+执行延迟造成的可优化成本(不含信息租金,与「追价成本」口径不同)。老仓位/取价失败显示 —;|¢|>10 琥珀,与进场偏离护栏阈一致"
             >
               延迟成本
             </th>
@@ -1190,7 +1190,7 @@ function SettledTable({
                 {/* 主显示 ¢ 差(可跨仓横比),美元退居括号小字;中性色,超警示线转琥珀。 */}
                 <td
                   className="mono is-right"
-                  data-label="滑点"
+                  data-label="追价成本"
                   style={slipWarnStyle(slipC)}
                 >
                   {fmtSignedCents(slipC)}
@@ -1260,13 +1260,13 @@ function OpenTable({
             </th>
             <th
               className="is-right"
-              title="入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示。口径含聪明钱的信息租金(他们买得早/便宜,拿不到别追)—— 与「延迟成本」(vs 形成价)不同"
+              title="旧称「滑点」。入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示。口径含聪明钱的信息租金(他们买得早/便宜,拿不到别追)—— 与「延迟成本」(vs 形成价)不同;也不是盘口执行滑点(纸面按报价快照成交,不吃盘口)"
             >
-              滑点
+              追价成本
             </th>
             <th
               className="is-right"
-              title="进场价 − 形成价(¢)。形成价=第 N 个白名单钱包到位那一刻的市价;正=共识形成后追贵了,是系统检测+执行延迟造成的可优化成本(不含信息租金,与「滑点」口径不同)。老仓位/取价失败显示 —;|¢|>10 琥珀,与进场偏离护栏阈一致"
+              title="进场价 − 形成价(¢)。形成价=第 N 个白名单钱包到位那一刻的市价;正=共识形成后追贵了,是系统检测+执行延迟造成的可优化成本(不含信息租金,与「追价成本」口径不同)。老仓位/取价失败显示 —;|¢|>10 琥珀,与进场偏离护栏阈一致"
             >
               延迟成本
             </th>
@@ -1297,7 +1297,7 @@ function OpenTable({
                 {/* 主显示 ¢ 差(可跨仓横比),美元退居括号小字;中性色,超警示线转琥珀。 */}
                 <td
                   className="mono is-right"
-                  data-label="滑点"
+                  data-label="追价成本"
                   style={slipWarnStyle(slipC)}
                 >
                   {fmtSignedCents(slipC)}
@@ -1425,7 +1425,8 @@ export default function FollowPage() {
         </h1>
         <div className="ds-hint">
           现价进场 · 只跟 15 分钟内新形成的共识 · 持有到结算 · 固定 $/信号 ·
-          仅结算盈亏(不做浮盈)
+          仅结算盈亏(不做浮盈)·
+          按报价快照纸面成交,不含盘口执行成本(价差/深度),盈亏偏乐观
           {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
           {loading ? (
             <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>
