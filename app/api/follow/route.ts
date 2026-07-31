@@ -6,12 +6,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // One follow_strategies row as read for the view (params_json parsed in
-// buildFollowView; enabled is 0/1).
+// buildFollowView; enabled is 0/1; created_at feeds the fund profile — 成立/
+// 运行时长/年化 的锚点,seed 时落库,理论上非空但类型对 NULL 宽容).
 type StrategyRow = {
   id: number;
   name: string;
   enabled: number;
   params_json: string | null;
+  created_at: number | null;
 };
 
 // follow_positions row read for the view: exactly the FollowPositionRow columns
@@ -39,7 +41,7 @@ export async function GET() {
     try {
       const strategies = db
         .prepare(
-          "SELECT id, name, enabled, params_json FROM follow_strategies ORDER BY id",
+          "SELECT id, name, enabled, params_json, created_at FROM follow_strategies ORDER BY id",
         )
         .all() as StrategyRow[];
 

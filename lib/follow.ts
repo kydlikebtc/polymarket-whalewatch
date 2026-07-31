@@ -657,6 +657,78 @@ export function computeStrategyMetrics(
 }
 
 // ---------------------------------------------------------------------------
+// 基金式档案指标 —— 把一条跟单策略当一只小基金看:何时成立、跑了多久、最多同时
+// 押了多少本金、按峰值本金折算的年化。纯函数、不修改入参;红线:全部只做展示归因,
+// 绝不反向影响开仓/结算逻辑。
+// ---------------------------------------------------------------------------
+
+export interface FundMetrics {
+  // 成立时间(秒):策略 created_at;缺失(老库/异常)回退最早开仓 entry_ts;
+  // 两者皆无(全新策略零仓位且无 created_at)为 null。
+  startTs: number | null;
+  // 运行天数:(nowSec − startTs) / 86400;startTs 缺失为 null。
+  runDays: number | null;
+  // 峰值占用资金($):任一时刻同时处于持有状态的仓位 size_usd 之和的历史最大值。
+  // 即「照这套策略实盘,需要准备多少本金」。open 仓从 entry 起占用至今不释放。
+  maxConcurrentUsd: number;
+  // 平均年化 = (结算净值 ÷ 峰值占用) × (365 ÷ 运行天数)。仅结算盈亏口径(与整页
+  // 一致,不含浮盈)。无结算仓 / 峰值占用为 0 / 运行不足 1 天(短窗年化爆炸)为 null。
+  annualizedRoi: number | null;
+}
+
+/**
+ * 单条策略的基金式档案。positions 是该策略的全部仓位(open+settled)。
+ *
+ * 峰值占用用扫描线:每仓在 entry_ts 记 +size,settled 仓在 exit_ts 记 −size
+ * (open 仓不记出场 —— 资金仍被占用);按时间升序扫,同一时刻「先入后出」——
+ * 结算回款与新开仓同秒发生时,新仓的本金必须先备好,这是保守(偏大)的本金
+ * 口径,宁可高估所需本金也不虚报资金效率。
+ */
+export function computeFundMetrics(
+  positions: FollowPositionRow[],
+  createdAt: number | null,
+  nowSec: number,
+): FundMetrics {
+  const firstEntryTs =
+    positions.length > 0
+      ? positions.reduce((m, p) => Math.min(m, p.entry_ts), Infinity)
+      : null;
+  const startTs = createdAt ?? firstEntryTs;
+  const runDays = startTs != null ? (nowSec - startTs) / 86400 : null;
+
+  // 扫描线:+entry / −exit 事件按 ts 升序;同 ts 时正 delta(入场)排前(保守峰值)。
+  const events: { ts: number; delta: number }[] = [];
+  for (const p of positions) {
+    events.push({ ts: p.entry_ts, delta: p.size_usd });
+    if (p.status === "settled") {
+      // settled 却无 exit_ts 属数据异常,与 avgHoldingDays 同口径按 entry_ts 兜底
+      // (视作零时长占用,不让异常行虚增峰值)。
+      events.push({ ts: p.exit_ts ?? p.entry_ts, delta: -p.size_usd });
+    }
+  }
+  events.sort((a, b) => a.ts - b.ts || b.delta - a.delta);
+  let running = 0;
+  let maxConcurrentUsd = 0;
+  for (const ev of events) {
+    running += ev.delta;
+    if (running > maxConcurrentUsd) maxConcurrentUsd = running;
+  }
+
+  // 年化:仅在「有结算样本 + 有真实本金 + 运行 ≥1 天」时给数,否则诚实置 null ——
+  // 几小时窗口的年化没有解释力,宁缺毋滥(与全站小样本标注文化一致)。
+  const totalRealized = positions
+    .filter((p) => p.status === "settled")
+    .reduce((s, p) => s + (p.realized_pnl ?? 0), 0);
+  const settledCount = positions.filter((p) => p.status === "settled").length;
+  const annualizedRoi =
+    settledCount > 0 && maxConcurrentUsd > 0 && runDays != null && runDays >= 1
+      ? (totalRealized / maxConcurrentUsd) * (365 / runDays)
+      : null;
+
+  return { startTs, runDays, maxConcurrentUsd, annualizedRoi };
+}
+
+// ---------------------------------------------------------------------------
 // Task 8: buildFollowView —— /api/follow 只读接口的纯整形层。把「策略行 + 全部仓位
 // + 分类映射」组装成每策略一块的视图(参数、指标、open/settled 两列)。无副作用、
 // 不修改入参,便于单测与复用;route 层只负责开库、取行、抓分类,整形逻辑全在这里。
@@ -674,6 +746,7 @@ export interface FollowStrategyView {
     maxEntryDeviationCents: number;
   };
   metrics: StrategyMetrics;
+  fund: FundMetrics; // 基金式档案:成立/运行/峰值占用/年化(仅展示,不参与任何决策)
   open: FollowPositionRow[]; // status==='open'
   settled: FollowPositionRow[]; // status==='settled',按 exit_ts 降序(最新在前)
 }
@@ -725,6 +798,8 @@ function parseParamsView(
 /**
  * 组装 /api/follow 响应体。
  *  - 按 strategy_id 把 positions 分组;每策略 metrics 用「该策略全部仓位」算。
+ *  - fund 档案:created_at + nowSec 流入 computeFundMetrics(nowSec 参数化以便
+ *    测试注入固定时刻;route 侧用默认「当前时刻」)。
  *  - open/settled 分列;settled 按 exit_ts 降序(最新在前),exit_ts 缺失按 0 兜底
  *    排到末尾。filter/sort 均作用于新数组,不修改入参 positions。
  *  - 策略顺序沿用入参顺序(route 用 ORDER BY id,故稳定按 id 升序)。
@@ -735,9 +810,11 @@ export function buildFollowView(
     name: string;
     enabled: number;
     params_json: string | null;
+    created_at: number | null;
   }[],
   positions: FollowPositionRow[],
   categoryByCid: Record<string, string | null>,
+  nowSec: number = Math.floor(Date.now() / 1000),
 ): { strategies: FollowStrategyView[] } {
   const byStrategy = new Map<number, FollowPositionRow[]>();
   for (const p of positions) {
@@ -754,6 +831,7 @@ export function buildFollowView(
       enabled: !!s.enabled,
       params: parseParamsView(s.params_json),
       metrics: computeStrategyMetrics(own, categoryByCid),
+      fund: computeFundMetrics(own, s.created_at, nowSec),
       open: own.filter((p) => p.status === "open"),
       settled: own
         .filter((p) => p.status === "settled")

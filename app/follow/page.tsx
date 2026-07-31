@@ -12,7 +12,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { Tag } from "../ui";
+import { Segmented, Tag } from "../ui";
 
 /* ------------------------------------------------------------- API types */
 // 客户端本地类型:镜像 lib/follow 的视图结构,但独立声明,避免把 server 侧
@@ -59,6 +59,14 @@ type StrategyMetrics = {
   byCategory: Record<string, { realized: number; settledCount: number }>;
 };
 
+// 基金式档案(镜像 lib/follow 的 FundMetrics):成立/运行/峰值占用/年化。
+type FundMetrics = {
+  startTs: number | null;
+  runDays: number | null;
+  maxConcurrentUsd: number;
+  annualizedRoi: number | null;
+};
+
 type FollowStrategyView = {
   id: number;
   name: string;
@@ -73,6 +81,8 @@ type FollowStrategyView = {
     maxEntryDeviationCents?: number;
   };
   metrics: StrategyMetrics;
+  // 基金式档案:新响应恒有;类型可选以对旧响应宽容,缺失时各项显示「—」。
+  fund?: FundMetrics;
   open: FollowPositionRow[];
   settled: FollowPositionRow[];
 };
@@ -84,6 +94,12 @@ type FollowResponse = {
 
 // 合并各策略仓位到一张表时,给每行贴上来源策略名(表内可标注归属)。
 type LabeledRow = FollowPositionRow & { strategyName: string };
+
+// 仓位明细的两个 tab:已结算 / 持有中(替代旧版上下两段排列)。
+type PosTab = "settled" | "open";
+
+// 策略筛选的「全部」哨兵值。策略 id 从 1 起(AUTOINCREMENT),0 不会撞真实 id。
+const FILTER_ALL = 0;
 
 /* --------------------------------------------------------------- format */
 
@@ -109,6 +125,20 @@ function fmtHold(sec: number): string {
   const days = sec / 86400;
   if (days < 1) return `${Math.max(0, Math.round(days * 24))} 小时`;
   return `${days.toFixed(1)} 天`;
+}
+
+// 成立日期:秒时间戳 → YYYY-MM-DD(本地时区,基金档案用)。
+function fmtDate(ts: number): string {
+  const d = new Date(ts * 1000);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+// 年化收益率:±X%。|值|≥100% 取整(±1825% 不需要小数),否则一位小数。
+function fmtAnnualized(r: number): string {
+  const pct = Math.abs(r * 100);
+  return `${r >= 0 ? "+" : MINUS}${pct.toFixed(pct >= 100 ? 0 : 1)}%`;
 }
 
 function pnlTone(n: number): "up" | "down" {
@@ -430,6 +460,7 @@ function StrategyCard({
   leading: boolean;
 }) {
   const m = s.metrics;
+  const fund = s.fund; // 旧响应可能缺失 → 档案各项显示「—」
   const slip = m.slippageCost;
   // 均 ¢ 差/仓:所有仓位(open+settled,滑点在进场即产生)的单仓 ¢ 差算术平均。
   // 简单口径 —— 每仓等权、不按 usd 加权;目的只是把美元合计还原成可横比的偏离度。
@@ -516,6 +547,22 @@ function StrategyCard({
           }
         />
         <Metric
+          label="平均年化"
+          title="结算净值 ÷ 峰值占用资金 × 365 ÷ 运行天数。把策略当一只小基金:按历史峰值备足本金、自成立日起折算年化。短窗口/小样本外推极不可靠,仅供横向对比;无结算仓或运行不足 1 天显示 —"
+          value={
+            fund?.annualizedRoi == null ? (
+              <span className="muted">—</span>
+            ) : (
+              <span
+                className={`mono ${pnlTone(fund.annualizedRoi)}`}
+                style={{ fontSize: 18, fontWeight: 600 }}
+              >
+                {fmtAnnualized(fund.annualizedRoi)}
+              </span>
+            )
+          }
+        />
+        <Metric
           label="结算胜率"
           title="盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间;平局不计入分母"
           value={<span className="mono">{winRateLabel(m)}</span>}
@@ -574,6 +621,39 @@ function StrategyCard({
             </span>
           }
         />
+        <Metric
+          label="开始时间"
+          title="策略上线(成立)日期;运行时间与年化都以此为锚。老库缺创建时间时回退首仓开仓日"
+          value={
+            fund?.startTs != null ? (
+              <span className="mono">{fmtDate(fund.startTs)}</span>
+            ) : (
+              <span className="muted">—</span>
+            )
+          }
+        />
+        <Metric
+          label="运行时间"
+          title="自开始时间至今的时长(策略持续在跑,含无信号的空窗期)"
+          value={
+            fund?.runDays != null ? (
+              <span className="mono">{fmtHold(fund.runDays * 86400)}</span>
+            ) : (
+              <span className="muted">—</span>
+            )
+          }
+        />
+        <Metric
+          label="最大占用资金"
+          title="历史上任一时刻同时持有仓位的本金峰值(扫描线口径,open 仓占用至结算才释放)。即照此策略实盘需准备的本金,也是「平均年化」的分母"
+          value={
+            fund ? (
+              <span className="mono">${fmtUsd0(fund.maxConcurrentUsd)}</span>
+            ) : (
+              <span className="muted">—</span>
+            )
+          }
+        />
       </div>
       {m.avgHoldingDays != null ? (
         <div className="ds-hint" style={{ marginTop: "var(--s-3)" }}>
@@ -611,9 +691,15 @@ function MarketCell({ p }: { p: FollowPositionRow }) {
   );
 }
 
-function SettledTable({ rows }: { rows: LabeledRow[] }) {
+function SettledTable({
+  rows,
+  emptyText = "尚无已结算的纸面仓位",
+}: {
+  rows: LabeledRow[];
+  emptyText?: string;
+}) {
   if (rows.length === 0) {
-    return <div className="ds-empty">尚无已结算的纸面仓位</div>;
+    return <div className="ds-empty">{emptyText}</div>;
   }
   const now = Math.floor(Date.now() / 1000);
   return (
@@ -722,9 +808,15 @@ function SettledTable({ rows }: { rows: LabeledRow[] }) {
   );
 }
 
-function OpenTable({ rows }: { rows: LabeledRow[] }) {
+function OpenTable({
+  rows,
+  emptyText = "当前没有持仓中的纸面仓位",
+}: {
+  rows: LabeledRow[];
+  emptyText?: string;
+}) {
   if (rows.length === 0) {
-    return <div className="ds-empty">当前没有持仓中的纸面仓位</div>;
+    return <div className="ds-empty">{emptyText}</div>;
   }
   const now = Math.floor(Date.now() / 1000);
   return (
@@ -816,6 +908,9 @@ export default function FollowPage() {
   const [loading, setLoading] = useState<boolean>(false);
   const [lastRefreshed, setLastRefreshed] = useState<string>("");
   const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
+  // 仓位明细:tab(已结算/持有中)+ 策略筛选(FILTER_ALL=全部,否则策略 id)。
+  const [posTab, setPosTab] = useState<PosTab>("settled");
+  const [stratFilter, setStratFilter] = useState<number>(FILTER_ALL);
   const activeReq = useRef<number>(0);
 
   const load = useCallback(async () => {
@@ -876,6 +971,22 @@ export default function FollowPage() {
   const openRows: LabeledRow[] = shown.flatMap((s) =>
     s.open.map((p) => ({ ...p, strategyName: s.name })),
   );
+
+  // 策略筛选:渲染期派生「有效筛选值」而非 setState —— 选中的策略可能在下一次
+  // 刷新后消失(被停用),此时静默回退「全部」,不在 render 里改状态。
+  const effFilter = shown.some((s) => s.id === stratFilter)
+    ? stratFilter
+    : FILTER_ALL;
+  const byFilter = (rows: LabeledRow[]) =>
+    effFilter === FILTER_ALL
+      ? rows
+      : rows.filter((r) => r.strategy_id === effFilter);
+  const shownSettled = byFilter(settledRows);
+  const shownOpen = byFilter(openRows);
+  const filterName =
+    effFilter === FILTER_ALL
+      ? null
+      : (shown.find((s) => s.id === effFilter)?.name ?? null);
 
   return (
     <main className="ds-main">
@@ -967,20 +1078,70 @@ export default function FollowPage() {
             </div>
           </section>
 
-          {/* 已结算 */}
-          <section style={{ marginBottom: "var(--s-5)" }}>
-            <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-              已结算 · 落袋盈亏({settledRows.length})
-            </div>
-            <SettledTable rows={settledRows} />
-          </section>
-
-          {/* 持有中 · 待结算 */}
+          {/* 仓位明细:已结算/持有中 tab 切换 + 按策略筛选(计数随筛选联动) */}
           <section>
             <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-              持有中 · 待结算({openRows.length}) — 不显示浮盈
+              仓位明细
             </div>
-            <OpenTable rows={openRows} />
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--s-3)",
+                flexWrap: "wrap",
+                marginBottom: "var(--s-2)",
+              }}
+            >
+              <Segmented<PosTab>
+                ariaLabel="仓位状态"
+                options={[
+                  {
+                    label: `已结算 · 落袋(${shownSettled.length})`,
+                    value: "settled",
+                  },
+                  {
+                    label: `持有中 · 待结算(${shownOpen.length})`,
+                    value: "open",
+                  },
+                ]}
+                value={posTab}
+                onChange={setPosTab}
+              />
+              {/* 只有一条策略时筛选没有意义,不渲染 */}
+              {shown.length >= 2 ? (
+                <Segmented<number>
+                  ariaLabel="按策略筛选仓位"
+                  options={[
+                    { label: "全部策略", value: FILTER_ALL },
+                    ...shown.map((s) => ({ label: s.name, value: s.id })),
+                  ]}
+                  value={effFilter}
+                  onChange={setStratFilter}
+                />
+              ) : null}
+              {posTab === "open" ? (
+                <span className="ds-hint">不显示浮盈</span>
+              ) : null}
+            </div>
+            {posTab === "settled" ? (
+              <SettledTable
+                rows={shownSettled}
+                emptyText={
+                  filterName
+                    ? `「${filterName}」策略尚无已结算的纸面仓位`
+                    : undefined
+                }
+              />
+            ) : (
+              <OpenTable
+                rows={shownOpen}
+                emptyText={
+                  filterName
+                    ? `「${filterName}」策略当前没有持仓中的纸面仓位`
+                    : undefined
+                }
+              />
+            )}
           </section>
         </>
       )}

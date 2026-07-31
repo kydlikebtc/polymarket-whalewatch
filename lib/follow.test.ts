@@ -6,6 +6,7 @@ import {
   qualifyingGroups,
   latestPriceByAsset,
   computeStrategyMetrics,
+  computeFundMetrics,
   buildFollowView,
 } from "./follow";
 import type { FollowPositionRow } from "./follow";
@@ -227,6 +228,7 @@ const strat = (o: Partial<StratRow>): StratRow => ({
     sizeUsd: 500,
     exitRule: "settlement",
   }),
+  created_at: null,
   ...o,
 });
 
@@ -348,5 +350,139 @@ describe("buildFollowView", () => {
       realized: -50,
       settledCount: 1,
     });
+  });
+});
+
+// --- 基金式档案指标(开始时间/运行天数/峰值占用/年化) ---
+describe("computeFundMetrics", () => {
+  const DAY = 86400;
+
+  it("空仓 + created_at → startTs=created_at,峰值占用 0,年化 null(无结算仓)", () => {
+    const f = computeFundMetrics([], 1000, 1000 + 10 * DAY);
+    expect(f.startTs).toBe(1000);
+    expect(f.runDays).toBeCloseTo(10);
+    expect(f.maxConcurrentUsd).toBe(0);
+    expect(f.annualizedRoi).toBeNull();
+  });
+
+  it("created_at 缺失 → startTs 回退最早 entry_ts;两者皆无 → 全 null/0", () => {
+    const f = computeFundMetrics(
+      [
+        pos({ entry_ts: 5 * DAY }),
+        pos({ condition_id: "b", entry_ts: 2 * DAY }),
+      ],
+      null,
+      12 * DAY,
+    );
+    expect(f.startTs).toBe(2 * DAY);
+    expect(f.runDays).toBeCloseTo(10);
+
+    const empty = computeFundMetrics([], null, 12 * DAY);
+    expect(empty.startTs).toBeNull();
+    expect(empty.runDays).toBeNull();
+    expect(empty.maxConcurrentUsd).toBe(0);
+    expect(empty.annualizedRoi).toBeNull();
+  });
+
+  it("峰值占用 = 扫描线求同时持仓资金峰值(open 仓占用至今不释放)", () => {
+    const f = computeFundMetrics(
+      [
+        // [0,100] 与 [50,150] 重叠 → 峰值 1000;120 开的 open 仓再叠 → 峰值 1000+
+        pos({ condition_id: "a", entry_ts: 0, exit_ts: 100, size_usd: 500 }),
+        pos({ condition_id: "b", entry_ts: 50, exit_ts: 150, size_usd: 500 }),
+        pos({
+          condition_id: "c",
+          entry_ts: 120,
+          size_usd: 500,
+          status: "open",
+          exit_ts: null,
+          exit_price: null,
+          realized_pnl: null,
+        }),
+      ],
+      0,
+      30 * DAY,
+    );
+    // 时间线:0→+500;50→1000(峰);100→500;120→1000(峰);150→500(open 不释放)
+    expect(f.maxConcurrentUsd).toBe(1000);
+  });
+
+  it("同一时刻先入后出(保守口径):exit 与 entry 同 ts 记作瞬时并存", () => {
+    const f = computeFundMetrics(
+      [
+        pos({ condition_id: "a", entry_ts: 0, exit_ts: 100, size_usd: 500 }),
+        pos({ condition_id: "b", entry_ts: 100, exit_ts: 200, size_usd: 500 }),
+      ],
+      0,
+      30 * DAY,
+    );
+    expect(f.maxConcurrentUsd).toBe(1000);
+  });
+
+  it("年化 = 结算净值/峰值占用 × 365/运行天数", () => {
+    // 运行 73 天(365/5),净值 +100,峰值占用 500 → 0.2 × 5 = 1.0(+100%)
+    const f = computeFundMetrics(
+      [pos({ entry_ts: 0, exit_ts: DAY, size_usd: 500, realized_pnl: 100 })],
+      0,
+      73 * DAY,
+    );
+    expect(f.annualizedRoi).toBeCloseTo(1.0);
+  });
+
+  it("护栏:运行不足 1 天 → 年化 null(短窗年化爆炸,不外推)", () => {
+    const f = computeFundMetrics(
+      [pos({ entry_ts: 0, exit_ts: 1800, size_usd: 500, realized_pnl: 100 })],
+      0,
+      3600,
+    );
+    expect(f.runDays).toBeCloseTo(3600 / DAY);
+    expect(f.annualizedRoi).toBeNull();
+  });
+
+  it("护栏:峰值占用为 0(size 全 0 的异常数据)→ 年化 null,不除零", () => {
+    const f = computeFundMetrics(
+      [pos({ entry_ts: 0, exit_ts: DAY, size_usd: 0, realized_pnl: 50 })],
+      0,
+      30 * DAY,
+    );
+    expect(f.maxConcurrentUsd).toBe(0);
+    expect(f.annualizedRoi).toBeNull();
+  });
+});
+
+describe("buildFollowView · fund 档案透传", () => {
+  const DAY = 86400;
+
+  it("每策略携带 fund;created_at 与 nowSec 流入计算", () => {
+    const { strategies } = buildFollowView(
+      [strat({ id: 1, created_at: 1000 })],
+      [
+        pos({
+          strategy_id: 1,
+          entry_ts: 1000,
+          exit_ts: 1000 + DAY,
+          size_usd: 500,
+          realized_pnl: 100,
+        }),
+      ],
+      {},
+      1000 + 73 * DAY,
+    );
+    const f = strategies[0].fund;
+    expect(f.startTs).toBe(1000);
+    expect(f.runDays).toBeCloseTo(73);
+    expect(f.maxConcurrentUsd).toBe(500);
+    expect(f.annualizedRoi).toBeCloseTo(1.0);
+  });
+
+  it("created_at null → fund.startTs 回退该策略最早 entry_ts", () => {
+    const { strategies } = buildFollowView(
+      [strat({ id: 1, created_at: null })],
+      [pos({ strategy_id: 1, entry_ts: 7 * DAY })],
+      {},
+      17 * DAY,
+    );
+    expect(strategies[0].fund.startTs).toBe(7 * DAY);
+    expect(strategies[0].fund.runDays).toBeCloseTo(10);
   });
 });
