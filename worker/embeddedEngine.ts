@@ -22,6 +22,7 @@ import {
 } from "../lib/discovery";
 import { maybeDailyDiscovery } from "../lib/admission";
 import { runFollowCycle } from "../lib/follow";
+import { fetchAskBook } from "../lib/orderBook";
 import { fetchPriceAt } from "../lib/priceHistory";
 import { wrapSendWithHealth } from "../lib/telegramHealth";
 import {
@@ -338,6 +339,9 @@ export function startAlertEngine(): void {
           // 价格通常朝进场方向移动,取"之后的最近点"会系统性低估延迟成本。
           fetchFormationPrice: (asset, tsSec) =>
             fetchPriceAt(asset, tsSec, { atOrBefore: true }),
+          // 执行层归因:开仓瞬间盘口快照模拟吃单(exec_*)。每轮新开仓通常
+          // 0~5 笔,一仓一次 /book 请求,失败落 null 不阻塞开仓。
+          fetchBook: (asset) => fetchAskBook(asset),
           getMeta: (cids) => getMarketMeta(db, cids),
         });
         if (opened > 0 || settled > 0) {

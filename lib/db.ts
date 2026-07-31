@@ -23,7 +23,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS cycle_metrics (id INTEGER PRIMARY KEY AUTOINCREMENT, loop TEXT NOT NULL, ts INTEGER NOT NULL, window_trades INTEGER, window_usd REAL, raw_groups INTEGER, contested_dropped INTEGER, fired INTEGER);
     CREATE INDEX IF NOT EXISTS idx_cycle_metrics_ts ON cycle_metrics(loop, ts);
     CREATE TABLE IF NOT EXISTS follow_strategies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, enabled INTEGER DEFAULT 1, params_json TEXT, created_at INTEGER);
-    CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, formation_ts INTEGER, formation_price REAL, markout_30m REAL, markout_2h REAL, UNIQUE(strategy_id, condition_id, outcome));
+    CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, formation_ts INTEGER, formation_price REAL, markout_30m REAL, markout_2h REAL, exec_price REAL, exec_best_ask REAL, exec_filled_usd REAL, UNIQUE(strategy_id, condition_id, outcome));
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
     CREATE INDEX IF NOT EXISTS idx_candidates_evidence_ts ON wallet_candidates(evidence_ts);
   `);
@@ -67,11 +67,17 @@ export function openDb(path = "data.sqlite") {
   // 的市价 —— 量化「延迟成本」用。红线:这些列只用于归因展示,绝不参与
   // realized_pnl。同 markets_traded 的写法:老库 ALTER 补列,新库 CREATE TABLE
   // 已含 → "duplicate column" 静默。
+  // exec_*:执行层归因(开仓瞬间盘口快照模拟吃单)。exec_price=模拟成交均价、
+  // exec_best_ask=彼时最优卖价、exec_filled_usd=盘口实际能吃下的金额(<size_usd
+  // = 薄盘部分成交)。红线同上:只归因展示,绝不参与 realized_pnl。
   for (const col of [
     "formation_ts INTEGER",
     "formation_price REAL",
     "markout_30m REAL",
     "markout_2h REAL",
+    "exec_price REAL",
+    "exec_best_ask REAL",
+    "exec_filled_usd REAL",
   ]) {
     try {
       db.prepare(`ALTER TABLE follow_positions ADD COLUMN ${col}`).run();

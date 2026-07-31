@@ -1026,3 +1026,111 @@ describe("runFollowCycle markout 惰性回填", () => {
     db.close();
   });
 });
+
+// --- 执行层建模:开仓瞬间盘口快照 → 模拟吃单落 exec_* 归因列 ---
+describe("runFollowCycle 执行滑点归因(fetchBook)", () => {
+  const twoWalletTrades = () => [
+    trade({ proxyWallet: "w1", transactionHash: "h1", size: 10000, price: 0.6 }),
+    trade({ proxyWallet: "w2", transactionHash: "h2", size: 10000, price: 0.6 }),
+  ];
+  const baseDeps = (db: ReturnType<typeof openDb>) => ({
+    db,
+    fetchWindow: async () => ({ trades: twoWalletTrades() }),
+    getSmart: smart,
+    fetchPrice: async () => 0.63,
+    getMeta: async () => ({}),
+    nowSec: 1800,
+  });
+
+  it("注入 fetchBook → 模拟吃单结果落 exec_price/exec_best_ask/exec_filled_usd", async () => {
+    const db = openDb(":memory:");
+    // 升序簿(AskBook 契约):最优 0.64 档只有 $320 深度,余下吃 0.66 档。
+    const r = await runFollowCycle({
+      ...baseDeps(db),
+      fetchBook: async () => ({
+        asks: [
+          { price: 0.64, size: 500 }, // $320
+          { price: 0.66, size: 100000 },
+        ],
+      }),
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const row = db
+      .prepare(
+        "SELECT exec_price, exec_best_ask, exec_filled_usd FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as {
+      exec_price: number;
+      exec_best_ask: number;
+      exec_filled_usd: number;
+    };
+    const shares = 500 + 180 / 0.66; // 0.64 档 $320/0.64=500 份 + 0.66 档 $180
+    expect(row.exec_best_ask).toBeCloseTo(0.64);
+    expect(row.exec_filled_usd).toBeCloseTo(500);
+    expect(row.exec_price).toBeCloseTo(500 / shares);
+  });
+
+  it("薄簿吃穿:exec_filled_usd < size_usd 如实落库(部分成交)", async () => {
+    const db = openDb(":memory:");
+    await runFollowCycle({
+      ...baseDeps(db),
+      fetchBook: async () => ({ asks: [{ price: 0.5, size: 100 }] }), // 仅 $50 深度
+    });
+    const row = db
+      .prepare(
+        "SELECT exec_price, exec_filled_usd FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as { exec_price: number; exec_filled_usd: number };
+    expect(row.exec_filled_usd).toBeCloseTo(50);
+    expect(row.exec_price).toBeCloseTo(0.5);
+  });
+
+  it("fetchBook 抛错 → 开仓照常,exec 列全 null(归因抖动杀不死开仓)", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      ...baseDeps(db),
+      fetchBook: async () => {
+        throw new Error("boom 500");
+      },
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const row = db
+      .prepare(
+        "SELECT exec_price, exec_best_ask, exec_filled_usd FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as {
+      exec_price: number | null;
+      exec_best_ask: number | null;
+      exec_filled_usd: number | null;
+    };
+    expect(row.exec_price).toBeNull();
+    expect(row.exec_best_ask).toBeNull();
+    expect(row.exec_filled_usd).toBeNull();
+  });
+
+  it("空簿(拿到了簿但无人挂卖)→ exec 列 null,开仓照常", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      ...baseDeps(db),
+      fetchBook: async () => ({ asks: [] }),
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const row = db
+      .prepare(
+        "SELECT exec_price FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as { exec_price: number | null };
+    expect(row.exec_price).toBeNull();
+  });
+
+  it("未注入 fetchBook(向后兼容)→ exec 列 null", async () => {
+    const db = openDb(":memory:");
+    await runFollowCycle(baseDeps(db));
+    const row = db
+      .prepare(
+        "SELECT exec_price FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as { exec_price: number | null };
+    expect(row.exec_price).toBeNull();
+  });
+});

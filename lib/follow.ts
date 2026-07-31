@@ -4,6 +4,8 @@ import type { DB } from "./db";
 import { DEFAULT_DISAGREEMENT, detectDisagreement } from "./disagreement";
 import type { MarketMeta } from "./gamma";
 import { excludeContestedFromConsensus } from "./marketSignals";
+import type { AskBook } from "./orderBook";
+import { simulateBookBuy } from "./orderBook";
 import { wilsonInterval } from "./outcomeStats";
 import type { SmartTag } from "./smartWallets";
 import { latestPriceByAsset } from "./trades";
@@ -126,6 +128,11 @@ export interface FollowCycleDeps {
     asset: string,
     tsSec: number,
   ) => Promise<number | null>;
+  // 盘口来源(可选):开仓瞬间抓 ask 簿(AskBook 契约:升序、已数字化,由
+  // parseAskBook 保证),用本仓 sizeUsd 模拟吃单 → exec_* 执行滑点归因列。
+  // 盘口只有当下快照、无历史,故只能开仓时点采集,老仓恒 null。失败/缺依赖
+  // → exec_* 存 null,绝不阻塞开仓;红线:不参与任何开仓判定与 realized_pnl。
+  fetchBook?: (asset: string) => Promise<AskBook | null>;
   getMeta: (cids: string[]) => Promise<Record<string, MarketMeta>>;
   // 新鲜度闸门(秒):只对「formationTs(第 N 个合格钱包跨线时刻)距 now <=
   // freshSec」的共识组开仓。默认 900(15min:10min 会和 5min 轮询周期冲突 ——
@@ -221,6 +228,7 @@ export async function runFollowCycle(
     getSmart,
     fetchPrice,
     fetchFormationPrice,
+    fetchBook,
     getMeta,
     freshSec = 900,
     nowSec = Math.floor(Date.now() / 1000),
@@ -329,8 +337,8 @@ export async function runFollowCycle(
       `INSERT OR IGNORE INTO follow_positions
          (strategy_id, condition_id, outcome, asset, outcome_index, title, event_slug,
           entry_ts, entry_price, smart_avg_price, size_usd, shares, status,
-          formation_ts, formation_price)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`,
+          formation_ts, formation_price, exec_price, exec_best_ask, exec_filled_usd)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
     );
     for (const s of strategies) {
       for (const g of freshByStrategy.get(s.id) ?? []) {
@@ -408,6 +416,27 @@ export async function runFollowCycle(
           );
           continue;
         }
+        // 执行层归因:开仓瞬间盘口快照模拟吃单(exec_*)。盘口无历史、只能此刻
+        // 采集;任何失败(网络/空簿/形状)→ 三列 null,开仓照常 —— 与 formation
+        // 同级的纯归因,杀不死开仓,也不参与护栏判定。
+        let execPrice: number | null = null;
+        let execBestAsk: number | null = null;
+        let execFilledUsd: number | null = null;
+        if (fetchBook) {
+          try {
+            const book = await fetchBook(g.asset);
+            if (book && book.asks.length > 0) {
+              execBestAsk = book.asks[0].price;
+              const fill = simulateBookBuy(book.asks, s.sizeUsd);
+              if (fill) {
+                execPrice = fill.avgPrice;
+                execFilledUsd = fill.filledUsd;
+              }
+            }
+          } catch (e) {
+            console.warn(`[follow] fetchBook failed for ${g.asset}:`, e);
+          }
+        }
         const shares = positionShares(entry, s.sizeUsd);
         const res = ins.run(
           s.id,
@@ -424,6 +453,9 @@ export async function runFollowCycle(
           shares,
           g.formationTs,
           formationPrice,
+          execPrice,
+          execBestAsk,
+          execFilledUsd,
         );
         // changes===0 说明 UNIQUE 命中(并发/竞态下已被开出),不重复计数。
         if (res.changes === 1) opened++;

@@ -41,6 +41,10 @@ type FollowPositionRow = {
   formation_price?: number | null;
   markout_30m?: number | null;
   markout_2h?: number | null;
+  // 执行层归因:开仓瞬间盘口快照模拟吃单(仅新仓有值,老仓 null)。
+  exec_price?: number | null;
+  exec_best_ask?: number | null;
+  exec_filled_usd?: number | null;
 };
 
 type StrategyMetrics = {
@@ -210,6 +214,37 @@ function rowMarkout2hCents(p: FollowPositionRow): number | null {
 function markoutToneClass(c: number): string {
   if (Math.abs(c) <= 0.5) return "muted";
   return c > 0 ? "up" : "down";
+}
+
+// 执行滑点 ¢ =(盘口模拟成交均价 − 报价入场价)× 100 —— 买入成本分解的最后一段
+// (价差 + 深度)。开仓瞬间盘口快照;盘口无历史,老仓恒 null。
+function rowExecCents(p: FollowPositionRow): number | null {
+  return p.exec_price != null ? (p.exec_price - p.entry_price) * 100 : null;
+}
+
+// 执行滑点单元格:中性色(是成本不是盈亏);盘口深度吃不满本仓名义金额时转琥珀
+// 并标「薄」,悬停给出实际可成交额 —— 薄盘警示与部分成交事实一体呈现。
+function ExecCell({ p }: { p: FollowPositionRow }) {
+  const c = rowExecCents(p);
+  if (c == null) return <span className="muted">—</span>;
+  const partial =
+    p.exec_filled_usd != null && p.exec_filled_usd < p.size_usd * 0.999;
+  return (
+    <span
+      className="mono"
+      style={partial ? { color: "var(--warn-700)" } : undefined}
+      title={
+        partial
+          ? `盘口深度不足:$${fmtUsd0(p.size_usd)} 名义只能成交 $${fmtUsd0(
+              p.exec_filled_usd ?? 0,
+            )},均价按已成交部分计`
+          : undefined
+      }
+    >
+      {fmtSignedCents(c)}
+      {partial ? <span className="muted">(薄)</span> : null}
+    </span>
+  );
 }
 
 // 带符号 ¢ 差:+5.9¢ / −19.9¢(0 记 +0.0¢)。
@@ -567,6 +602,14 @@ function StrategyCard({
     delaySamples.length > 0
       ? delaySamples.reduce((sum, c) => sum + c, 0) / delaySamples.length
       : null;
+  // 均执行滑点:仅统计有盘口快照的仓位(执行层上线后的新仓),每仓等权平均。
+  const execSamples = allPos
+    .map(rowExecCents)
+    .filter((c): c is number => c != null);
+  const avgExecCents =
+    execSamples.length > 0
+      ? execSamples.reduce((sum, c) => sum + c, 0) / execSamples.length
+      : null;
   return (
     <div
       className="ds-card"
@@ -697,6 +740,21 @@ function StrategyCard({
                   {fmtSignedCents(avgDelayCents)}
                 </span>
                 <div className="kpi-sub mono">n={delaySamples.length}</div>
+              </>
+            )
+          }
+        />
+        <Metric
+          label="均执行滑点"
+          title="有盘口快照的仓位的(模拟成交均价 − 报价入场价)¢ 算术平均 —— 真实执行成本(跨价差+吃深度)的实测估计。开仓瞬间抓 CLOB 订单簿、按本仓名义金额模拟市价吃单;盘口无历史,执行层上线前的老仓不进样本"
+          value={
+            avgExecCents == null ? (
+              <span className="muted">—</span>
+            ) : (
+              <>
+                {/* 配色中性:执行滑点是成本不是盈亏。 */}
+                <span className="mono">{fmtSignedCents(avgExecCents)}</span>
+                <div className="kpi-sub mono">n={execSamples.length}</div>
               </>
             )
           }
@@ -1155,6 +1213,12 @@ function SettledTable({
             </th>
             <th
               className="is-right"
+              title="开仓瞬间抓 CLOB 盘口快照,按本仓名义金额模拟市价吃单:模拟成交均价 − 报价入场价(¢)。真实执行成本(跨价差+吃深度)的实测估计;琥珀(薄)=盘口深度不足只能部分成交。盘口无历史,仅新开仓有值,老仓显示 —"
+            >
+              执行滑点
+            </th>
+            <th
+              className="is-right"
               title="markout:形成后 2 小时市价 − 形成价(¢),衡量共识形成后还有没有肉。涨绿跌红(±0.5¢ 死区记平推);形成价或 2h 回填价缺失显示 —"
             >
               形成后2h
@@ -1207,6 +1271,10 @@ function SettledTable({
                   ) : (
                     <span className="muted">—</span>
                   )}
+                </td>
+                {/* 执行滑点:盘口快照模拟吃单 vs 报价入场;仅新仓有值。 */}
+                <td className="is-right" data-label="执行滑点">
+                  <ExecCell p={p} />
                 </td>
                 {/* 形成后 2h:价格方向,涨绿跌红(±0.5¢ 死区平推);缺值显示 —。 */}
                 <td className="mono is-right" data-label="形成后2h">
@@ -1270,6 +1338,12 @@ function OpenTable({
             >
               延迟成本
             </th>
+            <th
+              className="is-right"
+              title="开仓瞬间抓 CLOB 盘口快照,按本仓名义金额模拟市价吃单:模拟成交均价 − 报价入场价(¢)。真实执行成本(跨价差+吃深度)的实测估计;琥珀(薄)=盘口深度不足只能部分成交。盘口无历史,仅新开仓有值,老仓显示 —"
+            >
+              执行滑点
+            </th>
             <th className="is-right">已持有</th>
             <th>状态</th>
           </tr>
@@ -1314,6 +1388,10 @@ function OpenTable({
                   ) : (
                     <span className="muted">—</span>
                   )}
+                </td>
+                {/* 执行滑点:盘口快照模拟吃单 vs 报价入场;仅新仓有值。 */}
+                <td className="is-right" data-label="执行滑点">
+                  <ExecCell p={p} />
                 </td>
                 <td className="mono muted is-right" data-label="已持有">
                   {fmtHold(held)}
@@ -1426,7 +1504,7 @@ export default function FollowPage() {
         <div className="ds-hint">
           现价进场 · 只跟 15 分钟内新形成的共识 · 持有到结算 · 固定 $/信号 ·
           仅结算盈亏(不做浮盈)·
-          按报价快照纸面成交,不含盘口执行成本(价差/深度),盈亏偏乐观
+          按报价快照纸面成交,不含盘口执行成本(价差/深度),盈亏偏乐观;「执行滑点」列为该成本的实测估计
           {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
           {loading ? (
             <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>

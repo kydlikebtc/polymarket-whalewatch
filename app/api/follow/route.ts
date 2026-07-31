@@ -31,6 +31,11 @@ type PositionRow = FollowPositionRow & {
   formation_price: number | null;
   markout_30m: number | null;
   markout_2h: number | null;
+  // 执行层归因:开仓瞬间盘口快照模拟吃单。exec_price=模拟成交均价、
+  // exec_best_ask=彼时最优卖价、exec_filled_usd=盘口能吃下的金额。老仓 null。
+  exec_price: number | null;
+  exec_best_ask: number | null;
+  exec_filled_usd: number | null;
 };
 
 // Read-only: strategies + their paper positions + per-strategy metrics. No live
@@ -50,7 +55,8 @@ export async function GET() {
           `SELECT strategy_id, condition_id, outcome, title, event_slug, size_usd,
                   entry_price, smart_avg_price, shares, status, entry_ts,
                   exit_ts, exit_price, realized_pnl,
-                  formation_ts, formation_price, markout_30m, markout_2h
+                  formation_ts, formation_price, markout_30m, markout_2h,
+                  exec_price, exec_best_ask, exec_filled_usd
              FROM follow_positions`,
         )
         .all() as PositionRow[];
