@@ -162,6 +162,14 @@ function fmtAnnualized(r: number): string {
   return `${r >= 0 ? "+" : MINUS}${pct.toFixed(pct >= 100 ? 0 : 1)}%`;
 }
 
+// 动作时间:M/D HH:mm(本地时区,操作历史用);完整时间放 title 悬停。
+function fmtDateTime(ts: number): string {
+  const d = new Date(ts * 1000);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${d.getMonth() + 1}/${d.getDate()} ${hh}:${mi}`;
+}
+
 function pnlTone(n: number): "up" | "down" {
   return n >= 0 ? "up" : "down";
 }
@@ -741,7 +749,7 @@ function StrategyCard({
           平均持有 {m.avgHoldingDays.toFixed(1)} 天
         </div>
       ) : null}
-      <AccountPlanBlock name={s.name} acct={s.account} />
+      <CardActions name={s.name} acct={s.account} positions={allPos} />
     </div>
   );
 }
@@ -749,17 +757,22 @@ function StrategyCard({
 const fmtPct = (u: number | null) =>
   u == null ? "—" : `${(u * 100).toFixed(0)}%`;
 
-// 账户推演入口:卡片只露「建议跟单额度」一个数字 + 入口按钮,额度依据与五档
-// 推演表收进弹窗,卡片保持紧凑。仅展示,不参与任何决策。
-function AccountPlanBlock({
+// 卡片底部动作行:「建议跟单额度」数字 + 两个弹窗入口(账户推演 / 操作历史),
+// 细节全部收进弹窗,卡片保持紧凑。仅展示,不参与任何决策。
+function CardActions({
   name,
   acct,
+  positions,
 }: {
   name: string;
   acct?: AccountPlan;
+  positions: FollowPositionRow[];
 }) {
-  const [open, setOpen] = useState(false);
-  if (!acct || acct.rows.length === 0 || acct.suggestedUsd == null) return null;
+  const [planOpen, setPlanOpen] = useState(false);
+  const [histOpen, setHistOpen] = useState(false);
+  const hasPlan = !!acct && acct.rows.length > 0 && acct.suggestedUsd != null;
+  const hasHistory = positions.length > 0;
+  if (!hasPlan && !hasHistory) return null;
   return (
     <div
       style={{
@@ -772,26 +785,54 @@ function AccountPlanBlock({
         flexWrap: "wrap",
       }}
     >
-      <span className="ds-hint">建议跟单额度</span>
-      <span className="mono" style={{ fontWeight: 600 }}>
-        ${fmtUsd0(acct.suggestedUsd)}
-      </span>
-      <button
-        type="button"
-        className="ds-btn"
-        onClick={() => setOpen(true)}
-        title="额度依据与「若账户只备 $X」五档精确回放"
-      >
-        账户推演 · 该备多少钱
-      </button>
-      <Modal
-        open={open}
-        onClose={() => setOpen(false)}
-        title={`${name} · 建议跟单额度与账户推演`}
-        width={680}
-      >
-        <AccountPlanDialog acct={acct} />
-      </Modal>
+      {hasPlan ? (
+        <>
+          <span className="ds-hint">建议跟单额度</span>
+          <span className="mono" style={{ fontWeight: 600 }}>
+            ${fmtUsd0(acct!.suggestedUsd!)}
+          </span>
+          <button
+            type="button"
+            className="ds-btn"
+            onClick={() => setPlanOpen(true)}
+            title="额度依据与「若账户只备 $X」五档精确回放"
+          >
+            账户推演 · 该备多少钱
+          </button>
+        </>
+      ) : null}
+      {hasHistory ? (
+        <button
+          type="button"
+          className="ds-btn"
+          onClick={() => setHistOpen(true)}
+          title="出信号→买入、兑现卖出的完整动作记录,倒序排列"
+        >
+          操作历史
+        </button>
+      ) : null}
+      {hasPlan ? (
+        <Modal
+          open={planOpen}
+          onClose={() => setPlanOpen(false)}
+          title={`${name} · 建议跟单额度与账户推演`}
+          width={680}
+        >
+          <AccountPlanDialog acct={acct!} />
+        </Modal>
+      ) : null}
+      {hasHistory ? (
+        <Modal
+          open={histOpen}
+          onClose={() => setHistOpen(false)}
+          title={`${name} · 操作历史`}
+          // 尽量占满视口宽(Modal 内部按 min(width, 100%) 收敛),配合市场列
+          // 允许换行,表格不出现左右滚动。
+          width={1200}
+        >
+          <HistoryDialog positions={positions} />
+        </Modal>
+      ) : null}
     </div>
   );
 }
@@ -917,6 +958,136 @@ function AccountPlanDialog({ acct }: { acct: AccountPlan }) {
         回放口径:把历史仓位按开仓顺序重演——账户资金不够就错过该信号、市场结算
         即释放资金。每仓固定 $/信号且互相独立,因此错过哪几仓、少赚/少亏多少是
         精确值而非估计。效率 = 时间加权平均占用 ÷ 账户额(含零仓闲置期)。
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------ action history */
+
+// 操作历史事件:每仓一条「买入」(entry_ts,附信号形成时间),已结算再加一条
+// 「兑现」(exit_ts)。仅记录已执行的纸面动作——被新鲜度闸门/偏离护栏拦下、
+// 或(推演意义上)资金外的信号不产生仓位行,自然不在此表。
+type HistoryEvent = {
+  ts: number;
+  kind: "open" | "settle";
+  p: FollowPositionRow;
+};
+
+// 倒序(最新在前);同一时刻「兑现」排在「买入」上方——同刻时兑现在时间线上
+// 是更靠后的动作(entry==exit 的零时长异常仓也因此顺序自然)。
+function buildHistory(positions: FollowPositionRow[]): HistoryEvent[] {
+  const events: HistoryEvent[] = [];
+  for (const p of positions) {
+    events.push({ ts: p.entry_ts, kind: "open", p });
+    if (p.status === "settled" && p.exit_ts != null) {
+      events.push({ ts: p.exit_ts, kind: "settle", p });
+    }
+  }
+  return events.sort(
+    (a, b) =>
+      b.ts - a.ts || (a.kind === b.kind ? 0 : a.kind === "settle" ? -1 : 1),
+  );
+}
+
+// 兑现动作的结果着色:赢绿 / 输红 / 平中性(与 SideTag 同一 up/down 语义)。
+function settleTagVariant(pnl: number | null): "up" | "down" | "default" {
+  if (pnl == null || pnl === 0) return "default";
+  return pnl > 0 ? "up" : "down";
+}
+
+function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
+  const events = buildHistory(positions);
+  const buys = events.filter((e) => e.kind === "open").length;
+  return (
+    <div>
+      <div className="ds-hint" style={{ marginBottom: "var(--s-2)" }}>
+        {buys} 次买入 · {events.length - buys} 次兑现 · 倒序(最新在前)·
+        纸面模拟,无真实成交;仅记录已执行动作,被护栏/新鲜度闸门拦下的信号不在此列
+      </div>
+      <div className="ds-table-wrap">
+        <table className="ds-table">
+          <thead>
+            <tr>
+              <th title="动作发生时刻(本地时区),悬停看完整时间">时间</th>
+              <th title="买入 = 信号触发后现价开仓;兑现 = 市场结算平仓(赢绿/输红/平灰)">
+                动作
+              </th>
+              <th>市场 · 结果</th>
+              <th
+                className="is-right"
+                title="买入行 = 进场价,下附信号形成时间与检测延迟;兑现行 = 结算价,下附持有时长"
+              >
+                价格
+              </th>
+              <th
+                className="is-right"
+                title="买入行 = 投入本金;兑现行 = 已实现盈亏"
+              >
+                金额 / 盈亏
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {events.map((e, i) => (
+              <tr key={`${e.p.condition_id}-${e.p.outcome}-${e.kind}-${i}`}>
+                <td
+                  className="mono"
+                  title={new Date(e.ts * 1000).toLocaleString("zh-CN")}
+                >
+                  {fmtDateTime(e.ts)}
+                </td>
+                <td>
+                  {e.kind === "open" ? (
+                    <span className="ds-tag">买入</span>
+                  ) : (
+                    <Tag variant={settleTagVariant(e.p.realized_pnl)}>兑现</Tag>
+                  )}
+                </td>
+                {/* 市场列放开全局 nowrap:长标题换行而不是把表撑出横向滚动 */}
+                <td style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>
+                  <MarketCell p={e.p} />
+                </td>
+                <td className="is-right">
+                  {e.kind === "open" ? (
+                    <>
+                      <span className="mono">{cents(e.p.entry_price)}</span>
+                      {e.p.formation_ts != null ? (
+                        <div className="kpi-sub">
+                          信号 {fmtDateTime(e.p.formation_ts)} · 延迟{" "}
+                          {Math.max(
+                            0,
+                            Math.round((e.p.entry_ts - e.p.formation_ts) / 60),
+                          )}{" "}
+                          分
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <span className="mono">
+                        {e.p.exit_price != null ? cents(e.p.exit_price) : "—"}
+                      </span>
+                      <div className="kpi-sub">
+                        持有{" "}
+                        {fmtHold((e.p.exit_ts ?? e.p.entry_ts) - e.p.entry_ts)}
+                      </div>
+                    </>
+                  )}
+                </td>
+                <td className="is-right">
+                  {e.kind === "open" ? (
+                    <span className="mono muted">${fmtUsd0(e.p.size_usd)}</span>
+                  ) : (
+                    <span className={`mono ${pnlTone(e.p.realized_pnl ?? 0)}`}>
+                      {fmtSignedUsd(e.p.realized_pnl ?? 0)}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
