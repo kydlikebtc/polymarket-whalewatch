@@ -67,6 +67,25 @@ type FundMetrics = {
   annualizedRoi: number | null;
 };
 
+// 账户推演(镜像 lib/follow 的 AccountSimRow/AccountPlan):备多少钱→接住多少。
+type AccountSimRow = {
+  accountUsd: number;
+  taken: number;
+  missed: number;
+  realizedPnl: number;
+  missedPnl: number;
+  annualizedRoi: number | null;
+  utilization: number | null;
+};
+
+type AccountPlan = {
+  rows: AccountSimRow[];
+  recommendedUsd: number | null;
+  avgOccupiedUsd: number;
+  utilization: number | null;
+  annualizedOnRecommended: number | null;
+};
+
 type FollowStrategyView = {
   id: number;
   name: string;
@@ -81,8 +100,9 @@ type FollowStrategyView = {
     maxEntryDeviationCents?: number;
   };
   metrics: StrategyMetrics;
-  // 基金式档案:新响应恒有;类型可选以对旧响应宽容,缺失时各项显示「—」。
+  // 基金式档案与账户推演:新响应恒有;类型可选以对旧响应宽容,缺失时不渲染/显示「—」。
   fund?: FundMetrics;
+  account?: AccountPlan;
   open: FollowPositionRow[];
   settled: FollowPositionRow[];
 };
@@ -660,6 +680,95 @@ function StrategyCard({
           平均持有 {m.avgHoldingDays.toFixed(1)} 天
         </div>
       ) : null}
+      <AccountPlanBlock acct={s.account} />
+    </div>
+  );
+}
+
+// 账户推演块:反事实精确回放「若账户只备 $X」。固定 $/仓 + 仓位独立 ⇒ 回放
+// 无路径耦合,错过哪几仓/少赚多少是精确值而非估计。仅展示,不参与任何决策。
+function AccountPlanBlock({ acct }: { acct?: AccountPlan }) {
+  if (!acct || acct.rows.length === 0) return null;
+  const fmtPct = (u: number | null) =>
+    u == null ? "—" : `${(u * 100).toFixed(0)}%`;
+  return (
+    <div
+      style={{
+        marginTop: "var(--s-3)",
+        borderTop: "1px solid var(--n-200)",
+        paddingTop: "var(--s-3)",
+      }}
+    >
+      <div
+        className="ds-label"
+        style={{ marginBottom: "var(--s-2)" }}
+        title="把历史仓位按开仓顺序重演:账户资金不够就错过、结算即释放。固定 $/信号且仓位互相独立,回放是精确反事实而非估计。建议账户额 = 恰好接住全部历史信号的峰值资金;历史窗口口径,未来峰值可能更高"
+      >
+        账户推演 · 该备多少钱
+      </div>
+      <div className="ds-hint" style={{ marginBottom: "var(--s-2)" }}>
+        {acct.recommendedUsd != null
+          ? `建议账户 ≥ $${fmtUsd0(acct.recommendedUsd)}(恰接住全部历史信号 · 实盘宜上浮 20–30%)`
+          : ""}
+        {` · 平均占用 $${fmtUsd0(acct.avgOccupiedUsd)}`}
+        {acct.utilization != null
+          ? ` · 使用效率 ${fmtPct(acct.utilization)}`
+          : ""}
+      </div>
+      <div className="ds-table-wrap">
+        <table className="ds-table">
+          <thead>
+            <tr>
+              <th title="若账户只备这么多钱(0.25/0.5/0.75/1/1.25 × 峰值占用)">
+                若账户
+              </th>
+              <th title="按开仓顺序回放:资金不足即错过该信号">接住 · 错过</th>
+              <th title="接住且已结算仓位的已实现盈亏合计(不含浮盈)">落袋</th>
+              <th title="落袋 ÷ 账户额 × 365 ÷ 运行天数;无结算仓或运行不足 1 天为 —">
+                年化
+              </th>
+              <th title="时间加权平均占用 ÷ 账户额(含零仓闲置期)">效率</th>
+            </tr>
+          </thead>
+          <tbody>
+            {acct.rows.map((r) => (
+              <tr
+                key={r.accountUsd}
+                style={
+                  r.accountUsd === acct.recommendedUsd
+                    ? { background: "var(--n-100)" }
+                    : undefined
+                }
+              >
+                <td className="mono">${fmtUsd0(r.accountUsd)}</td>
+                <td className="mono">
+                  {r.taken} ·{" "}
+                  {r.missed > 0 ? (
+                    <span style={{ color: "var(--warn-700)" }}>{r.missed}</span>
+                  ) : (
+                    "0"
+                  )}
+                </td>
+                <td>
+                  <span className={`mono ${pnlTone(r.realizedPnl)}`}>
+                    {fmtSignedUsd(r.realizedPnl)}
+                  </span>
+                </td>
+                <td>
+                  {r.annualizedRoi == null ? (
+                    <span className="muted">—</span>
+                  ) : (
+                    <span className={`mono ${pnlTone(r.annualizedRoi)}`}>
+                      {fmtAnnualized(r.annualizedRoi)}
+                    </span>
+                  )}
+                </td>
+                <td className="mono">{fmtPct(r.utilization)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -729,6 +729,180 @@ export function computeFundMetrics(
 }
 
 // ---------------------------------------------------------------------------
+// 账户推演 —— 回答「跟这条策略该在账户里备多少钱」。固定 $/仓 + 仓位互相独立
+// 使得反事实可以**精确回放**(不像真实复利仓位存在路径耦合):把历史仓位按开仓
+// 顺序重演一遍,资金不够就错过、结算即释放,得到每个账户档位下的接住/错过/
+// 落袋/效率——账户额建议由数据推导,不靠拍脑袋。纯函数,只做展示归因。
+// ---------------------------------------------------------------------------
+
+export interface AccountSimRow {
+  accountUsd: number; // 档位:若账户只备这么多钱
+  taken: number; // 接住仓数
+  missed: number; // 资金不足错过的仓数
+  realizedPnl: number; // 接住且已结算的落袋合计
+  missedPnl: number; // 错过且已结算的盈亏合计(机会成本;负值=幸运避亏)
+  annualizedRoi: number | null; // (realizedPnl ÷ accountUsd) × 365 ÷ 运行天数
+  utilization: number | null; // 该档下时间加权平均占用 ÷ accountUsd
+}
+
+export interface AccountPlan {
+  rows: AccountSimRow[]; // 0.25/0.5/0.75/1/1.25 × 峰值 的档位阶梯
+  recommendedUsd: number | null; // 恰好接住全部历史信号的最小资金 = 峰值占用
+  avgOccupiedUsd: number; // 全接住时的时间加权平均占用(含零仓闲置期)
+  utilization: number | null; // avgOccupiedUsd ÷ recommendedUsd
+  annualizedOnRecommended: number | null; // 峰值档年化(与 fund.annualizedRoi 同口径)
+}
+
+// 单账户档回放。同刻先入后出:t 时刻退出的资金在 t 时刻不可用(与
+// computeFundMetrics 扫描线同口径,保守——宁可高估所需本金)。同刻多笔开仓
+// 沿用入参顺序(生产行序≈引擎开仓顺序),不引入额外偏好。
+function simulateAccount(
+  positions: FollowPositionRow[],
+  accountUsd: number,
+  startTs: number | null,
+  nowSec: number,
+): {
+  taken: number;
+  missed: number;
+  takenSettled: number;
+  realizedPnl: number;
+  missedPnl: number;
+  avgOccupiedUsd: number;
+} {
+  const sorted = [...positions].sort((a, b) => a.entry_ts - b.entry_ts);
+  const releases: { ts: number; size: number }[] = []; // 按 ts 升序的待释放资金
+  const occEvents: { ts: number; delta: number }[] = []; // 接住仓的占用事件(积分用)
+  let occupied = 0;
+  let taken = 0;
+  let missed = 0;
+  let takenSettled = 0;
+  let realizedPnl = 0;
+  let missedPnl = 0;
+  for (const p of sorted) {
+    while (releases.length > 0 && releases[0].ts < p.entry_ts) {
+      occupied -= releases.shift()!.size;
+    }
+    if (occupied + p.size_usd > accountUsd) {
+      missed++;
+      if (p.status === "settled") missedPnl += p.realized_pnl ?? 0;
+      continue;
+    }
+    taken++;
+    occupied += p.size_usd;
+    occEvents.push({ ts: p.entry_ts, delta: p.size_usd });
+    if (p.status === "settled") {
+      takenSettled++;
+      realizedPnl += p.realized_pnl ?? 0;
+      const exitTs = p.exit_ts ?? p.entry_ts; // 数据异常兜底:视作零时长占用
+      occEvents.push({ ts: exitTs, delta: -p.size_usd });
+      // 有序插入(N 小,线性即可),保持 releases 按 ts 升序。
+      let i = releases.length;
+      while (i > 0 && releases[i - 1].ts > exitTs) i--;
+      releases.splice(i, 0, { ts: exitTs, size: p.size_usd });
+    }
+  }
+
+  // 时间加权平均占用:∫占用 dt ÷ (nowSec − startTs),含零仓闲置期(闲置现金是
+  // 账户体验的一部分)。窗口前的事件夹到 startTs、窗口后的丢弃。
+  let avgOccupiedUsd = 0;
+  if (startTs != null && nowSec > startTs && occEvents.length > 0) {
+    const clamped = occEvents
+      .filter((e) => e.ts <= nowSec)
+      .map((e) => ({ ts: Math.max(e.ts, startTs), delta: e.delta }))
+      .sort((a, b) => a.ts - b.ts);
+    let integral = 0;
+    let cur = 0;
+    let prevTs = startTs;
+    for (const e of clamped) {
+      integral += cur * (e.ts - prevTs);
+      cur += e.delta;
+      prevTs = e.ts;
+    }
+    integral += cur * (nowSec - prevTs);
+    avgOccupiedUsd = integral / (nowSec - startTs);
+  }
+
+  return {
+    taken,
+    missed,
+    takenSettled,
+    realizedPnl,
+    missedPnl,
+    avgOccupiedUsd,
+  };
+}
+
+/**
+ * 账户档位推演表。档位 = {0.25, 0.5, 0.75, 1, 1.25} × 峰值占用,按最小仓量向上
+ * 取整、去重、滤掉接不住任何一仓的档;1.25 冗余档刻意保留——它接住的仓与峰值档
+ * 相同,但效率更低,把「多备钱的闲置拖累」摆在明面。年化护栏与 fund 同口径:
+ * 无结算接住仓 / 运行不足 1 天 → null。
+ */
+export function computeAccountPlan(
+  positions: FollowPositionRow[],
+  fund: FundMetrics,
+  nowSec: number,
+): AccountPlan {
+  const peak = fund.maxConcurrentUsd;
+  const sizes = positions.map((p) => p.size_usd).filter((s) => s > 0);
+  if (peak <= 0 || sizes.length === 0) {
+    return {
+      rows: [],
+      recommendedUsd: null,
+      avgOccupiedUsd: 0,
+      utilization: null,
+      annualizedOnRecommended: null,
+    };
+  }
+  const minSize = Math.min(...sizes);
+  const roundUp = (x: number) => Math.ceil(x / minSize) * minSize;
+  const ladder = [
+    ...new Set(
+      [0.25, 0.5, 0.75, 1, 1.25].map((f) =>
+        f === 1 ? peak : roundUp(peak * f),
+      ),
+    ),
+  ]
+    .filter((usd) => usd >= minSize)
+    .sort((a, b) => a - b);
+
+  const { runDays, startTs } = fund;
+  const rows: AccountSimRow[] = ladder.map((accountUsd) => {
+    const sim = simulateAccount(positions, accountUsd, startTs, nowSec);
+    const annualizedRoi =
+      sim.takenSettled > 0 && runDays != null && runDays >= 1
+        ? (sim.realizedPnl / accountUsd) * (365 / runDays)
+        : null;
+    return {
+      accountUsd,
+      taken: sim.taken,
+      missed: sim.missed,
+      realizedPnl: sim.realizedPnl,
+      missedPnl: sim.missedPnl,
+      annualizedRoi,
+      utilization:
+        startTs != null && nowSec > startTs
+          ? sim.avgOccupiedUsd / accountUsd
+          : null,
+    };
+  });
+
+  // 峰值档 = 恰好接住全部(峰值定义使然),其占用轨迹即无约束轨迹,直接复用。
+  const recRow = rows.find((r) => r.accountUsd === peak) ?? null;
+  const avgOccupiedUsd =
+    recRow != null && recRow.utilization != null
+      ? recRow.utilization * peak
+      : 0;
+  return {
+    rows,
+    recommendedUsd: peak,
+    avgOccupiedUsd,
+    utilization: recRow?.utilization ?? null,
+    annualizedOnRecommended: recRow?.annualizedRoi ?? null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Task 8: buildFollowView —— /api/follow 只读接口的纯整形层。把「策略行 + 全部仓位
 // + 分类映射」组装成每策略一块的视图(参数、指标、open/settled 两列)。无副作用、
 // 不修改入参,便于单测与复用;route 层只负责开库、取行、抓分类,整形逻辑全在这里。
@@ -747,6 +921,7 @@ export interface FollowStrategyView {
   };
   metrics: StrategyMetrics;
   fund: FundMetrics; // 基金式档案:成立/运行/峰值占用/年化(仅展示,不参与任何决策)
+  account: AccountPlan; // 账户推演:备多少钱→接住多少信号(仅展示,不参与任何决策)
   open: FollowPositionRow[]; // status==='open'
   settled: FollowPositionRow[]; // status==='settled',按 exit_ts 降序(最新在前)
 }
@@ -825,13 +1000,15 @@ export function buildFollowView(
 
   const views: FollowStrategyView[] = strategies.map((s) => {
     const own = byStrategy.get(s.id) ?? [];
+    const fund = computeFundMetrics(own, s.created_at, nowSec);
     return {
       id: s.id,
       name: s.name,
       enabled: !!s.enabled,
       params: parseParamsView(s.params_json),
       metrics: computeStrategyMetrics(own, categoryByCid),
-      fund: computeFundMetrics(own, s.created_at, nowSec),
+      fund,
+      account: computeAccountPlan(own, fund, nowSec),
       open: own.filter((p) => p.status === "open"),
       settled: own
         .filter((p) => p.status === "settled")

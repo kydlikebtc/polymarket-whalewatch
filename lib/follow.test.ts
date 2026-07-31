@@ -7,6 +7,7 @@ import {
   latestPriceByAsset,
   computeStrategyMetrics,
   computeFundMetrics,
+  computeAccountPlan,
   buildFollowView,
 } from "./follow";
 import type { FollowPositionRow } from "./follow";
@@ -484,5 +485,290 @@ describe("buildFollowView · fund 档案透传", () => {
     );
     expect(strategies[0].fund.startTs).toBe(7 * DAY);
     expect(strategies[0].fund.runDays).toBeCloseTo(10);
+  });
+});
+
+// --- 账户推演(反事实回放:若账户只备 $X,接住/错过/落袋/效率) ---
+describe("computeAccountPlan", () => {
+  const DAY = 86400;
+  const plan = (
+    positions: FollowPositionRow[],
+    createdAt: number | null,
+    nowSec: number,
+  ) =>
+    computeAccountPlan(
+      positions,
+      computeFundMetrics(positions, createdAt, nowSec),
+      nowSec,
+    );
+
+  it("空仓 → rows 空、recommended null、平均占用 0", () => {
+    const p = plan([], 0, 10 * DAY);
+    expect(p.rows).toEqual([]);
+    expect(p.recommendedUsd).toBeNull();
+    expect(p.avgOccupiedUsd).toBe(0);
+    expect(p.utilization).toBeNull();
+    expect(p.annualizedOnRecommended).toBeNull();
+  });
+
+  it("recommended = 峰值占用;峰值档接住全部、错过 0、落袋=结算合计", () => {
+    const p = plan(
+      [
+        pos({
+          condition_id: "a",
+          entry_ts: 0,
+          exit_ts: 100,
+          size_usd: 500,
+          realized_pnl: 100,
+        }),
+        pos({
+          condition_id: "b",
+          entry_ts: 50,
+          exit_ts: 150,
+          size_usd: 500,
+          realized_pnl: -40,
+        }),
+      ],
+      0,
+      30 * DAY,
+    );
+    expect(p.recommendedUsd).toBe(1000); // 两仓 [0,100]×[50,150] 重叠
+    const rec = p.rows.find((r) => r.accountUsd === 1000)!;
+    expect(rec.taken).toBe(2);
+    expect(rec.missed).toBe(0);
+    expect(rec.realizedPnl).toBeCloseTo(60);
+  });
+
+  it("账户 < 峰值 → 按开仓顺序精确错过,错过仓的盈亏进 missedPnl 不进落袋", () => {
+    const p = plan(
+      [
+        pos({
+          condition_id: "a",
+          entry_ts: 0,
+          exit_ts: 200,
+          size_usd: 500,
+          realized_pnl: 100,
+        }),
+        pos({
+          condition_id: "b",
+          entry_ts: 50,
+          exit_ts: 200,
+          size_usd: 500,
+          realized_pnl: 100,
+        }),
+        pos({
+          condition_id: "c",
+          entry_ts: 60,
+          exit_ts: 200,
+          size_usd: 500,
+          realized_pnl: -500,
+        }),
+      ],
+      0,
+      30 * DAY,
+    );
+    // 峰值 1500;考察 $1,000 档:c 第三个进场时资金已满 → 错过,幸运避亏
+    const row = p.rows.find((r) => r.accountUsd === 1000)!;
+    expect(row.taken).toBe(2);
+    expect(row.missed).toBe(1);
+    expect(row.realizedPnl).toBeCloseTo(200);
+    expect(row.missedPnl).toBeCloseTo(-500);
+  });
+
+  it("结算释放资金可复用:后进仓在前仓退出后进场,小账户也全接住", () => {
+    const p = plan(
+      [
+        pos({
+          condition_id: "a",
+          entry_ts: 0,
+          exit_ts: 100,
+          size_usd: 500,
+          realized_pnl: 50,
+        }),
+        pos({
+          condition_id: "b",
+          entry_ts: 150,
+          exit_ts: 300,
+          size_usd: 500,
+          realized_pnl: 50,
+        }),
+      ],
+      0,
+      30 * DAY,
+    );
+    expect(p.recommendedUsd).toBe(500); // 无重叠 → 峰值一仓
+    const rec = p.rows.find((r) => r.accountUsd === 500)!;
+    expect(rec.taken).toBe(2);
+    expect(rec.missed).toBe(0);
+  });
+
+  it("同刻先入后出(保守口径):t 时刻退出的资金 t 时刻不可用 → 同刻新仓错过", () => {
+    const p = plan(
+      [
+        pos({
+          condition_id: "a",
+          entry_ts: 0,
+          exit_ts: 100,
+          size_usd: 500,
+          realized_pnl: 50,
+        }),
+        pos({
+          condition_id: "b",
+          entry_ts: 100,
+          exit_ts: 200,
+          size_usd: 500,
+          realized_pnl: 50,
+        }),
+      ],
+      0,
+      30 * DAY,
+    );
+    expect(p.recommendedUsd).toBe(1000); // 与扫描线峰值同口径:瞬时并存
+    const tight = p.rows.find((r) => r.accountUsd === 500)!;
+    expect(tight.taken).toBe(1);
+    expect(tight.missed).toBe(1);
+  });
+
+  it("时间加权平均占用与使用效率:仓 [0,100d] $500 · 窗口 200d → 均 250、效率 50%", () => {
+    const p = plan(
+      [
+        pos({
+          entry_ts: 0,
+          exit_ts: 100 * DAY,
+          size_usd: 500,
+          realized_pnl: 0,
+        }),
+      ],
+      0,
+      200 * DAY,
+    );
+    expect(p.avgOccupiedUsd).toBeCloseTo(250);
+    expect(p.recommendedUsd).toBe(500);
+    expect(p.utilization).toBeCloseTo(0.5);
+  });
+
+  it("open 仓占用至今不释放:平均占用把持有段全计入", () => {
+    const p = plan(
+      [
+        pos({
+          entry_ts: 5 * DAY,
+          size_usd: 500,
+          status: "open",
+          exit_ts: null,
+          exit_price: null,
+          realized_pnl: null,
+        }),
+      ],
+      0,
+      10 * DAY,
+    );
+    expect(p.avgOccupiedUsd).toBeCloseTo(250); // [5d,10d] 占用 / 10d 窗口
+  });
+
+  it("年化护栏:运行不足 1 天 / 无结算接住仓 → 该档年化 null", () => {
+    const shortWin = plan(
+      [pos({ entry_ts: 0, exit_ts: 1800, size_usd: 500, realized_pnl: 100 })],
+      0,
+      3600,
+    );
+    for (const r of shortWin.rows) expect(r.annualizedRoi).toBeNull();
+
+    const openOnly = plan(
+      [
+        pos({
+          entry_ts: 0,
+          size_usd: 500,
+          status: "open",
+          exit_ts: null,
+          exit_price: null,
+          realized_pnl: null,
+        }),
+      ],
+      0,
+      30 * DAY,
+    );
+    for (const r of openOnly.rows) expect(r.annualizedRoi).toBeNull();
+    expect(openOnly.annualizedOnRecommended).toBeNull();
+  });
+
+  it("峰值档年化 = (落袋 ÷ 峰值) × 365/运行天数,与 fund.annualizedRoi 同口径", () => {
+    const positions = [
+      pos({ entry_ts: 0, exit_ts: DAY, size_usd: 500, realized_pnl: 100 }),
+    ];
+    const nowSec = 73 * DAY;
+    const p = plan(positions, 0, nowSec);
+    const f = computeFundMetrics(positions, 0, nowSec);
+    expect(p.annualizedOnRecommended).toBeCloseTo(1.0);
+    expect(p.annualizedOnRecommended).toBeCloseTo(f.annualizedRoi!);
+  });
+
+  it("档位阶梯:0.25/0.5/0.75/1/1.25×峰值,按最小仓量向上取整并去重,滤掉接不住任何一仓的档", () => {
+    const p = plan(
+      [
+        pos({
+          condition_id: "a",
+          entry_ts: 0,
+          exit_ts: 200,
+          size_usd: 500,
+          realized_pnl: 10,
+        }),
+        pos({
+          condition_id: "b",
+          entry_ts: 10,
+          exit_ts: 200,
+          size_usd: 500,
+          realized_pnl: 10,
+        }),
+        pos({
+          condition_id: "c",
+          entry_ts: 20,
+          exit_ts: 200,
+          size_usd: 500,
+          realized_pnl: 10,
+        }),
+        pos({
+          condition_id: "d",
+          entry_ts: 30,
+          exit_ts: 200,
+          size_usd: 500,
+          realized_pnl: 10,
+        }),
+      ],
+      0,
+      30 * DAY,
+    );
+    // 峰值 2000 → 原始档 [500,1000,1500,2000,2500];全部 ≥ 最小仓量 500,无重复
+    expect(p.rows.map((r) => r.accountUsd)).toEqual([
+      500, 1000, 1500, 2000, 2500,
+    ]);
+    // 1.25 冗余档接住数与峰值档一致,但效率更低(闲置拖累可见)
+    const rec = p.rows.find((r) => r.accountUsd === 2000)!;
+    const buf = p.rows.find((r) => r.accountUsd === 2500)!;
+    expect(buf.taken).toBe(rec.taken);
+    expect(buf.utilization!).toBeLessThan(rec.utilization!);
+  });
+});
+
+describe("buildFollowView · account 推演透传", () => {
+  const DAY = 86400;
+  it("每策略携带 account;recommended 与 fund 峰值一致", () => {
+    const { strategies } = buildFollowView(
+      [strat({ id: 1, created_at: 0 })],
+      [
+        pos({
+          strategy_id: 1,
+          entry_ts: 0,
+          exit_ts: DAY,
+          size_usd: 500,
+          realized_pnl: 100,
+        }),
+      ],
+      {},
+      73 * DAY,
+    );
+    const v = strategies[0];
+    expect(v.account.recommendedUsd).toBe(v.fund.maxConcurrentUsd);
+    expect(v.account.rows.length).toBeGreaterThan(0);
+    expect(v.account.annualizedOnRecommended).toBeCloseTo(1.0);
   });
 });
