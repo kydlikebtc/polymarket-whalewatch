@@ -22,6 +22,8 @@ function insertSignal(
     price?: number | null; // 成交价 = 市场隐含概率（评分基准）
     priceKey?: "price" | "avgBuyPrice"; // consensus 用后者
     side?: "BUY" | "SELL" | null; // null = payload 无该键（consensus 的形态）
+    conditionId?: string; // 共识折叠键的一半
+    outcome?: string; // 另一半
   } = {},
 ): void {
   const {
@@ -33,10 +35,14 @@ function insertSignal(
     price = 0.5,
     priceKey = "price",
     side = "BUY",
+    conditionId,
+    outcome,
   } = over;
   const payload: Record<string, unknown> = { proxyWallet: wallet };
   if (price != null) payload[priceKey] = price;
   if (side != null) payload.side = side;
+  if (conditionId != null) payload.conditionId = conditionId;
+  if (outcome != null) payload.outcome = outcome;
   const r = db
     .prepare(
       "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, ?, ?)",
@@ -148,6 +154,67 @@ describe("typeSignalRecord", () => {
     const r = typeSignalRecord(db, "consensus", { nowSec: NOW });
     expect(r.settled).toBe(2);
     expect(r.wins).toBe(1);
+  });
+
+  it("同一次共识的升级行折叠为一条 —— 第 3 人加入不是第二个信号", () => {
+    // dedup_key 含 walletCount(consensus.ts),2 人升 3 人升 4 人 = 三条 alerts
+    // 行，逐行计数会把同一次共识计三次。方向性偏差明确:升级过的组恰是更强
+    // 的组，重复计数给强信号加权 → 战绩系统性抬高;同时这三行显然不独立，
+    // sd=√Σp(1−p) 的伯努利独立性假设被破坏，「已超运气范围」判定偏乐观。
+    const db = openDb(":memory:");
+    const base = {
+      type: "consensus",
+      priceKey: "avgBuyPrice" as const,
+      side: null,
+      conditionId: "0xCID",
+      outcome: "Yes",
+    };
+    insertSignal(db, { ...base, createdAt: NOW - 3 * DAY, price: 0.4, won: 1 });
+    insertSignal(db, { ...base, createdAt: NOW - 2 * DAY, price: 0.5, won: 1 });
+    insertSignal(db, { ...base, createdAt: NOW - DAY, price: 0.6, won: 1 });
+    const r = typeSignalRecord(db, "consensus", { nowSec: NOW });
+    expect(r.settled).toBe(1);
+    expect(r.wins).toBe(1);
+    // 保留的是形成时刻那一条 —— 读者当时真正能行动的价格。
+    expect(r.implied).toBeCloseTo(0.4);
+  });
+
+  it("不同市场 / 不同结果的共识各算各的（折叠不过度）", () => {
+    const db = openDb(":memory:");
+    const base = {
+      type: "consensus",
+      priceKey: "avgBuyPrice" as const,
+      side: null,
+      price: 0.5,
+      won: 1,
+    };
+    insertSignal(db, { ...base, conditionId: "0xA", outcome: "Yes" });
+    insertSignal(db, { ...base, conditionId: "0xA", outcome: "No" });
+    insertSignal(db, { ...base, conditionId: "0xB", outcome: "Yes" });
+    expect(typeSignalRecord(db, "consensus", { nowSec: NOW }).settled).toBe(3);
+  });
+
+  it("大额/聪明钱不折叠 —— 每笔成交是独立信号", () => {
+    // 同一钱包在同一市场的多笔大额买入是多次独立决策，折叠会丢样本。
+    const db = openDb(":memory:");
+    for (let i = 0; i < 3; i++) {
+      insertSignal(db, { conditionId: "0xA", outcome: "Yes", won: 1 });
+    }
+    expect(walletSignalRecord(db, "0xaaa", { nowSec: NOW }).settled).toBe(3);
+  });
+
+  it("共识 payload 缺 conditionId/outcome 时不折叠（宁可重复也不误合并）", () => {
+    const db = openDb(":memory:");
+    const base = {
+      type: "consensus",
+      priceKey: "avgBuyPrice" as const,
+      side: null,
+      price: 0.5,
+      won: 1,
+    };
+    insertSignal(db, base);
+    insertSignal(db, base);
+    expect(typeSignalRecord(db, "consensus", { nowSec: NOW }).settled).toBe(2);
   });
 
   it("共识的成交价在 avgBuyPrice 键下，同样能取到基准", () => {

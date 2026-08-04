@@ -101,6 +101,16 @@ export interface SummaryAlert {
   type: string;
   side: string;
   price: number;
+  /**
+   * Escalation fold key — rows sharing it are ONE signal re-alerted (a
+   * consensus growing 2 → 3 → 4 wallets writes three rows, because dedup_key
+   * carries walletCount). Absent/null = counted per row, which is right for
+   * single fills. Mirrors lib/signalRecord's fold so the dashboard strip and
+   * the push footer can never report two different numbers for one event.
+   */
+  foldKey?: string | null;
+  /** Fold tiebreaker: the EARLIEST row survives (the actionable one). */
+  createdAt?: number;
 }
 
 export interface SummaryOutcome {
@@ -117,6 +127,28 @@ export interface SummaryOutcome {
  * paradox). ε pushes are excluded from numerator AND denominator; settled
  * pushes arrive as won=null and are likewise skipped.
  */
+/**
+ * Collapse re-alerts of one signal down to the row a reader could have acted
+ * on — the earliest. Kept local (rather than importing signalRecord's twin)
+ * because this module is bundled into the client page and must stay free of
+ * the `better-sqlite3` import chain; the two share the rule, not the code.
+ */
+export function foldAlertEscalations<T extends SummaryAlert>(alerts: T[]): T[] {
+  const earliest = new Map<string, T>();
+  const unfoldable: T[] = [];
+  for (const a of alerts) {
+    if (!a.foldKey) {
+      unfoldable.push(a);
+      continue;
+    }
+    const prev = earliest.get(a.foldKey);
+    if (!prev || (a.createdAt ?? 0) < (prev.createdAt ?? 0)) {
+      earliest.set(a.foldKey, a);
+    }
+  }
+  return [...unfoldable, ...earliest.values()];
+}
+
 export function summarizeOutcomes(
   alerts: SummaryAlert[],
   outcomes: Record<number, SummaryOutcome>,
@@ -134,7 +166,7 @@ export function summarizeOutcomes(
     t.total += 1;
     if (hit) t.hits += 1;
   };
-  for (const a of alerts) {
+  for (const a of foldAlertEscalations(alerts)) {
     const o = outcomes[a.id];
     if (!o) continue;
     const marks: [number | null, OutcomeStat][] = [

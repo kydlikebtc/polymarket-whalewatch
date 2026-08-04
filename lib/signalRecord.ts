@@ -63,11 +63,58 @@ const ENTRY_PRICE_SQL = `COALESCE(json_extract(a.payload, '$.price'), json_extra
 // absent key defaults to BUY rather than dropping the row.
 const SIDE_SQL = `COALESCE(json_extract(a.payload, '$.side'), 'BUY')`;
 
+// Escalation fold key. A consensus re-alerts as it escalates — the dedup_key
+// is `consensus:<cid>:<outcome>:<walletCount>` (consensus.ts), so a group going
+// 2 → 3 → 4 wallets writes THREE alerts rows for ONE signal. Counting them per
+// row double-counts, and not neutrally: escalated groups are by construction
+// the STRONGER groups, so the record is inflated exactly where it flatters.
+// The three rows are also plainly not independent, which breaks the Bernoulli
+// assumption behind sd = √Σp(1−p) and makes "已超运气范围" fire too easily.
+// Rows lacking either key part fold-key to NULL — never merged, since a wrong
+// merge silently deletes real samples while a missed merge only over-counts.
+const FOLD_KEY_SQL = `CASE WHEN a.type = 'consensus'
+    THEN json_extract(a.payload, '$.conditionId') || '|' || json_extract(a.payload, '$.outcome')
+    ELSE NULL END`;
+
 export interface GradedRow {
   won: number;
   price: number | null;
   /** "BUY" | "SELL"; absent/unknown reads as BUY (see SIDE_SQL). */
   side?: string | null;
+  /** Rows sharing a non-null key are ONE signal seen twice (see FOLD_KEY_SQL). */
+  foldKey?: string | null;
+  /** Fold tiebreaker — the EARLIEST row survives (see foldEscalations). */
+  createdAt?: number | null;
+}
+
+/**
+ * Collapse re-alerts of the same signal to the row a reader could actually
+ * have acted on: the FORMATION one. Keeping the earliest (rather than the
+ * latest, or an average) is the only choice that grades the signal at the
+ * price it was first published at — the later escalation rows quote a price
+ * the market had already moved to.
+ *
+ * Folding runs over ALREADY-GRADED rows, so the rare case where a formation
+ * row settled as a push (≈50/50, excluded upstream) while its escalation did
+ * not falls back to the escalation. That is the honest outcome: something was
+ * gradeable, and it is still counted exactly once.
+ */
+export function foldEscalations<T extends GradedRow>(rows: T[]): T[] {
+  const earliest = new Map<string, T>();
+  const unfoldable: T[] = [];
+  for (const r of rows) {
+    if (!r.foldKey) {
+      unfoldable.push(r);
+      continue;
+    }
+    const prev = earliest.get(r.foldKey);
+    // Strict <: on a created_at tie the first row wins, and callers order by
+    // (created_at, id) so "first" is deterministic across runs.
+    if (!prev || (r.createdAt ?? 0) < (prev.createdAt ?? 0)) {
+      earliest.set(r.foldKey, r);
+    }
+  }
+  return [...unfoldable, ...earliest.values()];
 }
 
 /**
@@ -96,9 +143,14 @@ type Row = GradedRow;
 function record(rows: Row[]): SignalRecord {
   // A row with no fill price has no benchmark and so cannot be graded — it
   // leaves BOTH sides of the ledger, the same discipline pushes get.
-  const graded = rows.filter(
-    (r): r is Row & { price: number } =>
-      typeof r.price === "number" && Number.isFinite(r.price),
+  // Price-filter BEFORE folding, not after: folding first would let a
+  // priceless formation row win the fold and then get dropped, deleting a
+  // signal its own escalation could have graded.
+  const graded = foldEscalations(
+    rows.filter(
+      (r): r is Row & { price: number } =>
+        typeof r.price === "number" && Number.isFinite(r.price),
+    ),
   );
   const wins = graded.reduce((s, r) => s + (r.won === 1 ? 1 : 0), 0);
   const implied = graded.reduce(
@@ -154,9 +206,12 @@ export function typeSignalRecord(
   const { nowSec = Math.floor(Date.now() / 1000), days = WINDOW_DAYS } = opts;
   const rows = db
     .prepare(
-      `SELECT ao.won, ${ENTRY_PRICE_SQL} AS price, ${SIDE_SQL} AS side FROM alerts a
+      `SELECT ao.won, ${ENTRY_PRICE_SQL} AS price, ${SIDE_SQL} AS side,
+              ${FOLD_KEY_SQL} AS foldKey, a.created_at AS createdAt
+       FROM alerts a
        JOIN alert_outcomes ao ON ao.alert_id = a.id
-       WHERE a.type = ? AND a.created_at >= ? AND ao.won IS NOT NULL`,
+       WHERE a.type = ? AND a.created_at >= ? AND ao.won IS NOT NULL
+       ORDER BY a.created_at ASC, a.id ASC`,
     )
     .all(type, nowSec - days * 86_400) as Row[];
   return record(rows);

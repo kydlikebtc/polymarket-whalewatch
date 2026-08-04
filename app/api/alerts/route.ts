@@ -40,7 +40,21 @@ type AlertView = {
   eventSlug: string;
   txHash: string;
   createdAt: number;
+  // Escalation fold key (consensus only, null elsewhere). A consensus
+  // re-alerts as it grows, and dedup_key carries the wallet count
+  // (`consensus:<cid>:<outcome>:<n>`), so dropping the last segment yields a
+  // stable per-(market, outcome) identity — no payload re-parse needed. The
+  // validation strip folds on it so one consensus counts once.
+  foldKey: string | null;
 };
+
+// `consensus:0xabc:Yes:3` -> `consensus:0xabc:Yes`. lastIndexOf is safe even
+// if an outcome label ever contains a colon: the wallet count never does.
+function consensusFoldKey(dedupKey: string | null): string | null {
+  if (!dedupKey) return null;
+  const cut = dedupKey.lastIndexOf(":");
+  return cut > 0 ? dedupKey.slice(0, cut) : null;
+}
 
 const DB_PATH = process.env.DASH_DB ?? "data.sqlite";
 
@@ -86,6 +100,7 @@ export async function GET() {
             eventSlug: p.eventSlug ?? "",
             txHash: "",
             createdAt: row.created_at ?? 0,
+            foldKey: consensusFoldKey(row.dedup_key),
           };
         }
         const size = typeof p.size === "number" ? p.size : 0;
@@ -102,6 +117,8 @@ export async function GET() {
           eventSlug: p.eventSlug ?? p.slug ?? "",
           txHash: p.transactionHash ?? "",
           createdAt: row.created_at ?? 0,
+          // Single fills are independent decisions — never folded.
+          foldKey: null,
         };
       });
 

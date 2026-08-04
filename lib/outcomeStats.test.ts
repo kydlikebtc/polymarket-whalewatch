@@ -180,4 +180,50 @@ describe("summarizeOutcomes", () => {
     expect(s.dir24h.total).toBe(0);
     expect(s.settled.total).toBe(0);
   });
+
+  it("同一次共识的升级行只计一次（看板胜率条与推送战绩同口径）", () => {
+    // 共识 dedup_key 含 walletCount,2→3→4 人写三行。逐行计数会把一次共识
+    // 计三次,且升级过的组恰是更强的组 —— 看板胜率条与推送战绩必须同口径,
+    // 否则同一件事在两处报出两个数字。
+    const escalations = [
+      {
+        id: 10,
+        type: "consensus",
+        side: "BUY",
+        price: 0.4,
+        foldKey: "c|Yes",
+        createdAt: 100,
+      },
+      {
+        id: 11,
+        type: "consensus",
+        side: "BUY",
+        price: 0.5,
+        foldKey: "c|Yes",
+        createdAt: 200,
+      },
+      {
+        id: 12,
+        type: "consensus",
+        side: "BUY",
+        price: 0.6,
+        foldKey: "c|Yes",
+        createdAt: 300,
+      },
+    ];
+    const won = { resolved: true, won: true, price1h: null, price24h: null };
+    const s = summarizeOutcomes(escalations, { 10: won, 11: won, 12: won });
+    expect(s.settled.total).toBe(1);
+    expect(s.settled.byType.consensus).toEqual({ hits: 1, total: 1 });
+  });
+
+  it("无 foldKey 的行逐行计数（大额/聪明钱每笔都是独立信号）", () => {
+    const fills = [
+      { id: 20, type: "large", side: "BUY", price: 0.5 },
+      { id: 21, type: "large", side: "BUY", price: 0.5 },
+    ];
+    const won = { resolved: true, won: true, price1h: null, price24h: null };
+    const s = summarizeOutcomes(fills, { 20: won, 21: won });
+    expect(s.settled.total).toBe(2);
+  });
 });

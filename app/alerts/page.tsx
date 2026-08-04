@@ -36,6 +36,11 @@ type AlertView = {
   eventSlug: string;
   txHash: string;
   createdAt: number;
+  // Set only on consensus rows — summarizeOutcomes folds a group's escalation
+  // re-alerts into one so the 验证 strip counts a consensus once. Declared
+  // here (not just server-side) so a refactor can't silently drop it and
+  // quietly restore the double-count.
+  foldKey: string | null;
 };
 
 // Push-channel health from /api/alerts (engine-written counters in the config
