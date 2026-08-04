@@ -325,12 +325,13 @@ function feedRecord(db: DB, sinceSec: number): SignalRecord {
     .prepare(
       `SELECT ao.won,
               COALESCE(json_extract(a.payload,'$.price'),
-                       json_extract(a.payload,'$.avgBuyPrice')) AS price
+                       json_extract(a.payload,'$.avgBuyPrice')) AS price,
+              COALESCE(json_extract(a.payload,'$.side'), 'BUY') AS side
        FROM alerts a JOIN alert_outcomes ao ON ao.alert_id = a.id
        WHERE a.type IN ('consensus','smart') AND a.created_at >= ?
          AND ao.won IS NOT NULL`,
     )
-    .all(sinceSec) as { won: number; price: number | null }[];
+    .all(sinceSec) as { won: number; price: number | null; side: string }[];
   return gradeRows(rows);
 }
 

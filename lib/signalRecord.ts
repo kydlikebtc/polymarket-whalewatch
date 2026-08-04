@@ -19,10 +19,24 @@ import type { DB } from "./db";
 // reports three things: how many the source hit, how many the MARKET expected
 // it to hit at those same prices, and whether the gap outruns luck.
 
+// SIDE MATTERS. The benchmark is the market's implied probability of THE
+// EVENT THE SIGNAL BET ON, and a SELL bets on the opposite event: settleWon
+// grades a SELL as a win when `resolutionPrice < entry`, so at a fill of 0.20
+// the market's own expectation of that win is 0.80, not 0.20. Summing raw fill
+// prices got this exactly backwards on the sell side — 10 SELL@0.20 fills all
+// settling at 0 (a textbook zero-edge outcome the market priced at 80%) came
+// out as wins=10 vs implied=2.0, an excess of +8.0 at 6.3σ, and the push
+// printed "已超运气范围". The SD is untouched: p(1−p) is symmetric about 0.5,
+// so only the CENTRE of the null was wrong, which is the half that decides
+// whether a strategy looks like alpha.
 export interface SignalRecord {
   settled: number; // outcomes with a win/loss verdict (pushes excluded)
   wins: number;
-  /** Σ fill price — the wins the market itself implied at those same prices. */
+  /**
+   * Σ market-implied probability of each signal's own win condition — the wins
+   * the market itself expected at those same prices. BUY contributes `price`,
+   * SELL contributes `1 − price`.
+   */
   implied: number;
   /** wins − implied. Positive = beat the market's own pricing. */
   excess: number;
@@ -45,9 +59,26 @@ const SIGNIFICANCE_SD = 2;
 // 100% of rows of all three types.
 const ENTRY_PRICE_SQL = `COALESCE(json_extract(a.payload, '$.price'), json_extract(a.payload, '$.avgBuyPrice'))`;
 
+// Consensus payloads carry no `side` — a consensus IS net buying, so the
+// absent key defaults to BUY rather than dropping the row.
+const SIDE_SQL = `COALESCE(json_extract(a.payload, '$.side'), 'BUY')`;
+
 export interface GradedRow {
   won: number;
   price: number | null;
+  /** "BUY" | "SELL"; absent/unknown reads as BUY (see SIDE_SQL). */
+  side?: string | null;
+}
+
+/**
+ * The market's own probability of THIS signal's win condition. A SELL wins
+ * when the price falls, and the market prices that at 1 − p.
+ */
+function impliedWinProb(
+  price: number,
+  side: string | null | undefined,
+): number {
+  return side === "SELL" ? 1 - price : price;
 }
 
 /**
@@ -70,8 +101,16 @@ function record(rows: Row[]): SignalRecord {
       typeof r.price === "number" && Number.isFinite(r.price),
   );
   const wins = graded.reduce((s, r) => s + (r.won === 1 ? 1 : 0), 0);
-  const implied = graded.reduce((s, r) => s + r.price, 0);
-  const variance = graded.reduce((s, r) => s + r.price * (1 - r.price), 0);
+  const implied = graded.reduce(
+    (s, r) => s + impliedWinProb(r.price, r.side),
+    0,
+  );
+  // p(1−p) is symmetric, so the SD is side-invariant — written through
+  // impliedWinProb anyway so the null hypothesis has exactly one definition.
+  const variance = graded.reduce((s, r) => {
+    const p = impliedWinProb(r.price, r.side);
+    return s + p * (1 - p);
+  }, 0);
   return {
     settled: graded.length,
     wins,
@@ -95,7 +134,7 @@ export function walletSignalRecord(
   const { nowSec = Math.floor(Date.now() / 1000), days = WINDOW_DAYS } = opts;
   const rows = db
     .prepare(
-      `SELECT ao.won, ${ENTRY_PRICE_SQL} AS price FROM alerts a
+      `SELECT ao.won, ${ENTRY_PRICE_SQL} AS price, ${SIDE_SQL} AS side FROM alerts a
        JOIN alert_outcomes ao ON ao.alert_id = a.id
        WHERE a.type IN ('large', 'smart')
          AND a.created_at >= ?
@@ -115,7 +154,7 @@ export function typeSignalRecord(
   const { nowSec = Math.floor(Date.now() / 1000), days = WINDOW_DAYS } = opts;
   const rows = db
     .prepare(
-      `SELECT ao.won, ${ENTRY_PRICE_SQL} AS price FROM alerts a
+      `SELECT ao.won, ${ENTRY_PRICE_SQL} AS price, ${SIDE_SQL} AS side FROM alerts a
        JOIN alert_outcomes ao ON ao.alert_id = a.id
        WHERE a.type = ? AND a.created_at >= ? AND ao.won IS NOT NULL`,
     )

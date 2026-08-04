@@ -21,6 +21,7 @@ function insertSignal(
     resolved?: number;
     price?: number | null; // 成交价 = 市场隐含概率（评分基准）
     priceKey?: "price" | "avgBuyPrice"; // consensus 用后者
+    side?: "BUY" | "SELL" | null; // null = payload 无该键（consensus 的形态）
   } = {},
 ): void {
   const {
@@ -31,9 +32,11 @@ function insertSignal(
     resolved = 1,
     price = 0.5,
     priceKey = "price",
+    side = "BUY",
   } = over;
   const payload: Record<string, unknown> = { proxyWallet: wallet };
   if (price != null) payload[priceKey] = price;
+  if (side != null) payload.side = side;
   const r = db
     .prepare(
       "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, ?, ?)",
@@ -81,6 +84,42 @@ describe("walletSignalRecord", () => {
     expect(dog.excess).toBeCloseTo(1); // 比市场预期多赢 1 次
     expect(dog.wins / dog.settled).toBeLessThan(fav.wins / fav.settled);
     expect(dog.excess).toBeGreaterThan(fav.excess);
+  });
+
+  it("SELL 侧基准取 1−成交价 —— 市场对「跌」的隐含概率才是卖方的对手盘", () => {
+    // 10 笔 SELL@0.20 全部结算到 0：settleWon 判 rp<entry 即卖方赢 → 10 胜。
+    // 但市场在 0.20 处隐含的正是「有 80% 概率归零」——这 10 胜是市场自己
+    // 预期的结果，零信息量。旧口径拿 Σ0.20=2.0 当预期，算出超额 +8.0
+    // (6.3σ) 并往频道印「已超运气范围」，把一个零优势的策略认证成了 alpha。
+    const db = openDb(":memory:");
+    for (let i = 0; i < 10; i++) {
+      insertSignal(db, { won: 1, price: 0.2, side: "SELL" });
+    }
+    const r = walletSignalRecord(db, "0xaaa", { nowSec: NOW });
+    expect(r.wins).toBe(10);
+    expect(r.implied).toBeCloseTo(8); // 旧口径:2.0
+    expect(r.excess).toBeCloseTo(2); // 旧口径:+8.0
+    // p(1−p) 对称 ⇒ sd 不随方向改变;错的只有 implied/excess 的中心。
+    expect(r.sd).toBeCloseTo(Math.sqrt(10 * 0.2 * 0.8));
+    // 修正后 2.0/1.26 = 1.58σ,诚实地落回运气范围内。
+    expect(formatRecordLine("该钱包", r)).toContain("仍在运气范围内");
+  });
+
+  it("BUY 侧口径不变（回归保护）", () => {
+    const db = openDb(":memory:");
+    for (let i = 0; i < 10; i++) {
+      insertSignal(db, { won: 1, price: 0.2, side: "BUY" });
+    }
+    const r = walletSignalRecord(db, "0xaaa", { nowSec: NOW });
+    expect(r.implied).toBeCloseTo(2);
+    expect(r.excess).toBeCloseTo(8);
+  });
+
+  it("payload 无 side 键时按 BUY 计（共识本身就是净买入）", () => {
+    const db = openDb(":memory:");
+    insertSignal(db, { won: 1, price: 0.3, side: null });
+    const r = walletSignalRecord(db, "0xaaa", { nowSec: NOW });
+    expect(r.implied).toBeCloseTo(0.3);
   });
 
   it("无成交价的行两侧都不计（没有基准就无法评分）", () => {
