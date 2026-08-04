@@ -2,6 +2,7 @@ import type { ConsensusGroup, ConsensusOptions } from "./consensus";
 import { detectConsensus } from "./consensus";
 import type { DB } from "./db";
 import { DEFAULT_DISAGREEMENT, detectDisagreement } from "./disagreement";
+import { takerFeeUsd } from "./fees";
 import type { MarketMeta } from "./gamma";
 import { excludeContestedFromConsensus } from "./marketSignals";
 import type { AskBook } from "./orderBook";
@@ -337,8 +338,9 @@ export async function runFollowCycle(
       `INSERT OR IGNORE INTO follow_positions
          (strategy_id, condition_id, outcome, asset, outcome_index, title, event_slug,
           entry_ts, entry_price, smart_avg_price, size_usd, shares, status,
-          formation_ts, formation_price, exec_price, exec_best_ask, exec_filled_usd)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
+          formation_ts, formation_price, exec_price, exec_best_ask, exec_filled_usd,
+          fee_usd)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
     );
     for (const s of strategies) {
       for (const g of freshByStrategy.get(s.id) ?? []) {
@@ -437,6 +439,20 @@ export async function runFollowCycle(
             console.warn(`[follow] fetchBook failed for ${g.asset}:`, e);
           }
         }
+        // 协议 taker 费:2026-08-04 实测推翻「Polymarket 零手续费」——
+        // 头部 100 市场 72 个 feesEnabled,占 24h 量 57.8%,而同一笔 $500 单
+        // 的盘口滑点实测 $0.00、taker 费约名义额 2.5%。执行成本里最大的一
+        // 项此前完全没进账。价格优先用模拟成交均价(真实吃到的),回退报价。
+        // 归因列纪律同 exec_*:未知落 null(绝不当 0),不参与 realized_pnl。
+        const m = meta[g.conditionId];
+        const feeUsd = m
+          ? takerFeeUsd({
+              sizeUsd: s.sizeUsd,
+              price: execPrice ?? entry,
+              feesEnabled: m.feesEnabled,
+              schedule: m.feeSchedule,
+            })
+          : null;
         const shares = positionShares(entry, s.sizeUsd);
         const res = ins.run(
           s.id,
@@ -456,6 +472,7 @@ export async function runFollowCycle(
           execPrice,
           execBestAsk,
           execFilledUsd,
+          feeUsd,
         );
         // changes===0 说明 UNIQUE 命中(并发/竞态下已被开出),不重复计数。
         if (res.changes === 1) opened++;
@@ -572,6 +589,11 @@ export interface FollowPositionRow {
   exit_ts: number | null;
   exit_price: number | null;
   realized_pnl: number | null;
+  /**
+   * 开仓时的协议 taker 费(USD)。null = 未知(上线前的老仓,或费率表拿不到),
+   * 0 = 该市场确实免费。红线同 markout/exec_*:归因列,不参与 realized_pnl。
+   */
+  fee_usd: number | null;
 }
 
 export interface StrategyMetrics {
@@ -586,6 +608,12 @@ export interface StrategyMetrics {
   avgHoldingDays: number | null;
   maxDrawdown: number;
   slippageCost: number;
+  /** 已结算且费用已知的仓的协议费合计(USD)。 */
+  feeCost: number;
+  /** 上面那个数覆盖了几仓 —— 「含协议费」一档必须带覆盖率一起看。 */
+  feeSamples: number;
+  /** 已结算但费用未知的仓数(上线前的老仓)。 */
+  feeUnknown: number;
   equityCurve: { ts: number; cum: number }[];
   byCategory: Record<string, { realized: number; settledCount: number }>;
 }
@@ -663,6 +691,14 @@ export function computeStrategyMetrics(
     0,
   );
 
+  // 协议 taker 费:与 realized 同口径只看 settled(它要跟已结算净盈亏相减),
+  // 且只累计「已知」的。fee_usd===0 是已知的零(免费市场),必须与 null(未知)
+  // 区分 —— 把未知当 0 正是「零手续费」这个错误前提能活六周的机制。
+  const feeSettled = settled.filter((p) => p.fee_usd != null);
+  const feeCost = feeSettled.reduce((s, p) => s + (p.fee_usd ?? 0), 0);
+  const feeSamples = feeSettled.length;
+  const feeUnknown = settledCount - feeSamples;
+
   // 按赛道分解:仅 settled,categoryByCid 缺失/null 归「未分类」。
   const byCategory: Record<string, { realized: number; settledCount: number }> =
     {};
@@ -685,6 +721,9 @@ export function computeStrategyMetrics(
     avgHoldingDays,
     maxDrawdown,
     slippageCost,
+    feeCost,
+    feeSamples,
+    feeUnknown,
     equityCurve,
     byCategory,
   };

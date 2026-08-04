@@ -69,6 +69,116 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
     db.close();
   });
 
+  it("开仓落 fee_usd —— 协议费按成交价算，是执行成本里最大的一项", async () => {
+    // 「Polymarket 零手续费」在 2026-08-04 被实测推翻:头部 100 市场 72 个
+    // feesEnabled,占 24h 量 57.8%。同一笔 $500 单实测盘口滑点 $0.00 而
+    // taker 费约名义额 2.5% —— 不计费的纸面收益率偏乐观,且偏的正是最大项。
+    const db = openDb(":memory:");
+    const trades = [
+      trade({ proxyWallet: "w1", transactionHash: "h1", size: 10000 }),
+      trade({ proxyWallet: "w2", transactionHash: "h2", size: 10000 }),
+    ];
+    const feeMeta: MarketMeta = {
+      conditionId: "c1",
+      closed: false,
+      outcomePrices: [0.6, 0.4],
+      outcomes: ["Yes", "No"],
+      volume24hr: null,
+      liquidity: null,
+      endDate: null,
+      category: null,
+      feesEnabled: true,
+      feeType: "politics_fees",
+      feeSchedule: {
+        exponent: 1,
+        rate: 0.05,
+        takerOnly: true,
+        rebateRate: 0.2,
+      },
+      umaDisputed: false,
+    };
+    await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart,
+      fetchPrice: async () => 0.5,
+      getMeta: async () => ({ c1: feeMeta }),
+      nowSec: 1800,
+    });
+    const rows = db
+      .prepare("SELECT size_usd, entry_price, fee_usd FROM follow_positions")
+      .all() as { size_usd: number; entry_price: number; fee_usd: number }[];
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const p of rows) {
+      // fee = sizeUsd × rate × (1−p) = size × 0.05 × 0.5
+      expect(p.fee_usd).toBeCloseTo(p.size_usd * 0.05 * 0.5, 6);
+    }
+  });
+
+  it("免费市场 fee_usd=0，费率未知则为 null（绝不把未知当 0）", async () => {
+    const mk = async (over: Partial<MarketMeta>) => {
+      const db = openDb(":memory:");
+      const trades = [
+        trade({ proxyWallet: "w1", transactionHash: "h1", size: 10000 }),
+        trade({ proxyWallet: "w2", transactionHash: "h2", size: 10000 }),
+      ];
+      await runFollowCycle({
+        db,
+        fetchWindow: async () => ({ trades }),
+        getSmart: smart,
+        fetchPrice: async () => 0.5,
+        getMeta: async () => ({
+          c1: {
+            conditionId: "c1",
+            closed: false,
+            outcomePrices: [0.6, 0.4],
+            outcomes: ["Yes", "No"],
+            volume24hr: null,
+            liquidity: null,
+            endDate: null,
+            category: null,
+            feesEnabled: false,
+            feeType: null,
+            feeSchedule: null,
+            umaDisputed: false,
+            ...over,
+          } as MarketMeta,
+        }),
+        nowSec: 1800,
+      });
+      const r = db
+        .prepare("SELECT fee_usd FROM follow_positions LIMIT 1")
+        .get() as { fee_usd: number | null };
+      db.close();
+      return r.fee_usd;
+    };
+    expect(await mk({ feesEnabled: false })).toBe(0);
+    // 收费但费率表缺失 = 未知,落 null 让 UI 诚实留白。
+    expect(await mk({ feesEnabled: true, feeSchedule: null })).toBeNull();
+  });
+
+  it("市场 meta 缺失时 fee_usd 为 null，开仓照常（费用是归因，不阻塞主链路）", async () => {
+    const db = openDb(":memory:");
+    const trades = [
+      trade({ proxyWallet: "w1", transactionHash: "h1", size: 10000 }),
+      trade({ proxyWallet: "w2", transactionHash: "h2", size: 10000 }),
+    ];
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart,
+      fetchPrice: async () => 0.5,
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const p = db
+      .prepare("SELECT fee_usd FROM follow_positions LIMIT 1")
+      .get() as { fee_usd: number | null };
+    expect(p.fee_usd).toBeNull();
+    db.close();
+  });
+
   it("截断窗口跳过开仓(formationTs 不可信),结算照常", async () => {
     // 窗口被截断时,截断边缘前的成交不可见,可见跨线会把 formationTs 系统性
     // 后移 —— 新鲜度闸门与形成价护栏同时失真,此轮禁止开仓;结算与 markout

@@ -56,7 +56,7 @@ export async function GET() {
                   entry_price, smart_avg_price, shares, status, entry_ts,
                   exit_ts, exit_price, realized_pnl,
                   formation_ts, formation_price, markout_30m, markout_2h,
-                  exec_price, exec_best_ask, exec_filled_usd
+                  exec_price, exec_best_ask, exec_filled_usd, fee_usd
              FROM follow_positions`,
         )
         .all() as PositionRow[];

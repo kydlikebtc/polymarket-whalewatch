@@ -149,7 +149,44 @@ const pos = (o: Partial<FollowPositionRow>): FollowPositionRow => ({
   exit_ts: 86400,
   exit_price: 1,
   realized_pnl: 0,
+  fee_usd: null,
   ...o,
+});
+
+describe("computeStrategyMetrics 协议费", () => {
+  it("只累计已结算且费用已知的仓，并如实报出未知的那几仓", () => {
+    // 费用是 append-only 归因:上线前的老仓恒为 null(费率表是当前值而非
+    // 成交时刻值,回填会造出一个看不出是估算的估算)。所以「含协议费」这一
+    // 档必须带着覆盖率一起呈现,否则读者会以为它覆盖了全部样本。
+    const m = computeStrategyMetrics(
+      [
+        pos({ realized_pnl: 100, fee_usd: 12.5 }),
+        pos({ realized_pnl: -50, fee_usd: 7.5 }),
+        pos({ realized_pnl: 30, fee_usd: null }), // 老仓,未知
+        pos({ status: "open", realized_pnl: null, fee_usd: 99 }), // 未结算不计
+      ],
+      {},
+    );
+    expect(m.feeCost).toBeCloseTo(20);
+    expect(m.feeSamples).toBe(2);
+    expect(m.feeUnknown).toBe(1);
+  });
+
+  it("fee_usd=0 是已知的零（免费市场），计入样本但不加成本", () => {
+    const m = computeStrategyMetrics(
+      [pos({ realized_pnl: 10, fee_usd: 0 })],
+      {},
+    );
+    expect(m.feeCost).toBe(0);
+    expect(m.feeSamples).toBe(1);
+    expect(m.feeUnknown).toBe(0);
+  });
+
+  it("全是老仓时 feeSamples=0 —— 页面据此整档留白而不是显示 $0", () => {
+    const m = computeStrategyMetrics([pos({ realized_pnl: 10 })], {});
+    expect(m.feeSamples).toBe(0);
+    expect(m.feeUnknown).toBe(1);
+  });
 });
 
 describe("computeStrategyMetrics", () => {
