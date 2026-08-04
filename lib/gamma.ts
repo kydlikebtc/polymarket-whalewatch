@@ -230,9 +230,7 @@ export async function getMarketMeta(
       }
       const age = nowSec - row.fetched_at;
       // Closed = resolved = immutable, EXCEPT while a dispute is live.
-      const fresh = meta.umaDisputed
-        ? age < DISPUTED_TTL_SEC
-        : meta.closed || age < ttlSec;
+      const fresh = meta.closed || age < ttlSec;
       if (fresh) {
         out[cid] = meta;
       } else {
