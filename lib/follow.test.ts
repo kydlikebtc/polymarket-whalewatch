@@ -209,6 +209,28 @@ describe("computeStrategyMetrics 协议费", () => {
     expect(m.feeSamples).toBe(0);
     expect(m.feeUnknown).toBe(1);
   });
+
+  it("netAfterCostsCovered 只在费用已知的子集上算三项 —— 老仓不拖累指标可用性", () => {
+    // 老仓永不回填费用,若沿用「有一个未知就整档留白」,这个指标会因为历史
+    // 仓的存在而永远不亮。改为限定子集:三项同口径、数字自洽,覆盖率另行披露。
+    const per = (500 / 0.6) * 0.1; // 单仓追价成本
+    const m = computeStrategyMetrics(
+      [
+        pos({
+          realized_pnl: 100,
+          fee_usd: 12.5,
+          entry_price: 0.6,
+          smart_avg_price: 0.5,
+        }),
+        // 老仓:盈亏很大但费用未知 —— 绝不能混进这个子集。
+        pos({ realized_pnl: 9999, fee_usd: null }),
+      ],
+      {},
+    );
+    expect(m.feeSamples).toBe(1);
+    expect(m.feeUnknown).toBe(1);
+    expect(m.netAfterCostsCovered).toBeCloseTo(100 - per - 12.5);
+  });
 });
 
 describe("computeStrategyMetrics", () => {

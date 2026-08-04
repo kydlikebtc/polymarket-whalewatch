@@ -39,9 +39,17 @@ review 查出四处口径错误，共同特征是：**都让对外数字偏乐�
 **保留哪一行**：形成时刻那条（`created_at` 最早）。它是读者当时真正能按那个价格行动的一条；
 升级行报的是市场已经走过去的价。
 
-**两处现场，共享规则而非代码**：`lib/signalRecord.foldEscalations` 与
-`lib/outcomeStats.foldAlertEscalations`。刻意不复用——`outcomeStats` 被打进客户端包，
-不能引入 `better-sqlite3` 依赖链。
+**三处现场，共享规则而非代码**：`lib/signalRecord.foldEscalations`（推送脚注 / 对外 feed）与
+`lib/outcomeStats.foldAlertEscalations`（看板验证条 / bot 的 `/market` 卡片战绩行）。
+刻意不复用同一份代码——`outcomeStats` 被打进客户端包，不能引入 `better-sqlite3` 依赖链。
+
+> 第三处（bot 卡片）是复审才发现的：`lib/marketCard` 的 `history` 逐行喂给
+> `lib/botCommands` 的战绩行，实测输出过「已判定 3/4 中」而诚实口径是 1/2。
+> 现在只折叠分子分母，「N 条告警」仍报原始行数——那是这个市场上真实推送过的次数。
+
+**逐统计折叠，而非一次性折叠**：`price_1h` / `price_24h` / 结算 是按告警 id **独立惰性回填**的，
+同一组的形成行与升级行进度可以不同。若先折叠再判可评分，没回填 1h 价的形成行会赢下折叠
+然后被丢弃，**整组从 1h 命中率里消失**。与 `signalRecord` 的「先过滤、再折叠」同一条纪律。
 
 **折叠键来源**：服务端由既有 `dedup_key` 剥掉末段得到（`consensus:<cid>:<outcome>:<n>` → 去掉 `:<n>`），
 不重解析 payload。单笔成交恒为 null——每笔是独立决策，折叠会丢样本。
@@ -83,20 +91,38 @@ fee = shares × rate × p × (1−p),  shares = sizeUsd / p
 （实测样本恒为 1，未观测形态不猜）→ **null**。把未知当 0 正是「零手续费」这个错误前提
 能活六周的机制。
 
-**同口径纪律**：三档相减用 `slippageCostSettled`（仅已结算仓）而非看板上覆盖全部仓位的
-`slippageCost`——`totalRealized` 与 `feeCost` 都是 settled 口径，混用等于把还没兑现的成本
-提前记进已结算账。第三档仅在已结算仓费用**全部已知**时才给数字，否则留白。
+**同口径纪律**：第三档（`netAfterCostsCovered`）的三项——已实现盈亏、追价成本、协议费——
+**全部限定在「协议费已知」的那批已结算仓上逐仓计算**，页面同时标出「覆盖 n/m 仓」。
+两个被否掉的写法各有毛病：拿全量 `slippageCost`（含持仓中的仓）去减已结算盈亏，等于把
+还没兑现的成本提前记账；而「只要有一个未知就整档留白」会让这个指标因为历史仓的存在
+**永远不亮**（老仓不回填，未知数永不归零）。限定同一子集后三项口径一致、数字自洽，
+且随着老仓陆续结算完毕会自然收敛到全量。
 
 **费用只收一次**：`follow_positions` 唯一的出场路径是 `status='settled'`（市场关闭后按
 `outcomePrices` 赎回），赎回不是成交、不产生 taker 费。
 
 ### U4 · UMA 争议门
 
-`umaResolutionStatuses` 是**字符串化 JSON 数组**（不是数组），取值只见过 `"proposed"` / `"disputed"`。
+gamma 给了**两个**字段，只有单数那个是权威的：`umaResolutionStatus`（`"proposed"` /
+`"disputed"` / `"resolved"`）与 `umaResolutionStatuses`（字符串化 JSON 数组，逐轮历史）。
 
-**关键形态**：`["proposed","disputed","proposed","disputed"]`——争议后会重新提案。
-所以「当前是否争议中」是**最后一个元素**，不是「数组里含不含 disputed」；后者会让任何
-被争议过的市场永久冻结结算。开放市场样本里约 1.5% 处于争议中。
+> ⚠️ **第一版判据是错的，已被实测推翻并修正。** 初版读数组的最后一个元素，理由是
+> 「争议后必然会重新提案」。真相相反：第二次争议升级到 UMA 的 **DVM 投票仲裁**后，
+> 裁决结果**不会**作为一次 `"proposed"` 追加进数组——数组永远停在 `"disputed"`，
+> 而单数字段翻成 `"resolved"`。两个真实市场（均 `closed:true`、`outcomePrices:["1","0"]`）：
+> `0x99180dac…`（infinex 公售）、`0x6f4f3632…`（伊朗领空），数组都是
+> `["proposed","disputed","proposed","disputed"]` 而单数是 `"resolved"`。
+> 只看数组会把这类**已终局**市场永久判为争议中：仓位永不结算、告警永不进战绩，
+> **且无自愈路径**。教训：我采样了 400 个市场看到这个形态就总结出「规律」，
+> 但从没查过这些市场是否已经结算——样本够大不等于问对了问题。
+
+**实测分布（2026-08-04）**：300 个 closed 市场的单数字段 **300/300 都是 `"resolved"`**；
+100 个 open 市场为 缺席 88 / `"proposed"` 10 / `"disputed"` 2。所以真实的「争议中」形态是
+`closed:false` + 单数 `"disputed"`——而两处结算门都先要求 `closed`，这道门在当前数据下
+几乎不会触发。保留它是为了防御未来出现「已关闭但未终裁」的形态，成本极低。
+
+**判据**：单数字段优先（`disputed` → true；`resolved` / `proposed` → false；其它 → null）；
+仅在单数字段缺席时回退数组末位——数组本身分不清「争议中」与「争议后已仲裁」。
 
 **为什么必须拦**：两条结算路径都是一次性写入——`follow` 的 `realized_pnl` 写完不再重算，
 `alertOutcomes` 的 `won` 一旦写入就直接进 30 天战绩的分子分母。

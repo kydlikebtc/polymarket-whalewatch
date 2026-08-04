@@ -632,6 +632,12 @@ export interface StrategyMetrics {
   feeSamples: number;
   /** 已结算但费用未知的仓数(上线前的老仓)。 */
   feeUnknown: number;
+  /**
+   * 「含追价成本 + 协议费」的净额,**只覆盖 feeSamples 那批仓**。
+   * 三项(realized / 追价 / 协议费)都限定在同一子集上算 —— 不是拿部分覆盖的
+   * 费用去减全量盈亏。展示时必须同时给出 feeSamples/settledCount 覆盖率。
+   */
+  netAfterCostsCovered: number;
   equityCurve: { ts: number; cum: number }[];
   byCategory: Record<string, { realized: number; settledCount: number }>;
 }
@@ -723,6 +729,21 @@ export function computeStrategyMetrics(
   const feeSamples = feeSettled.length;
   const feeUnknown = settledCount - feeSamples;
 
+  // 「含全部成本」净额:三项都限定在【费用已知】的那批仓上算,而不是拿部分
+  // 覆盖的费用去减全量盈亏。这么定的原因:费用是 append-only 的,上线前的
+  // 老仓永远为 null —— 若沿用「有一个未知就整档留白」的规则,这个指标会
+  // 因为历史仓的存在而永远不亮,等于白做。限定子集后三项同口径、数字自洽,
+  // 且随着老仓逐渐结算完毕,这个子集会自然收敛到全量。展示层必须同时给出
+  // feeSamples/settledCount 的覆盖率,否则读者会把子集当全量。
+  const netAfterCostsCovered = feeSettled.reduce(
+    (s, p) =>
+      s +
+      (p.realized_pnl ?? 0) -
+      positionSlippage(p.entry_price, p.smart_avg_price, p.size_usd) -
+      (p.fee_usd ?? 0),
+    0,
+  );
+
   // 按赛道分解:仅 settled,categoryByCid 缺失/null 归「未分类」。
   const byCategory: Record<string, { realized: number; settledCount: number }> =
     {};
@@ -749,6 +770,7 @@ export function computeStrategyMetrics(
     feeCost,
     feeSamples,
     feeUnknown,
+    netAfterCostsCovered,
     equityCurve,
     byCategory,
   };

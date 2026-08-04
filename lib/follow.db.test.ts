@@ -8,11 +8,19 @@ import { openDb } from "./db";
 // P1 信号触发改造新增的归因列:formation_ts/formation_price(形成时刻三价记录)
 // + markout_30m/markout_2h(形成后 30min/2h 的市价回填)。只用于归因展示,
 // 绝不参与 realized_pnl。
+// exec_*(开仓瞬间盘口快照模拟吃单)与 fee_usd(协议 taker 费)同为后加的
+// 归因列 —— 老库必须靠 ALTER 补齐。这份清单曾漏掉它们:把 db.ts 里对应的
+// ALTER 行删掉,全量测试依然全绿(所有用例都走 :memory: 新库,命中的是
+// CREATE TABLE 而非 ALTER 路径),迁移缺失只会在真实老库上炸。
 const FORMATION_COLS = [
   "formation_ts",
   "formation_price",
   "markout_30m",
   "markout_2h",
+  "exec_price",
+  "exec_best_ask",
+  "exec_filled_usd",
+  "fee_usd",
 ];
 
 const positionCols = (db: ReturnType<typeof openDb>): string[] =>

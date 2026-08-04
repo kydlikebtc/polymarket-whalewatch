@@ -83,6 +83,7 @@ const card = (over: Partial<MarketCard> = {}): MarketCard => ({
       price1h: 0.725,
       price24h: null,
       resolved: true,
+      foldKey: "consensus:0xc1:Yes",
     },
   ],
   window: { trades: 36, truncated: false, hours: 24 },
@@ -109,6 +110,54 @@ describe("formatMarketCardTg", () => {
     expect(html).toContain("<b>本工具战绩</b>");
     expect(html).toContain("📐 90d 1 条告警 · 已判定 1/1 中");
     expect(html).toContain("polymarket.com/event/x-ev");
+  });
+
+  it("战绩行折叠共识升级 —— 一次共识不报成三条(与推送/看板同口径)", () => {
+    // 实测复现过的错法:同一组 2→3→4 人的三条升级行 + 一条判负的大额,
+    // 逐行计数输出「已判定 3/4 中」,而诚实口径是 1/2。
+    const esc = (n: number, won: number) => ({
+      type: "consensus",
+      createdAt: n,
+      title: "Will X happen?",
+      outcome: "Yes",
+      side: "BUY",
+      usd: 1000 * n,
+      price: null,
+      eventSlug: "x-ev",
+      won,
+      price1h: null,
+      price24h: null,
+      resolved: true,
+      foldKey: "consensus:0xc1:Yes",
+    });
+    const html = formatMarketCardTg(
+      card({
+        history: [
+          esc(1, 1),
+          esc(2, 1),
+          esc(3, 1),
+          {
+            type: "large",
+            createdAt: 4,
+            title: "Will X happen?",
+            outcome: "Yes",
+            side: "BUY",
+            usd: 12_000,
+            price: 0.4,
+            eventSlug: "x-ev",
+            won: 0,
+            price1h: null,
+            price24h: null,
+            resolved: true,
+            foldKey: null, // 单笔成交:独立信号,不折叠
+          },
+        ],
+      }),
+    );
+    expect(html).toContain("已判定 1/2 中");
+    expect(html).not.toContain("已判定 3/4 中");
+    // 「N 条告警」仍报原始行数 —— 这个市场上确实推送过 4 次。
+    expect(html).toContain("90d 4 条告警");
   });
 
   it("publicUrl → 链接区带 🔗 完整信号卡（identity 缺失也照带,cid 已知）", () => {

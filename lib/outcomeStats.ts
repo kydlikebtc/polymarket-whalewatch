@@ -128,12 +128,31 @@ export interface SummaryOutcome {
  * pushes arrive as won=null and are likewise skipped.
  */
 /**
+ * `consensus:0xabc:Yes:3` → `consensus:0xabc:Yes`. A consensus re-alerts as it
+ * grows and dedup_key carries the wallet count, so dropping the last segment
+ * yields a stable per-(market, outcome) identity with no payload re-parse.
+ * lastIndexOf is safe even if an outcome label ever contains a colon: the
+ * wallet count never does. Non-consensus rows must pass null — single fills
+ * are independent decisions and folding them would delete real samples.
+ */
+export function consensusFoldKey(dedupKey: string | null): string | null {
+  if (!dedupKey) return null;
+  const cut = dedupKey.lastIndexOf(":");
+  return cut > 0 ? dedupKey.slice(0, cut) : null;
+}
+
+/**
  * Collapse re-alerts of one signal down to the row a reader could have acted
  * on — the earliest. Kept local (rather than importing signalRecord's twin)
  * because this module is bundled into the client page and must stay free of
  * the `better-sqlite3` import chain; the two share the rule, not the code.
+ *
+ * The constraint is structural (only foldKey/createdAt are read) so the bot's
+ * market card can reuse it on its own row shape.
  */
-export function foldAlertEscalations<T extends SummaryAlert>(alerts: T[]): T[] {
+export function foldAlertEscalations<
+  T extends { foldKey?: string | null; createdAt?: number },
+>(alerts: T[]): T[] {
   const earliest = new Map<string, T>();
   const unfoldable: T[] = [];
   for (const a of alerts) {
@@ -166,20 +185,52 @@ export function summarizeOutcomes(
     t.total += 1;
     if (hit) t.hits += 1;
   };
-  for (const a of foldAlertEscalations(alerts)) {
-    const o = outcomes[a.id];
-    if (!o) continue;
-    const marks: [number | null, OutcomeStat][] = [
-      [o.price1h, summary.dir1h],
-      [o.price24h, summary.dir24h],
-    ];
-    for (const [later, stat] of marks) {
+  // Fold PER STAT, after gradability, not once up front. The three marks are
+  // backfilled independently per alert id, so a group's formation row can have
+  // no price_1h yet while its escalation row does. Folding first would let the
+  // ungradable formation row win the fold and delete the whole group from that
+  // stat. Same discipline as lib/signalRecord's "filter, then fold".
+  const gradeInto = (
+    stat: OutcomeStat,
+    graded: { a: SummaryAlert; hit: boolean }[],
+  ) => {
+    for (const g of foldAlertEscalations(
+      graded.map((g) => ({
+        ...g,
+        foldKey: g.a.foldKey,
+        createdAt: g.a.createdAt,
+      })),
+    )) {
+      bump(stat, g.a.type, g.hit);
+    }
+  };
+  const dirGraded = (pick: (o: SummaryOutcome) => number | null) => {
+    const out: { a: SummaryAlert; hit: boolean }[] = [];
+    for (const a of alerts) {
+      const o = outcomes[a.id];
+      if (!o) continue;
+      const later = pick(o);
       if (later == null) continue;
       const v = directionVerdict(a.side, a.price, later);
-      if (v === "push") continue;
-      bump(stat, a.type, v === "hit");
+      if (v === "push") continue; // ε push: out of numerator AND denominator
+      out.push({ a, hit: v === "hit" });
     }
-    if (o.resolved && o.won != null) bump(summary.settled, a.type, o.won);
-  }
+    return out;
+  };
+  gradeInto(
+    summary.dir1h,
+    dirGraded((o) => o.price1h),
+  );
+  gradeInto(
+    summary.dir24h,
+    dirGraded((o) => o.price24h),
+  );
+  gradeInto(
+    summary.settled,
+    alerts.flatMap((a) => {
+      const o = outcomes[a.id];
+      return o && o.resolved && o.won != null ? [{ a, hit: o.won }] : [];
+    }),
+  );
   return summary;
 }

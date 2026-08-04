@@ -10,6 +10,7 @@ import {
 } from "./marketBrief";
 import { parseAlertHit, type AlertHit, type AlertHitRow } from "./alertHits";
 import { fetchWithRetry } from "./fetchWithRetry";
+import { consensusFoldKey } from "./outcomeStats";
 
 // Shared single-market card composition — ONE implementation feeding both the
 // dashboard API (/api/market/[cid]) and the Telegram bot's 🎯 query reply, so
@@ -36,6 +37,13 @@ export interface CardHistoryRow extends AlertHit {
   price1h: number | null;
   price24h: number | null;
   resolved: boolean;
+  /**
+   * Escalation fold key (consensus only, null elsewhere). The history LIST
+   * still shows every row — a reader looking at the timeline should see the
+   * group grow. Only the aggregate 战绩 line folds, so one consensus counts
+   * once there, matching the push footer and the dashboard strip.
+   */
+  foldKey: string | null;
 }
 
 export interface MarketCard {
@@ -113,7 +121,7 @@ export async function buildMarketCard(
   // The tool's own alert history for this market + validation verdicts.
   const hitRows = db
     .prepare(
-      `SELECT a.type, a.payload, a.created_at,
+      `SELECT a.type, a.payload, a.created_at, a.dedup_key,
               ao.won, ao.price_1h, ao.price_24h, ao.resolved
        FROM alerts a
        LEFT JOIN alert_outcomes ao ON ao.alert_id = a.id
@@ -125,6 +133,7 @@ export async function buildMarketCard(
       `%${conditionId}%`,
       HISTORY_LIMIT,
     ) as (AlertHitRow & {
+    dedup_key: string | null;
     won: number | null;
     price_1h: number | null;
     price_24h: number | null;
@@ -140,6 +149,7 @@ export async function buildMarketCard(
         price1h: r.price_1h,
         price24h: r.price_24h,
         resolved: r.resolved === 1,
+        foldKey: r.type === "consensus" ? consensusFoldKey(r.dedup_key) : null,
       },
     ];
   });

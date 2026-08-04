@@ -59,8 +59,10 @@ type StrategyMetrics = {
   avgHoldingDays: number | null;
   maxDrawdown: number;
   slippageCost: number;
-  // 已结算仓口径的追价成本 —— 只用于与 totalRealized/feeCost 相减。
+  // 已结算仓口径的追价成本(与全量 slippageCost 区分)。
   slippageCostSettled: number;
+  // 「含追价+协议费」净额,只覆盖协议费已知的那批已结算仓(见 lib/follow)。
+  netAfterCostsCovered: number;
   // 协议 taker 费(2026-08 起采集)。feeSamples 是覆盖率分子 —— 上线前的
   // 老仓 fee_usd 为 null,「含协议费」一档必须带着 n= 一起读。
   feeCost: number;
@@ -759,26 +761,22 @@ function StrategyCard({
         />
         <Metric
           label="净盈亏(含追价+协议费)"
-          title="已结算净盈亏 − 累计追价成本 − 协议费 = 三档口径里最接近实盘的一档。上面的「已实现盈亏」是纸面档(不含任何执行成本),这一档把两项成本都扣掉。只有当已结算仓的协议费全部已知(无未知仓)时才给出数字,否则留白 —— 用部分覆盖的费用去减全量盈亏会得到一个介于两档之间、无法解释的数"
+          title="三档口径里最接近实盘的一档:已实现盈亏 − 追价成本 − 协议费。上面的「已实现盈亏」是纸面档,不含任何执行成本。⚠️ 口径范围:三项都只在【协议费已知】的那批已结算仓上计算,而不是拿部分覆盖的费用去减全量盈亏(那会得到一个介于两档之间、无法解释的数)。协议费自 2026-08 起才采集、老仓不回填,所以这一档目前只覆盖一个子集;随着老仓陆续结算完毕会自然收敛到全量"
           value={
-            m.feeSamples === 0 || m.feeUnknown > 0 ? (
+            m.feeSamples === 0 ? (
               <>
                 <span className="muted">—</span>
-                <div className="kpi-sub mono">
-                  {m.feeUnknown > 0 ? `${m.feeUnknown} 仓费用未知` : "n=0"}
-                </div>
+                <div className="kpi-sub mono">n=0</div>
               </>
             ) : (
-              (() => {
-                // 三项必须同为「已结算」口径:slip(全量)含未结算仓的成本,
-                // 拿它去减已结算盈亏会把还没兑现的成本提前记账。
-                const net = m.totalRealized - m.slippageCostSettled - m.feeCost;
-                return (
-                  <span className={`mono ${pnlTone(net)}`}>
-                    {fmtSignedUsd(net)}
-                  </span>
-                );
-              })()
+              <>
+                <span className={`mono ${pnlTone(m.netAfterCostsCovered)}`}>
+                  {fmtSignedUsd(m.netAfterCostsCovered)}
+                </span>
+                <div className="kpi-sub mono">
+                  覆盖 {m.feeSamples}/{m.settledCount} 仓
+                </div>
+              </>
             )
           }
         />

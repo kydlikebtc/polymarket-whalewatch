@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { consensusFoldKey } from "../../../lib/outcomeStats";
 import { getSmartPoolStatus } from "../../../lib/smartWallets";
 import { getTelegramHealth } from "../../../lib/telegramHealth";
 
@@ -47,14 +48,6 @@ type AlertView = {
   // validation strip folds on it so one consensus counts once.
   foldKey: string | null;
 };
-
-// `consensus:0xabc:Yes:3` -> `consensus:0xabc:Yes`. lastIndexOf is safe even
-// if an outcome label ever contains a colon: the wallet count never does.
-function consensusFoldKey(dedupKey: string | null): string | null {
-  if (!dedupKey) return null;
-  const cut = dedupKey.lastIndexOf(":");
-  return cut > 0 ? dedupKey.slice(0, cut) : null;
-}
 
 const DB_PATH = process.env.DASH_DB ?? "data.sqlite";
 

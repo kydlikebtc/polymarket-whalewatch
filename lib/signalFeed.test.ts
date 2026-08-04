@@ -275,3 +275,34 @@ describe("buildSignalFeed · 契约", () => {
     expect(feed.updatedAt).toBe(NOW);
   });
 });
+
+describe("buildSignalFeed · record30d 口径（对外契约）", () => {
+  it("SELL 侧 implied 取 1−成交价 —— 卖出信号的市场预期方向相反", () => {
+    // 这是 /api/signals 的对外 record30d,消费方(mm-mobile App)直接展示。
+    // 10 笔 SELL@0.20 全判赢:市场自己就给了 80% 概率,零优势。
+    const db = openDb(":memory:");
+    for (let i = 0; i < 10; i++) {
+      insert(db, "smart", smart({ side: "SELL", price: 0.2 }), NOW - H, {
+        won: 1,
+      });
+    }
+    const r = buildSignalFeed(db, { nowSec: NOW }).record30d;
+    expect(r.settled).toBe(10);
+    expect(r.wins).toBe(10);
+    expect(r.implied).toBeCloseTo(8); // 旧口径:2.0
+    expect(r.excess).toBeCloseTo(2); // 旧口径:+8.0
+  });
+
+  it("共识升级行折叠 —— 同一次共识只进一次分母", () => {
+    const db = openDb(":memory:");
+    // 同市场同方向的三条升级行(形成 @0.4,升级 @0.5/@0.6)。
+    for (const p of [0.4, 0.5, 0.6]) {
+      insert(db, "consensus", consensus({ avgBuyPrice: p }), NOW - 3 * H, {
+        won: 1,
+      });
+    }
+    const r = buildSignalFeed(db, { nowSec: NOW }).record30d;
+    expect(r.settled).toBe(1);
+    expect(r.implied).toBeCloseTo(0.4); // 保留形成时刻那条
+  });
+});

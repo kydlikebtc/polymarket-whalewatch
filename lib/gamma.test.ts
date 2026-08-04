@@ -224,6 +224,34 @@ describe("getMarketMeta", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it("closed 但争议中的市场继续刷新 —— 不享有 immutable 缓存", async () => {
+    // 这段逻辑曾被一次「只改文档」的提交静默回退,而 733 个测试无一变红:
+    // 它当时零覆盖。争议中的临时结果若被永久缓存,即使 UMA 后来翻案也永不重取。
+    const db = openDb(":memory:");
+    const fetcher = vi.fn(async (ids: string[]) =>
+      Object.fromEntries(
+        ids.map((c) => [c, meta(c, { closed: true, umaDisputed: true })]),
+      ),
+    );
+    await getMarketMeta(db, ["0xd"], { fetcher, nowSec: 1000 });
+    await getMarketMeta(db, ["0xd"], { fetcher, nowSec: 1000 + 100_000 });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("争议态 TTL 取 min —— 绝不把调用方更短的 ttlSec 拉长", async () => {
+    // /api/consensus 用 ttlSec=60 读「现价」,若被争议分支放大到 1800s,
+    // 「仍可跟 +1.2¢ / 已跑」会基于半小时前的价格给出结论。
+    const db = openDb(":memory:");
+    const fetcher = vi.fn(async (ids: string[]) =>
+      Object.fromEntries(
+        ids.map((c) => [c, meta(c, { closed: false, umaDisputed: true })]),
+      ),
+    );
+    await getMarketMeta(db, ["0xd"], { fetcher, nowSec: 1000, ttlSec: 60 });
+    await getMarketMeta(db, ["0xd"], { fetcher, nowSec: 1600, ttlSec: 60 });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("degrades to an empty result when the fetcher throws", async () => {
     const db = openDb(":memory:");
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -297,40 +325,65 @@ describe("event categories", () => {
   });
 });
 
-describe("parseUmaDisputed", () => {
-  // 实测取值(2026-08-04,400 个市场样本):字符串化 JSON 数组,元素只见过
-  // "proposed" 与 "disputed";开放市场里约 1.5% 含 disputed。
+describe("parseUmaDisputed 单数字段优先", () => {
+  // 实测分布(2026-08-04):300 个 closed 市场单数字段 100% 为 "resolved";
+  // 100 个 open 市场里 缺席 88 / "proposed" 10 / "disputed" 2。
+  // 真正争议中的形态是 closed=false + 单数 "disputed"。
+  it.each([
+    ["单数 disputed → 争议中", "disputed", true],
+    ["单数 resolved → 已终局", "resolved", false],
+    ["单数 proposed → 待过期,未争议", "proposed", false],
+  ])("%s", (_n, status, expected) => {
+    expect(parseUmaDisputed(status)).toBe(expected);
+  });
+
+  it("⚠️ DVM 终裁形态：数组停在 disputed 但单数已 resolved —— 必须判为已终局", () => {
+    // 这是本函数最初的 bug:第二次争议升级到 UMA 的 DVM 投票后,仲裁结果
+    // 不会再作为一次 "proposed" 追加进数组,数组永远停在 "disputed"。只看
+    // 数组末位会把这类【已终局】市场永久判为争议中 —— 仓位永不结算、告警
+    // 永不进战绩,且无自愈路径。两个真实市场(均 closed + outcomePrices
+    // ["1","0"]):0x99180dac…(infinex 公售)、0x6f4f3632…(伊朗领空)。
+    const arr = '["proposed","disputed","proposed","disputed"]';
+    expect(parseUmaDisputed("resolved", arr)).toBe(false);
+    // 单数缺席时才回退数组 —— 数组本身分不清"争议中"与"争议后已仲裁"。
+    expect(parseUmaDisputed(undefined, arr)).toBe(true);
+  });
+
+  it("单数字段优先级高于数组，且未观测取值 → null", () => {
+    expect(parseUmaDisputed("disputed", '["proposed"]')).toBe(true);
+    expect(parseUmaDisputed("resolved", '["disputed"]')).toBe(false);
+    expect(parseUmaDisputed("某个新状态", '["disputed"]')).toBeNull();
+  });
+});
+
+describe("parseUmaDisputed 数组回退（单数字段缺席时）", () => {
+  // 数组是字符串化 JSON(不是数组),元素见过 "proposed" / "disputed" / "resolved"。
+  // 只在单数字段缺席时使用 —— 它分不清「争议中」与「争议后已仲裁」。
   it.each([
     ['"[]" 尚未提案 → 未争议', "[]", false],
     ["单次提案 → 未争议", '["proposed"]', false],
     ["提案后被争议 → 争议中", '["proposed","disputed"]', true],
-    // 关键形态:争议后会重新提案,所以判据必须看最后一个元素而不是
-    // "数组里含不含 disputed"。
-    [
-      "争议→重新提案→再争议 → 仍在争议中",
-      '["proposed","disputed","proposed","disputed"]',
-      true,
-    ],
+    ["末位 resolved → 已终局", '["proposed","disputed","resolved"]', false],
     [
       "争议后重新提案且未再被争议 → 已不在争议中",
       '["proposed","disputed","proposed"]',
       false,
     ],
   ])("%s", (_name, raw, expected) => {
-    expect(parseUmaDisputed(raw)).toBe(expected);
+    expect(parseUmaDisputed(undefined, raw)).toBe(expected);
   });
 
-  it("字段缺席 / 坏 JSON / 未观测取值 → null（fail-open，按今天的行为走）", () => {
-    expect(parseUmaDisputed(undefined)).toBeNull();
-    expect(parseUmaDisputed(null)).toBeNull();
-    expect(parseUmaDisputed("不是 JSON")).toBeNull();
-    expect(parseUmaDisputed('["settled"]')).toBeNull(); // 没见过的取值不猜
-    expect(parseUmaDisputed('{"a":1}')).toBeNull();
-    expect(parseUmaDisputed('["proposed", 42]')).toBeNull();
+  it("两个字段都缺席 / 坏 JSON / 未观测取值 → null（fail-open）", () => {
+    expect(parseUmaDisputed(undefined, undefined)).toBeNull();
+    expect(parseUmaDisputed(null, null)).toBeNull();
+    expect(parseUmaDisputed(undefined, "不是 JSON")).toBeNull();
+    expect(parseUmaDisputed(undefined, '["settled"]')).toBeNull();
+    expect(parseUmaDisputed(undefined, '{"a":1}')).toBeNull();
+    expect(parseUmaDisputed(undefined, '["proposed", 42]')).toBeNull();
   });
 
   it("已经是数组的形态也接受（上游若改回真数组不会静默失灵）", () => {
-    expect(parseUmaDisputed(["proposed", "disputed"])).toBe(true);
+    expect(parseUmaDisputed(undefined, ["proposed", "disputed"])).toBe(true);
   });
 });
 

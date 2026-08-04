@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   OUTCOME_EPSILON,
+  consensusFoldKey,
   directionVerdict,
   settleWon,
   wilsonInterval,
@@ -215,6 +216,59 @@ describe("summarizeOutcomes", () => {
     const s = summarizeOutcomes(escalations, { 10: won, 11: won, 12: won });
     expect(s.settled.total).toBe(1);
     expect(s.settled.byType.consensus).toEqual({ hits: 1, total: 1 });
+  });
+
+  it("每个统计各自折叠 —— 形成行还没回填 1h 价时不该拖累整组", () => {
+    // price_1h/price_24h/结算 是按告警 id 独立惰性回填的,同一组的形成行与
+    // 升级行回填进度可以不同。若先折叠再判可评分,形成行(无 1h 价)会赢下
+    // 折叠然后被丢弃,整组从 1h 命中率里消失;而结算维度它明明是可评分的。
+    const alerts = [
+      {
+        id: 1,
+        type: "consensus",
+        side: "BUY",
+        price: 0.4,
+        foldKey: "c|Yes",
+        createdAt: 100,
+      },
+      {
+        id: 2,
+        type: "consensus",
+        side: "BUY",
+        price: 0.5,
+        foldKey: "c|Yes",
+        createdAt: 200,
+      },
+    ];
+    const s = summarizeOutcomes(alerts, {
+      1: { price1h: null, price24h: null, resolved: true, won: true },
+      2: { price1h: 0.7, price24h: null, resolved: true, won: true },
+    });
+    // 结算维度:形成行可评分 → 折叠后计 1 次。
+    expect(s.settled).toEqual({
+      hits: 1,
+      total: 1,
+      byType: { consensus: { hits: 1, total: 1 } },
+    });
+    // 1h 维度:只有升级行有价 → 仍应计 1 次,而不是整组消失。
+    expect(s.dir1h.total).toBe(1);
+    expect(s.dir1h.hits).toBe(1);
+  });
+
+  it("consensusFoldKey 剥掉 dedup_key 的钱包数末段", () => {
+    expect(consensusFoldKey("consensus:0xabc:Yes:3")).toBe(
+      "consensus:0xabc:Yes",
+    );
+    // 同市场同方向的不同人数折叠到同一个键 —— 这正是折叠要合并的那组。
+    expect(consensusFoldKey("consensus:0xabc:Yes:2")).toBe(
+      consensusFoldKey("consensus:0xabc:Yes:7"),
+    );
+    // 不同方向不能撞键。
+    expect(consensusFoldKey("consensus:0xabc:No:3")).not.toBe(
+      consensusFoldKey("consensus:0xabc:Yes:3"),
+    );
+    expect(consensusFoldKey(null)).toBeNull();
+    expect(consensusFoldKey("nocolon")).toBeNull();
   });
 
   it("无 foldKey 的行逐行计数（大额/聪明钱每笔都是独立信号）", () => {

@@ -34,25 +34,54 @@ export interface MarketMeta {
 }
 
 /**
- * `umaResolutionStatuses` is a STRINGIFIED JSON array (verified live — it is
- * not an array), whose elements have only ever been "proposed" and "disputed".
+ * Is this market's UMA resolution currently contested?
  *
- * The subtle part: a dispute can be followed by a fresh proposal, so live rows
- * look like ["proposed","disputed","proposed","disputed"]. "Currently
- * disputed" is therefore the LAST element, not "contains a disputed anywhere"
- * — the latter would permanently freeze settlement for any market that was
- * ever contested.
+ * gamma exposes TWO fields and only the SINGULAR one is authoritative:
+ *   `umaResolutionStatus`   — "proposed" | "disputed" | "resolved"
+ *   `umaResolutionStatuses` — a STRINGIFIED JSON array (not an array) of the
+ *                             per-round history
  *
- * Anything unrecognized returns null (unknown), and callers fail open: an
- * unknown status behaves exactly as this system did before the field existed.
+ * An earlier version of this function read the LAST element of the array,
+ * reasoning that a dispute is always followed by a fresh proposal. **That is
+ * wrong and it was verified wrong on live data.** When a second dispute
+ * escalates to UMA's DVM vote, the arbitration result is NOT appended as
+ * another "proposed" — the array stops at "disputed" forever while the
+ * singular field flips to "resolved". Two live examples, both `closed:true`
+ * with final `outcomePrices:["1","0"]`:
+ *   0x99180dac… (over-3m-committed-to-the-infinex-public-sale)
+ *   0x6f4f3632… (will-iran-close-its-airspace-by-december-31)
+ * both carry `["proposed","disputed","proposed","disputed"]` + `"resolved"`.
+ * Reading the array alone marks these permanently disputed, which blocks
+ * settlement forever with no self-healing path.
+ *
+ * Sampled distribution (2026-08-04):
+ *   300 closed markets → singular is "resolved" in 300/300
+ *   100 open markets   → absent 88 · "proposed" 10 · "disputed" 2
+ * So a genuine live dispute is `closed:false` + singular "disputed"; the
+ * settlement gates all require `closed` first and therefore rarely fire. The
+ * gate is kept anyway as cheap insurance against a closed-and-contested shape.
+ *
+ * Anything unrecognized returns null (unknown) and callers fail open.
  */
-export function parseUmaDisputed(raw: unknown): boolean | null {
-  if (raw == null) return null; // field absent — unknown, not "undisputed"
+export function parseUmaDisputed(
+  status: unknown,
+  statuses?: unknown,
+): boolean | null {
+  // The singular field wins whenever present — it reflects arbitration.
+  if (typeof status === "string") {
+    if (status === "disputed") return true;
+    if (status === "resolved" || status === "proposed") return false;
+    return null; // unobserved value — don't guess
+  }
+  // Fallback for rows that predate / omit the singular field. Never overrides
+  // it: the array cannot distinguish "in dispute" from "disputed then
+  // arbitrated", which is exactly the bug above.
+  if (statuses == null) return null;
   let arr: unknown;
-  if (Array.isArray(raw)) arr = raw;
-  else if (typeof raw === "string") {
+  if (Array.isArray(statuses)) arr = statuses;
+  else if (typeof statuses === "string") {
     try {
-      arr = JSON.parse(raw);
+      arr = JSON.parse(statuses);
     } catch {
       return null;
     }
@@ -63,7 +92,7 @@ export function parseUmaDisputed(raw: unknown): boolean | null {
   if (arr.length === 0) return false; // nothing proposed yet
   const last = arr[arr.length - 1] as string;
   if (last === "disputed") return true;
-  if (last === "proposed") return false;
+  if (last === "proposed" || last === "resolved") return false;
   return null; // unobserved status value
 }
 
@@ -107,7 +136,10 @@ function normalize(row: Record<string, unknown>): MarketMeta | null {
     feesEnabled: row.feesEnabled === true,
     feeType: typeof row.feeType === "string" ? row.feeType : null,
     feeSchedule: parseFeeSchedule(row.feeSchedule),
-    umaDisputed: parseUmaDisputed(row.umaResolutionStatuses),
+    umaDisputed: parseUmaDisputed(
+      row.umaResolutionStatus,
+      row.umaResolutionStatuses,
+    ),
   };
 }
 
@@ -229,8 +261,15 @@ export async function getMarketMeta(
         continue;
       }
       const age = nowSec - row.fetched_at;
-      // Closed = resolved = immutable, EXCEPT while a dispute is live.
-      const fresh = meta.closed || age < ttlSec;
+      // Closed = resolved = immutable, EXCEPT while a dispute is live: UMA can
+      // still overturn it, so the permanent-cache shortcut must not apply.
+      // Math.min, NOT a flat DISPUTED_TTL_SEC: a caller asking for a SHORTER
+      // ttl must never be lengthened by this branch. /api/consensus passes
+      // ttlSec=60 because it reads meta for CURRENT prices, and serving those
+      // 30 minutes stale would misinform the 仍可跟 / 已跑 call.
+      const fresh = meta.umaDisputed
+        ? age < Math.min(ttlSec, DISPUTED_TTL_SEC)
+        : meta.closed || age < ttlSec;
       if (fresh) {
         out[cid] = meta;
       } else {

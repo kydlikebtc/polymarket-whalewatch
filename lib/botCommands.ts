@@ -1,4 +1,5 @@
 import type { DB } from "./db";
+import { foldAlertEscalations } from "./outcomeStats";
 import { cents, esc, usd, urlSeg } from "./tgFormat";
 import type { MarketCard } from "./marketCard";
 import type { ResolveResult } from "./marketCard";
@@ -128,7 +129,14 @@ export function formatMarketCardTg(
   if (card.history.length === 0) {
     record = "📐 90d 暂无告警";
   } else {
-    const judged = card.history.filter((h) => h.won != null);
+    // 折叠共识升级行:一个组从 2 人涨到 4 人会写三条 alerts 行,逐行计数会
+    // 把一次共识报成三条战绩(实测曾输出「已判定 3/4 中」而诚实口径是 1/2)。
+    // 与推送脚注、看板验证条同一条规则 —— 同一件事不能在三处报出三个数。
+    // 注意只折叠分母/分子:「N 条告警」仍报原始行数,那是这个市场上真实发生
+    // 过的推送次数。
+    const judged = foldAlertEscalations(
+      card.history.filter((h) => h.won != null),
+    );
     const wins = judged.filter((h) => h.won === 1).length;
     record =
       `📐 90d ${card.history.length} 条告警` +
