@@ -179,6 +179,107 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
     db.close();
   });
 
+  it("UMA 争议中的市场不结算 —— outcomePrices 还可能被推翻", async () => {
+    // 争议中的 closed 市场,outcomePrices 是「提案结果」而非终局。按它结算会
+    // 把一个可能被推翻的价格永久写进 realized_pnl(结算是一次性的,写完就不
+    // 再重算)。保持 open、下轮再试,是唯一可回退的选择。
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status) VALUES (1,'cD','Yes','tokD',0,0.5,500,1000,'open')",
+    ).run();
+    const disputed: MarketMeta = {
+      conditionId: "cD",
+      closed: true,
+      outcomePrices: [1, 0],
+      outcomes: ["Yes", "No"],
+      volume24hr: null,
+      liquidity: null,
+      endDate: null,
+      category: null,
+      feesEnabled: false,
+      feeType: null,
+      feeSchedule: null,
+      umaDisputed: true,
+    };
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: [] }),
+      getSmart: smart,
+      fetchPrice: async () => 0.5,
+      getMeta: async () => ({ cD: disputed }),
+      nowSec: 1800,
+    });
+    expect(r.settled).toBe(0);
+    const p = db
+      .prepare("SELECT status, realized_pnl FROM follow_positions")
+      .get() as { status: string; realized_pnl: number | null };
+    expect(p.status).toBe("open");
+    expect(p.realized_pnl).toBeNull();
+    db.close();
+  });
+
+  it("争议解除后正常结算（争议门是暂缓，不是永久拉黑）", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status) VALUES (1,'cD','Yes','tokD',0,0.5,500,1000,'open')",
+    ).run();
+    const settledMeta: MarketMeta = {
+      conditionId: "cD",
+      closed: true,
+      outcomePrices: [1, 0],
+      outcomes: ["Yes", "No"],
+      volume24hr: null,
+      liquidity: null,
+      endDate: null,
+      category: null,
+      feesEnabled: false,
+      feeType: null,
+      feeSchedule: null,
+      umaDisputed: false,
+    };
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: [] }),
+      getSmart: smart,
+      fetchPrice: async () => 0.5,
+      getMeta: async () => ({ cD: settledMeta }),
+      nowSec: 1800,
+    });
+    expect(r.settled).toBe(1);
+    db.close();
+  });
+
+  it("umaDisputed=null(未知)照常结算 —— fail-open,不因新字段拿不到就冻结全局", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status) VALUES (1,'cU','Yes','tokU',0,0.5,500,1000,'open')",
+    ).run();
+    const unknown: MarketMeta = {
+      conditionId: "cU",
+      closed: true,
+      outcomePrices: [1, 0],
+      outcomes: ["Yes", "No"],
+      volume24hr: null,
+      liquidity: null,
+      endDate: null,
+      category: null,
+      feesEnabled: false,
+      feeType: null,
+      feeSchedule: null,
+      umaDisputed: null,
+    };
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: [] }),
+      getSmart: smart,
+      fetchPrice: async () => 0.5,
+      getMeta: async () => ({ cU: unknown }),
+      nowSec: 1800,
+    });
+    expect(r.settled).toBe(1);
+    db.close();
+  });
+
   it("截断窗口跳过开仓(formationTs 不可信),结算照常", async () => {
     // 窗口被截断时,截断边缘前的成交不可见,可见跨线会把 formationTs 系统性
     // 后移 —— 新鲜度闸门与形成价护栏同时失真,此轮禁止开仓;结算与 markout

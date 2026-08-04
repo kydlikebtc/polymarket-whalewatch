@@ -46,6 +46,64 @@ const meta = (over: Partial<MarketMeta> = {}): MarketMeta => ({
   ...over,
 });
 
+describe("computeAlertOutcomes UMA 争议门", () => {
+  it("争议中的市场不判定胜负 —— won 一旦写入就直接进 30 天战绩", async () => {
+    const db = openDb(":memory:");
+    const id = insertAlert(db);
+    const out = await computeAlertOutcomes(db, [id], {
+      fetchPrice: async () => null,
+      getMeta: async () => ({
+        "0xc1": meta({
+          closed: true,
+          outcomePrices: [1, 0],
+          umaDisputed: true,
+        }),
+      }),
+      nowSec: T0 + 90_000,
+    });
+    expect(out[id].resolved).toBe(false);
+    expect(out[id].won).toBeNull();
+    db.close();
+  });
+
+  it("争议解除后正常判定（暂缓不是永久拉黑）", async () => {
+    const db = openDb(":memory:");
+    const id = insertAlert(db);
+    const out = await computeAlertOutcomes(db, [id], {
+      fetchPrice: async () => null,
+      getMeta: async () => ({
+        "0xc1": meta({
+          closed: true,
+          outcomePrices: [1, 0],
+          umaDisputed: false,
+        }),
+      }),
+      nowSec: T0 + 90_000,
+    });
+    expect(out[id].resolved).toBe(true);
+    expect(out[id].won).toBe(true); // BUY@0.6 结算于 1
+    db.close();
+  });
+
+  it("umaDisputed=null(未知)照常判定 —— fail-open", async () => {
+    const db = openDb(":memory:");
+    const id = insertAlert(db);
+    const out = await computeAlertOutcomes(db, [id], {
+      fetchPrice: async () => null,
+      getMeta: async () => ({
+        "0xc1": meta({
+          closed: true,
+          outcomePrices: [1, 0],
+          umaDisputed: null,
+        }),
+      }),
+      nowSec: T0 + 90_000,
+    });
+    expect(out[id].resolved).toBe(true);
+    db.close();
+  });
+});
+
 describe("computeAlertOutcomes", () => {
   it("fetches 1h/24h follow-through prices once both marks have passed", async () => {
     const db = openDb(":memory:");

@@ -200,7 +200,14 @@ export async function computeAlertOutcomes(
 
     if (!resolved) {
       const meta = metaByCid[p.conditionId];
-      const rp = meta?.closed ? meta.outcomePrices[p.outcomeIndex] : undefined;
+      // UMA 争议门:争议中的市场其 outcomePrices 仍可能被推翻,而结算判定
+      // (won)一旦写入就是终局并直接进 30 天战绩分子/分母。严格 ===true,
+      // null(未知)照常结算 —— fail-open,与 follow 结算同一条纪律。
+      const disputed = meta?.umaDisputed === true;
+      const rp =
+        meta?.closed && !disputed
+          ? meta.outcomePrices[p.outcomeIndex]
+          : undefined;
       if (typeof rp === "number" && Number.isFinite(rp)) {
         resolved = true;
         resolutionPrice = rp;

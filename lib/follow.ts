@@ -489,6 +489,17 @@ export async function runFollowCycle(
     for (const row of openRows) {
       const m = meta[row.condition_id];
       if (!m || !m.closed) continue;
+      // UMA 争议门:争议中的 closed 市场,outcomePrices 是「提案结果」不是终局
+      // —— UMA 可以推翻它。而结算是一次性写入(写完 realized_pnl 就不再重算),
+      // 所以按争议中的价格结算 = 把一个可能错的数字永久钉死。保持 open 下轮
+      // 再试是唯一可回退的选择。严格 ===true:null(未知/上游没这个字段)照常
+      // 结算,fail-open —— 新字段拿不到不该冻结全局结算。
+      if (m.umaDisputed === true) {
+        console.log(
+          `[follow] ${row.condition_id}: UMA 争议中,暂缓结算(下轮再试)`,
+        );
+        continue;
+      }
       const exit = m.outcomePrices[row.outcome_index];
       // outcomePrices 缺项/NaN(gamma 归一化对坏值填 NaN)→ 保持 open,下轮再试。
       if (exit == null || !Number.isFinite(exit)) continue;
