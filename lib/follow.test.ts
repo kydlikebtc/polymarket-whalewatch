@@ -172,6 +172,28 @@ describe("computeStrategyMetrics 协议费", () => {
     expect(m.feeUnknown).toBe(1);
   });
 
+  it("slippageCostSettled 只算已结算仓 —— 三档相减必须同口径", () => {
+    // slippageCost 覆盖 open+settled(追价成本在进场即产生),但 totalRealized
+    // 与 feeCost 只覆盖 settled。「净盈亏(含追价+协议费)」若拿全量追价成本去
+    // 减已结算盈亏,等于把还没结算的仓的成本提前记进已结算账 —— 三个数必须
+    // 同口径才能相减。
+    const positions = [
+      pos({ status: "settled", entry_price: 0.6, smart_avg_price: 0.5 }),
+      pos({
+        status: "open",
+        entry_price: 0.6,
+        smart_avg_price: 0.5,
+        realized_pnl: null,
+      }),
+    ];
+    const m = computeStrategyMetrics(positions, {});
+    // positionSlippage 由 size/entry 重算份额(不取行里的 shares 列):
+    // 每仓 = (500/0.6) × (0.6 − 0.5) = 833.33 × 0.1 = 83.33
+    const per = (500 / 0.6) * 0.1;
+    expect(m.slippageCost).toBeCloseTo(per * 2); // open + settled
+    expect(m.slippageCostSettled).toBeCloseTo(per); // 只已结算那一仓
+  });
+
   it("fee_usd=0 是已知的零（免费市场），计入样本但不加成本", () => {
     const m = computeStrategyMetrics(
       [pos({ realized_pnl: 10, fee_usd: 0 })],

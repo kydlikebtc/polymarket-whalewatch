@@ -59,6 +59,8 @@ type StrategyMetrics = {
   avgHoldingDays: number | null;
   maxDrawdown: number;
   slippageCost: number;
+  // 已结算仓口径的追价成本 —— 只用于与 totalRealized/feeCost 相减。
+  slippageCostSettled: number;
   // 协议 taker 费(2026-08 起采集)。feeSamples 是覆盖率分子 —— 上线前的
   // 老仓 fee_usd 为 null,「含协议费」一档必须带着 n= 一起读。
   feeCost: number;
@@ -768,7 +770,9 @@ function StrategyCard({
               </>
             ) : (
               (() => {
-                const net = m.totalRealized - slip - m.feeCost;
+                // 三项必须同为「已结算」口径:slip(全量)含未结算仓的成本,
+                // 拿它去减已结算盈亏会把还没兑现的成本提前记账。
+                const net = m.totalRealized - m.slippageCostSettled - m.feeCost;
                 return (
                   <span className={`mono ${pnlTone(net)}`}>
                     {fmtSignedUsd(net)}

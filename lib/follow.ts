@@ -618,7 +618,14 @@ export interface StrategyMetrics {
   openCount: number;
   avgHoldingDays: number | null;
   maxDrawdown: number;
+  /** 全部仓位(open+settled)的累计追价成本 —— 追价成本在进场即产生。 */
   slippageCost: number;
+  /**
+   * 只算已结算仓的追价成本。存在的唯一理由:要跟 totalRealized/feeCost
+   * (都是 settled 口径)相减出「含成本净盈亏」。拿全量去减已结算盈亏,等于
+   * 把还没结算的仓的成本提前记进已结算账。
+   */
+  slippageCostSettled: number;
   /** 已结算且费用已知的仓的协议费合计(USD)。 */
   feeCost: number;
   /** 上面那个数覆盖了几仓 —— 「含协议费」一档必须带覆盖率一起看。 */
@@ -702,6 +709,12 @@ export function computeStrategyMetrics(
     0,
   );
 
+  const slippageCostSettled = settled.reduce(
+    (s, p) =>
+      s + positionSlippage(p.entry_price, p.smart_avg_price, p.size_usd),
+    0,
+  );
+
   // 协议 taker 费:与 realized 同口径只看 settled(它要跟已结算净盈亏相减),
   // 且只累计「已知」的。fee_usd===0 是已知的零(免费市场),必须与 null(未知)
   // 区分 —— 把未知当 0 正是「零手续费」这个错误前提能活六周的机制。
@@ -732,6 +745,7 @@ export function computeStrategyMetrics(
     avgHoldingDays,
     maxDrawdown,
     slippageCost,
+    slippageCostSettled,
     feeCost,
     feeSamples,
     feeUnknown,
