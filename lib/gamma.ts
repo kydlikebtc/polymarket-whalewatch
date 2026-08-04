@@ -1,5 +1,6 @@
 import type { DB } from "./db";
 import { fetchWithRetry } from "./fetchWithRetry";
+import { parseFeeSchedule, type FeeSchedule } from "./fees";
 
 const GAMMA_API = "https://gamma-api.polymarket.com";
 
@@ -19,6 +20,51 @@ export interface MarketMeta {
   category: string | null;
   outcomes: string[];
   outcomePrices: number[];
+  // Protocol fees. Rides along on the SAME response the enrichment already
+  // fetches, so reading them costs zero extra upstream calls. See lib/fees.
+  feesEnabled: boolean;
+  feeType: string | null; // sports_fees_v2 / politics_fees / … (7 seen live)
+  feeSchedule: FeeSchedule | null;
+  /**
+   * UMA resolution dispute state, or null when unknown. A disputed market's
+   * `outcomePrices` can still be overturned, so settlement must not treat it
+   * as final. Also free on the same response.
+   */
+  umaDisputed: boolean | null;
+}
+
+/**
+ * `umaResolutionStatuses` is a STRINGIFIED JSON array (verified live — it is
+ * not an array), whose elements have only ever been "proposed" and "disputed".
+ *
+ * The subtle part: a dispute can be followed by a fresh proposal, so live rows
+ * look like ["proposed","disputed","proposed","disputed"]. "Currently
+ * disputed" is therefore the LAST element, not "contains a disputed anywhere"
+ * — the latter would permanently freeze settlement for any market that was
+ * ever contested.
+ *
+ * Anything unrecognized returns null (unknown), and callers fail open: an
+ * unknown status behaves exactly as this system did before the field existed.
+ */
+export function parseUmaDisputed(raw: unknown): boolean | null {
+  if (raw == null) return null; // field absent — unknown, not "undisputed"
+  let arr: unknown;
+  if (Array.isArray(raw)) arr = raw;
+  else if (typeof raw === "string") {
+    try {
+      arr = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  } else return null;
+  if (!Array.isArray(arr)) return null;
+  // Mixed junk means the shape changed upstream — say unknown, don't guess.
+  if (!arr.every((x) => typeof x === "string")) return null;
+  if (arr.length === 0) return false; // nothing proposed yet
+  const last = arr[arr.length - 1] as string;
+  if (last === "disputed") return true;
+  if (last === "proposed") return false;
+  return null; // unobserved status value
 }
 
 const num = (v: unknown): number | null =>
@@ -58,6 +104,10 @@ function normalize(row: Record<string, unknown>): MarketMeta | null {
     outcomePrices: jsonArr(row.outcomePrices)
       .map((p) => num(p))
       .map((p) => p ?? NaN),
+    feesEnabled: row.feesEnabled === true,
+    feeType: typeof row.feeType === "string" ? row.feeType : null,
+    feeSchedule: parseFeeSchedule(row.feeSchedule),
+    umaDisputed: parseUmaDisputed(row.umaResolutionStatuses),
   };
 }
 
@@ -124,6 +174,17 @@ export async function fetchMarketMeta(
 
 const DEFAULT_TTL_SEC = 3600;
 
+// Cached-shape version. CLOSED markets never expire (that immutability is what
+// lets settlement backfill treat gamma as a permanent resolution source), so a
+// newly added field would stay NULL on those rows forever. Bumping this makes
+// every stale-shaped row a cache miss exactly once.
+//   1 → 2: feesEnabled / feeType / feeSchedule / umaDisputed
+const META_V = 2;
+
+// A closed-but-DISPUTED market is not final — UMA can overturn it — so it must
+// keep refreshing instead of inheriting the permanent-cache rule.
+const DISPUTED_TTL_SEC = 1800;
+
 /**
  * SQLite-cached market metadata keyed by conditionId (market_meta table).
  * Open markets refresh hourly (volume/liquidity drift); CLOSED markets are
@@ -162,9 +223,17 @@ export async function getMarketMeta(
       continue;
     }
     try {
-      const meta = JSON.parse(row.meta_json) as MarketMeta;
-      // Closed = resolved = immutable; only open markets go stale.
-      if (meta.closed || nowSec - row.fetched_at < ttlSec) {
+      const meta = JSON.parse(row.meta_json) as MarketMeta & { v?: number };
+      if (meta.v !== META_V) {
+        misses.push(cid); // stale shape — refetch once, then it sticks
+        continue;
+      }
+      const age = nowSec - row.fetched_at;
+      // Closed = resolved = immutable, EXCEPT while a dispute is live.
+      const fresh = meta.umaDisputed
+        ? age < DISPUTED_TTL_SEC
+        : meta.closed || age < ttlSec;
+      if (fresh) {
         out[cid] = meta;
       } else {
         misses.push(cid);
@@ -177,7 +246,7 @@ export async function getMarketMeta(
     try {
       const fetched = await fetcher(misses);
       for (const [cid, meta] of Object.entries(fetched)) {
-        ins.run(cid, JSON.stringify(meta), nowSec);
+        ins.run(cid, JSON.stringify({ ...meta, v: META_V }), nowSec);
         out[cid] = meta;
       }
     } catch (e) {

@@ -90,6 +90,10 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
       liquidity: null,
       endDate: null,
       category: null,
+      feesEnabled: false,
+      feeType: null,
+      feeSchedule: null,
+      umaDisputed: false,
     };
     const r = await runFollowCycle({
       db,
@@ -139,6 +143,10 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
       liquidity: null,
       endDate: null,
       category: null,
+      feesEnabled: false,
+      feeType: null,
+      feeSchedule: null,
+      umaDisputed: false,
     };
     const r = await runFollowCycle({
       db,
@@ -173,6 +181,10 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
       liquidity: null,
       endDate: null,
       category: null,
+      feesEnabled: false,
+      feeType: null,
+      feeSchedule: null,
+      umaDisputed: false,
     };
     const r = await runFollowCycle({
       db,
@@ -230,6 +242,10 @@ describe("runFollowCycle 开仓/结算/幂等", () => {
       liquidity: null,
       endDate: null,
       category: null,
+      feesEnabled: false,
+      feeType: null,
+      feeSchedule: null,
+      umaDisputed: false,
     };
     const r = await runFollowCycle({
       db,
@@ -347,6 +363,10 @@ describe("runFollowCycle 新鲜度闸门 + 跳过已结算市场", () => {
       liquidity: null,
       endDate: null,
       category: null,
+      feesEnabled: false,
+      feeType: null,
+      feeSchedule: null,
+      umaDisputed: false,
     };
     const r = await runFollowCycle({
       db,
@@ -1030,8 +1050,18 @@ describe("runFollowCycle markout 惰性回填", () => {
 // --- 执行层建模:开仓瞬间盘口快照 → 模拟吃单落 exec_* 归因列 ---
 describe("runFollowCycle 执行滑点归因(fetchBook)", () => {
   const twoWalletTrades = () => [
-    trade({ proxyWallet: "w1", transactionHash: "h1", size: 10000, price: 0.6 }),
-    trade({ proxyWallet: "w2", transactionHash: "h2", size: 10000, price: 0.6 }),
+    trade({
+      proxyWallet: "w1",
+      transactionHash: "h1",
+      size: 10000,
+      price: 0.6,
+    }),
+    trade({
+      proxyWallet: "w2",
+      transactionHash: "h2",
+      size: 10000,
+      price: 0.6,
+    }),
   ];
   const baseDeps = (db: ReturnType<typeof openDb>) => ({
     db,

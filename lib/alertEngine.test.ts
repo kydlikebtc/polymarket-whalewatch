@@ -465,6 +465,10 @@ describe("runAlertCycle", () => {
       endDate,
       closed: false,
       category: null,
+      feesEnabled: false,
+      feeType: null,
+      feeSchedule: null,
+      umaDisputed: false,
       outcomes: ["Yes", "No"],
       outcomePrices: [0.5, 0.5],
     });
@@ -508,6 +512,10 @@ describe("runAlertCycle", () => {
       endDate: "2026-07-01T05:00:00Z",
       closed: false,
       category: null,
+      feesEnabled: false,
+      feeType: null,
+      feeSchedule: null,
+      umaDisputed: false,
       outcomes: ["Yes", "No"],
       outcomePrices: [0.5, 0.5],
     };

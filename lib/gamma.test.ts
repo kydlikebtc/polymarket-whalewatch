@@ -5,6 +5,7 @@ import {
   fetchMarketMeta,
   getEventCategories,
   getMarketMeta,
+  parseUmaDisputed,
   tradeMarketContext,
   type MarketMeta,
 } from "./gamma";
@@ -32,6 +33,10 @@ const meta = (cid: string, over: Partial<MarketMeta> = {}): MarketMeta => ({
   category: "Sports",
   outcomes: ["Yes", "No"],
   outcomePrices: [0.9, 0.1],
+  feesEnabled: false,
+  feeType: null,
+  feeSchedule: null,
+  umaDisputed: false,
   ...over,
 });
 
@@ -48,6 +53,48 @@ describe("fetchMarketMeta", () => {
     expect(m.outcomePrices).toEqual([0.905, 0.095]);
     expect(m.closed).toBe(false);
     expect(fetchMock.mock.calls[0][0]).toContain("condition_ids=0xc1");
+  });
+
+  it("采集费率与 UMA 争议字段（同一响应免费带回，零新增上游调用）", async () => {
+    // 实测形状(2026-08-04):72/100 头部市场 feesEnabled=true,7 个品类。
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        gammaRow("0xc1", {
+          feesEnabled: true,
+          feeType: "sports_fees_v2",
+          feeSchedule: {
+            exponent: 1,
+            rate: 0.05,
+            takerOnly: true,
+            rebateRate: 0.15,
+          },
+          umaResolutionStatuses: '["proposed"]',
+        }),
+      ],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const m = (await fetchMarketMeta(["0xc1"]))["0xc1"];
+    expect(m.feesEnabled).toBe(true);
+    expect(m.feeType).toBe("sports_fees_v2");
+    expect(m.feeSchedule).toEqual({
+      exponent: 1,
+      rate: 0.05,
+      takerOnly: true,
+      rebateRate: 0.15,
+    });
+    expect(m.umaDisputed).toBe(false);
+  });
+
+  it("费率字段缺失的市场诚实置空（免费市场 feesEnabled=false）", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => [gammaRow("0xc1")] });
+    vi.stubGlobal("fetch", fetchMock);
+    const m = (await fetchMarketMeta(["0xc1"]))["0xc1"];
+    expect(m.feesEnabled).toBe(false);
+    expect(m.feeSchedule).toBeNull();
+    expect(m.umaDisputed).toBeNull(); // 字段缺席 = 未知,不是"没争议"
   });
 
   it("keeps successful chunks when another chunk fails (independent failure)", async () => {
@@ -152,6 +199,31 @@ describe("getMarketMeta", () => {
     expect(fetcher.mock.calls[1][0]).toEqual(["0xopen"]);
   });
 
+  it("schema 版本变更让旧缓存行失效 —— 否则 CLOSED 市场永远拿不到新字段", async () => {
+    // closed 市场的缓存"永不过期"是结算回填赖以成立的前提,代价是新增字段
+    // 对老行永久为空。版本号是唯一的解法。
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO market_meta (condition_id, meta_json, fetched_at) VALUES (?, ?, ?)",
+    ).run(
+      "0xclosed",
+      JSON.stringify({ conditionId: "0xclosed", closed: true }), // 无 v 的老行
+      1000,
+    );
+    const fetcher = vi.fn(async (ids: string[]) =>
+      Object.fromEntries(ids.map((c) => [c, meta(c, { closed: true })])),
+    );
+    const out = await getMarketMeta(db, ["0xclosed"], {
+      fetcher,
+      nowSec: 1100,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(out["0xclosed"].feesEnabled).toBe(false);
+    // 重取后带上版本号,下一次命中缓存。
+    await getMarketMeta(db, ["0xclosed"], { fetcher, nowSec: 1200 });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("degrades to an empty result when the fetcher throws", async () => {
     const db = openDb(":memory:");
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -222,6 +294,43 @@ describe("event categories", () => {
     const second = await getEventCategories(db, ["ev-a"], { fetcher });
     expect(second["ev-a"]).toBe("Politics");
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("parseUmaDisputed", () => {
+  // 实测取值(2026-08-04,400 个市场样本):字符串化 JSON 数组,元素只见过
+  // "proposed" 与 "disputed";开放市场里约 1.5% 含 disputed。
+  it.each([
+    ['"[]" 尚未提案 → 未争议', "[]", false],
+    ["单次提案 → 未争议", '["proposed"]', false],
+    ["提案后被争议 → 争议中", '["proposed","disputed"]', true],
+    // 关键形态:争议后会重新提案,所以判据必须看最后一个元素而不是
+    // "数组里含不含 disputed"。
+    [
+      "争议→重新提案→再争议 → 仍在争议中",
+      '["proposed","disputed","proposed","disputed"]',
+      true,
+    ],
+    [
+      "争议后重新提案且未再被争议 → 已不在争议中",
+      '["proposed","disputed","proposed"]',
+      false,
+    ],
+  ])("%s", (_name, raw, expected) => {
+    expect(parseUmaDisputed(raw)).toBe(expected);
+  });
+
+  it("字段缺席 / 坏 JSON / 未观测取值 → null（fail-open，按今天的行为走）", () => {
+    expect(parseUmaDisputed(undefined)).toBeNull();
+    expect(parseUmaDisputed(null)).toBeNull();
+    expect(parseUmaDisputed("不是 JSON")).toBeNull();
+    expect(parseUmaDisputed('["settled"]')).toBeNull(); // 没见过的取值不猜
+    expect(parseUmaDisputed('{"a":1}')).toBeNull();
+    expect(parseUmaDisputed('["proposed", 42]')).toBeNull();
+  });
+
+  it("已经是数组的形态也接受（上游若改回真数组不会静默失灵）", () => {
+    expect(parseUmaDisputed(["proposed", "disputed"])).toBe(true);
   });
 });
 
