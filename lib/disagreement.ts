@@ -260,17 +260,26 @@ function tiltFormationTs(
  * 成 0,不拉低这四个字段,这是 P0.6 的既定行为,detectDisagreement 的 19 个
  * 既有测试锁死了它,不能变。
  *
- * signedNetUsd 是唯一的例外,也是新增这个类型的唯一理由:它是【不 clamp】的
- * 有符号版本 —— Σ netShares(acc) × avgBuyPrice(acc),对净卖者(或本轮净持仓
- * 转负的钱包)老老实实累计负值,不砍成 0。C2 要跟的信号是「这个 outcome
- * 整体从净买翻成净卖」,用一个恒 >= 0 的量测不出"翻转"这件事本身 ——
- * netUsd/weightedUsd 眼里,一个满仓净卖出的 outcome 和一个从没人买过的
- * outcome 长得一模一样(都是 0),而 signedNetUsd 会把前者算成负数,后者
- * 仍是 0,两者才分得开。
+ * buyUsd/sellUsd/buyShares/sellShares 四个是唯一的例外,也是新增这个类型的
+ * 唯一理由:对该 outcome 全部非剔除钱包(MM/hedger 已排除,不分净买净卖)
+ * 求和的原始现金流,供 C2 判定"认输"用(见 lib/sourceResolved.ts)。
  *
- * 两组字段共享同一套前置处理(MM 剔除、hedger 剔除、dedup)、只在"要不要把
- * 净卖者的负贡献算进来"这一步分叉 —— 写在同一个函数里保证这是它们唯一的
- * 分歧点,不会因为分别实现而在 MM/hedger/dedup 上悄悄跑偏。
+ * 复审推翻过一版用 `netShares(acc) × avgBuyPrice(acc)`(不 clamp 的有符号
+ * "敞口")做判据的实现,原因是这个量对最自然的割肉形态失明、且方向可能
+ * 判反,记录在这里防止未来重构走回头路:
+ *   - 一个窗口内零买入、只把窗口前建的仓卖光的钱包 —— avgBuyPrice=0(没有
+ *     买入份额可算均价),`负shares × 0 = 0`,不是负数。而"窗口内零买入的
+ *     全清仓"恰恰是认输最典型的样子,这个量对它完全失明。
+ *   - 买 100@0.5、卖 150@0.9 这种【赚钱止盈】,`负50股 × 买入均价0.5 = -25`,
+ *     符号是负的 —— 会被误判成"认输",但这明明是获利了结,方向判反了。
+ * 现金流口径(buyUsd/sellUsd/buyShares/sellShares,判定逻辑见
+ * lib/sourceResolved.ts 的 isCapitulating)同时解决这两个问题:「卖出金额
+ * 超过买入金额」这个动作本身不需要 avgBuyPrice 兜底就能成立;「卖均价低于
+ * 买均价」这第二个条件专门把止盈挡在外面。
+ *
+ * 两组字段共享同一套前置处理(MM 剔除、hedger 剔除、dedup)、只在"要不要按
+ * exposureUsd 的正负筛选钱包"这一步分叉 —— 写在同一个函数里保证这是它们
+ * 唯一的分歧点,不会因为分别实现而在 MM/hedger/dedup 上悄悄跑偏。
  */
 export interface OutcomeAggregate {
   outcome: string;
@@ -281,8 +290,14 @@ export interface OutcomeAggregate {
   avgBuyPrice: number; // 净买者的 usd 加权均价(同 DisagreementSide.avgBuyPrice)
   walletCount: number; // 净买者人数(同 DisagreementSide.walletCount)
   wallets: DisagreementWallet[]; // 净买者,按 netUsd 降序(同 DisagreementSide.wallets)
-  /** Σ netShares(acc) × avgBuyPrice(acc),不 clamp,可为负/为零。只有 C2 用。*/
-  signedNetUsd: number;
+  /** Σ acc.buyUsd,该 outcome 全部非剔除钱包(不分净买净卖)。C2 认输判据用。*/
+  buyUsd: number;
+  /** Σ acc.sellUsd,同上。*/
+  sellUsd: number;
+  /** Σ acc.buyShares,同上。*/
+  buyShares: number;
+  /** Σ acc.sellShares,同上。*/
+  sellShares: number;
 }
 
 /**
@@ -298,12 +313,12 @@ export interface OutcomeAggregate {
  * 自己不再重复这五步,而是调用本函数、复用它算出的 netUsd/weightedUsd/
  * avgBuyPrice/walletCount/wallets 五个字段。
  *
- * 刻意不做的事:不检查 exposureUsd/signedNetUsd 的正负、不套 per-side USD
- * 或钱包数门槛。这些是消费方的语义,两个调用方对"够不够格算一个 side"这件事
- * 答案不同(detectDisagreement 要门槛过滤,C2 恰恰要看未过滤、可能为负的
- * 原始值),门槛因此必须留在各自的调用处 —— 提取时最容易犯的错就是把这道
- * 过滤也一起搬进来,一旦搬进来 C2 就再也看不到负值了(minor 转净卖后
- * exposureUsd 恒被 clamp 成 0,C2 判定的正是"转负"这个瞬间)。
+ * 刻意不做的事:不检查 exposureUsd 的正负、不套 per-side USD 或钱包数门槛。
+ * 这些是消费方的语义,两个调用方对"够不够格算一个 side"这件事答案不同
+ * (detectDisagreement 要门槛过滤,C2 恰恰要看未过滤的原始现金流),门槛
+ * 因此必须留在各自的调用处 —— 提取时最容易犯的错就是把这道过滤也一起搬
+ * 进来,一旦搬进来 buyUsd/sellUsd 这类"不分净买净卖"的聚合就再也算不全了
+ * (净卖者被提前踢出循环,它的 sellUsd 贡献会凭空消失)。
  */
 export function aggregateMarketOutcomes(
   marketTrades: Trade[],
@@ -367,15 +382,25 @@ export function aggregateMarketOutcomes(
     let weightedUsd = 0;
     let sumBuyUsd = 0;
     let sumBuyShares = 0;
-    let signedNetUsd = 0;
+    let outcomeBuyUsd = 0;
+    let outcomeSellUsd = 0;
+    let outcomeBuyShares = 0;
+    let outcomeSellShares = 0;
     for (const [wallet, acc] of o.byWallet) {
       if (excluded.has(wallet)) continue;
+      // 现金流口径(C2 认输判据用,见 lib/sourceResolved.ts 的 isCapitulating):
+      // 对该 outcome 全部非剔除钱包求和,不分净买净卖 —— 这是与
+      // netUsd/weightedUsd/avgBuyPrice/wallets 那组"仅净买者"聚合唯一的
+      // 分歧点。净卖者/窗口内零买入的清仓者若被下面的 `net <= 0` 提前
+      // continue,它的 buyUsd/sellUsd 贡献会凭空消失,所以必须在那道过滤
+      // 之前就累计完。
+      outcomeBuyUsd += acc.buyUsd;
+      outcomeSellUsd += acc.sellUsd;
+      outcomeBuyShares += acc.buyShares;
+      outcomeSellShares += acc.sellShares;
+
       const smart = smartTags.get(wallet);
       const score = smart?.score ?? null;
-      // 不 clamp 的有符号口径:净卖者/本轮转负的钱包老实累计负值 —— 只喂给
-      // signedNetUsd,不进 netUsd/weightedUsd/avgBuyPrice/wallets(那四个是
-      // "净买者"的聚合,定义上不含负值贡献)。
-      signedNetUsd += netShares(acc) * avgBuyPrice(acc);
       // 成本敞口口径(P0.6):留存净股数 × 买入均价 —— 等股买卖不同价的
       // "USD 假净买"不构成一侧;纯买入时与旧现金流口径数值一致。
       const net = exposureUsd(acc);
@@ -402,7 +427,10 @@ export function aggregateMarketOutcomes(
       avgBuyPrice: sumBuyShares > 0 ? sumBuyUsd / sumBuyShares : 0,
       walletCount: wallets.length,
       wallets,
-      signedNetUsd,
+      buyUsd: outcomeBuyUsd,
+      sellUsd: outcomeSellUsd,
+      buyShares: outcomeBuyShares,
+      sellShares: outcomeSellShares,
     });
   }
   return { byOutcome: out, excludedWallets: excluded };

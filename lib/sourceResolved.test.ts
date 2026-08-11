@@ -74,11 +74,12 @@ const snapshot = (
 
 // ---------------------------------------------------------------------------
 // 共用 fixture:主导边(Yes)0xA 净买 $10k、稳稳留仓;少数边(No)0xB 先买
-// $10k 再卖 $15k(30000 股)→ netShares=-10000,avgBuyPrice=0.5(买入均价不受
-// 卖出影响),signedNetUsd = -10000 × 0.5 = -$5000 —— aggregateMarketOutcomes
-// 的有符号口径能测出这个转负;而它的 clamp 口径(exposureUsd,DisagreementSide
-// 用的那套)会把这个钱包按 net<=0 直接排除在外,netUsd/walletCount 都归零,
-// 这正是"少数边真转净卖后,市场会从 ctx.contested 消失"这条论证的具体样子。
+// $10k(20000@0.5) 再卖 $12k(30000@0.4)—— 现金流口径:buyUsd=10000,
+// sellUsd=12000,buyShares=20000,sellShares=30000。sellUsd(12000)>buyUsd(10000)
+// 且卖均价(0.4)<买均价(0.5)→ isCapitulating=true(真亏钱离场,不是等价
+// round-trip)。同时 exposureUsd(netShares=-10000<=0)被 clamp 到 0,这个
+// 钱包按 detectDisagreement 的口径直接被排除在外,netUsd/walletCount 都归零
+// —— 这正是"少数边真转净卖后,市场会从 ctx.contested 消失"这条论证的具体样子。
 // ---------------------------------------------------------------------------
 const leadTrades = (): Trade[] => [
   mk({
@@ -108,8 +109,8 @@ const minorFlippedTrades = (): Trade[] => [
     asset: "assetNo",
     side: "SELL",
     size: 30000,
-    price: 0.5,
-  }), // 0xB 卖 No 30000@0.5=$15k → netShares=-10000,转净卖
+    price: 0.4,
+  }), // 0xB 卖 No 30000@0.4=$12k → 卖均价(0.4)<买均价(0.5),真亏钱离场
 ];
 const resolvedSmart = () => smartMap({ "0xa": 80, "0xb": 80 });
 
@@ -138,6 +139,71 @@ describe("detectResolvedCandidates", () => {
     expect(cand.sourceKind).toBe("resolved");
     expect(cand.walletCount).toBe(1); // 0xA
     expect(cand.totalNetUsd).toBe(10000); // 主导边净买,不是少数边的任何数字
+  });
+
+  it("少数边窗口内零买入、全部清仓(最自然的割肉形态)→ 仍能触发(修复:旧口径 netShares×avgBuyPrice 对这种形态失明)", () => {
+    // 0xB 本窗口没有任何 BUY 记录(代表窗口前已经建仓,这一刻只把它清空)——
+    // buyShares=0,旧的"有符号敞口"口径(netShares × avgBuyPrice)会因为
+    // avgBuyPrice=0 而算出 0,不是负数,对这种最典型的离场形态完全失明。
+    // 现金流口径不需要 avgBuyPrice 兜底:sellUsd>buyUsd(0)恒真,buyShares===0
+    // 直接判定为最强离场信号。
+    const trades = [
+      ...leadTrades(),
+      mk({
+        proxyWallet: "0xB",
+        transactionHash: "0x2",
+        timestamp: 200,
+        outcome: "No",
+        outcomeIndex: 1,
+        asset: "assetNo",
+        side: "SELL",
+        size: 20000,
+        price: 0.4,
+      }), // 0xB 只卖,不买:sellUsd=8000,buyUsd=0,buyShares=0
+    ];
+    const c = ctx({
+      smart: resolvedSmart(),
+      nowSec: 800,
+      prevTilt: new Map([["0xc", snapshot()]]),
+    });
+    const out = detectResolvedCandidates(trades, params(), c);
+    expect(out).toHaveLength(1);
+    expect(out[0].outcome).toBe("Yes");
+  });
+
+  it("少数边卖出金额更大,但卖价高于买价(赚钱止盈)→ 不算认输,不触发(修复:旧口径方向判反)", () => {
+    // 0xB 买 20000@0.5=$10k 后卖 30000@0.9=$27k —— sellUsd(27000)>buyUsd(10000),
+    // 单看"钱流出"会误判,但卖均价(0.9)远高于买均价(0.5),这是获利了结,
+    // 不是认输。旧的"有符号敞口"口径在这个场景会算出负数(方向判反:止盈被
+    // 当成认输),现金流口径的第二个条件(卖均价<买均价)专门把它挡在外面。
+    const trades = [
+      ...leadTrades(),
+      mk({
+        proxyWallet: "0xB",
+        transactionHash: "0x2",
+        timestamp: 100,
+        outcome: "No",
+        outcomeIndex: 1,
+        asset: "assetNo",
+      }), // 买 20000@0.5=$10k
+      mk({
+        proxyWallet: "0xB",
+        transactionHash: "0x3",
+        timestamp: 200,
+        outcome: "No",
+        outcomeIndex: 1,
+        asset: "assetNo",
+        side: "SELL",
+        size: 30000,
+        price: 0.9,
+      }), // 卖 30000@0.9=$27k,赚钱止盈
+    ];
+    const c = ctx({
+      smart: resolvedSmart(),
+      nowSec: 800,
+      prevTilt: new Map([["0xc", snapshot()]]),
+    });
+    expect(detectResolvedCandidates(trades, params(), c)).toHaveLength(0);
   });
 
   it("首见市场(prevTilt 无记录)→ 不触发,没有'之前'就无所谓'转变'", () => {

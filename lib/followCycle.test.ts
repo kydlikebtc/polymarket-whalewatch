@@ -1719,8 +1719,10 @@ describe("runFollowCycle — market_tilt_history 跨轮读写(C2 分歧解除,�
     });
 
     // 第二轮(nowSec=2000):窗口沿用第一轮的两笔成交(模拟滚动窗口仍覆盖旧
-    // 成交)+ w2 新增一笔卖出 30000@0.5=$15k —— netShares=-10000,No 边转净卖,
-    // 市场本轮不再 contested(No 边 walletCount 归零,sides.length<2)。
+    // 成交)+ w2 新增一笔卖出 30000@0.4=$12k —— 现金流:buyUsd=10000,
+    // sellUsd=12000,卖均价(0.4)<买均价(0.5)→ 满足认输判据(isCapitulating);
+    // 同时 netShares=-10000<=0,exposureUsd 被 clamp 到 0,No 边 walletCount
+    // 归零,市场本轮不再 contested(sides.length<2)。
     const round2Trades: Trade[] = [
       ...round1Trades,
       trade({
@@ -1732,7 +1734,7 @@ describe("runFollowCycle — market_tilt_history 跨轮读写(C2 分歧解除,�
         outcomeIndex: 1,
         conditionId: "c1",
         size: 30000,
-        price: 0.5,
+        price: 0.4,
         timestamp: 1500,
       }),
     ];
@@ -1767,4 +1769,123 @@ describe("runFollowCycle — market_tilt_history 跨轮读写(C2 分歧解除,�
 
     db.close();
   });
+});
+
+// 复审 Important 3:对抗测试,专门构造"读写顺序颠倒会给出不同答案"的场景 ——
+// 之前那条跨轮集成测试证明不了这一点,因为"本轮被写入"(要求市场仍 contested,
+// 少数边净买者子集必须过 floor)与"本轮触发 C2"(要求少数边现金流已满足认输)
+// 对同一个 conditionId 结构性互斥:少数边只要还有一个够格的净买者,少数边整体
+// 就"仍 contested"会被写入,但该净买者的存在不妨碍*其它*钱包的巨额卖出把
+// 现金流聚合拖成"已认输" —— 这正是本用例构造的东西,两个条件在同一市场、
+// 同一轮里可以同时成立。
+describe("runFollowCycle — market_tilt_history 读写顺序对抗测试(mutation-tested,复审 Important 3)", () => {
+  const smartThreeWallets = (): Map<string, SmartTag> =>
+    new Map([
+      ["w1", { score: 90, winRate: 0.7, netPnl: 1, isWhitelist: true }], // Yes 边:score 更高,确定性地成为主导边
+      ["w2", { score: 80, winRate: 0.65, netPnl: 1, isWhitelist: true }], // No 边:唯一的净买者,单独就能让 No 边过 floor
+      ["w3", { score: 80, winRate: 0.65, netPnl: 1, isWhitelist: true }], // No 边:买一点、卖很多,net<=0 不进 netUsd,但现金流把 No 边拖成"已认输"
+    ]);
+
+  it("市场首次变 contested:少数边净买者子集够格入选(会被写入),但少数边现金流本轮已满足认输 —— 正确顺序(读在写之前)不产出虚假候选", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
+    ).run(
+      "读写顺序对抗测试档",
+      JSON.stringify({
+        source: "resolved",
+        sizeUsd: 500,
+        exitRule: "settlement",
+      }),
+      900,
+    );
+
+    const trades: Trade[] = [
+      // Yes(lead):w1 买 $10k,健康,score 90(weightedUsd=10000×0.92=9200)。
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "b1",
+        asset: "tokYes",
+        outcome: "Yes",
+        outcomeIndex: 0,
+        conditionId: "cFirst",
+        size: 20000,
+        price: 0.5,
+        timestamp: 900,
+      }),
+      // No(minor)钳位口径够格入选的净买者:w2 买 $10k,不卖 —— 单独这一笔就让
+      // No 边过 $5k floor(walletCount=1,netUsd=10000,score 80,
+      // weightedUsd=8400<9200,No 确定是 minor 不是 lead)。
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "b2",
+        asset: "tokNo",
+        outcome: "No",
+        outcomeIndex: 1,
+        conditionId: "cFirst",
+        size: 20000,
+        price: 0.5,
+        timestamp: 900,
+      }),
+      // No 边另一个钱包 w3:买一点(exposureUsd 仍为正,不影响判定)、卖很多——
+      // netShares=1000-100000=-99000<=0,exposureUsd 被 clamp 到 0,不进
+      // No 边的 netUsd/walletCount(No 边"够格"完全靠 w2 一个人撑住)。但它的
+      // buyUsd/sellUsd 现金流贡献不受这道 clamp 影响,把 No 边的现金流聚合拖成
+      // sellUsd(40000)>buyUsd(10500) 且卖均价(0.4)<买均价(0.5)——本轮就已经
+      // 满足认输判据 isCapitulating。
+      trade({
+        proxyWallet: "w3",
+        transactionHash: "b3",
+        asset: "tokNo",
+        outcome: "No",
+        outcomeIndex: 1,
+        conditionId: "cFirst",
+        size: 1000,
+        price: 0.5,
+        timestamp: 900,
+      }),
+      trade({
+        proxyWallet: "w3",
+        transactionHash: "b4",
+        side: "SELL",
+        asset: "tokNo",
+        outcome: "No",
+        outcomeIndex: 1,
+        conditionId: "cFirst",
+        size: 100000,
+        price: 0.4,
+        timestamp: 950,
+      }),
+    ];
+
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smartThreeWallets,
+      fetchPrice: async () => 0.5,
+      getMeta: async () => ({}),
+      nowSec: 1000,
+    });
+
+    // 库里此前没有任何 market_tilt_history 记录(:memory: 全新库,首次观察)——
+    // 正确顺序下 ctx.prevTilt 读到空 Map,resolved 策略这一轮不可能有候选,
+    // 即便"cFirst"本轮同时满足"够格入选 contested"与"少数边现金流已认输"
+    // 这两个条件。
+    expect(r.opened).toBe(0);
+
+    // 快照仍然正常落库(轮末写,不受读的结果影响)——下一轮才轮到它被读到。
+    const snap = readMarketTiltSnapshots(db).get("cFirst");
+    expect(snap?.leadOutcome).toBe("Yes");
+    expect(snap?.minorOutcome).toBe("No");
+
+    db.close();
+  });
+
+  // 变异验证(手工执行,不作为常驻用例保留):把上面 it 块里 runFollowCycle 的
+  // 调用临时替换成"先写后读"—— 在 lib/follow.ts 的 readMarketTiltSnapshots(db)
+  // 调用之前临时插入一行 writeMarketTiltSnapshots(db, contested, nowSec),
+  // 模拟"写在读之前"的错误顺序,重跑本文件:上面这条用例从 r.opened===0
+  // 变为 r.opened===1(读到了本轮自己刚写的行,把"当前状态"误认成"上一轮
+  // 状态",凭空产出 1 个虚假候选)。验证完成后已还原 lib/follow.ts,不保留
+  // 这个临时改动 —— 这条注释只记录验证过程,供复核。
 });

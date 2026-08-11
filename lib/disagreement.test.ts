@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { detectDisagreement, qualityWeight } from "./disagreement";
+import {
+  aggregateMarketOutcomes,
+  detectDisagreement,
+  qualityWeight,
+} from "./disagreement";
 import type { SmartTag } from "./smartWallets";
 import type { Trade } from "./types";
 
@@ -677,5 +681,161 @@ describe("detectDisagreement — 倾斜形成时刻(formationTs)", () => {
     expect(out).toHaveLength(1);
     expect(out[0].sides[0].outcome).toBe("Yes");
     expect(out[0].sides[0].formationTs).toBe(300);
+  });
+});
+
+// Task 9(复审补测):aggregateMarketOutcomes 是新提取且导出的函数,正确性此前
+// 完全靠"没弄坏 detectDisagreement 的 19 条既有测试"间接兜底 —— 但那些测试
+// 根本不检查新增的现金流字段(DisagreementSide 不暴露它们),需要直接单测。
+describe("aggregateMarketOutcomes", () => {
+  it("MM 剔除:isMarketMaker 钱包的成交不计入任何 outcome 的聚合", () => {
+    const trades = [
+      mk({ proxyWallet: "0xMM", transactionHash: "0x1", outcome: "Yes" }),
+      mk({
+        proxyWallet: "0xA",
+        transactionHash: "0x2",
+        outcome: "No",
+        outcomeIndex: 1,
+        asset: "assetNo",
+      }),
+    ];
+    const smart = smartMap({ "0xa": 80 });
+    smart.set("0xmm", { ...tag(80), isMarketMaker: true });
+    const { byOutcome } = aggregateMarketOutcomes(trades, smart);
+    // MM 是 Yes 唯一的成交者 —— 剔除后 Yes 连 byOutcome 的 key 都不该出现
+    // (第一遍分组本身就先过滤了 MM,不像 hedger 剔除是第二遍才排除)。
+    expect(byOutcome.has("Yes")).toBe(false);
+    const no = byOutcome.get("No");
+    expect(no?.buyUsd).toBe(10000);
+    expect(no?.walletCount).toBe(1);
+  });
+
+  it("hedger 剔除:同一钱包净买 >= 2 个 outcome,两边的聚合(含现金流字段)都不计入它", () => {
+    const trades = [
+      mk({ proxyWallet: "0xH", transactionHash: "0x1", outcome: "Yes" }), // hedger 买 Yes $10k
+      mk({
+        proxyWallet: "0xH",
+        transactionHash: "0x2",
+        outcome: "No",
+        outcomeIndex: 1,
+        asset: "assetNo",
+      }), // hedger 买 No $10k —— 两个 outcome 都净买,构成对冲
+      mk({ proxyWallet: "0xA", transactionHash: "0x3", outcome: "Yes" }), // 真实买家
+    ];
+    const smart = smartMap({ "0xh": 80, "0xa": 80 });
+    const { byOutcome, excludedWallets } = aggregateMarketOutcomes(
+      trades,
+      smart,
+    );
+    expect(excludedWallets.has("0xh")).toBe(true);
+    const yes = byOutcome.get("Yes")!;
+    expect(yes.walletCount).toBe(1); // 只有 0xA
+    expect(yes.buyUsd).toBe(10000); // hedger 的 $10k 不计入现金流聚合
+    const no = byOutcome.get("No")!;
+    expect(no.walletCount).toBe(0);
+    expect(no.buyUsd).toBe(0); // No 边唯一的钱包就是 hedger,现金流也被排除
+  });
+
+  it("dedup:分页重复行只计一次", () => {
+    const t1 = mk({
+      proxyWallet: "0xA",
+      transactionHash: "0xsame",
+      outcome: "Yes",
+    });
+    const { byOutcome } = aggregateMarketOutcomes(
+      [t1, { ...t1 }],
+      smartMap({ "0xa": 80 }),
+    );
+    const yes = byOutcome.get("Yes")!;
+    expect(yes.buyUsd).toBe(10000); // 不是 20000
+    expect(yes.walletCount).toBe(1);
+  });
+
+  it("现金流边界 · 零买入(只卖不买):buyUsd/buyShares=0,sellUsd/sellShares 如实累计,不计入净买者聚合", () => {
+    const trades = [
+      mk({
+        proxyWallet: "0xA",
+        transactionHash: "0x1",
+        outcome: "Yes",
+        side: "SELL",
+        size: 20000,
+        price: 0.4,
+      }),
+    ];
+    const { byOutcome } = aggregateMarketOutcomes(
+      trades,
+      smartMap({ "0xa": 80 }),
+    );
+    const yes = byOutcome.get("Yes")!;
+    expect(yes.buyUsd).toBe(0);
+    expect(yes.buyShares).toBe(0);
+    expect(yes.sellUsd).toBe(8000);
+    expect(yes.sellShares).toBe(20000);
+    expect(yes.netUsd).toBe(0); // netShares=-20000<=0 → exposureUsd clamp
+    expect(yes.walletCount).toBe(0);
+    expect(yes.wallets).toHaveLength(0);
+  });
+
+  it("现金流边界 · 买卖各半(卖出少于买入,仍净持仓为正):现金流四字段如实累计买卖两侧,同时仍计入净买者聚合", () => {
+    const trades = [
+      mk({
+        proxyWallet: "0xA",
+        transactionHash: "0x1",
+        outcome: "Yes",
+        size: 20000,
+        price: 0.5,
+      }), // 买 20000@0.5=$10k
+      mk({
+        proxyWallet: "0xA",
+        transactionHash: "0x2",
+        outcome: "Yes",
+        side: "SELL",
+        size: 8000,
+        price: 0.6,
+      }), // 卖 8000@0.6=$4800,仍留仓 12000 股
+    ];
+    const { byOutcome } = aggregateMarketOutcomes(
+      trades,
+      smartMap({ "0xa": 80 }),
+    );
+    const yes = byOutcome.get("Yes")!;
+    expect(yes.buyUsd).toBe(10000);
+    expect(yes.sellUsd).toBe(4800);
+    expect(yes.buyShares).toBe(20000);
+    expect(yes.sellShares).toBe(8000);
+    expect(yes.netUsd).toBeCloseTo(6000); // netShares=12000 × avgBuyPrice(0.5)
+    expect(yes.walletCount).toBe(1); // 仍是净买者,进 wallets[]
+  });
+
+  it("现金流边界 · 净空仓(卖出多于买入):现金流四字段如实累计,netUsd 被 clamp 到 0、不计入净买者", () => {
+    const trades = [
+      mk({
+        proxyWallet: "0xA",
+        transactionHash: "0x1",
+        outcome: "Yes",
+        size: 20000,
+        price: 0.5,
+      }), // 买 20000@0.5=$10k
+      mk({
+        proxyWallet: "0xA",
+        transactionHash: "0x2",
+        outcome: "Yes",
+        side: "SELL",
+        size: 30000,
+        price: 0.4,
+      }), // 卖 30000@0.4=$12k,净空 10000 股
+    ];
+    const { byOutcome } = aggregateMarketOutcomes(
+      trades,
+      smartMap({ "0xa": 80 }),
+    );
+    const yes = byOutcome.get("Yes")!;
+    expect(yes.buyUsd).toBe(10000);
+    expect(yes.sellUsd).toBe(12000);
+    expect(yes.buyShares).toBe(20000);
+    expect(yes.sellShares).toBe(30000);
+    expect(yes.netUsd).toBe(0); // netShares=-10000<=0 → exposureUsd clamp
+    expect(yes.walletCount).toBe(0);
+    expect(yes.wallets).toHaveLength(0);
   });
 });
