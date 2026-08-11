@@ -113,13 +113,17 @@ type WalletAcc = {
  * 会以负数拉低另一侧。这里按【每个 (outcome, wallet) 维护与主检测同结构的
  * WalletAcc,逐笔重放后取 exposureUsd 的增量(after − before)】来累计每个
  * outcome 的 net/weighted:对任一 wallet,Σ(exposureUsd 的增量) 端到端恒等于
- * 它最终的 exposureUsd(裂项相消),所以重放到窗口末尾时,本函数内部聚合的
- * net/weighted 与主检测 sides[].netUsd/weightedUsd 逐分不差;又因为
- * exposureUsd 恒 ≥ 0,这里的 outcome 级聚合也恒 ≥ 0,不需要额外的负值钳制。
- * (若改为直接按"逐笔带符号现金流"累加 per-outcome net —— 早期草案就是这么
- * 写的 —— 会与 exposureUsd 口径脱节:一个钱包高价买入、低价大量部分卖出时,
- * 现金流可以逼近 0 甚至为负,而 exposureUsd 仍是较大正数,两者能在深度换手的
- * 市场上给出方向相反的"净买"读数,让重放与主检测的最终判定互相矛盾。)
+ * 它最终的 exposureUsd(裂项相消:Σ(f(acc_i)−f(acc_{i-1})) = f(acc_n)−f(acc_0)
+ * 对任意函数 f 成立,不要求线性,avgBuyPrice 随买入变动不影响这个等式),所以
+ * 重放到窗口末尾时,本函数内部聚合的 net/weighted 与主检测 sides[].netUsd/
+ * weightedUsd 逐分不差;又因为 exposureUsd 恒 ≥ 0,这里的 outcome 级聚合也
+ * 恒 ≥ 0,不需要额外的负值钳制。(若改为直接按"逐笔带符号现金流"累加
+ * per-outcome net —— 早期草案就是这么写的 —— 会与 exposureUsd 口径脱节:
+ * 一个钱包高价买入、低价大量部分卖出时,现金流可以逼近 0 甚至为负,而
+ * exposureUsd 仍是较大正数,两者能在深度换手的市场上给出方向相反的"净买"
+ * 读数,让重放与主检测的最终判定互相矛盾 —— 见 disagreement.test.ts 里那条
+ * SELL 回归测试:把 delta 退回裸现金流会让它读到错误的 formationTs,这条
+ * 测试就是为了钉死这处口径,防止未来重构不小心退回去。)
  *
  * 达标判定:>=2 边过 opts.minPerSideUsd 的 USD floor,且 leadOutcome 自己也
  * 必须在这 qualified 集合里 —— 否则占比的分子可能来自一个还没过 floor 的边
@@ -130,6 +134,31 @@ type WalletAcc = {
  * 只认最终主导边:leadOutcome 是调用方传入的固定值(sides.sort 之后的
  * sides[0].outcome),重放全程只检查它的占比 —— 重放中途若由另一边短暂领先
  * 并达标,不算,我们要跟的是"现在这一边赢下这场分歧"的那一刻。
+ *
+ * 按秒【分批】判定,不能逐笔判定:Trade.timestamp 全程只有秒级精度,同一秒内
+ * 完全可能有跨 outcome 的反向大单 —— 突发消息把市场打倾斜的那一刻,天然最
+ * 容易有多笔成交扎堆落在同一秒。下面的 sorted 用的是稳定排序,同一 timestamp
+ * 内谁先谁后取决于它们在 marketTrades 里的原始相对顺序,而那只是上游分页
+ * 抓取/合并的实现细节,不代表链上真实执行序。若逐笔判定(处理完一笔立刻拿
+ * 当前状态检查是否达标),同一秒内"另一笔反向成交还没被应用"的瞬时状态会被
+ * 当成正式的达标时刻,结果随数组序摆动 —— 实测反例:Over/Under 各站稳 $10k
+ * 后,同一秒两笔反向大单各 +$30k,完整算完这一秒后比例仍是 0.5(不该跨线),
+ * 但数组序 [Over 那笔, Under 那笔] 会在处理完前者的瞬间读到 40000/50000=0.8
+ * 并立即 return,顺序反过来则不会 —— 两个数组序对同一个真实事件给出不同
+ * 答案,而数组序本身不是这个信号的一部分。修法:排序后按 timestamp 分组,
+ * 组内全部成交先【完整应用】一遍("这一秒到底发生了什么"必须看完整),再对
+ * 应用完这一整秒之后的状态做【一次】达标检查 —— 组内成交的相对顺序此时已
+ * 不可观察,判定天然与之无关(见下方 applyTrade / isLeadQualified 的职责
+ * 拆分:前者只管累加状态、绝不判定,后者只读当前状态、绝不感知时序)。
+ *
+ * 这里不能照搬 lib/consensus.ts 的 ConsensusGroup.formationTs 那套(取
+ * qualifiedTs 升序第 minWallets 个):那边每个钱包的 crossTs 只由**它自己**
+ * 的成交序列独立决定 —— 别的钱包同一秒做什么不影响这个钱包自身的
+ * exposureUsd,取第 N 个天然免疫于同秒的相对顺序。这里的达标判定是**跨
+ * outcome 的联合比例**(leadW/totalW,分子分母都汇总了多个钱包、多个 outcome
+ * 的贡献),同一秒内不同 outcome 的成交会互相影响这同一个比例,是本质上更
+ * 难、绕不开"这一秒必须整体看待"的问题,不能用 consensus 那套单钱包独立判定
+ * 的思路简化。
  *
  * 从未达标 → 返回 null。调用方(sourceLopsided,Task 8)见 null 即不产出
  * 候选 —— fail-closed,绝不用 lastTs 之类的兜底值硬开仓。
@@ -148,13 +177,15 @@ function tiltFormationTs(
   const agg = new Map<string, { netUsd: number; weightedUsd: number }>();
   const seen = new Set<string>();
 
-  const sorted = [...marketTrades].sort((a, b) => a.timestamp - b.timestamp);
-  for (const t of sorted) {
+  // 应用单笔成交:更新 byOutcome/agg,不做任何达标判定。判定职责完全交给
+  // isLeadQualified,只在同一秒整组应用完之后调用一次(见主循环)—— 这个
+  // 拆分本身就是同秒乱序 bug 的修复,写在一起会诱使人在组内提前判定。
+  const applyTrade = (t: Trade): void => {
     const wallet = t.proxyWallet.toLowerCase();
     const tag = smartTags.get(wallet);
-    if (!tag || tag.isMarketMaker || excluded.has(wallet)) continue;
+    if (!tag || tag.isMarketMaker || excluded.has(wallet)) return;
     const dk = dedupKey(t);
-    if (seen.has(dk)) continue;
+    if (seen.has(dk)) return;
     seen.add(dk);
 
     let wallets = byOutcome.get(t.outcome);
@@ -183,19 +214,37 @@ function tiltFormationTs(
     a.netUsd += delta;
     a.weightedUsd += delta * weight;
     agg.set(t.outcome, a);
+  };
 
+  // 用【当前累计状态】判定 leadOutcome 是否已达标 —— 不看时序,只读 agg 的
+  // 快照,因此只要调用时机对(整组同秒成交应用完之后),结果天然与组内顺序
+  // 无关。
+  const isLeadQualified = (): boolean => {
     const qualified = [...agg.entries()].filter(
       ([, v]) => v.netUsd >= opts.minPerSideUsd,
     );
-    if (qualified.length < 2) continue;
-    // leadOutcome 必须自己也过 floor(见函数头注释的反例),否则跳过本笔,
-    // 继续重放,绝不把一个还没站稳的边误判成"已倾斜"。
-    if (!qualified.some(([outcome]) => outcome === leadOutcome)) continue;
+    if (qualified.length < 2) return false;
+    // leadOutcome 必须自己也过 floor(见函数头注释的反例),否则占比的分子
+    // 可能来自一个还没站稳的边,绝不把它误判成"已倾斜"。
+    if (!qualified.some(([outcome]) => outcome === leadOutcome)) return false;
     const totalW = qualified.reduce((s, [, v]) => s + v.weightedUsd, 0);
     const leadW = agg.get(leadOutcome)?.weightedUsd ?? 0;
-    if (totalW > 0 && leadW / totalW >= opts.lopsidedTiltPct) {
-      return t.timestamp; // 首次达标即返回,后续波动(回落/再次跨过)不再重置
+    return totalW > 0 && leadW / totalW >= opts.lopsidedTiltPct;
+  };
+
+  const sorted = [...marketTrades].sort((a, b) => a.timestamp - b.timestamp);
+  let i = 0;
+  while (i < sorted.length) {
+    const ts = sorted[i].timestamp;
+    let j = i;
+    while (j < sorted.length && sorted[j].timestamp === ts) {
+      applyTrade(sorted[j]);
+      j++;
     }
+    // 这一秒的成交已经全部应用完,现在才检查 —— 首次达标即返回,后续波动
+    // (回落/再次跨过)不再重置。
+    if (isLeadQualified()) return ts;
+    i = j;
   }
   return null;
 }

@@ -546,4 +546,136 @@ describe("detectDisagreement — 倾斜形成时刻(formationTs)", () => {
     expect(out[0].sides[0].formationTs).not.toBe(300); // bug 会误判的时刻
     expect(out[0].sides[0].formationTs).toBe(400); // 诚实的首次达标时刻
   });
+
+  it("同一秒内跨边的反向大单:formationTs 不随这些成交在数组里的相对顺序摆动(按秒分批判定,回归)", () => {
+    // 早前时刻先站稳 Over=$10k / Under=$10k(比例 0.5,未跨线)。
+    const A = mk({
+      proxyWallet: "0xA",
+      transactionHash: "0x1",
+      timestamp: 100,
+      outcome: "Over",
+      outcomeIndex: 0,
+      asset: "assetOver",
+      size: 20000,
+      price: 0.5,
+    }); // Over $10k
+    const B = mk({
+      proxyWallet: "0xB",
+      transactionHash: "0x2",
+      timestamp: 200,
+      outcome: "Under",
+      outcomeIndex: 1,
+      asset: "assetUnder",
+      size: 20000,
+      price: 0.5,
+    }); // Under $10k
+    // 同一秒 t=300 两笔反向大单:整组算完后 Over=Under=$40k,比例仍是 0.5,
+    // 不该跨线 —— 但若逐笔判定,先处理 Over 那笔会在组内瞬间读到
+    // 40000/50000=0.8 并立即 return,这个瞬时假象只取决于这两笔在输入数组里
+    // 的先后,不代表链上真实执行序。
+    const X = mk({
+      proxyWallet: "0xX",
+      transactionHash: "0x3",
+      timestamp: 300,
+      outcome: "Over",
+      outcomeIndex: 0,
+      asset: "assetOver",
+      size: 60000,
+      price: 0.5,
+    }); // Over +$30k
+    const Y = mk({
+      proxyWallet: "0xY",
+      transactionHash: "0x4",
+      timestamp: 300,
+      outcome: "Under",
+      outcomeIndex: 1,
+      asset: "assetUnder",
+      size: 60000,
+      price: 0.5,
+    }); // Under +$30k
+    // t=400 才是诚实的跨线:Over 再 +$60k → 100000/140000≈0.714 ≥ 0.7。
+    const C = mk({
+      proxyWallet: "0xC",
+      transactionHash: "0x5",
+      timestamp: 400,
+      outcome: "Over",
+      outcomeIndex: 0,
+      asset: "assetOver",
+      size: 120000,
+      price: 0.5,
+    }); // Over +$60k
+
+    const smart = smartMap({
+      "0xA": 80,
+      "0xB": 80,
+      "0xX": 80,
+      "0xY": 80,
+      "0xC": 80,
+    });
+    const outXY = detectDisagreement([A, B, X, Y, C], smart, OPTS);
+    const outYX = detectDisagreement([A, B, Y, X, C], smart, OPTS);
+
+    expect(outXY[0].sides[0].outcome).toBe("Over");
+    expect(outYX[0].sides[0].outcome).toBe("Over");
+    // 两种数组序结果必须一致,且都是诚实的 t=400,不是同秒乱序造出的 t=300。
+    expect(outXY[0].sides[0].formationTs).toBe(400);
+    expect(outYX[0].sides[0].formationTs).toBe(400);
+  });
+
+  it("SELL 引发的部分平仓必须按 exposureUsd 增量计入,不能按裸现金流(回归:锁死重放口径)", () => {
+    // No 边:单钱包买 $10k,先站稳一个已过线的对照边。
+    const trades = [
+      mk({
+        proxyWallet: "0xN",
+        transactionHash: "0x1",
+        timestamp: 50,
+        outcome: "No",
+        outcomeIndex: 1,
+        asset: "assetNo",
+      }), // $10k
+      // Yes 边:0xY 买 100,000 股 @$0.10 = $10k(avgBuyPrice=0.10)。
+      mk({
+        proxyWallet: "0xY",
+        transactionHash: "0x2",
+        timestamp: 100,
+        outcome: "Yes",
+        size: 100000,
+        price: 0.1,
+      }),
+      // 0xY 卖 20,000 股 @$0.90 = $18k(留仓 80,000 股)。
+      // exposureUsd: 10000→8000,delta=−2000,只掉留仓那 20,000 股按买入均价
+      // (0.10)算的成本 —— 裸现金流口径会把整笔卖出金额 $18k 倒扣,
+      // delta=−18000,天差地别。
+      mk({
+        proxyWallet: "0xY",
+        transactionHash: "0x3",
+        timestamp: 200,
+        outcome: "Yes",
+        side: "SELL",
+        size: 20000,
+        price: 0.9,
+      }),
+      // 另一钱包 0xY2 买 30,800 股 @$0.5 = $15,400。
+      // 正确口径(exposureUsd 增量):Yes=8000+15400=23400,
+      //   比例=23400/(23400+10000)≈0.7006 ≥ 0.7 → 跨线于 t=300
+      // 裸现金流口径(退化,防止未来重构不小心退回去):
+      //   Yes=(10000−18000)+15400=7400,比例≈0.425,永不跨线
+      mk({
+        proxyWallet: "0xY2",
+        transactionHash: "0x4",
+        timestamp: 300,
+        outcome: "Yes",
+        size: 30800,
+        price: 0.5,
+      }),
+    ];
+    const out = detectDisagreement(
+      trades,
+      smartMap({ "0xN": 80, "0xY": 80, "0xY2": 80 }),
+      OPTS,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].sides[0].outcome).toBe("Yes");
+    expect(out[0].sides[0].formationTs).toBe(300);
+  });
 });
