@@ -179,12 +179,16 @@ C1 若直接拿 `lastTs` 当 `formationTs`，等于把一个已经付出代价�
   // ===== source=consensus 专属 =====
   "minWallets": 3,
   "minPerWalletUsd": 10000,
-  "minWalletScore": null, // A3
-  "minTotalNetUsd": null, // A4
+  // A3/A4 的门槛:不设该门槛时【整个 key 省略】,不要写 null。
+  // 解析层的 numOr 对「字段缺失」与「显式 null」一视同仁,写 null 不表达任何
+  // 额外语义,只会让种子数据带上一个类型上已不存在的形态(Task 3 已把
+  // StrategyParams 的这两个字段统一成 `?: number`)。
+  "minWalletScore": 80, // A3
+  "minTotalNetUsd": 100000, // A4
 
   // ===== source=heavy 专属 =====
   "minSingleFillUsd": 50000,
-  "minWalletScore": null, // B3 复用同一字段名
+  "minWalletScore": 80, // B3 复用同一字段名
 
   // ===== source=lopsided / resolved 专属 =====
   "minTiltPct": 0.7,
