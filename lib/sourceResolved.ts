@@ -75,7 +75,23 @@ function isCapitulating(o: OutcomeAggregate): boolean {
  *
  * formationTs = ctx.nowSec:分歧解除是本轮才观察到的事件(prev 快照证明它
  * 上一轮还没解除,不然早被上一轮的 C2 捕获过),新鲜度天然满足,不需要像
- * C1 那样重放"跨线时刻"。
+ * C1 那样重放"跨线时刻"。这不是 bug —— nowSec 确实是 C2 唯一站得住脚的取值
+ * (解除是本轮才观察到的事件,不存在更早的"形成时刻")—— 但这个选择有两处
+ * 连带代价,此前没有任何地方记录,写在这里:
+ *   (a) 进场偏离护栏对 C2 近乎失效。护栏(见 lib/follow.ts runFollowCycle)算
+ *       deviationCents = |entry − baseline| × 100,baseline = formationPrice ??
+ *       referencePrice,formationPrice 由 fetchFormationPrice(asset, formationTs)
+ *       取得。C2 的 formationTs 就是开仓那一刻的 nowSec,与 entry 取价用的是
+ *       同一个 nowSec —— 取到的 formationPrice 数值上约等于 entry 本身,
+ *       deviationCents 几乎恒为 0。这道护栏只在形成价取价失败、回退到
+ *       referencePrice(主导边历史成本均价,不是"形成后漂移")时才真正起作用,
+ *       即 C2 这一档实际上是靠取价失败兜底,不是靠形成价本身在拦截。
+ *   (b) markout 不可跨族与其它档比较。其余五族的 formationTs 可以早于
+ *       entry_ts 最多 freshSec(默认 900s,A5 是 300s),所以它们的
+ *       markout_30m/2h 天然包含"检测到信号→决定跟进"这段延迟的漂移成本;
+ *       C2 因为 formationTs===entry_ts,markout 测的是"从我们开仓那一刻起"的
+ *       纯漂移,不含这段延迟。以后若做"哪一族形成后走势最好"之类的跨族分析,
+ *       C2 和别族的 markout 不是同一把尺子,直接比较是苹果对橘子。
  *
  * referencePrice/walletCount/totalNetUsd 取主导边(prev.leadOutcome)【本轮】
  * 用 aggregateMarketOutcomes 重新算出的净买者聚合(netUsd/avgBuyPrice/
