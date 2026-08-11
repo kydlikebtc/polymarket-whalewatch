@@ -1431,7 +1431,9 @@ describe("runFollowCycle — maxPrice 闸门", () => {
       getMeta: async () => ({}),
       nowSec: 1800,
     });
-    expect(r.opened).toBeGreaterThanOrEqual(1);
+    // highRefTrades 只有 2 个钱包 → 只有「激进」(2×$5k)命中,「保守」(3×$10k)
+    // 因钱包数不够不产生候选,精确值就是 1(而非 toBeGreaterThanOrEqual)。
+    expect(r.opened).toBe(1);
     const pos = db
       .prepare(
         "SELECT entry_price FROM follow_positions WHERE condition_id='c1'",
@@ -1495,6 +1497,88 @@ describe("runFollowCycle — 轮内缓存(同 asset 只取一次价)", () => {
     });
     expect(calls).toBe(1);
     expect(r.opened).toBe(2);
+    db.close();
+  });
+
+  // 上一条用例只覆盖了「同 asset」命中两次的场景 —— 缓存 key 若漏写 asset(例如
+  // 误写成只按 `price:${nowSec}`),同 asset 场景一样能通过(反正只有一个 key,
+  // 命中几次都对)。真正能测出漏 asset 的,是两个不同 asset 各开一仓:key 若不
+  // 含 asset,第二个 asset 会命中第一个 asset 的缓存条目 —— fetchPrice 对它
+  // 恒不调用、且它的 entry_price 会被错误地"串"成第一个 asset 的价格。
+  it("不同 asset 各自独立取价,互不串价(缓存 key 必须含 asset)", async () => {
+    const db = openDb(":memory:");
+    // 两个独立市场(cA/tokA、cB/tokB),各 2 个钱包净买 $6k@0.6 → 都只满足
+    // 「激进」(2×$5k);「保守」(3×$10k)钱包数不够,两边都不产生候选。
+    const trades = [
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "hA1",
+        conditionId: "cA",
+        asset: "tokA",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "hA2",
+        conditionId: "cA",
+        asset: "tokA",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "hB1",
+        conditionId: "cB",
+        asset: "tokB",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "hB2",
+        conditionId: "cB",
+        asset: "tokB",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+    ];
+    const calls: Record<string, number> = {};
+    const priceByAsset: Record<string, number> = { tokA: 0.61, tokB: 0.58 };
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart,
+      fetchPrice: async (asset) => {
+        calls[asset] = (calls[asset] ?? 0) + 1;
+        return priceByAsset[asset];
+      },
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBe(2);
+    // 各 asset 各取一次价:key 缺 asset 时,第二个处理到的 asset 会直接命中
+    // 第一个的缓存条目,对应的 fetchPrice 调用数会是 0(undefined)而非 1。
+    expect(calls.tokA).toBe(1);
+    expect(calls.tokB).toBe(1);
+    const posA = db
+      .prepare(
+        "SELECT entry_price FROM follow_positions WHERE condition_id='cA'",
+      )
+      .get() as { entry_price: number };
+    const posB = db
+      .prepare(
+        "SELECT entry_price FROM follow_positions WHERE condition_id='cB'",
+      )
+      .get() as { entry_price: number };
+    // 精确核对各自应得的价格(而非只判"互不相等")—— 这样即使两者被整体对调
+    // (key 冲突的另一种表现形式)也逃不过断言。
+    expect(posA.entry_price).toBeCloseTo(0.61);
+    expect(posB.entry_price).toBeCloseTo(0.58);
     db.close();
   });
 });

@@ -1,10 +1,12 @@
 import type { DisagreementMarket } from "./disagreement";
 import type { SmartTag } from "./smartWallets";
 // 值导入(非 type-only):DETECTORS 注册表要把这个函数装进去。方向是
-// followCandidate → sourceConsensus 单向值依赖;反向(sourceConsensus 顶部对本
-// 文件的 import)全部是 `import type`,编译期擦除,不构成运行时环——用 madge
-// 在改造后跑过 `npx madge --circular --extensions ts .`确认过,同 consensus.ts
-// 顶部对 marketSignals.ts 循环导入风险的既有处理注释同一套论证。
+// followCandidate → sourceConsensus 单向值依赖;反向(sourceConsensus 顶部对
+// 本文件的 import)全部是 `import type`。用 isolatedModules 单文件转译验证过:
+// sourceConsensus.ts 的编译产物里没有任何对 ./followCandidate 的 import,整行
+// 被编译器擦除,不构成运行时环 —— 同 consensus.ts 顶部对 marketSignals.ts 循环
+// 导入风险的既有处理同一套论证。注:纯语法扫描工具(如 madge)不区分 import type
+// 与值导入,复查时会把这类单向类型依赖也报成"环",那是工具局限,不是运行时事实。
 import { detectConsensusCandidates } from "./sourceConsensus";
 import type { Trade } from "./types";
 
