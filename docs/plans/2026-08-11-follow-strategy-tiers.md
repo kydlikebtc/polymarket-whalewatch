@@ -20,7 +20,9 @@
 
 ## 阶段 1 — 架构层
 
-### Task 1: `FollowCandidate` 契约 + 注册表骨架
+### Task 1: `FollowCandidate` 契约
+
+> 只立契约，**不建** `DETECTORS` 注册表 —— 那是 Task 4 的范围。
 
 **Files:**
 
