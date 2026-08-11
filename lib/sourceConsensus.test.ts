@@ -13,9 +13,13 @@ const mk = (over: Partial<Trade> = {}): Trade =>
     size: 20000,
     price: 0.5, // $10k notional by default
     timestamp: 1000,
-    title: "Market",
-    slug: "slug",
-    eventSlug: "event",
+    // title/slug/eventSlug 刻意取三个一眼能分清彼此的值(而非 "Market"/"slug"/
+    // "event" 这种容易在断言里对错都长得一样的占位符)—— 用例1要逐字段核对
+    // FollowCandidate 的映射,slug/eventSlug 写反这种 bug 编译器和运行时都不
+    // 会报,只有断言值本身互不相同才拦得住。
+    title: "Market Title",
+    slug: "market-slug",
+    eventSlug: "event-slug",
     outcome: "Yes",
     outcomeIndex: 0,
     conditionId: "0xc",
@@ -68,12 +72,24 @@ describe("detectConsensusCandidates", () => {
     ];
     const out = detectConsensusCandidates(trades, params(), ctx());
     expect(out).toHaveLength(1);
-    expect(out[0].sourceKind).toBe("consensus");
+    // 12 个字段逐个核对映射(FollowCandidate 契约的全部字段)—— Task 4 要把
+    // 这些字段直接喂进 INSERT 语句,slug/eventSlug 这类同为 string 的语义相近
+    // 字段写反,TS 不报错、只挑几个字段断言也测不出来,必须全覆盖。
     expect(out[0].conditionId).toBe("0xc");
     expect(out[0].outcome).toBe("Yes");
-    expect(out[0].walletCount).toBe(2);
+    expect(out[0].outcomeIndex).toBe(0);
+    expect(out[0].asset).toBe("asset1");
+    expect(out[0].title).toBe("Market Title");
+    expect(out[0].slug).toBe("market-slug");
+    expect(out[0].eventSlug).toBe("event-slug");
+    // formationTs = 两个钱包各自唯一一笔 BUY 的 timestamp(单笔即跨线)。
+    expect(out[0].formationTs).toBe(1000);
     // referencePrice = 聪明钱加权均价(此处两笔同价 0.5)
     expect(out[0].referencePrice).toBeCloseTo(0.5);
+    expect(out[0].sourceKind).toBe("consensus");
+    expect(out[0].walletCount).toBe(2);
+    // totalNetUsd = 两个钱包各 $10k 净买(size 20000 × price 0.5)之和。
+    expect(out[0].totalNetUsd).toBe(20000);
   });
 
   it("只有 1 个钱包 → 无候选", () => {
@@ -113,9 +129,18 @@ describe("detectConsensusCandidates", () => {
     expect(out).toHaveLength(0);
   });
 
-  it("参数缺失(minWallets/minPerWalletUsd)→ 空候选,不抛错", () => {
+  it("参数缺失(minWallets undefined)→ 空候选,不抛错", () => {
     const trades = [mk({ proxyWallet: "0xA" }), mk({ proxyWallet: "0xB" })];
     const bad = { ...params(), minWallets: undefined };
+    expect(detectConsensusCandidates(trades, bad, ctx())).toHaveLength(0);
+  });
+
+  // 上一条只覆盖了 `minWallets == null || minPerWalletUsd == null` 的前半支;
+  // 这里单独覆盖后半支(minWallets 保持有效),否则短路求值下后半支从未被
+  // 真正执行过 —— 两支各自独立覆盖,不能只测其一就当整个 OR 条件测过了。
+  it("参数缺失(minPerWalletUsd undefined)→ 空候选,不抛错", () => {
+    const trades = [mk({ proxyWallet: "0xA" }), mk({ proxyWallet: "0xB" })];
+    const bad = { ...params(), minPerWalletUsd: undefined };
     expect(detectConsensusCandidates(trades, bad, ctx())).toHaveLength(0);
   });
 });

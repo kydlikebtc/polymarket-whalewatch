@@ -50,6 +50,15 @@ export interface FollowCandidate {
  * Detector 的只读上下文。**全部是数据,没有 DB 句柄** —— detector 必须是纯函数,
  * 便于单测(对齐 detectConsensus/detectDisagreement 的既有纪律)。DB 查询
  * (wallet_candidates、tilt 历史)由 runFollowCycle 每轮预取一次后填进来。
+ *
+ * 故意没有 `truncated` 字段:那是「这轮抓的窗口完不完整」的性质,描述的是窗口
+ * 本身的质量,不是任何一条策略的检测输入,不该塞进逐策略传递的 ctx 里。但调用方
+ * (runFollowCycle)**必须**在 truncated 时跳过本轮全部 detector 调用,一条都不能
+ * 漏 —— 每个 detector 产出的 formationTs 都建立在「窗口完整覆盖跨线区间」这个
+ * 前提上:窗口被页数上限/瞬态失败裁短后,截断边缘之前的成交不可见,幸存下来的
+ * 可见跨线会把 formationTs 系统性后移,新鲜度闸门与(开仓侧的)形成价护栏被同
+ * 一个错误时间戳同时削弱。论证见 lib/follow.ts 的 `FollowCycleDeps.fetchWindow`
+ * 字段注释(那里已经详细写过一遍,这里只是提醒调用方别忘了接上)。
  */
 export interface DetectorCtx {
   smart: Map<string, SmartTag>;

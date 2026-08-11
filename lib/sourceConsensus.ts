@@ -8,7 +8,7 @@ import { excludeContestedFromConsensus } from "./marketSignals";
 import type { Trade } from "./types";
 
 /**
- * 族 A:共识候选。这一版是 runFollowCycle 原有逻辑(follow.ts:263-296)的等价提取 ——
+ * 族 A:共识候选。这一版是 runFollowCycle 原有的 freshByStrategy 循环段的等价提取 ——
  * 每策略各跑一次 detectConsensus(不能用最松阈值跑一次再复筛:formationTs 的跨线
  * 时刻依赖该策略自己的 minPerWalletUsd)、分歧互斥、新鲜度闸门,顺序与语义完全不变。
  *
