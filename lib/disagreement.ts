@@ -34,6 +34,29 @@ export interface DisagreementSide {
   weightedUsd: number; // Σ netUsd × qualityWeight(score) — drives the tilt
   avgBuyPrice: number; // usd-weighted across the side's buyers
   wallets: DisagreementWallet[]; // net buyers, sorted by netUsd desc
+  /**
+   * 倾斜形成时刻:tiltPct 首次跨过 lopsidedTiltPct 的那一笔成交时间。只有
+   * 【最终主导边】(sides[0],weightedUsd 最大者)会有值,其余边恒为 null ——
+   * "形成"这个概念只对最终赢下这场分歧的一边有意义。从未跨过阈值(balanced
+   * 市场)同样为 null。
+   *
+   * 用途:C1(一边倒分歧)跟单档的新鲜度闸门 / 进场护栏基准取价 / markout
+   * 锚点,三者都靠它,定错了会同时失效。
+   *
+   * 为什么不能用市场级 firstTs/lastTs 代替:lastTs 被市场内任何白名单成交
+   * (含 SELL、含不达标钱包)刷新 —— lib/follow.ts 的
+   * FollowCycleDeps.fetchWindow 字段注释记录过这个已经修掉的 bug(5 小时前
+   * 形成的老共识被一笔 $2k 卖单"续命"成新鲜,按现价跟入 → 买入成本失控)。
+   * C1 若拿 lastTs 当 formationTs,等于把这个后门重新打开。
+   *
+   * 为什么不能用"本边自己成立时刻"(本边净买首次跨过 minPerSideUsd 那一刻)
+   * 代替:多数边往往早就站住了,倾斜是后来少数边撤退才形成的 —— 用前者会让
+   * formationTs 落在几小时前,900s 新鲜度闸门会把 C1 全部拦掉,这一档实质是
+   * 个空档。
+   *
+   * 计算见 tiltFormationTs(与本检测函数同文件的私有重放函数)。
+   */
+  formationTs: number | null;
 }
 
 // "lopsided" = one side's quality-weight dominates (a "金矿"-shaped split);
@@ -75,6 +98,107 @@ type WalletAcc = {
   buyShares: number;
   sellShares: number;
 };
+
+/**
+ * 倾斜形成时刻的时序重放:按成交时间正序,重放【最终主导边】leadOutcome 的
+ * "质量加权占比"何时首次达标(≥ opts.lopsidedTiltPct)。只对已经判定为
+ * contested 的市场调用(detectDisagreement 里 sides.length>=2 之后),每市场
+ * 一次 O(n log n)(排序)+ O(n) 重放,不是对全窗口跑 —— 通常每轮 contested
+ * 市场是个位数。
+ *
+ * 口径纪律(必须与主检测同基准,否则会出现"重放说达标了,但主检测算出的最终
+ * tiltPct 是 balanced"的自相矛盾):主检测里一侧的 netUsd/weightedUsd 是
+ * Σ_{wallet: exposureUsd(wallet)>0} exposureUsd(wallet) × qualityWeight —— 只
+ * 累计"留存净股数 × 买入均价"为正的钱包,净卖/等股回合的钱包贡献恒为 0,绝不
+ * 会以负数拉低另一侧。这里按【每个 (outcome, wallet) 维护与主检测同结构的
+ * WalletAcc,逐笔重放后取 exposureUsd 的增量(after − before)】来累计每个
+ * outcome 的 net/weighted:对任一 wallet,Σ(exposureUsd 的增量) 端到端恒等于
+ * 它最终的 exposureUsd(裂项相消),所以重放到窗口末尾时,本函数内部聚合的
+ * net/weighted 与主检测 sides[].netUsd/weightedUsd 逐分不差;又因为
+ * exposureUsd 恒 ≥ 0,这里的 outcome 级聚合也恒 ≥ 0,不需要额外的负值钳制。
+ * (若改为直接按"逐笔带符号现金流"累加 per-outcome net —— 早期草案就是这么
+ * 写的 —— 会与 exposureUsd 口径脱节:一个钱包高价买入、低价大量部分卖出时,
+ * 现金流可以逼近 0 甚至为负,而 exposureUsd 仍是较大正数,两者能在深度换手的
+ * 市场上给出方向相反的"净买"读数,让重放与主检测的最终判定互相矛盾。)
+ *
+ * 达标判定:>=2 边过 opts.minPerSideUsd 的 USD floor,且 leadOutcome 自己也
+ * 必须在这 qualified 集合里 —— 否则占比的分子可能来自一个还没过 floor 的边
+ * (它的 exposureUsd 可以被高分钱包的 qualityWeight 放大到看起来很唬人),
+ * 而分母只由**其它**已过线的边撑起,比值可以轻松 ≥ 1,把"这一边根本还没
+ * 站稳"误判成"倾斜已形成"。
+ *
+ * 只认最终主导边:leadOutcome 是调用方传入的固定值(sides.sort 之后的
+ * sides[0].outcome),重放全程只检查它的占比 —— 重放中途若由另一边短暂领先
+ * 并达标,不算,我们要跟的是"现在这一边赢下这场分歧"的那一刻。
+ *
+ * 从未达标 → 返回 null。调用方(sourceLopsided,Task 8)见 null 即不产出
+ * 候选 —— fail-closed,绝不用 lastTs 之类的兜底值硬开仓。
+ */
+function tiltFormationTs(
+  marketTrades: Trade[],
+  leadOutcome: string,
+  smartTags: Map<string, SmartTag>,
+  excluded: Set<string>, // 已剔除的对冲者/MM,与主检测同一份,不重算
+  opts: DisagreementOptions,
+): number | null {
+  // outcome -> wallet -> WalletAcc:与主检测同结构,逐笔重放到"此刻"的持仓。
+  const byOutcome = new Map<string, Map<string, WalletAcc>>();
+  // outcome -> 当前 { netUsd, weightedUsd },由每笔成交前后的 exposureUsd 差值
+  // 增量维护(见函数头口径纪律)。
+  const agg = new Map<string, { netUsd: number; weightedUsd: number }>();
+  const seen = new Set<string>();
+
+  const sorted = [...marketTrades].sort((a, b) => a.timestamp - b.timestamp);
+  for (const t of sorted) {
+    const wallet = t.proxyWallet.toLowerCase();
+    const tag = smartTags.get(wallet);
+    if (!tag || tag.isMarketMaker || excluded.has(wallet)) continue;
+    const dk = dedupKey(t);
+    if (seen.has(dk)) continue;
+    seen.add(dk);
+
+    let wallets = byOutcome.get(t.outcome);
+    if (!wallets) {
+      wallets = new Map();
+      byOutcome.set(t.outcome, wallets);
+    }
+    let acc = wallets.get(wallet);
+    if (!acc) {
+      acc = { buyUsd: 0, sellUsd: 0, buyShares: 0, sellShares: 0 };
+      wallets.set(wallet, acc);
+    }
+    const before = exposureUsd(acc);
+    const usdVal = notionalUsd(t);
+    if (t.side === "BUY") {
+      acc.buyUsd += usdVal;
+      acc.buyShares += t.size;
+    } else {
+      acc.sellUsd += usdVal;
+      acc.sellShares += t.size;
+    }
+    const after = exposureUsd(acc);
+    const delta = after - before; // 可正可负(round-trip 部分卖出会为负)
+    const weight = qualityWeight(tag.score);
+    const a = agg.get(t.outcome) ?? { netUsd: 0, weightedUsd: 0 };
+    a.netUsd += delta;
+    a.weightedUsd += delta * weight;
+    agg.set(t.outcome, a);
+
+    const qualified = [...agg.entries()].filter(
+      ([, v]) => v.netUsd >= opts.minPerSideUsd,
+    );
+    if (qualified.length < 2) continue;
+    // leadOutcome 必须自己也过 floor(见函数头注释的反例),否则跳过本笔,
+    // 继续重放,绝不把一个还没站稳的边误判成"已倾斜"。
+    if (!qualified.some(([outcome]) => outcome === leadOutcome)) continue;
+    const totalW = qualified.reduce((s, [, v]) => s + v.weightedUsd, 0);
+    const leadW = agg.get(leadOutcome)?.weightedUsd ?? 0;
+    if (totalW > 0 && leadW / totalW >= opts.lopsidedTiltPct) {
+      return t.timestamp; // 首次达标即返回,后续波动(回落/再次跨过)不再重置
+    }
+  }
+  return null;
+}
 
 /**
  * Pure detection over a trade window: find markets where whitelisted smart
@@ -223,6 +347,7 @@ export function detectDisagreement(
         weightedUsd,
         avgBuyPrice: sumBuyShares > 0 ? sumBuyUsd / sumBuyShares : 0,
         wallets,
+        formationTs: null, // 占位;下面只对最终主导边(sides[0])重放覆盖
       });
     }
 
@@ -232,6 +357,19 @@ export function detectDisagreement(
     const totalNetUsd = sides.reduce((s, x) => s + x.netUsd, 0);
     const tiltPct =
       totalWeightedUsd > 0 ? sides[0].weightedUsd / totalWeightedUsd : 0;
+    // 倾斜形成时刻:只对已经判定 contested 的市场重放(这里,不是全窗口 ——
+    // 按 conditionId 从整窗筛出该市场的原始成交,交给 tiltFormationTs 自己
+    // 做白名单/去重/hedger 过滤),只算【最终主导边】sides[0] 的达标时刻;
+    // 非主导边不适用"形成"概念,保留上面 push 时的 null 占位。
+    const marketTrades = trades.filter((t) => t.conditionId === conditionId);
+    const leadFormationTs = tiltFormationTs(
+      marketTrades,
+      sides[0].outcome,
+      smartTags,
+      excluded,
+      opts,
+    );
+    sides[0] = { ...sides[0], formationTs: leadFormationTs };
     out.push({
       conditionId,
       title: m.title,
