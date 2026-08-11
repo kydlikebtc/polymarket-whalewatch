@@ -86,6 +86,12 @@ export type Detector = (
  * source 专属字段可选 —— 各 detector 自己校验并在缺失时产出空候选 + 日志。
  */
 export interface StrategyParams {
+  /**
+   * follow_strategies 行 id。只用于日志定位 —— 12 档并行时,不带 id 的日志
+   * (「剔除 3 个共识组」)无法回答「是哪条策略」,可诊断性会比单档时代倒退。
+   * 不参与任何检测判定。
+   */
+  id: number;
   source: FollowSourceKind;
   sizeUsd: number;
   exitRule: string;

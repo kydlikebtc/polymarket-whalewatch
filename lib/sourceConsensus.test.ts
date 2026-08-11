@@ -48,6 +48,7 @@ const ctx = (over: Partial<DetectorCtx> = {}): DetectorCtx => ({
 });
 
 const params = (over: Partial<StrategyParams> = {}): StrategyParams => ({
+  id: 1,
   source: "consensus",
   sizeUsd: 500,
   exitRule: "settlement",
