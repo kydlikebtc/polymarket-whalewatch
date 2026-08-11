@@ -1889,3 +1889,170 @@ describe("runFollowCycle — market_tilt_history 读写顺序对抗测试(mutati
   // 状态",凭空产出 1 个虚假候选)。验证完成后已还原 lib/follow.ts,不保留
   // 这个临时改动 —— 这条注释只记录验证过程,供复核。
 });
+
+// Task 11:D2(early_winner)钱包预取的端到端集成 —— 证明 runFollowCycle 真的
+// 从 wallet_candidates 表读出 channel='early_winner' 的地址喂给 ctx,以及
+// 查询失败时的降级不拖累同轮其它策略。detector 内部判据(净买门槛/跨线语义/
+// MM 剔除/新鲜度/折叠规则)已在 lib/sourceWallet.test.ts 覆盖,这里只测预取
+// 这一层「读表 → 填 ctx → detector 真的用上了」的接线是否正确。
+describe("runFollowCycle — D2(early_winner)钱包预取", () => {
+  it("wallet_candidates 有 early_winner 渠道的行 → 能读到,D2 策略据此开仓;非 early_winner 渠道的行不算数", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
+    ).run(
+      "早期赢家跟投",
+      JSON.stringify({
+        source: "early_winner",
+        minNetUsd: 5000,
+        sizeUsd: 500,
+        exitRule: "settlement",
+      }),
+      1000,
+    );
+    // w1:channel='early_winner',应当入选。w2:channel='echo'(其它渠道),
+    // 即使也有一笔够格的净买,也不该被 D2 当作渠道成员。
+    db.prepare(
+      `INSERT INTO wallet_candidates
+         (address, channel, condition_id, evidence_ts, usd, price, note, created_at)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    ).run("w1", "early_winner", "cSomeMarket", 900, 1000, 0.5, "note", 900);
+    db.prepare(
+      `INSERT INTO wallet_candidates
+         (address, channel, condition_id, evidence_ts, usd, price, note, created_at)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    ).run("w2", "echo", "cSomeMarket", 900, 1000, 0.5, "note", 900);
+
+    const trades = [
+      // w1(early_winner 成员):净买 $6,000 >= minNetUsd(5000)→ 应当开仓。
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "hEW1",
+        conditionId: "cD2a",
+        asset: "tokD2a",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      // w2(echo 成员,非 early_winner):同样净买 $6,000,但不该被 D2 开仓。
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "hEW2",
+        conditionId: "cD2b",
+        asset: "tokD2b",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+    ];
+
+    await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart, // w1/w2 都在白名单里(见文件头 smart() 工厂)
+      fetchPrice: async () => 0.6,
+      getMeta: async () => ({}),
+      nowSec: 1500, // 距 formationTs(1000)500s <= freshSec 默认 900,新鲜
+    });
+
+    const strat = db
+      .prepare("SELECT id FROM follow_strategies WHERE name = ?")
+      .get("早期赢家跟投") as { id: number };
+    const positions = db
+      .prepare(
+        "SELECT condition_id FROM follow_positions WHERE strategy_id = ?",
+      )
+      .all(strat.id) as { condition_id: string }[];
+    expect(positions).toHaveLength(1);
+    expect(positions[0].condition_id).toBe("cD2a"); // w1 的市场,不是 w2 的
+    db.close();
+  });
+
+  it("wallet_candidates 查询抛错 → 预取降级为空 Set,D2 本轮无候选,不影响同轮其它策略", async () => {
+    const db = openDb(":memory:");
+    // 破坏表本身,模拟"查询抛错"这个极端场景(而不是 mock db.prepare ——
+    // 直接损坏真实表,断言的是 runFollowCycle 面对真实 SQL 异常时的行为)。
+    // 用 .prepare(...).run() 而非 .exec(...) 执行 DDL,与 lib/db.ts 里
+    // ALTER TABLE 等既有 DDL 语句同一套写法。
+    db.prepare("DROP TABLE wallet_candidates").run();
+
+    db.prepare(
+      "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
+    ).run(
+      "早期赢家跟投",
+      JSON.stringify({
+        source: "early_winner",
+        minNetUsd: 5000,
+        sizeUsd: 500,
+        exitRule: "settlement",
+      }),
+      1000,
+    );
+
+    const trades = [
+      // 同轮内还有一组正常的 2 钱包共识(w1+w2 各净买 $6k)—— 用来证明
+      // early_winner 预取失败不会拖垮同轮其它 source 的策略(种子自带的
+      // "激进" consensus 策略:2 钱包 × $5k)。
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "hC1",
+        conditionId: "cConsensus",
+        asset: "tokConsensus",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "hC2",
+        conditionId: "cConsensus",
+        asset: "tokConsensus",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      // 若预取没有正确降级(比如异常没被兜住导致整轮 reject),这笔本该被
+      // D2 开仓的交易也能反证:D2 本该产出候选但降级后必须是 0。
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "hEW",
+        conditionId: "cD2",
+        asset: "tokD2",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+    ];
+
+    // 不 reject 整轮:预取失败被 runFollowCycle 内部 try/catch 兜住。
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart,
+      fetchPrice: async () => 0.6,
+      getMeta: async () => ({}),
+      nowSec: 1500,
+    });
+
+    // 激进(consensus)策略照常开仓 —— early_winner 预取失败不影响它。
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const consensusPos = db
+      .prepare(
+        "SELECT 1 FROM follow_positions WHERE condition_id = 'cConsensus'",
+      )
+      .all();
+    expect(consensusPos.length).toBeGreaterThanOrEqual(1);
+
+    // early_winner 策略本轮无候选(earlyWinnerWallets 降级为空 Set)。
+    const strat = db
+      .prepare("SELECT id FROM follow_strategies WHERE name = ?")
+      .get("早期赢家跟投") as { id: number };
+    const ewPos = db
+      .prepare(
+        "SELECT 1 FROM follow_positions WHERE strategy_id = ? AND condition_id = 'cD2'",
+      )
+      .all(strat.id);
+    expect(ewPos).toHaveLength(0);
+    db.close();
+  });
+});

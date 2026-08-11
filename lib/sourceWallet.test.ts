@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { detectLoneWolfCandidates } from "./sourceWallet";
+import { describe, it, expect, vi } from "vitest";
+import {
+  detectEarlyWinnerCandidates,
+  detectLoneWolfCandidates,
+} from "./sourceWallet";
 import type { DetectorCtx, StrategyParams } from "./followCandidate";
 import type { SmartTag } from "./smartWallets";
 import type { Trade } from "./types";
@@ -58,6 +61,20 @@ const loneWolfParams = (
   freshSec: 900,
   minNetUsd: 10_000,
   minWalletScore: 90,
+  ...over,
+});
+
+const earlyWinnerParams = (
+  over: Partial<StrategyParams> = {},
+): StrategyParams => ({
+  id: 2,
+  source: "early_winner",
+  sizeUsd: 500,
+  exitRule: "settlement",
+  maxEntryDeviationCents: 10,
+  maxPrice: 0.95,
+  freshSec: 900,
+  minNetUsd: 5_000,
   ...over,
 });
 
@@ -362,5 +379,151 @@ describe("detectLoneWolfCandidates", () => {
       ctx(),
     );
     expect(out).toHaveLength(0);
+  });
+});
+
+describe("detectEarlyWinnerCandidates", () => {
+  it("属于 ctx.earlyWinnerWallets 的钱包 → 产出候选,即使 score 很低(与 D1 的关键区别)", () => {
+    const smart = new Map([["0xa", tag({ score: 10 })]]); // 远低于任何合理的 minWalletScore
+    const out = detectEarlyWinnerCandidates(
+      [mk({ proxyWallet: "0xA", size: 20000, price: 0.5 })], // $10,000 net
+      earlyWinnerParams(),
+      ctx({ smart, earlyWinnerWallets: new Set(["0xa"]) }),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].sourceKind).toBe("early_winner");
+    expect(out[0].totalNetUsd).toBeCloseTo(10_000);
+  });
+
+  it("属于 ctx.earlyWinnerWallets 的钱包 → 产出候选,即使 score 为 null", () => {
+    const smart = new Map([["0xa", tag({ score: null })]]);
+    const out = detectEarlyWinnerCandidates(
+      [mk({ proxyWallet: "0xA", size: 20000, price: 0.5 })],
+      earlyWinnerParams(),
+      ctx({ smart, earlyWinnerWallets: new Set(["0xa"]) }),
+    );
+    expect(out).toHaveLength(1);
+  });
+
+  it("不在 earlyWinnerWallets 集合里的钱包 → 无候选(即使 score 很高)", () => {
+    const smart = new Map([["0xa", tag({ score: 99 })]]);
+    const out = detectEarlyWinnerCandidates(
+      [mk({ proxyWallet: "0xA", size: 20000, price: 0.5 })],
+      earlyWinnerParams(),
+      // earlyWinnerWallets 里没有 0xa —— 高分不能替代渠道成员资格。
+      ctx({ smart, earlyWinnerWallets: new Set(["0xother"]) }),
+    );
+    expect(out).toHaveLength(0);
+  });
+
+  it("earlyWinnerWallets 为空集(预取失败的降级态)→ 无候选,不抛错", () => {
+    const smart = new Map([["0xa", tag({ score: 99 })]]);
+    const trades = [mk({ proxyWallet: "0xA", size: 20000, price: 0.5 })];
+    expect(() =>
+      detectEarlyWinnerCandidates(
+        trades,
+        earlyWinnerParams(),
+        ctx({ smart, earlyWinnerWallets: new Set() }),
+      ),
+    ).not.toThrow();
+    const out = detectEarlyWinnerCandidates(
+      trades,
+      earlyWinnerParams(),
+      ctx({ smart, earlyWinnerWallets: new Set() }),
+    );
+    expect(out).toHaveLength(0);
+  });
+
+  it("做市商钱包不算,即使属于 earlyWinnerWallets(MM 剔除与 D1 共享同一道闸)", () => {
+    const smart = new Map([["0xa", tag({ isMarketMaker: true })]]);
+    const out = detectEarlyWinnerCandidates(
+      [mk({ proxyWallet: "0xA", size: 20000, price: 0.5 })],
+      earlyWinnerParams(),
+      ctx({ smart, earlyWinnerWallets: new Set(["0xa"]) }),
+    );
+    expect(out).toHaveLength(0);
+  });
+
+  it("非白名单钱包不算,即使属于 earlyWinnerWallets(必须先有 SmartTag 才谈得上 MM 判定)", () => {
+    const out = detectEarlyWinnerCandidates(
+      [mk({ proxyWallet: "0xSTRANGER", size: 20000, price: 0.5 })],
+      earlyWinnerParams(),
+      // smart 为空(0xstranger 不在其中),即使它在 earlyWinnerWallets 里也不算。
+      ctx({ smart: new Map(), earlyWinnerWallets: new Set(["0xstranger"]) }),
+    );
+    expect(out).toHaveLength(0);
+  });
+
+  it("新鲜度闸门与折叠规则与 D1 共享:陈旧跨线不产出候选", () => {
+    const smart = new Map([["0xa", tag({ score: null })]]);
+    const out = detectEarlyWinnerCandidates(
+      [mk({ proxyWallet: "0xA", size: 20000, price: 0.5, timestamp: 1000 })],
+      earlyWinnerParams(),
+      ctx({
+        smart,
+        earlyWinnerWallets: new Set(["0xa"]),
+        nowSec: 100_000, // 远超 freshSec 900
+      }),
+    );
+    expect(out).toHaveLength(0);
+  });
+
+  it("折叠规则与 D1 共享:同一 (市场,方向) 多个渠道钱包 → 取净买最大的那个", () => {
+    const smart = new Map([
+      ["0xa", tag({ score: null })],
+      ["0xb", tag({ score: null })],
+    ]);
+    const trades = [
+      mk({
+        proxyWallet: "0xA",
+        transactionHash: "0x1",
+        size: 20000,
+        price: 0.5, // $10,000
+        timestamp: 100,
+      }),
+      mk({
+        proxyWallet: "0xB",
+        transactionHash: "0x2",
+        size: 40000,
+        price: 0.5, // $20,000,更大
+        timestamp: 200,
+      }),
+    ];
+    const out = detectEarlyWinnerCandidates(
+      trades,
+      earlyWinnerParams(),
+      ctx({
+        smart,
+        earlyWinnerWallets: new Set(["0xa", "0xb"]),
+        nowSec: 300,
+      }),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].totalNetUsd).toBeCloseTo(20_000);
+  });
+
+  it("参数缺失(minNetUsd undefined)→ 空候选,不抛错", () => {
+    const smart = new Map([["0xa", tag()]]);
+    const trades = [mk({ proxyWallet: "0xA", size: 20000, price: 0.5 })];
+    const out = detectEarlyWinnerCandidates(
+      trades,
+      earlyWinnerParams({ minNetUsd: undefined }),
+      ctx({ smart, earlyWinnerWallets: new Set(["0xa"]) }),
+    );
+    expect(out).toHaveLength(0);
+  });
+
+  it("身份/资格门槛剔除数会打日志(调试可诊断性)", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const smart = new Map([["0xa", tag({ score: 1 })]]);
+    detectEarlyWinnerCandidates(
+      [mk({ proxyWallet: "0xA", size: 20000, price: 0.5 })],
+      earlyWinnerParams(),
+      // 0xa 不在 earlyWinnerWallets 里 → notQualified 计数 +1。
+      ctx({ smart, earlyWinnerWallets: new Set() }),
+    );
+    const lines = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes("身份/资格门槛"))).toBe(true);
+    logSpy.mockRestore();
   });
 });

@@ -10,23 +10,25 @@ import { dedupKey, notionalUsd } from "./trades";
 import type { Trade } from "./types";
 
 /**
- * 族 D:钱包画像。D1(lone_wolf,高分独狼)判据:单个钱包在窗口内对某
- * (市场,方向) 的净买 >= minNetUsd,且 score >= minWalletScore —— 测的是
- * "一个极好的钱包,一个人说了算吗"。
+ * 族 D:钱包画像。D1(lone_wolf,高分独狼)与 D2(early_winner,早期赢家跟投)
+ * 判据几乎完全相同 —— 单个钱包在窗口内对某 (市场,方向) 的净买 >= minNetUsd,
+ * 唯一不同的是"这个钱包够不够格"的谓词:
+ *   D1:score >= minWalletScore(质量轴,测的是"钱包好不好")
+ *   D2:属于 ctx.earlyWinnerWallets(渠道轴,测的是"敢不敢在便宜时下重注"——
+ *       earlyWinner.ts 的 EW_MAX_PRICE/EW_EARLY_LEAD_SEC 判据,与 score 的三个
+ *       分量——绝对利润/资金效率/胜率——完全正交,score 里没有这个维度)
+ * 两者共用 detectWalletCandidates,只在 isQualified 谓词上分叉,避免复制粘贴
+ * 两份净买累加/跨线/折叠逻辑。
  *
  * 与族 B(heavy)的区别:B 看**单笔金额**(一笔巨额本身就是信号,无关钱包是谁);
- * D 看**钱包质量**(同样金额的净买,出自一个 score=95 的钱包比出自普通白名单
- * 钱包更值得跟)。
+ * D 看**钱包质量/身份**(同样金额的净买,出自一个 score=95 的钱包 或一个
+ * early_winner 钱包,比出自普通白名单钱包更值得跟)。
  *
  * 不受分歧互斥约束(D6,与族 B 同一裁决,见
- * docs/plans/2026-08-11-follow-strategy-tiers-design.md §「D6」):lone_wolf 的
- * 语义是"这个钱包的净买本身就是信号",不依赖别的聪明钱怎么想。因市场有争议就
- * 不跟,等于用共识的世界观审查钱包画像族的信号,还会让 D 族只在无争议市场取样
- * (样本系统性偏置)。故本文件的 detector 不读 ctx.contested。
- *
- * detectWalletCandidates 是核心检测逻辑,刻意抽成"钱包是否入选"可参数化的
- * 内部函数(isQualified 谓词)—— 族 D 的下一个成员(early_winner,渠道成员
- * 判据而非 score 判据)将复用同一套净买累加/跨线/折叠逻辑,只替换这一个谓词。
+ * docs/plans/2026-08-11-follow-strategy-tiers-design.md §「D6」):lone_wolf/
+ * early_winner 的语义都是"这个钱包的净买本身就是信号",不依赖别的聪明钱怎么想。
+ * 因市场有争议就不跟,等于用共识的世界观审查钱包画像族的信号,还会让 D 族只在
+ * 无争议市场取样(样本系统性偏置)。故本文件两个 detector 都不读 ctx.contested。
  */
 
 // 净买累加器 + 跨线时刻。PositionAcc 是 netPosition.ts 的净股数口径基础结构
@@ -56,7 +58,7 @@ interface WalletEntry {
  *  1. 身份闸(P0.5 同款):非白名单(!tag)或做市商(isMarketMaker)剔除 ——
  *     与 detectConsensus/detectHeavyCandidates 同一道闸,做市商的成交是库存
  *     再平衡,不是方向性意见。
- *  2. isQualified 谓词:本源特有的"够不够格"判断(D1:score)。
+ *  2. isQualified 谓词:本源特有的"够不够格"判断(D1:score;D2:渠道成员)。
  *  3. 净股数口径(P0.6,netPosition.ts)按 (市场,方向,钱包) 累加,借鉴
  *     ConsensusWallet.qualifiedTs 的 last-upward-crossing:按时序累加,记录
  *     **最后一次**由 <floor 升到 >=floor 的成交时刻(中途跌回再跨则覆盖)。
@@ -243,8 +245,8 @@ function detectWalletCandidates(
  *
  * minWalletScore 缺失时提前短路(不进入共享逻辑):与 minNetUsd 缺失一样,
  * 都是"必需参数没配,本策略本轮无候选",在这里单独判断是因为 minNetUsd 的
- * 校验发生在 detectWalletCandidates 内部,而 minWalletScore 是 D1 独有的
- * 必需参数,detectWalletCandidates 对它一无所知。
+ * 校验发生在 detectWalletCandidates 内部(D2 也要用到那道校验),而
+ * minWalletScore 是 D1 独有的必需参数,detectWalletCandidates 对它一无所知。
  */
 export function detectLoneWolfCandidates(
   trades: Trade[],
@@ -265,5 +267,35 @@ export function detectLoneWolfCandidates(
     "lone_wolf",
     (_wallet, tag) => tag.score != null && tag.score >= minScore,
     `score>=${minScore}`,
+  );
+}
+
+/**
+ * D2:早期赢家跟投。由 early_winner 渠道(lib/earlyWinner.ts)发现的钱包开的
+ * 新仓 —— 这批钱包的筛选轴是"在 <=40¢ 且距结算 >=24h 时押中赢家"
+ * (EW_MAX_PRICE/EW_EARLY_LEAD_SEC),与 score 完全正交:score 的三个分量
+ * (绝对利润/资金效率/胜率)里没有"敢在便宜时下重注"这个维度。
+ *
+ * 与 D1 的唯一差别:不看 score,看钱包是否属于 ctx.earlyWinnerWallets ——
+ * 即使该钱包 score 很低甚至未知,只要它是 early_winner 渠道成员且净买达标,
+ * 照样产出候选。其余判据(净买门槛、跨线语义、身份闸/MM 剔除、新鲜度、折叠
+ * 规则)与 D1 完全共享同一个 detectWalletCandidates。
+ *
+ * ctx.earlyWinnerWallets 由 runFollowCycle 每轮预取一次(见 lib/follow.ts),
+ * 预取失败时降级为空 Set —— 本函数对此无感知,空 Set 下 isQualified 恒假,
+ * 自然产出空候选,不需要额外的降级分支。
+ */
+export function detectEarlyWinnerCandidates(
+  trades: Trade[],
+  params: StrategyParams,
+  ctx: DetectorCtx,
+): FollowCandidate[] {
+  return detectWalletCandidates(
+    trades,
+    params,
+    ctx,
+    "early_winner",
+    (wallet) => ctx.earlyWinnerWallets.has(wallet),
+    "early_winner 渠道钱包",
   );
 }

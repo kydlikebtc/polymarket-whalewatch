@@ -18,10 +18,13 @@ import { detectLopsidedCandidates } from "./sourceLopsided";
 // 的 import 全部是 `import type`,不构成运行时环。
 import { detectResolvedCandidates } from "./sourceResolved";
 // 值导入,同上方四个 detector 的单向值依赖论证:sourceWallet.ts 顶部对本文件
-// 的 import 全部是 `import type`,不构成运行时环。sourceWallet.ts 是族 D(钱包
-// 画像)的归属文件,lone_wolf(D1)先落地;early_winner(D2)将复用同一文件内的
-// 共享检测逻辑(见 sourceWallet.ts 文件头注释),届时这里再加一个导入。
-import { detectLoneWolfCandidates } from "./sourceWallet";
+// 的 import 全部是 `import type`,不构成运行时环。lone_wolf(D1)与 early_winner
+// (D2)共用这一个文件(两者判据几乎相同,只在"钱包是否入选"谓词上分叉,见
+// sourceWallet.ts 文件头注释),故这里只需一行 import 拿两个函数。
+import {
+  detectEarlyWinnerCandidates,
+  detectLoneWolfCandidates,
+} from "./sourceWallet";
 import type { Trade } from "./types";
 
 // 纸面跟单的统一候选契约。所有信号源产出这一个结构,开仓循环只认它 ——
@@ -153,10 +156,11 @@ export interface StrategyParams {
  * 不再 if/else 硬编码族。新增信号源 = 写一个纯函数(签名同 Detector)+ 在这里
  * 加一行,开仓代码(runFollowCycle 的护栏/查重/费用/执行层那一大段)零改动。
  *
- * 五个源已接线:consensus(Task 2)、heavy(Task 6)、lopsided(Task 8)、
- * resolved(Task 9)、lone_wolf(Task 10)。early_winner 是最后一个占位(Task 11
- * 落地);种子(Task 12)落地前不会有策略实际使用 lone_wolf,但它已是真实实现,
- * 不是占位 —— 空候选来自它自己的判据(净买/评分未达标),不是「未接入」。
+ * 六个源至此全部接线完毕:consensus(Task 2)、heavy(Task 6)、lopsided
+ * (Task 8)、resolved(Task 9)、lone_wolf(Task 10)、early_winner(Task 11)。
+ * 种子(Task 12)落地前不会有策略实际使用 lone_wolf/early_winner,但两者已是
+ * 真实实现,不是占位 —— 空候选来自它们各自的判据(净买/评分/渠道成员未达标),
+ * 不是「未接入」。
  */
 export const DETECTORS: Record<FollowSourceKind, Detector> = {
   consensus: detectConsensusCandidates,
@@ -164,5 +168,5 @@ export const DETECTORS: Record<FollowSourceKind, Detector> = {
   lopsided: detectLopsidedCandidates,
   resolved: detectResolvedCandidates,
   lone_wolf: detectLoneWolfCandidates,
-  early_winner: () => [],
+  early_winner: detectEarlyWinnerCandidates,
 };

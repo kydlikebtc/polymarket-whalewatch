@@ -525,11 +525,40 @@ export async function runFollowCycle(
     // 上一轮(或更早)写入的快照,不会读到本轮自己即将写的行。详细论证见
     // readMarketTiltSnapshots 的函数头注释。
     const prevTilt = readMarketTiltSnapshots(db);
+    // D2(early_winner)钱包预取:每轮一次,与 prevTilt 同级 —— 由 discovery 侧
+    // (lib/earlyWinner.ts runEarlyWinnerScan)持续写入 wallet_candidates 的
+    // channel='early_winner' 行,这里只读、不写,供本轮所有策略共享(不必每条
+    // 策略各查一次)。DISTINCT 是因为该表 PRIMARY KEY 是
+    // (address, channel, condition_id) —— 同一钱包在多个市场上都留下过
+    // early_winner 证据时会有多行,detectEarlyWinnerCandidates 只关心钱包本身
+    // 是否曾经入选,不关心具体是哪个/几个市场。
+    //
+    // 查询失败(表损坏等极端情况)降级为空 Set —— D2 本轮无候选,不影响其它
+    // source 的策略,与 getMeta/fetchPrice 等既有降级纪律一致:局部依赖失败
+    // 不该拖垮整轮。
+    let earlyWinnerWallets = new Set<string>();
+    try {
+      const ewRows = db
+        .prepare(
+          "SELECT DISTINCT address FROM wallet_candidates WHERE channel = 'early_winner'",
+        )
+        .all() as { address: string }[];
+      // recordEvidence(lib/discovery.ts)写入前已经 toLowerCase 过 ——
+      // CandidateEvidence.address 字段注释明确「lowercased」,
+      // extractEarlyWinnerEvidence(lib/earlyWinner.ts)构造证据行时也是
+      // `t.proxyWallet.toLowerCase()`。这里再 toLowerCase 一次纯属防御性:
+      // 万一未来某个写入路径疏漏了小写化,这里不会因此与 detector 里同样小写
+      // 的 wallet 比较静默失配(detectWalletCandidates 里 `t.proxyWallet.
+      // toLowerCase()` 是比较的另一侧,两边必须口径一致)。
+      earlyWinnerWallets = new Set(ewRows.map((r) => r.address.toLowerCase()));
+    } catch (e) {
+      console.warn("[follow] early_winner 钱包预取失败,D2 本轮无候选:", e);
+    }
     const ctx: DetectorCtx = {
       smart,
       nowSec,
       contested,
-      earlyWinnerWallets: new Set(), // Task 11 填充,在此之前是空 Set
+      earlyWinnerWallets,
       prevTilt,
     };
     for (const s of strategies) {
