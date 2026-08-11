@@ -112,6 +112,19 @@ type FollowStrategyView = {
     // 进场价偏离护栏(¢)。server 侧 parseParamsView 恒有值(默认 10);类型上留
     // 可选以对旧响应宽容,展示时按 10 兜底。
     maxEntryDeviationCents?: number;
+    // 12 档扩充(Task 13):source 决定这一档属于哪个信号族(见 familyOf);
+    // maxPrice/freshSec 是全局护栏,server 侧 parseParamsView 恒有值,可选只
+    // 为兼容旧响应。其余五个是各信号族的专属阈值——只有对应 source 的策略
+    // 才会有值,其它策略里恒为 undefined(不是"阈值 0","缺失"与"阈值为 0"
+    // 含义完全不同,见 sourceCoreHint 的 != null 判断)。
+    source?: string;
+    maxPrice?: number;
+    freshSec?: number;
+    minWalletScore?: number;
+    minTotalNetUsd?: number;
+    minSingleFillUsd?: number;
+    minTiltPct?: number;
+    minNetUsd?: number;
   };
   metrics: StrategyMetrics;
   // 基金式档案与账户推演:新响应恒有;类型可选以对旧响应宽容,缺失时不渲染/显示「—」。
@@ -281,13 +294,165 @@ function winRateLabel(m: StrategyMetrics): string {
   return `${pct}% · 95%CI ${lo}–${hi}%`;
 }
 
+/* ------------------------------------------------------- 12 档 · 信号族分类 */
+// source → 信号族的分组呈现(Task 13)。四族按"信息强度递减"排序,也是各族
+// 内部实现的顺序:共识(多人独立同向)→ 异常大额(单笔巨量本身即信号)→
+// 分歧(聪明钱不合但有主导边)→ 钱包画像(单钱包的历史身份撑腰)。每族一句
+// 话回答"这一族在验证什么假设",与 docs/plans/2026-08-11-follow-strategy-
+// tiers-design.md §9.1(战绩不可跨档相加)是同一处设计决策的两个呈现面。
+type FamilyKey = "consensus" | "heavy" | "disagreement" | "wallet" | "other";
+
+const FAMILY_META: Record<FamilyKey, { title: string; blurb: string }> = {
+  consensus: {
+    title: "共识",
+    blurb: "N 个聪明钱同时看多同一边,值不值得跟。",
+  },
+  heavy: {
+    title: "异常大额",
+    blurb: "一笔巨额单本身算不算信号(不等第 N 人到位)。",
+  },
+  disagreement: {
+    title: "分歧",
+    blurb: "聪明钱意见不一致时,能不能跟主导边。",
+  },
+  wallet: {
+    title: "钱包画像",
+    blurb: "一个足够好的钱包,一个人说了算吗。",
+  },
+  // 兜底组:未来新增 source 但还没来得及接进上面四族时,不能让那张策略卡从
+  // 页面上消失——消失比归类不准更危险(会被误读成"这条策略被停用/没生效"),
+  // 卡片本身的指标/仓位渲染跟 source 无关,照样能完整展示。命中这一组本身
+  // 就是一个待办信号,提醒开发者回来给新 source 在 familyOf 里分类。
+  other: {
+    title: "其它",
+    blurb: "尚未归入以上四族的信号源。",
+  },
+};
+
+const FAMILY_ORDER: FamilyKey[] = [
+  "consensus",
+  "heavy",
+  "disagreement",
+  "wallet",
+  "other",
+];
+
+// source → 信号族。与 lib/followCandidate.ts 的 FOLLOW_SOURCE_KINDS 六个值
+// 一一对应;任何不在这六种里的字符串(含 undefined,调用处已兜到 "consensus")
+// 都归入 "other",绝不抛错或让卡片消失。
+function familyOf(source: string): FamilyKey {
+  switch (source) {
+    case "consensus":
+      return "consensus";
+    case "heavy":
+      return "heavy";
+    case "lopsided":
+    case "resolved":
+      return "disagreement";
+    case "lone_wolf":
+    case "early_winner":
+      return "wallet";
+    default:
+      return "other";
+  }
+}
+
+/* --------------------------------------------------------- params 展示口径 */
+// 与 lib/follow.ts(DEFAULT_FRESH_SEC/DEFAULT_MAX_PRICE,均未导出)、
+// lib/disagreement.ts(DEFAULT_DISAGREEMENT.lopsidedTiltPct)同步的展示侧
+// 默认值。客户端刻意不 import 这些 server 侧模块(见文件顶部注释:避免把
+// better-sqlite3 依赖链拖进浏览器 bundle),故在此镜像字面量——与既有的
+// `maxEntryDeviationCents ?? 10` 同一约定,三侧改动需要同步维护。
+const DEFAULT_FRESH_SEC_DISPLAY = 900;
+const DEFAULT_MAX_PRICE_DISPLAY = 0.95;
+const DEFAULT_LOPSIDED_TILT_PCT_DISPLAY = 0.7;
+
+// 家族专属半句:不同 source 读的是完全不同的门槛字段,硬套「≥N 钱包」的共识
+// 话术会把 7/12 档显示成「≥0 钱包 · 每钱包 ≥$0」——这几个字段在非 consensus
+// 策略的 params_json 里压根不存在,是 parseParamsView 的展示占位,不是"这一
+// 档真的门槛是 0"。minWalletScore/minTotalNetUsd/minSingleFillUsd/
+// minTiltPct/minNetUsd 这五个新参数也是在这里第一次被渲染出来(复审发现此前
+// 完全没有 UI 消费它们)。
+function sourceCoreHint(p: FollowStrategyView["params"]): string {
+  const source = p.source ?? "consensus";
+  switch (source) {
+    case "consensus": {
+      const parts = [
+        `≥${p.minWallets} 钱包`,
+        `每钱包 ≥$${fmtUsd0(p.minPerWalletUsd)}`,
+      ];
+      if (p.minWalletScore != null) parts.push(`钱包评分≥${p.minWalletScore}`);
+      // 重仓共识(A4)最容易被望文生义的地方:"重仓"说的是触发信号的那批
+      // 聪明钱自己的总净买规模,不是我们自己的仓位——我们的仓位统一是下面
+      // 「$X/信号」那一句(12 档 sizeUsd 全是 $500)。两句故意分开写、用词
+      // 也刻意不同("总投入" vs "/信号"),不让读者把两个数字看成同一件事。
+      if (p.minTotalNetUsd != null)
+        parts.push(`聪明钱总投入 ≥$${fmtUsd0(p.minTotalNetUsd)}`);
+      return parts.join(" · ");
+    }
+    case "heavy": {
+      const parts = [`单笔 ≥$${fmtUsd0(p.minSingleFillUsd ?? 0)}`];
+      if (p.minWalletScore != null) parts.push(`钱包评分≥${p.minWalletScore}`);
+      return parts.join(" · ");
+    }
+    case "lopsided": {
+      // minTiltPct 是 C1(detectLopsidedCandidates)真会读的开关——
+      // `params.minTiltPct ?? DEFAULT_DISAGREEMENT.lopsidedTiltPct`,不是像
+      // minPerSideUsd 那样的纯文档字段。缺省时展示侧按同一个默认值(0.7)
+      // 兜底,与实际生效值保持一致(见 DEFAULT_LOPSIDED_TILT_PCT_DISPLAY)。
+      const pct = Math.round(
+        (p.minTiltPct ?? DEFAULT_LOPSIDED_TILT_PCT_DISPLAY) * 100,
+      );
+      return `一边倒分歧 · 主导边占比≥${pct}%`;
+    }
+    case "resolved":
+      // C2 没有任何逐策略可调阈值——detectResolvedCandidates 只看上一轮
+      // 分歧快照 + 本轮现金流是否"认输"(isCapitulating),不读 params 的
+      // 任何字段(minPerSideUsd 与 C1 一样是纯文档字段,两个 detector 都不
+      // 读它)。如实描述触发条件,不假装存在一个可调数字。
+      return "分歧解除 · 少数边由净买转净卖";
+    case "lone_wolf": {
+      const parts = ["单钱包信号"];
+      if (p.minWalletScore != null) parts.push(`钱包评分≥${p.minWalletScore}`);
+      if (p.minNetUsd != null) parts.push(`净买≥$${fmtUsd0(p.minNetUsd)}`);
+      return parts.join(" · ");
+    }
+    case "early_winner": {
+      const parts = ["早期赢家渠道钱包"];
+      if (p.minNetUsd != null) parts.push(`净买≥$${fmtUsd0(p.minNetUsd)}`);
+      return parts.join(" · ");
+    }
+    default:
+      // 未知 source:不假装认识它的专属字段,只把原始值报出来——提醒这张卡
+      // 需要有人回来给 sourceCoreHint/familyOf 补一支,而不是编造一句看似
+      // 正常、实则杜撰的门槛描述。
+      return `source=${source}(未接入展示层)`;
+  }
+}
+
 function paramsHint(p: FollowStrategyView["params"]): string {
   const exit = p.exitRule === "settlement" ? "持有到结算" : p.exitRule;
   // 偏离护栏:字段缺失(旧响应)按 10 兜底,与 lib/follow 开仓侧默认一致。
   const maxDev = p.maxEntryDeviationCents ?? 10;
-  return `≥${p.minWallets} 钱包 · 每钱包 ≥$${fmtUsd0(
-    p.minPerWalletUsd,
-  )} · $${fmtUsd0(p.sizeUsd)}/信号 · 偏离≤${maxDev}¢ · ${exit}`;
+  const freshSec = p.freshSec ?? DEFAULT_FRESH_SEC_DISPLAY;
+  const maxPrice = p.maxPrice ?? DEFAULT_MAX_PRICE_DISPLAY;
+  const parts = [
+    sourceCoreHint(p),
+    `$${fmtUsd0(p.sizeUsd)}/信号`,
+    `偏离≤${maxDev}¢`,
+  ];
+  // 新鲜度/价格上限是全局护栏,12 档目前只有「首发共识」把新鲜度收紧到 5
+  // 分钟——只在偏离默认值时才画出来,避免其余 11 张卡都重复同一句无差别
+  // 信息(价格上限当前没有任何一档覆盖默认值,但未来若加专项价格带档位,
+  // 这里已经能正确画出来)。
+  if (freshSec !== DEFAULT_FRESH_SEC_DISPLAY) {
+    parts.push(`新鲜度≤${Math.round(freshSec / 60)}分`);
+  }
+  if (maxPrice !== DEFAULT_MAX_PRICE_DISPLAY) {
+    parts.push(`价格≤${Math.round(maxPrice * 100)}¢`);
+  }
+  parts.push(exit);
+  return parts.join(" · ");
 }
 
 // 市场展示名:优先 title,回退到 event_slug / condition_id。
@@ -1548,6 +1713,19 @@ export default function FollowPage() {
       ? null
       : (shown.find((s) => s.id === effFilter)?.name ?? null);
 
+  // 12 档扩充(Task 13):按 source 分成信号族分组呈现(未知/缺失 source 落
+  // 「其它」兜底组,见 FAMILY_ORDER/familyOf),每族内部顺序沿用 shown 的原有
+  // 顺序(即 API 返回的 id 升序)。空族被 filter 掉不占页面——已上线的六种
+  // source 目前恰好落进四族,不会出现「其它」组,直到未来有新 source 上线还
+  // 没接进 familyOf 的窗口期。
+  const groups = FAMILY_ORDER.map((key) => ({
+    key,
+    meta: FAMILY_META[key],
+    items: shown.filter(
+      (s) => familyOf(s.params.source ?? "consensus") === key,
+    ),
+  })).filter((g) => g.items.length > 0);
+
   return (
     <main className="ds-main">
       <header style={{ marginBottom: "var(--s-4)" }}>
@@ -1611,23 +1789,54 @@ export default function FollowPage() {
       ) : shown.length === 0 ? (
         <div className="ds-empty">
           暂无启用中的跟单策略 —
-          引擎播种聪明钱白名单并跑通一轮跟单后,这里会出现策略 A/B 的纸面战绩
+          引擎播种聪明钱白名单并跑通一轮跟单后,这里会按信号族出现各档的纸面战绩
         </div>
       ) : (
         <>
-          {/* 策略 A/B 卡 */}
-          <section
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-              gap: "var(--s-4)",
-              marginBottom: "var(--s-5)",
-            }}
-          >
-            {shown.map((s) => (
-              <StrategyCard key={s.id} s={s} leading={s.id === leaderId} />
-            ))}
-          </section>
+          {/* 口径声明:12 档同屏平铺时,读者的本能是把战绩加总——但持仓存在
+              大面积重叠(「激进」的持仓是「保守」的超集、「巨鲸精英」是
+              「巨鲸」的子集、A3/A4 与 A1/A2 大面积重叠),加出来的数字会被
+              严重放大。放在全部卡片之前、用醒目的 warn 语义呈现,复用既有
+              ds-callout 组件(单一真相源在 app/globals.css,不写内联硬编码
+              色值)。仅在 ≥2 张卡时渲染——只有一档时不存在"跨档相加"这回事,
+              与下方"仓位明细"的策略筛选 Segmented 同一条既有约定。 */}
+          {shown.length >= 2 ? (
+            <div
+              className="ds-callout ds-callout--warn"
+              style={{ marginBottom: "var(--s-5)" }}
+            >
+              ⚠️
+              各档持仓存在重叠(同一市场可能同时命中多个信号源——例如「激进」的持仓是「保守」的超集、「巨鲸精英」是「巨鲸」的子集)。
+              <strong>
+                每一档的战绩都是「只跟这一档」的独立假设下算出的,不可跨档相加
+              </strong>
+              ;同理,每张卡的「建议跟单额度」也是单档口径——12
+              档一起跟所需的总资金,不是 12 个峰值之和。
+            </div>
+          ) : null}
+
+          {/* 策略卡:按信号族分组(共识 → 异常大额 → 分歧 → 钱包画像,按
+              信息强度递减排列,也是 FAMILY_ORDER 的实现顺序),每组一个小
+              标题 + 一句"这一族在回答什么"。 */}
+          {groups.map((g) => (
+            <section key={g.key} style={{ marginBottom: "var(--s-5)" }}>
+              <div style={{ marginBottom: "var(--s-2)" }}>
+                <div className="ds-label">{g.meta.title}</div>
+                <div className="ds-hint">{g.meta.blurb}</div>
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+                  gap: "var(--s-4)",
+                }}
+              >
+                {g.items.map((s) => (
+                  <StrategyCard key={s.id} s={s} leading={s.id === leaderId} />
+                ))}
+              </div>
+            </section>
+          ))}
 
           {/* 结算净值阶梯曲线 */}
           <section style={{ marginBottom: "var(--s-5)" }}>

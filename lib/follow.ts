@@ -1366,6 +1366,21 @@ export interface FollowStrategyView {
     source: string;
     maxPrice: number;
     freshSec: number;
+    // 12 档扩充(Task 13 展示层)新增:每个字段只被它对应的信号族读取 ——
+    // consensus 用 minWalletScore(A3)/minTotalNetUsd(A4),heavy 用
+    // minSingleFillUsd(必需)+minWalletScore(B3),lopsided 用 minTiltPct,
+    // lone_wolf 用 minWalletScore+minNetUsd,early_winner 用 minNetUsd。
+    // 与 minWallets/minPerWalletUsd(仅 consensus)同一套纪律:某条策略的
+    // params_json 里没有这个字段就是 undefined,不是「阈值为 0」—— 展示层
+    // 必须按 != null 判断要不要画出对应半句,不能直接当数字渲染(那会把
+    // 「未配置」误显示成「阈值 0」)。刻意不收 minPerSideUsd:它对 C1/C2 都是
+    // 纯文档字段(两个 detector 都不读),展示侧没有依据能替它宣称"这是一个
+    // 生效阈值",详见 lib/db.ts 种子里 C1/C2 两条注释。
+    minWalletScore?: number;
+    minTotalNetUsd?: number;
+    minSingleFillUsd?: number;
+    minTiltPct?: number;
+    minNetUsd?: number;
   };
   metrics: StrategyMetrics;
   fund: FundMetrics; // 基金式档案:成立/运行/峰值占用/年化(仅展示,不参与任何决策)
@@ -1408,6 +1423,13 @@ function parseParamsView(
   }
   const numOr = (v: unknown, d: number): number =>
     typeof v === "number" && Number.isFinite(v) ? v : d;
+  // 与 numOr 的区别:这五个字段没有「跨 source 通用」的安全默认值可退 ——
+  // 0 对 minWalletScore/minSingleFillUsd/...都不是「未配置」的诚实占位(0 分/
+  // $0 门槛看着像"什么都能通过"的合法阈值,会被误读成"这条策略真的这么松"),
+  // 只有 undefined 才能诚实表达「这个 source 家族没有这项门槛/这条策略没配」。
+  // 展示层(paramsHint)据此用 != null 判断要不要画出对应半句。
+  const numOrUndef = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) ? v : undefined;
   const maxDev = numOr(
     p.maxEntryDeviationCents,
     DEFAULT_MAX_ENTRY_DEVIATION_CENTS,
@@ -1426,6 +1448,11 @@ function parseParamsView(
     // 价格是 0-1 小数,>1 视为非法,与开仓侧同一判定式。
     maxPrice: maxPrice > 0 && maxPrice <= 1 ? maxPrice : DEFAULT_MAX_PRICE,
     freshSec: freshSec > 0 ? freshSec : DEFAULT_FRESH_SEC,
+    minWalletScore: numOrUndef(p.minWalletScore),
+    minTotalNetUsd: numOrUndef(p.minTotalNetUsd),
+    minSingleFillUsd: numOrUndef(p.minSingleFillUsd),
+    minTiltPct: numOrUndef(p.minTiltPct),
+    minNetUsd: numOrUndef(p.minNetUsd),
   };
 }
 

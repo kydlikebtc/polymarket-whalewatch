@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { openDb } from "./db";
-import type { DisagreementMarket } from "./disagreement";
+import { DEFAULT_DISAGREEMENT, type DisagreementMarket } from "./disagreement";
 import {
   pruneMarketTiltHistory,
   parseStrategyForTest,
@@ -346,6 +346,48 @@ describe("follow_strategies seed v2(Task 12:新增 10 档)", () => {
       db.close();
     },
   );
+
+  // Task 13 复审 Minor:「一边倒分歧」(C1)种子里的 minPerSideUsd/minTiltPct、
+  // 「分歧解除」(C2)种子里的 minPerSideUsd,数值上都抄自 DEFAULT_DISAGREEMENT
+  // (lib/disagreement.ts),此前全靠人工保持同步——DEFAULT_DISAGREEMENT 改了
+  // 而种子没跟着改,不会有任何测试失败,只会在两档的实际行为里悄悄跑偏。这条
+  // 测试把"人工保持同步"变成"测试保持同步"。
+  //
+  // ⚠️ 但两个字段与 DEFAULT_DISAGREEMENT 同步的"重要性"完全不同,断言之前必须
+  // 讲清楚(详见 lib/db.ts 种子定义处 C1/C2 两条注释、lib/sourceLopsided.ts /
+  // lib/sourceResolved.ts 的函数头注释):
+  //   - minPerSideUsd 对 C1、C2 都是纯文档字段——detectLopsidedCandidates 与
+  //     detectResolvedCandidates 都不读 params.minPerSideUsd,它们消费的是
+  //     runFollowCycle 每轮用固定 DEFAULT_DISAGREEMENT 算好、经 ctx.contested/
+  //     ctx.prevTilt 传入的现成结果。就算这里的字面量与 DEFAULT_DISAGREEMENT
+  //     分叉,C1/C2 的实际开仓行为也不会有任何变化——它纯粹是给人看的口径
+  //     说明,写错了只是"文档说谎",不是"行为出错"。
+  //   - minTiltPct 对 C1 是真会被读的实际开关:detectLopsidedCandidates 用
+  //     `params.minTiltPct ?? DEFAULT_DISAGREEMENT.lopsidedTiltPct`——种子里
+  //     配的 0.7 恰好与默认值相等,所以此刻不触发任何行为差异,但两者一旦
+  //     分叉,C1 会真的换一个不同的"一边倒"判定阈值去跑(且低于 0.7 时会
+  //     静默失效,见设计文档「已知设计边界」一节)。
+  // 换言之:C2 的这条断言纯粹是防止文档注释与实际种子值失配;C1 的
+  // minTiltPct 断言则是在保护一个真实生效的行为参数。
+  it("C1/C2 种子里的 minPerSideUsd/minTiltPct 字面量与 DEFAULT_DISAGREEMENT 同步", () => {
+    const db = openDb(":memory:");
+    const paramsOf = (name: string): Record<string, unknown> => {
+      const row = db
+        .prepare("SELECT params_json FROM follow_strategies WHERE name = ?")
+        .get(name) as { params_json: string } | undefined;
+      expect(row, `种子「${name}」未被种入 follow_strategies`).toBeDefined();
+      return JSON.parse(row!.params_json) as Record<string, unknown>;
+    };
+
+    const c1 = paramsOf("一边倒分歧");
+    expect(c1.minPerSideUsd).toBe(DEFAULT_DISAGREEMENT.minPerSideUsd);
+    expect(c1.minTiltPct).toBe(DEFAULT_DISAGREEMENT.lopsidedTiltPct);
+
+    const c2 = paramsOf("分歧解除");
+    expect(c2.minPerSideUsd).toBe(DEFAULT_DISAGREEMENT.minPerSideUsd);
+
+    db.close();
+  });
 });
 
 // Task 9:market_tilt_history 建表 + 读写 + 保留期清理。C2(sourceResolved)
