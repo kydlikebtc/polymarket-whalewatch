@@ -143,4 +143,119 @@ describe("detectConsensusCandidates", () => {
     const bad = { ...params(), minPerWalletUsd: undefined };
     expect(detectConsensusCandidates(trades, bad, ctx())).toHaveLength(0);
   });
+
+  // 回归锁:A3/A4 都不配置时(既有两条生产策略"保守"/"激进"的现状),产出必须
+  // 与本 describe 块里其余用例(从未传 minWalletScore/minTotalNetUsd)完全一致。
+  // 这里显式传 undefined,让"未配置 = 行为不变"这条契约在测试里有名有姓,而不是
+  // 只靠其它用例侧面覆盖到。
+  it("A3/A4 均不配置(显式 undefined)→ 产出与不传这两个字段时完全一致", () => {
+    const trades = [
+      mk({ proxyWallet: "0xA", transactionHash: "0x1" }),
+      mk({ proxyWallet: "0xB", transactionHash: "0x2" }),
+    ];
+    const baseline = detectConsensusCandidates(trades, params(), ctx());
+    const explicit = detectConsensusCandidates(
+      trades,
+      params({ minWalletScore: undefined, minTotalNetUsd: undefined }),
+      ctx(),
+    );
+    expect(explicit).toEqual(baseline);
+    expect(baseline).toHaveLength(1);
+    expect(baseline[0].walletCount).toBe(2);
+    expect(baseline[0].totalNetUsd).toBe(20000);
+  });
+});
+
+describe("detectConsensusCandidates — A3 质量门槛", () => {
+  it("minWalletScore=80:合格钱包中低于 80 分的不计入人数", () => {
+    const smart = new Map([
+      ["0xa", tag({ score: 90 })],
+      ["0xb", tag({ score: 50 })], // 分不够
+    ]);
+    const out = detectConsensusCandidates(
+      [mk({ proxyWallet: "0xA" }), mk({ proxyWallet: "0xB" })],
+      params({ minWalletScore: 80 }),
+      ctx({ smart }),
+    );
+    // 只剩 1 个够格钱包 < minWallets(2) → 无候选
+    expect(out).toHaveLength(0);
+  });
+
+  it("score 为 null(未知)视为不达标 —— 不把未知当合格", () => {
+    const smart = new Map([
+      ["0xa", tag({ score: 90 })],
+      ["0xb", tag({ score: null })],
+    ]);
+    const out = detectConsensusCandidates(
+      [mk({ proxyWallet: "0xA" }), mk({ proxyWallet: "0xB" })],
+      params({ minWalletScore: 80 }),
+      ctx({ smart }),
+    );
+    expect(out).toHaveLength(0);
+  });
+
+  it("两个都够分 → 产出候选,walletCount 只数够分的", () => {
+    const smart = new Map([
+      ["0xa", tag({ score: 90 })],
+      ["0xb", tag({ score: 85 })],
+    ]);
+    const out = detectConsensusCandidates(
+      [mk({ proxyWallet: "0xA" }), mk({ proxyWallet: "0xB" })],
+      params({ minWalletScore: 80 }),
+      ctx({ smart }),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].walletCount).toBe(2);
+  });
+});
+
+describe("detectConsensusCandidates — A4 总额门槛", () => {
+  it("minTotalNetUsd=100000:总净买不足 → 无候选", () => {
+    const out = detectConsensusCandidates(
+      [mk({ proxyWallet: "0xA" }), mk({ proxyWallet: "0xB" })], // 各 $10k
+      params({ minTotalNetUsd: 100_000 }),
+      ctx(),
+    );
+    expect(out).toHaveLength(0);
+  });
+
+  it("总额达标 → 产出候选", () => {
+    const big = { size: 200_000, price: 0.5 }; // $100k/笔
+    const out = detectConsensusCandidates(
+      [mk({ proxyWallet: "0xA", ...big }), mk({ proxyWallet: "0xB", ...big })],
+      params({ minTotalNetUsd: 100_000 }),
+      ctx(),
+    );
+    expect(out).toHaveLength(1);
+  });
+});
+
+describe("detectConsensusCandidates — A3+A4 同配:口径必须同步(边界)", () => {
+  it("全体总额够,但够分子集的总额不够 → 无候选(A4 不能吃 A3 排除前的总额)", () => {
+    // 0xA/0xB 够分(score>=80),各 $10k,合计 $20k —— 单独看 A3:2 个够格钱包
+    // >= minWallets(2),能过 A3。0xC 分不够(null),但净买高达 $200k —— 若
+    // A4 错误地拿"全体钱包"的总额($220k)去判断,会误判为达标;正确实现必须
+    // 拿 A3 过滤后的子集总额($20k)去判断,应判不达标。
+    const smart = new Map([
+      ["0xa", tag({ score: 90 })],
+      ["0xb", tag({ score: 85 })],
+      ["0xc", tag({ score: null })],
+    ]);
+    const trades = [
+      mk({ proxyWallet: "0xA", transactionHash: "0x1" }), // $10k
+      mk({ proxyWallet: "0xB", transactionHash: "0x2" }), // $10k
+      mk({
+        proxyWallet: "0xC",
+        transactionHash: "0x3",
+        size: 400_000,
+        price: 0.5,
+      }), // $200k,但 score 不够分
+    ];
+    const out = detectConsensusCandidates(
+      trades,
+      params({ minWalletScore: 80, minTotalNetUsd: 100_000 }),
+      ctx({ smart }),
+    );
+    expect(out).toHaveLength(0);
+  });
 });
