@@ -1636,6 +1636,16 @@ npm run typecheck # 零类型错误
 
 ---
 
+## 已知设计边界（非 bug，实施中发现）
+
+- **C1 的 `minTiltPct` 配低于 0.7 时会静默失效**：`ctx.contested` 恒由 `detectDisagreement(trades, smart, DEFAULT_DISAGREEMENT)` 算出，`sides[0].formationTs` 因此**永远锚定在固定的 0.7 阈值**上，不会随某条策略自己的低阈值重算。
+  - 后果：策略配 `minTiltPct: 0.6` 时，那些只跨过 0.6 没跨过 0.7 的市场，`formationTs` 是 `null` → fail-closed → 这一档静默不开仓。
+  - 安全性已核实：不会误开仓也不会用错价格（`formationTs` 非空时仍是一次真实的历史跨线时刻，新鲜度闸门只会偏保守）。与全仓库「宁可漏跟不可误开」的风控姿态一致。
+  - 配**高于** 0.7（如 0.9）完全没有这个问题，已有专门测试覆盖。种子里 C1 配的就是 0.7，不触发。
+  - 若将来真要支持低阈值 C1，得让 `runFollowCycle` 按各策略的 `minTiltPct` 分别算 `contested`（成本：每策略一次 `detectDisagreement` + 重放）。
+
+---
+
 ## 技术债 backlog（审查提出、本批不做）
 
 - **`detectDisagreement` 里 `trades.filter(...)` 的 O(N×K)**：`tiltFormationTs` 需要每个 contested 市场的 trades 子集，现在是在判定 contested 之后用 `trades.filter(t => t.conditionId === conditionId)` 现筛 —— 每个 contested 市场扫一遍全窗口，总体 O(N×K)（K = contested 市场数）。当前 K 是个位数、N 受深抓页数上限约束，多的是常数因子不是复杂度跃迁，可接受。若将来 K 或 N 变大，在主聚合循环里顺手建一个 `Map<conditionId, Trade[]>` 可摊薄到 O(N)。
