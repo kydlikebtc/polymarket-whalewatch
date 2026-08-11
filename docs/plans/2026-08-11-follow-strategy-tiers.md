@@ -1638,6 +1638,9 @@ npm run typecheck # 零类型错误
 
 ## 技术债 backlog（审查提出、本批不做）
 
+- **`detectDisagreement` 里 `trades.filter(...)` 的 O(N×K)**：`tiltFormationTs` 需要每个 contested 市场的 trades 子集，现在是在判定 contested 之后用 `trades.filter(t => t.conditionId === conditionId)` 现筛 —— 每个 contested 市场扫一遍全窗口，总体 O(N×K)（K = contested 市场数）。当前 K 是个位数、N 受深抓页数上限约束，多的是常数因子不是复杂度跃迁，可接受。若将来 K 或 N 变大，在主聚合循环里顺手建一个 `Map<conditionId, Trade[]>` 可摊薄到 O(N)。
+  （权衡的另一头是内存：预存要为**所有**市场存一份数组，而大多数市场最终不会 contested。）
+
 - **抽 `clampFraction(raw, default)` 共享校验**：`parseStrategy`（开仓侧）与 `parseParamsView`（展示侧）各自重新实现了一遍 `maxEntryDeviationCents` / `maxPrice` / `freshSec` 的边界校验 —— 同一判定式、同一常量，两处独立代码，靠注释互相提醒"必须同源"。字段加到三个就该抽了：抽出来能把「两侧必须同步」从**文档承诺**变成**结构保证**。现状靠两组测试（`parseStrategy` 用例 + `buildFollowView` 夹具）兜底，漂移要跑测试才发现。
   （这条约定踩过坑：展示侧若用自己的默认值，界面会显示"无护栏"而实际护栏生效 —— 看板骗人比没看板更糟。）
 
