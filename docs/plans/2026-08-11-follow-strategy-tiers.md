@@ -387,7 +387,7 @@ export function detectConsensusCandidates(
   const { minWallets, minPerWalletUsd } = params;
   if (minWallets == null || minPerWalletUsd == null) {
     console.warn(
-      "[follow/consensus] minWallets/minPerWalletUsd 缺失,本策略本轮无候选",
+      `[follow] strategy ${params.id} (consensus) minWallets/minPerWalletUsd 缺失,本策略本轮无候选`,
     );
     return [];
   }
@@ -399,7 +399,7 @@ export function detectConsensusCandidates(
   const dropped = groups.length - uncontested.length;
   if (dropped > 0) {
     console.log(
-      `[follow/consensus] 分歧互斥:剔除 ${dropped} 个单边共识组(聪明钱两边都买 → 不跟)`,
+      `[follow] strategy ${params.id} 分歧互斥:剔除 ${dropped} 个单边共识组(聪明钱两边都买 → 不跟)`,
     );
   }
   const fresh = uncontested.filter(
@@ -408,7 +408,7 @@ export function detectConsensusCandidates(
   const stale = uncontested.length - fresh.length;
   if (stale > 0) {
     console.log(
-      `[follow/consensus] 新鲜度闸门:跳过 ${stale} 个陈旧共识组(formationTs 距 now > ${params.freshSec}s),不补开历史`,
+      `[follow] strategy ${params.id} 新鲜度闸门:跳过 ${stale} 个陈旧共识组(formationTs 距 now > ${params.freshSec}s),不补开历史`,
     );
   }
   return fresh.map((g) => ({
