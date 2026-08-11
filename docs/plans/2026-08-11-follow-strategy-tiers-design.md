@@ -156,7 +156,8 @@ const DETECTORS: Record<FollowSourceKind, Detector> = { consensus, heavy, ... }
 | consensus                | `g.formationTs`（第 N 个合格钱包跨线时刻）            | 现成                                                          |
 | heavy                    | 那一笔成交的 `t.timestamp`                            | 单笔信号，天然精确                                            |
 | lone_wolf / early_winner | 该钱包净买**跨过门槛**的时刻                          | 新写，借鉴 `ConsensusWallet.qualifiedTs`（`consensus.ts:27`） |
-| lopsided / resolved      | **`tiltPct` 首次跨过 `lopsidedTiltPct` 的时刻**（D5） | 新写，需给 `DisagreementSide` 补字段                          |
+| lopsided                 | **`tiltPct` 首次跨过 `lopsidedTiltPct` 的时刻**（D5） | 新写，需给 `DisagreementSide` 补字段                          |
+| resolved                 | **`ctx.nowSec`**（实施中改定，见下方修订）            | 解除是本轮才观察到的事件，不存在更早的「形成时刻」            |
 
 **lopsided 这一格是必须小心的坑。** `DisagreementMarket` 目前只有市场级的 `firstTs`/`lastTs`
 （`disagreement.ts:36`），而 `lastTs` 正是 `follow.ts:139` 长注释里明确警告过的东西：
@@ -172,7 +173,16 @@ C1 若直接拿 `lastTs` 当 `formationTs`，等于把一个已经付出代价�
 - 「本边成立时刻」→ `formationTs` = 10:00，14:00 检测到时已过 4 小时，**新鲜度闸门（900s）全部拦掉，C1 是空档**
 - 「倾斜形成时刻」→ `formationTs` = 14:00，信号新鲜，正常开仓
 
-代价是要按时序重放两边的累计质量权重。C2 直接复用同一套重放。
+代价是要按时序重放两边的累计质量权重。
+
+> **⚠️ C2 不复用这套重放（实施中改定）。** 原设计写的是「C2 直接复用同一套重放」，实施时发现走不通：C2 要检测的是「少数边转净卖」，而少数边一旦转净卖就不再构成 side、市场整个从 `ctx.contested` 消失 —— 重放的前提（该市场仍是 contested）在 C2 触发的那一刻恰好不成立。
+>
+> **C2 最终用 `formationTs = ctx.nowSec`**：解除是本轮才观察到的事件，不存在更早的「形成时刻」。这是唯一站得住脚的取值，但有两处代价（已写进 `lib/sourceResolved.ts` 的函数头注释）：
+>
+> 1. **进场偏离护栏对 C2 近乎失效** —— `formation_ts` 恒等于 `entry_ts`，`fetchFormationPrice` 取到的价格约等于 `entry`，`deviationCents` 几乎恒为 0。这道护栏只在形成价取价失败、回退到 `referencePrice` 时才真正起作用。
+> 2. **markout 不可跨族比较** —— 其余五族的 `formationTs` 可早于 `entry_ts` 最多 `freshSec`，其 `markout_30m/2h` 天然包含「检测+决策延迟成本」；C2 因两者相等，测的纯粹是开仓后漂移。做「哪一族形成后走势最好」的分析时，直接比 C2 和别族是苹果对橘子。
+>
+> **不要照着上面那句「复用同一套重放」去改 `sourceResolved.ts`** —— 那会精确复现已经用真实反例排除掉的错误实现。
 
 ---
 
