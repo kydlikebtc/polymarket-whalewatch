@@ -207,10 +207,30 @@ function parseStrategy(
   }
 
   // 护栏/价格/新鲜度:显式合法值生效,缺失或非法退默认(既有库无这些字段,靠这里
-  // 兜底,无需数据迁移)。
+  // 兜底,无需数据迁移)。「字段缺失」与「字段存在但非法」区别对待:前者是正常
+  // 情况(既有库没有这些字段),静默退默认;后者留痕 —— 最典型的现实成因是配置
+  // 手滑(比如把 0-1 小数的 maxPrice 误写成百分数 50),而 maxPrice 这道护栏
+  // 存在的唯一理由就是拦住 DEFAULT_MAX_PRICE 注释里说的那类高价清扫单,配置
+  // 错误此时恰好静默落回护栏本该拦住的区间。Task 4 会直接消费这里吐出的
+  // 「已消毒」值、不再重新校验,此刻不留痕以后就永远查不出这个值被改写过。
   const maxDev = numOr(p.maxEntryDeviationCents);
   const maxPrice = numOr(p.maxPrice);
+  if (
+    p.maxPrice !== undefined &&
+    !(maxPrice != null && maxPrice > 0 && maxPrice <= 1)
+  ) {
+    console.warn(
+      `[follow] strategy ${id}: maxPrice=${JSON.stringify(p.maxPrice)} 非法` +
+        `(需 0<x<=1 的小数),已退默认 ${DEFAULT_MAX_PRICE}`,
+    );
+  }
   const freshSec = numOr(p.freshSec);
+  if (p.freshSec !== undefined && !(freshSec != null && freshSec > 0)) {
+    console.warn(
+      `[follow] strategy ${id}: freshSec=${JSON.stringify(p.freshSec)} 非法` +
+        `(需 >0 的秒数),已退默认 ${DEFAULT_FRESH_SEC}`,
+    );
+  }
 
   return {
     id,
@@ -317,14 +337,24 @@ export async function runFollowCycle(
     // 双边都不跟。
     const contested = detectDisagreement(trades, smart, DEFAULT_DISAGREEMENT);
     for (const s of strategies) {
-      // StrategyParams.minWallets/minPerWalletUsd 现在是可选的(其它 source 不
-      // 需要它们),但这段代码是 consensus 专属检测,尚未接入 detector 注册表。
-      // parseStrategy 已保证 source==="consensus" 时这两个字段必有值,非
-      // consensus 源本不该跑到这里 —— 这里只是把类型收窄成 ConsensusOptions
-      // 要求的 number,不改变任何运行时行为。Task 4 接入 detector 注册表后
+      // 这段代码是 consensus 专属检测,尚未接入 detector 注册表(Task 4)。守卫
+      // 必须显式按 source 门禁,不能只判 minWallets/minPerWalletUsd 是否非空 ——
+      // parseStrategy 对这两个字段的提取不看 source(它们本就是"通用字段,各
+      // detector 自己决定要不要用"的设计),一条 source:"heavy" 但 params_json
+      // 里残留了这两个字段的策略(比如从 consensus 模板复制粘贴没删干净)会有
+      // 非空的 minWallets/minPerWalletUsd,仅判空拦不住它,会被误当成 consensus
+      // 送进 detectConsensus。今天摸不到(生产只有两条合法 consensus 策略),但
+      // Task 12 要种 10 条非 consensus 策略,这道守卫会从「永不触发」变成「真的
+      // 在挡东西」。非 consensus 源交给各自 detector 处理,Task 4 接入注册表后
       // 整段(含这个守卫)移除。
       const { minWallets, minPerWalletUsd } = s;
-      if (minWallets == null || minPerWalletUsd == null) continue;
+      if (
+        s.source !== "consensus" ||
+        minWallets == null ||
+        minPerWalletUsd == null
+      ) {
+        continue;
+      }
       const groups = detectConsensus(trades, smart, {
         minWallets,
         minPerWalletUsd,

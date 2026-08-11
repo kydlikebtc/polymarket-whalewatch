@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   positionShares,
   positionRealizedPnl,
@@ -970,5 +970,60 @@ describe("parseStrategy — source/maxPrice/freshSec 扩展", () => {
       }),
     );
     expect(s!.maxPrice).toBe(0.95);
+  });
+
+  // 「字段缺失」与「字段存在但非法」必须区别对待:前者静默(既有库没有这些
+  // 字段,是正常情况),后者留痕(最典型的现实成因是配置手滑,比如把 0-1 小数
+  // 的 maxPrice 误写成百分数 —— 而这恰好是这道护栏本该拦住的区间,静默退默认
+  // 会让配置错误查无痕迹)。
+  it("maxPrice 字段存在但非法(如手滑写成 50)→ console.warn 留痕并注明退默认值", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const s = parseStrategyForTest(
+      7,
+      JSON.stringify({
+        minWallets: 2,
+        minPerWalletUsd: 5000,
+        sizeUsd: 500,
+        maxPrice: 50,
+      }),
+    );
+    expect(s!.maxPrice).toBe(0.95);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("maxPrice=50"),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("0.95"));
+    warnSpy.mockRestore();
+  });
+
+  it("freshSec 字段存在但非法(<=0)→ console.warn 留痕并注明退默认值", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const s = parseStrategyForTest(
+      8,
+      JSON.stringify({
+        minWallets: 2,
+        minPerWalletUsd: 5000,
+        sizeUsd: 500,
+        freshSec: -1,
+      }),
+    );
+    expect(s!.freshSec).toBe(900);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("freshSec=-1"),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("maxPrice/freshSec 字段缺失(未提供)→ 静默退默认,不留痕", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const s = parseStrategyForTest(
+      9,
+      JSON.stringify({ minWallets: 2, minPerWalletUsd: 5000, sizeUsd: 500 }),
+    );
+    expect(s!.maxPrice).toBe(0.95);
+    expect(s!.freshSec).toBe(900);
+    // 字段缺失是既有库(两条生产策略)的常态,不该被当成异常留痕 —— 若这里
+    // 意外 warn,说明「缺失」和「非法」的判定条件混在了一起。
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 });
