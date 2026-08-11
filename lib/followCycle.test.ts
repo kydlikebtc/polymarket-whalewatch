@@ -1593,9 +1593,15 @@ describe("runFollowCycle — 轮内缓存(同 asset 只取一次价)", () => {
 describe("runFollowCycle — 多 source 集成(注册表按 source 分派)", () => {
   it("heavy 策略残留 consensus 专属字段不会误走共识路径,consensus 策略正常开仓", async () => {
     const db = openDb(":memory:");
-    // 模拟运营从 consensus 模板复制粘贴新增 heavy 档,没删干净残留字段。
-    // DETECTORS.heavy 目前是占位实现(() => [],真正实现在 Task 6),必须验证
-    // 它就是恒无候选,不会因为这两个残留字段被送进 detectConsensus。
+    // 模拟运营从 consensus 模板复制粘贴新增 heavy 档,没删干净残留字段
+    // (minWallets/minPerWalletUsd),但没抄到 heavy 真正需要的
+    // minSingleFillUsd。DETECTORS.heavy 现在是 Task 6 落地的真实实现
+    // (detectHeavyCandidates,见 lib/sourceHeavy.ts)—— 这条测试仍然通过,
+    // 但通过的原因已经变了:不再是"占位实现恒空",而是注册表按 source 严格
+    // 分派到 detectHeavyCandidates 后,该函数发现自己的必需参数
+    // minSingleFillUsd 缺失(残留的 minWallets/minPerWalletUsd 对它没有任何
+    // 意义,它压根不读这两个字段)—— 按自身的必需参数校验产出空候选 +
+    // console.warn,而不是被误当成 consensus 送进 detectConsensus。
     db.prepare(
       "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
     ).run(
@@ -1655,6 +1661,15 @@ describe("runFollowCycle — 多 source 集成(注册表按 source 分派)", () 
 describe("runFollowCycle — market_tilt_history 跨轮读写(C2 分歧解除,读写顺序核心不变量)", () => {
   it("第一轮 contested 市场只写快照不开仓;第二轮少数边转净卖 → 靠上一轮快照产出候选并开仓", async () => {
     const db = openDb(":memory:");
+    // Task 12(策略种子 v2)起,openDb(":memory:") 也会一次性种进全部 12 条
+    // 生产策略(含另一条同为 source:"resolved" 的「分歧解除」)。这条用例
+    // 断言的是 r1.opened/r2.opened 的精确计数,验证的是 C2 读写顺序这一个
+    // 不变量 —— 不该被"生产种子里恰好也有一条 resolved 策略,对同一市场独立
+    // 判定出同一个候选"这件事干扰(两条 resolved 策略给的 params 不同名但
+    // 判据等价,会各开一仓,把 opened 计数翻倍)。清空自动种入的策略,只留下
+    // 下面手工插入的这一条,把测试隔离回"只有这一个 source:resolved 策略"
+    // 的场景。
+    db.prepare("DELETE FROM follow_strategies").run();
     db.prepare(
       "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
     ).run(
@@ -1788,6 +1803,15 @@ describe("runFollowCycle — market_tilt_history 读写顺序对抗测试(mutati
 
   it("市场首次变 contested:少数边净买者子集够格入选(会被写入),但少数边现金流本轮已满足认输 —— 正确顺序(读在写之前)不产出虚假候选", async () => {
     const db = openDb(":memory:");
+    // Task 12(策略种子 v2)起,openDb(":memory:") 也会一次性种进全部 12 条
+    // 生产策略。这条用例断言 r.opened 精确等于 0,验证的是"prevTilt 首次
+    // 观察必为空"这一个不变量 —— 但下面构造的 trades 里 w1(score 90)单独
+    // 净买 Yes $10k,同时满足生产种子「高分独狼」(lone_wolf,score>=90 且
+    // net>=$10k)的判据,且 D 族不受分歧互斥约束(见 lib/sourceWallet.ts),
+    // 会在与本测试意图无关的另一条策略上开出 1 仓,把 r.opened 从 0 污染成
+    // 1。清空自动种入的策略,只留下面手工插入的这一条,把测试隔离回"只有
+    // 这一个 source:resolved 策略"的场景。
+    db.prepare("DELETE FROM follow_strategies").run();
     db.prepare(
       "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
     ).run(
@@ -1898,6 +1922,13 @@ describe("runFollowCycle — market_tilt_history 读写顺序对抗测试(mutati
 describe("runFollowCycle — D2(early_winner)钱包预取", () => {
   it("wallet_candidates 有 early_winner 渠道的行 → 能读到,D2 策略据此开仓;非 early_winner 渠道的行不算数", async () => {
     const db = openDb(":memory:");
+    // Task 12(策略种子 v2)起,openDb(":memory:") 会自动种入一条同名的生产
+    // 策略「早期赢家跟投」—— 下面这条 INSERT 若不先清场会直接撞
+    // follow_strategies.name 的 UNIQUE 约束报错。这条用例只关心它自己插入
+    // 的这一条(后面按名字查 strat.id 精确 scoped 查询,不受其它策略干扰),
+    // 清空自动种入的策略,腾出这个名字,也避免其它生产策略在同一批 trades
+    // 上产出无关候选。
+    db.prepare("DELETE FROM follow_strategies").run();
     db.prepare(
       "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
     ).run(
@@ -1976,6 +2007,15 @@ describe("runFollowCycle — D2(early_winner)钱包预取", () => {
     // ALTER TABLE 等既有 DDL 语句同一套写法。
     db.prepare("DROP TABLE wallet_candidates").run();
 
+    // Task 12(策略种子 v2)起,openDb(":memory:") 会自动种入一条同名的生产
+    // 策略「早期赢家跟投」—— 下面这条 INSERT 若不先让出这个名字会直接撞
+    // follow_strategies.name 的 UNIQUE 约束报错。注意这里只删这一条同名的,
+    // 不是清空全表(DELETE FROM follow_strategies 不加 WHERE):本用例下面
+    // 的断言明确依赖种子自带的「激进」consensus 策略仍然存在且启用(见下面
+    // "种子自带的「激进」consensus 策略"那条注释与 consensusPos 断言)。
+    db.prepare(
+      "DELETE FROM follow_strategies WHERE name = '早期赢家跟投'",
+    ).run();
     db.prepare(
       "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
     ).run(
