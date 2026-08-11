@@ -1375,3 +1375,189 @@ describe("runFollowCycle 执行滑点归因(fetchBook)", () => {
     expect(row.exec_price).toBeNull();
   });
 });
+
+// --- Task 4:DETECTORS 注册表接线 —— maxPrice 闸门 + 轮内缓存 + 多 source 集成 ---
+
+// maxPrice 闸门:拦的是 entry(我们的实际入场价),不是聪明钱的成本 referencePrice。
+// 用 0.9 价位的成交构造 referencePrice=0.9,让 entry 落在偏离护栏阈内(默认 10¢)
+// 的同时可控地贴住/穿越 maxPrice(默认 0.95)—— 若沿用别处 0.6 的默认成交价,
+// entry 必须 >0.95 才碰得到 maxPrice,但那样偏离基准(0.6)早超了 10¢ 偏离护栏,
+// 分不清究竟是哪道闸拦下的开仓。
+describe("runFollowCycle — maxPrice 闸门", () => {
+  const highRefTrades = (): Trade[] => [
+    trade({
+      proxyWallet: "w1",
+      transactionHash: "h1",
+      size: 10000,
+      price: 0.9,
+      timestamp: 1000,
+    }),
+    trade({
+      proxyWallet: "w2",
+      transactionHash: "h2",
+      size: 10000,
+      price: 0.9,
+      timestamp: 1000,
+    }),
+  ];
+
+  it("entry 高于 maxPrice → 不开仓", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: highRefTrades() }),
+      getSmart: smart,
+      // 0.96 vs referencePrice 0.9:偏离 6¢ < 默认偏离护栏 10¢(不会被那道闸拦),
+      // 但 0.96 > 默认 maxPrice 0.95 → 应被价格上限单独拦下。
+      fetchPrice: async () => 0.96,
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBe(0);
+    const cnt = db
+      .prepare("SELECT COUNT(*) AS n FROM follow_positions")
+      .get() as { n: number };
+    expect(cnt.n).toBe(0);
+    db.close();
+  });
+
+  it("entry 等于 maxPrice → 照常开仓(边界:严格 >)", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: highRefTrades() }),
+      getSmart: smart,
+      fetchPrice: async () => 0.95, // == maxPrice,严格 `>` 判定不拦
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const pos = db
+      .prepare(
+        "SELECT entry_price FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as { entry_price: number };
+    expect(pos.entry_price).toBe(0.95);
+    db.close();
+  });
+});
+
+// 轮内缓存:12 档并行下同一 asset 会被多条策略反复取价(参数完全相同的
+// fetchPrice(asset, nowSec) 请求)。createPromiseCache 缓存的是 PROMISE,第一个
+// 发起后其余直接拿同一个 in-flight promise,一次往返都不多花(见 lib/promiseCache.ts)。
+describe("runFollowCycle — 轮内缓存(同 asset 只取一次价)", () => {
+  const smart3 = (): Map<string, SmartTag> =>
+    new Map([
+      ["w1", { score: 80, winRate: 0.7, netPnl: 1, isWhitelist: true }],
+      ["w2", { score: 75, winRate: 0.65, netPnl: 1, isWhitelist: true }],
+      ["w3", { score: 70, winRate: 0.6, netPnl: 1, isWhitelist: true }],
+    ]);
+
+  it("同一 asset 被多条策略命中时 fetchPrice 只调用一次", async () => {
+    const db = openDb(":memory:");
+    // 3 个钱包各净买 $10k @0.5(size=20000)→ 同时满足种子「保守」(3×$10k)与
+    // 「激进」(2×$5k)两条策略的阈值,两条策略各自对同一组(同一 asset=tok)
+    // 产出一个候选 —— 开仓阶段会为这两个候选分别请求现价,若无缓存则请求两次。
+    const trades = [
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "h1",
+        size: 20000,
+        price: 0.5,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "h2",
+        size: 20000,
+        price: 0.5,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w3",
+        transactionHash: "h3",
+        size: 20000,
+        price: 0.5,
+        timestamp: 1000,
+      }),
+    ];
+    let calls = 0;
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart3,
+      fetchPrice: async () => {
+        calls++;
+        return 0.55;
+      },
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(calls).toBe(1);
+    expect(r.opened).toBe(2);
+    db.close();
+  });
+});
+
+// 多 source 集成:注册表按 source 查表分派,天然不会被 params_json 里残留的
+// consensus 专属字段(minWallets/minPerWalletUsd)误导。这条测试锁的是 Task 3
+// 修掉的真实缺口(修复前实测会静默落一条 strategy_id=heavy 的仓位):当时的临时
+// 守卫只判 minWallets/minPerWalletUsd 是否非空,一条 source:"heavy" 但从
+// consensus 模板复制粘贴、残留了这两个字段的策略会被误当成 consensus 送进
+// detectConsensus。Task 4 的 DETECTORS 注册表按 source 严格查表分派,不检查这
+// 两个字段是否存在,从设计上杜绝这类误判,不再依赖一道专门补丁式的守卫。
+describe("runFollowCycle — 多 source 集成(注册表按 source 分派)", () => {
+  it("heavy 策略残留 consensus 专属字段不会误走共识路径,consensus 策略正常开仓", async () => {
+    const db = openDb(":memory:");
+    // 模拟运营从 consensus 模板复制粘贴新增 heavy 档,没删干净残留字段。
+    // DETECTORS.heavy 目前是占位实现(() => [],真正实现在 Task 6),必须验证
+    // 它就是恒无候选,不会因为这两个残留字段被送进 detectConsensus。
+    db.prepare(
+      "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
+    ).run(
+      "重仓单笔(占位)",
+      JSON.stringify({
+        source: "heavy",
+        minWallets: 2,
+        minPerWalletUsd: 5000,
+        sizeUsd: 500,
+        exitRule: "settlement",
+      }),
+      1000,
+    );
+    const trades = [
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "h1",
+        size: 10000,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "h2",
+        size: 10000,
+        timestamp: 1000,
+      }),
+    ];
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart,
+      fetchPrice: async () => 0.63,
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    // 种子「激进」(source 缺省 → consensus)命中并开仓。
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const heavyStrategy = db
+      .prepare("SELECT id FROM follow_strategies WHERE name = ?")
+      .get("重仓单笔(占位)") as { id: number };
+    const heavyPositions = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM follow_positions WHERE strategy_id = ?",
+      )
+      .get(heavyStrategy.id) as { n: number };
+    expect(heavyPositions.n).toBe(0);
+    db.close();
+  });
+});

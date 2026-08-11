@@ -1,5 +1,11 @@
 import type { DisagreementMarket } from "./disagreement";
 import type { SmartTag } from "./smartWallets";
+// 值导入(非 type-only):DETECTORS 注册表要把这个函数装进去。方向是
+// followCandidate → sourceConsensus 单向值依赖;反向(sourceConsensus 顶部对本
+// 文件的 import)全部是 `import type`,编译期擦除,不构成运行时环——用 madge
+// 在改造后跑过 `npx madge --circular --extensions ts .`确认过,同 consensus.ts
+// 顶部对 marketSignals.ts 循环导入风险的既有处理注释同一套论证。
+import { detectConsensusCandidates } from "./sourceConsensus";
 import type { Trade } from "./types";
 
 // 纸面跟单的统一候选契约。所有信号源产出这一个结构,开仓循环只认它 ——
@@ -125,3 +131,22 @@ export interface StrategyParams {
   // lone_wolf / early_winner 专属
   minNetUsd?: number;
 }
+
+/**
+ * source → detector 注册表。runFollowCycle 按每条策略的 `source` 字段查表分派,
+ * 不再 if/else 硬编码族。新增信号源 = 写一个纯函数(签名同 Detector)+ 在这里
+ * 加一行,开仓代码(runFollowCycle 的护栏/查重/费用/执行层那一大段)零改动。
+ *
+ * 后续 Task 逐个把占位实现换成真实 detector:heavy(Task 6)、lopsided(Task 8)、
+ * resolved(Task 9)、lone_wolf(Task 10)、early_winner(Task 11)。占位期间这些
+ * source 恒无候选(不是「未接入报错」,是「暂不产出信号」)—— 种子(Task 12)
+ * 落地前不会有策略实际使用这些 source,故此刻空数组是安全默认。
+ */
+export const DETECTORS: Record<FollowSourceKind, Detector> = {
+  consensus: detectConsensusCandidates,
+  heavy: () => [],
+  lopsided: () => [],
+  resolved: () => [],
+  lone_wolf: () => [],
+  early_winner: () => [],
+};
