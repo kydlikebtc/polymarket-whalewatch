@@ -1649,6 +1649,10 @@ npm run typecheck # 零类型错误
 
 ## 已知设计边界（非 bug，实施中发现）
 
+- **D2 只跟白名单内的 early_winner 钱包，不跟池外候选**：`wallet_candidates` 里 `channel='early_winner'` 的行既有池外候选（发现了但没过准入闸门），也有池内成员的行为标注。D2 要求钱包同时在 `ctx.smart` 里 —— 因为 MM 判定本就依赖 `SmartTag`，没有 tag 无法判定，且 `sourceHeavy` 也把「非白名单」与「做市商」算作同一道闸。
+  - 更根本的理由：**准入闸门是这个系统的红线**。历史教训是发现渠道③曾「绕闸」（$1.9k 的 culture 榜钱包直接进白名单，评审抓到的 high 级缺陷，后来加了质量闸 + 迁移清洗强制重播种）。D2 若对池外候选开仓，等于从跟单侧再开一个绕闸后门。
+  - 代价：D2 语义收窄为「白名单里那些曾在 ≤40¢ 且距结算 ≥24h 押中赢家的钱包」。**与 `score` 正交这个设计初衷仍然成立** —— score 的三个分量（绝对利润 / 资金效率 / 胜率）里确实没有「敢在便宜时下注」这一维。
+
 - **C1 的 `minTiltPct` 配低于 0.7 时会静默失效**：`ctx.contested` 恒由 `detectDisagreement(trades, smart, DEFAULT_DISAGREEMENT)` 算出，`sides[0].formationTs` 因此**永远锚定在固定的 0.7 阈值**上，不会随某条策略自己的低阈值重算。
   - 后果：策略配 `minTiltPct: 0.6` 时，那些只跨过 0.6 没跨过 0.7 的市场，`formationTs` 是 `null` → fail-closed → 这一档静默不开仓。
   - 安全性已核实：不会误开仓也不会用错价格（`formationTs` 非空时仍是一次真实的历史跨线时刻，新鲜度闸门只会偏保守）。与全仓库「宁可漏跟不可误开」的风控姿态一致。
