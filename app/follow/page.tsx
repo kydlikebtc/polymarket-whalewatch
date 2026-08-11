@@ -2,7 +2,8 @@
 
 // 共识跟单 · 纸面模拟看板。只读消费 /api/follow —— 现价进场、持有到结算、固定
 // $/信号、仅结算盈亏(不做浮盈)。设计系统组件/类全部复用 app/ui.tsx + globals.css,
-// 净值曲线用内联 SVG 阶梯折线(无图表依赖),多策略靠实线/虚线区分而非颜色。
+// 净值曲线用内联 SVG 阶梯折线(无图表依赖),多策略靠"线型 × 颜色"组合区分
+// (12 档同屏叠画,仅线型不够用,颜色也要真正承担区分职责,见 STRATEGY_STROKES)。
 
 import {
   useCallback,
@@ -462,14 +463,32 @@ function marketLabel(p: FollowPositionRow): string {
 
 /* ---------------------------------------------------- equity curve (SVG) */
 
-// 多策略叠加:主要靠虚实(dash)区分,颜色只做辅助且刻意避开绿/红(那是盈亏语义)。
-// 全部取设计系统 token,dark 模式随 token 走。
-const STRATEGY_STROKES = [
-  { dash: undefined as string | undefined, color: "var(--brand-500)" },
-  { dash: "7 4", color: "var(--n-500)" },
-  { dash: "2 4", color: "var(--brand-700)" },
-  { dash: "10 4 2 4", color: "var(--n-700)" },
+// 多策略叠加(最多 12 档同屏):4 色 × 3 线型 = 12 种两两不重复的组合,颜色
+// 刻意避开 up/down(绿/红是盈亏语义,图例里紧挨着的净值数字就用这两色,撞了
+// 会让读者误以为线条颜色代表盈亏)。全部取设计系统 token,不写死 hex ——
+// globals.css 是色值单一真相源。
+//
+// 只有 3 种线型,4 条一组共享同一线型,所以颜色不再只是"辅助":同线型的 4 条
+// 之间,颜色是唯一的区分依据。为了不让色盲用户在"相邻"两档之间只能靠色相
+// 判断,下面按"颜色外层、线型内层"的顺序展开(COLORS.flatMap(color =>
+// DASHES.map(dash => ...))),这样任意相邻下标(i, i+1)之间线型必然不同
+// (同色的 3 条内部靠线型区分;跨色边界处线型和颜色一起变)——线型差异始终
+// 能独立承担"这是两条不同的线"这件事,颜色只在跨过 3 条之外时才成为唯一
+// 依据。
+const STRATEGY_DASHES: (string | undefined)[] = [
+  undefined, // 实线
+  "7 4", // 长虚线
+  "10 4 2 4", // 虚点相间(点状"2 4"在阶梯图的短线段上容易视觉消失,弃用)
 ];
+const STRATEGY_COLORS = [
+  "var(--brand-500)", // 电蓝 · 品牌主色
+  "var(--n-900)", // 近黑 · 最强中性色
+  "var(--warn-700)", // 深琥珀 · 与蓝/黑拉开色相,兼容色觉差异
+  "var(--n-500)", // 中灰 · 弱中性色,与近黑靠明度而非色相区分
+];
+const STRATEGY_STROKES = STRATEGY_COLORS.flatMap((color) =>
+  STRATEGY_DASHES.map((dash) => ({ dash, color })),
+);
 const strokeFor = (i: number) => STRATEGY_STROKES[i % STRATEGY_STROKES.length];
 
 type CurveSeries = {
@@ -1733,8 +1752,9 @@ export default function FollowPage() {
           🧾 共识跟单 · 纸面模拟
         </h1>
         <div className="ds-hint">
-          现价进场 · 只跟 15 分钟内新形成的共识 · 持有到结算 · 固定 $/信号 ·
-          仅结算盈亏(不做浮盈)·
+          现价进场 ·
+          跟随共识/异常大额/分歧/钱包画像四类信号,新鲜度窗口因档而异(默认 15
+          分钟,详见各卡片) · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)·
           按报价快照纸面成交,不含盘口执行成本(价差/深度),盈亏偏乐观;「执行滑点」列为该成本的实测估计
           {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
           {loading ? (
@@ -1877,10 +1897,15 @@ export default function FollowPage() {
                 value={posTab}
                 onChange={setPosTab}
               />
-              {/* 只有一条策略时筛选没有意义,不渲染 */}
+              {/* 只有一条策略时筛选没有意义,不渲染。12 档上限时这里最多
+                  13 个胶囊(全部策略 + 12 档,含「早期赢家跟投」这种 6 字
+                  策略名),桌面宽度下会超出页面 max-width:1180px 的容器——
+                  用 ds-segmented--wrap 修饰类换行,不改共享基类(见
+                  globals.css 该类注释)。 */}
               {shown.length >= 2 ? (
                 <Segmented<number>
                   ariaLabel="按策略筛选仓位"
+                  className="ds-segmented--wrap"
                   options={[
                     { label: "全部策略", value: FILTER_ALL },
                     ...shown.map((s) => ({ label: s.name, value: s.id })),

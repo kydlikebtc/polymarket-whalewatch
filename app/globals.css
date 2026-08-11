@@ -371,6 +371,21 @@ h3 {
   box-shadow: var(--shadow-sm);
 }
 
+/* Opt-in modifier: wrap onto multiple rows on desktop instead of overflowing
+   the page. The base .ds-segmented above stays a plain non-wrapping
+   inline-flex — every other call site (2-5 short options) always fits one
+   row, so wrapping unconditionally would be dead weight there and risks
+   subtly changing their layout. Only an instance with many/long options
+   (e.g. /follow's per-strategy filter, up to 13 pills) needs this; opt in
+   via <Segmented className="ds-segmented--wrap" ...> rather than editing the
+   shared base rule. Same values as the ≤640px mobile rule further down —
+   that one's already proven not to break anything, this just makes it
+   available above the breakpoint too. */
+.ds-segmented--wrap {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
 /* =====================================================================
    Inputs
    ===================================================================== */

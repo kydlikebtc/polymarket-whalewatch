@@ -123,19 +123,30 @@ export type SegOption<T extends string | number> = {
 };
 
 // Controlled segmented toggle/tab. Active item = white thumb + shadow.
+// className is optional and additive (e.g. "ds-segmented--wrap") — most call
+// sites have 2-5 options that always fit one row on desktop, so the shared
+// base rule stays a plain non-wrapping inline-flex; a caller with many/long
+// options (e.g. /follow's per-strategy filter) opts into wrapping instead of
+// that behavior change leaking into every other Segmented on the site.
 export function Segmented<T extends string | number>({
   options,
   value,
   onChange,
   ariaLabel,
+  className,
 }: {
   options: ReadonlyArray<SegOption<T>>;
   value: T;
   onChange: (v: T) => void;
   ariaLabel?: string;
+  className?: string;
 }) {
   return (
-    <div className="ds-segmented" role="group" aria-label={ariaLabel}>
+    <div
+      className={className ? `ds-segmented ${className}` : "ds-segmented"}
+      role="group"
+      aria-label={ariaLabel}
+    >
       {options.map((o) => (
         <button
           key={String(o.value)}
