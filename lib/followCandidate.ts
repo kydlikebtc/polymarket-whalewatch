@@ -8,6 +8,9 @@ import type { SmartTag } from "./smartWallets";
 // 导入风险的既有处理同一套论证。注:纯语法扫描工具(如 madge)不区分 import type
 // 与值导入,复查时会把这类单向类型依赖也报成"环",那是工具局限,不是运行时事实。
 import { detectConsensusCandidates } from "./sourceConsensus";
+// 值导入,同上方 sourceConsensus 的单向值依赖论证:sourceHeavy.ts 顶部对本文件
+// 的 import 全部是 `import type`,不构成运行时环。
+import { detectHeavyCandidates } from "./sourceHeavy";
 import type { Trade } from "./types";
 
 // 纸面跟单的统一候选契约。所有信号源产出这一个结构,开仓循环只认它 ——
@@ -139,14 +142,14 @@ export interface StrategyParams {
  * 不再 if/else 硬编码族。新增信号源 = 写一个纯函数(签名同 Detector)+ 在这里
  * 加一行,开仓代码(runFollowCycle 的护栏/查重/费用/执行层那一大段)零改动。
  *
- * 后续 Task 逐个把占位实现换成真实 detector:heavy(Task 6)、lopsided(Task 8)、
- * resolved(Task 9)、lone_wolf(Task 10)、early_winner(Task 11)。占位期间这些
- * source 恒无候选(不是「未接入报错」,是「暂不产出信号」)—— 种子(Task 12)
- * 落地前不会有策略实际使用这些 source,故此刻空数组是安全默认。
+ * 后续 Task 逐个把占位实现换成真实 detector:lopsided(Task 8)、resolved
+ * (Task 9)、lone_wolf(Task 10)、early_winner(Task 11)。占位期间这些 source
+ * 恒无候选(不是「未接入报错」,是「暂不产出信号」)—— 种子(Task 12)落地前
+ * 不会有策略实际使用这些 source,故此刻空数组是安全默认。
  */
 export const DETECTORS: Record<FollowSourceKind, Detector> = {
   consensus: detectConsensusCandidates,
-  heavy: () => [],
+  heavy: detectHeavyCandidates,
   lopsided: () => [],
   resolved: () => [],
   lone_wolf: () => [],
