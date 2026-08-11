@@ -14,6 +14,9 @@ import { detectHeavyCandidates } from "./sourceHeavy";
 // 值导入,同上方 sourceConsensus/sourceHeavy 的单向值依赖论证:sourceLopsided.ts
 // 顶部对本文件的 import 全部是 `import type`,不构成运行时环。
 import { detectLopsidedCandidates } from "./sourceLopsided";
+// 值导入,同上方三个 detector 的单向值依赖论证:sourceResolved.ts 顶部对本文件
+// 的 import 全部是 `import type`,不构成运行时环。
+import { detectResolvedCandidates } from "./sourceResolved";
 import type { Trade } from "./types";
 
 // 纸面跟单的统一候选契约。所有信号源产出这一个结构,开仓循环只认它 ——
@@ -146,15 +149,15 @@ export interface StrategyParams {
  * 加一行,开仓代码(runFollowCycle 的护栏/查重/费用/执行层那一大段)零改动。
  *
  * 后续 Task 逐个把占位实现换成真实 detector:lopsided(Task 8,已接线)、
- * resolved(Task 9)、lone_wolf(Task 10)、early_winner(Task 11)。仍占位的
- * source 恒无候选(不是「未接入报错」,是「暂不产出信号」)—— 种子(Task 12)
- * 落地前不会有策略实际使用这些 source,故此刻空数组是安全默认。
+ * resolved(Task 9,已接线)、lone_wolf(Task 10)、early_winner(Task 11)。
+ * 仍占位的 source 恒无候选(不是「未接入报错」,是「暂不产出信号」)——
+ * 种子(Task 12)落地前不会有策略实际使用这些 source,故此刻空数组是安全默认。
  */
 export const DETECTORS: Record<FollowSourceKind, Detector> = {
   consensus: detectConsensusCandidates,
   heavy: detectHeavyCandidates,
   lopsided: detectLopsidedCandidates,
-  resolved: () => [],
+  resolved: detectResolvedCandidates,
   lone_wolf: () => [],
   early_winner: () => [],
 };

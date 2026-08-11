@@ -92,7 +92,10 @@ export const DEFAULT_DISAGREEMENT: DisagreementOptions = {
   lopsidedTiltPct: 0.7,
 };
 
-type WalletAcc = {
+// 导出(Task 9):lib/sourceResolved.ts(C2)拿到的是 aggregateMarketOutcomes 返回值
+// 里 byWallet 的 Map value,结构与本类型逐字段相同 —— 导出只是给这个结构一个
+// 名字,不改变任何行为。
+export type WalletAcc = {
   buyUsd: number;
   sellUsd: number;
   buyShares: number;
@@ -250,6 +253,162 @@ function tiltFormationTs(
 }
 
 /**
+ * 一个 outcome 的原始聚合(Task 9 从 detectDisagreement 内层循环提取,供
+ * lib/sourceResolved.ts 的 C2「分歧解除」共用同一份口径)。前四个数值字段
+ * (netUsd/weightedUsd/avgBuyPrice/walletCount)与 DisagreementSide 逐字段
+ * 同口径 —— 只累计【净买者】(exposureUsd>0),净卖/持平者贡献恒被 clamp
+ * 成 0,不拉低这四个字段,这是 P0.6 的既定行为,detectDisagreement 的 19 个
+ * 既有测试锁死了它,不能变。
+ *
+ * signedNetUsd 是唯一的例外,也是新增这个类型的唯一理由:它是【不 clamp】的
+ * 有符号版本 —— Σ netShares(acc) × avgBuyPrice(acc),对净卖者(或本轮净持仓
+ * 转负的钱包)老老实实累计负值,不砍成 0。C2 要跟的信号是「这个 outcome
+ * 整体从净买翻成净卖」,用一个恒 >= 0 的量测不出"翻转"这件事本身 ——
+ * netUsd/weightedUsd 眼里,一个满仓净卖出的 outcome 和一个从没人买过的
+ * outcome 长得一模一样(都是 0),而 signedNetUsd 会把前者算成负数,后者
+ * 仍是 0,两者才分得开。
+ *
+ * 两组字段共享同一套前置处理(MM 剔除、hedger 剔除、dedup)、只在"要不要把
+ * 净卖者的负贡献算进来"这一步分叉 —— 写在同一个函数里保证这是它们唯一的
+ * 分歧点,不会因为分别实现而在 MM/hedger/dedup 上悄悄跑偏。
+ */
+export interface OutcomeAggregate {
+  outcome: string;
+  outcomeIndex: number;
+  asset: string;
+  netUsd: number; // Σ exposureUsd(acc),仅净买者,恒 >= 0(同 DisagreementSide.netUsd)
+  weightedUsd: number; // 同上 × qualityWeight(同 DisagreementSide.weightedUsd)
+  avgBuyPrice: number; // 净买者的 usd 加权均价(同 DisagreementSide.avgBuyPrice)
+  walletCount: number; // 净买者人数(同 DisagreementSide.walletCount)
+  wallets: DisagreementWallet[]; // 净买者,按 netUsd 降序(同 DisagreementSide.wallets)
+  /** Σ netShares(acc) × avgBuyPrice(acc),不 clamp,可为负/为零。只有 C2 用。*/
+  signedNetUsd: number;
+}
+
+/**
+ * 提取自 detectDisagreement 内层循环的「边聚合」:给一个市场的全部成交
+ * (须已限定到同一 conditionId,不限 outcome —— hedger 判定需要该市场全部
+ * outcome 的联合上下文,同一钱包在两个不同 outcome 上各自净买,单独看某一个
+ * outcome 看不出它在对冲),算出每个 outcome 的聚合。
+ *
+ * 提取纪律(与 Task 2 的 detectConsensusCandidates 等价提取同一标准):
+ * detectDisagreement 的输出必须逐字节不变。本函数内部的 MM 剔除 → dedup →
+ * 按 outcome/wallet 分组 → hedger 剔除 → 净买者聚合五步,与重构前
+ * detectDisagreement 内联的逻辑逐行相同,只是挪了地方;detectDisagreement
+ * 自己不再重复这五步,而是调用本函数、复用它算出的 netUsd/weightedUsd/
+ * avgBuyPrice/walletCount/wallets 五个字段。
+ *
+ * 刻意不做的事:不检查 exposureUsd/signedNetUsd 的正负、不套 per-side USD
+ * 或钱包数门槛。这些是消费方的语义,两个调用方对"够不够格算一个 side"这件事
+ * 答案不同(detectDisagreement 要门槛过滤,C2 恰恰要看未过滤、可能为负的
+ * 原始值),门槛因此必须留在各自的调用处 —— 提取时最容易犯的错就是把这道
+ * 过滤也一起搬进来,一旦搬进来 C2 就再也看不到负值了(minor 转净卖后
+ * exposureUsd 恒被 clamp 成 0,C2 判定的正是"转负"这个瞬间)。
+ */
+export function aggregateMarketOutcomes(
+  marketTrades: Trade[],
+  smartTags: Map<string, SmartTag>,
+): { byOutcome: Map<string, OutcomeAggregate>; excludedWallets: Set<string> } {
+  const seen = new Set<string>();
+  const byOutcome = new Map<
+    string,
+    { outcomeIndex: number; asset: string; byWallet: Map<string, WalletAcc> }
+  >();
+  for (const t of marketTrades) {
+    const wallet = t.proxyWallet.toLowerCase();
+    // MM disenfranchisement (P0.5), same gate as detectConsensus: an MM
+    // absorbing one side is liquidity provision, not directional opposition.
+    const smartTag = smartTags.get(wallet);
+    if (!smartTag || smartTag.isMarketMaker) continue;
+    const dk = dedupKey(t);
+    if (seen.has(dk)) continue;
+    seen.add(dk);
+
+    let o = byOutcome.get(t.outcome);
+    if (!o) {
+      o = { outcomeIndex: t.outcomeIndex, asset: t.asset, byWallet: new Map() };
+      byOutcome.set(t.outcome, o);
+    }
+    let acc = o.byWallet.get(wallet);
+    if (!acc) {
+      acc = { buyUsd: 0, sellUsd: 0, buyShares: 0, sellShares: 0 };
+      o.byWallet.set(wallet, acc);
+    }
+    const usdVal = notionalUsd(t);
+    if (t.side === "BUY") {
+      acc.buyUsd += usdVal;
+      acc.buyShares += t.size;
+    } else {
+      acc.sellUsd += usdVal;
+      acc.sellShares += t.size;
+    }
+  }
+
+  // Fake-opposition: a wallet NET-BUYING >= 2 outcomes of this market is a
+  // hedger/market-maker, not a directional opinion — exclude from every side.
+  // (Net-buying one outcome while net-SELLING another is directionally
+  // consistent — e.g. bullish Yes, trimming No — and is NOT excluded.)
+  const netBuyOutcomes = new Map<string, number>();
+  for (const o of byOutcome.values()) {
+    for (const [wallet, acc] of o.byWallet) {
+      // 净股数口径(P0.6):只有真实留仓的结果才算"净买了该结果"。
+      if (netShares(acc) > 0) {
+        netBuyOutcomes.set(wallet, (netBuyOutcomes.get(wallet) ?? 0) + 1);
+      }
+    }
+  }
+  const excluded = new Set<string>();
+  for (const [wallet, n] of netBuyOutcomes) if (n >= 2) excluded.add(wallet);
+
+  const out = new Map<string, OutcomeAggregate>();
+  for (const [outcome, o] of byOutcome) {
+    const wallets: DisagreementWallet[] = [];
+    let netUsd = 0;
+    let weightedUsd = 0;
+    let sumBuyUsd = 0;
+    let sumBuyShares = 0;
+    let signedNetUsd = 0;
+    for (const [wallet, acc] of o.byWallet) {
+      if (excluded.has(wallet)) continue;
+      const smart = smartTags.get(wallet);
+      const score = smart?.score ?? null;
+      // 不 clamp 的有符号口径:净卖者/本轮转负的钱包老实累计负值 —— 只喂给
+      // signedNetUsd,不进 netUsd/weightedUsd/avgBuyPrice/wallets(那四个是
+      // "净买者"的聚合,定义上不含负值贡献)。
+      signedNetUsd += netShares(acc) * avgBuyPrice(acc);
+      // 成本敞口口径(P0.6):留存净股数 × 买入均价 —— 等股买卖不同价的
+      // "USD 假净买"不构成一侧;纯买入时与旧现金流口径数值一致。
+      const net = exposureUsd(acc);
+      if (net <= 0) continue; // flat / net sellers aren't buying this side
+      netUsd += net;
+      weightedUsd += net * qualityWeight(score);
+      sumBuyUsd += acc.buyUsd;
+      sumBuyShares += acc.buyShares;
+      wallets.push({
+        wallet,
+        netUsd: net,
+        score,
+        winRate: smart?.winRate ?? null,
+        avgBuyPrice: avgBuyPrice(acc),
+      });
+    }
+    wallets.sort((a, b) => b.netUsd - a.netUsd);
+    out.set(outcome, {
+      outcome,
+      outcomeIndex: o.outcomeIndex,
+      asset: o.asset,
+      netUsd,
+      weightedUsd,
+      avgBuyPrice: sumBuyShares > 0 ? sumBuyUsd / sumBuyShares : 0,
+      walletCount: wallets.length,
+      wallets,
+      signedNetUsd,
+    });
+  }
+  return { byOutcome: out, excludedWallets: excluded };
+}
+
+/**
  * Pure detection over a trade window: find markets where whitelisted smart
  * money is NET-BUYING two or more OPPOSING outcomes of the same market — the
  * "smart-money disagreement" signal. Mirrors detectConsensus's per-(market,
@@ -269,6 +428,13 @@ export function detectDisagreement(
   smartTags: Map<string, SmartTag>,
   opts: DisagreementOptions = DEFAULT_DISAGREEMENT,
 ): DisagreementMarket[] {
+  // 第一遍:只认 market 级元数据(title/slug/eventSlug/firstTs/lastTs)——
+  // 与重构前完全相同的过滤(MM 剔除 + dedup),这四个字段的口径不受下面的
+  // 提取影响。真正的 side 聚合(byOutcome/byWallet/hedger 剔除)交给
+  // aggregateMarketOutcomes,按 conditionId 分市场调用 —— 与本文件
+  // tiltFormationTs 的既有调用方式同构(见下方第二遍循环:先按 conditionId
+  // 筛出该市场自己的原始成交,再交给一个"自己做 MM/dedup/hedger 过滤"的
+  // 函数,而不是假设调用方已经筛好)。
   const seen = new Set<string>();
   const markets = new Map<
     string,
@@ -278,19 +444,8 @@ export function detectDisagreement(
       eventSlug: string;
       firstTs: number;
       lastTs: number;
-      byOutcome: Map<
-        string,
-        {
-          outcomeIndex: number;
-          asset: string;
-          byWallet: Map<string, WalletAcc>;
-        }
-      >;
     }
   >();
-
-  // Aggregate net buy per (conditionId, outcome, wallet) — smart wallets only,
-  // deduped (offset pagination re-serves boundary rows).
   for (const t of trades) {
     const wallet = t.proxyWallet.toLowerCase();
     // MM disenfranchisement (P0.5), same gate as detectConsensus: an MM
@@ -311,94 +466,37 @@ export function detectDisagreement(
         eventSlug: t.eventSlug,
         firstTs: t.timestamp,
         lastTs: t.timestamp,
-        byOutcome: new Map(),
       };
       markets.set(t.conditionId, m);
     }
     if (t.timestamp < m.firstTs) m.firstTs = t.timestamp;
     if (t.timestamp > m.lastTs) m.lastTs = t.timestamp;
-
-    let o = m.byOutcome.get(t.outcome);
-    if (!o) {
-      o = { outcomeIndex: t.outcomeIndex, asset: t.asset, byWallet: new Map() };
-      m.byOutcome.set(t.outcome, o);
-    }
-    let acc = o.byWallet.get(wallet);
-    if (!acc) {
-      acc = { buyUsd: 0, sellUsd: 0, buyShares: 0, sellShares: 0 };
-      o.byWallet.set(wallet, acc);
-    }
-    const usdVal = notionalUsd(t);
-    if (t.side === "BUY") {
-      acc.buyUsd += usdVal;
-      acc.buyShares += t.size;
-    } else {
-      acc.sellUsd += usdVal;
-      acc.sellShares += t.size;
-    }
   }
 
   const out: DisagreementMarket[] = [];
   for (const [conditionId, m] of markets) {
-    // Fake-opposition: a wallet NET-BUYING >= 2 outcomes of this market is a
-    // hedger/market-maker, not a directional opinion — exclude from every side.
-    // (Net-buying one outcome while net-SELLING another is directionally
-    // consistent — e.g. bullish Yes, trimming No — and is NOT excluded.)
-    const netBuyOutcomes = new Map<string, number>();
-    for (const o of m.byOutcome.values()) {
-      for (const [wallet, acc] of o.byWallet) {
-        // 净股数口径(P0.6):只有真实留仓的结果才算"净买了该结果"。
-        if (netShares(acc) > 0) {
-          netBuyOutcomes.set(wallet, (netBuyOutcomes.get(wallet) ?? 0) + 1);
-        }
-      }
-    }
-    const excluded = new Set<string>();
-    for (const [wallet, n] of netBuyOutcomes) if (n >= 2) excluded.add(wallet);
+    const marketTrades = trades.filter((t) => t.conditionId === conditionId);
+    const { byOutcome: aggByOutcome, excludedWallets: excluded } =
+      aggregateMarketOutcomes(marketTrades, smartTags);
 
-    // Build a side per outcome from the remaining NET BUYERS.
-    const sides: DisagreementSide[] = [];
-    for (const [outcome, o] of m.byOutcome) {
-      const wallets: DisagreementWallet[] = [];
-      let netUsd = 0;
-      let weightedUsd = 0;
-      let sumBuyUsd = 0;
-      let sumBuyShares = 0;
-      for (const [wallet, acc] of o.byWallet) {
-        if (excluded.has(wallet)) continue;
-        // 成本敞口口径(P0.6):留存净股数 × 买入均价 —— 等股买卖不同价的
-        // "USD 假净买"不构成一侧;纯买入时与旧现金流口径数值一致。
-        const net = exposureUsd(acc);
-        if (net <= 0) continue; // flat / net sellers aren't buying this side
-        const smart = smartTags.get(wallet);
-        const score = smart?.score ?? null;
-        netUsd += net;
-        weightedUsd += net * qualityWeight(score);
-        sumBuyUsd += acc.buyUsd;
-        sumBuyShares += acc.buyShares;
-        wallets.push({
-          wallet,
-          netUsd: net,
-          score,
-          winRate: smart?.winRate ?? null,
-          avgBuyPrice: avgBuyPrice(acc),
-        });
-      }
-      if (wallets.length < opts.minWalletsPerSide) continue;
-      if (netUsd < opts.minPerSideUsd) continue;
-      wallets.sort((a, b) => b.netUsd - a.netUsd);
-      sides.push({
-        outcome,
+    // Build a side per outcome from the qualifying NET BUYERS.
+    const sides: DisagreementSide[] = [...aggByOutcome.values()]
+      .filter(
+        (o) =>
+          o.walletCount >= opts.minWalletsPerSide &&
+          o.netUsd >= opts.minPerSideUsd,
+      )
+      .map((o) => ({
+        outcome: o.outcome,
         outcomeIndex: o.outcomeIndex,
         asset: o.asset,
-        walletCount: wallets.length,
-        netUsd,
-        weightedUsd,
-        avgBuyPrice: sumBuyShares > 0 ? sumBuyUsd / sumBuyShares : 0,
-        wallets,
+        walletCount: o.walletCount,
+        netUsd: o.netUsd,
+        weightedUsd: o.weightedUsd,
+        avgBuyPrice: o.avgBuyPrice,
+        wallets: o.wallets,
         formationTs: null, // 占位;下面只对最终主导边(sides[0])重放覆盖
-      });
-    }
+      }));
 
     if (sides.length < 2) continue; // no opposing sides → not a disagreement
     sides.sort((a, b) => b.weightedUsd - a.weightedUsd);
@@ -406,11 +504,10 @@ export function detectDisagreement(
     const totalNetUsd = sides.reduce((s, x) => s + x.netUsd, 0);
     const tiltPct =
       totalWeightedUsd > 0 ? sides[0].weightedUsd / totalWeightedUsd : 0;
-    // 倾斜形成时刻:只对已经判定 contested 的市场重放(这里,不是全窗口 ——
-    // 按 conditionId 从整窗筛出该市场的原始成交,交给 tiltFormationTs 自己
-    // 做白名单/去重/hedger 过滤),只算【最终主导边】sides[0] 的达标时刻;
-    // 非主导边不适用"形成"概念,保留上面 push 时的 null 占位。
-    const marketTrades = trades.filter((t) => t.conditionId === conditionId);
+    // 倾斜形成时刻:只对已经判定 contested 的市场重放(marketTrades 已在上面
+    // 按 conditionId 筛出该市场的原始成交,交给 tiltFormationTs 自己做白名单/
+    // 去重/hedger 过滤),只算【最终主导边】sides[0] 的达标时刻;非主导边不
+    // 适用"形成"概念,保留上面 push 时的 null 占位。
     const leadFormationTs = tiltFormationTs(
       marketTrades,
       sides[0].outcome,

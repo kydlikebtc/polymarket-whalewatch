@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { openDb } from "./db";
-import { runFollowCycle } from "./follow";
+import { readMarketTiltSnapshots, runFollowCycle } from "./follow";
 import type { SmartTag } from "./smartWallets";
 import type { MarketMeta } from "./gamma";
 import type { Trade } from "./types";
@@ -1642,6 +1642,129 @@ describe("runFollowCycle — 多 source 集成(注册表按 source 分派)", () 
       )
       .get(heavyStrategy.id) as { n: number };
     expect(heavyPositions.n).toBe(0);
+    db.close();
+  });
+});
+
+// Task 9:market_tilt_history 跨轮读写的端到端集成 —— 证明"读必须在写之前"
+// 这条不变量在真实两轮调用下确实成立:第一轮市场刚变 contested,prevTilt 还
+// 是空的(C2 无候选,只写快照);第二轮少数边转净卖、市场跌出 contested,
+// C2 靠第一轮写下的快照才能判定"转变"并开仓。若读写顺序反了(写在读之前),
+// 第二轮的 prevTilt 会读到的仍是空/或本轮自己的东西,C2 永远不会在这里开仓 ——
+// 这条集成测试直接锁死"第一轮不开仓、第二轮才开仓"这个可观察行为。
+describe("runFollowCycle — market_tilt_history 跨轮读写(C2 分歧解除,读写顺序核心不变量)", () => {
+  it("第一轮 contested 市场只写快照不开仓;第二轮少数边转净卖 → 靠上一轮快照产出候选并开仓", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
+    ).run(
+      "分歧解除测试档",
+      JSON.stringify({
+        source: "resolved",
+        sizeUsd: 500,
+        exitRule: "settlement",
+      }),
+      900,
+    );
+
+    // 第一轮(nowSec=1000):w1 买 Yes $10k(score 80),w2 买 No $10k(score 75)
+    // —— 两边都过 $5k floor,市场 contested;quality weight 不同(0.84 vs 0.8)
+    // 使 Yes 确定性地成为主导边,不依赖排序平局规则。
+    const round1Trades: Trade[] = [
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "r1",
+        asset: "tokYes",
+        outcome: "Yes",
+        outcomeIndex: 0,
+        conditionId: "c1",
+        size: 20000,
+        price: 0.5,
+        timestamp: 900,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "r2",
+        asset: "tokNo",
+        outcome: "No",
+        outcomeIndex: 1,
+        conditionId: "c1",
+        size: 20000,
+        price: 0.5,
+        timestamp: 900,
+      }),
+    ];
+    const r1 = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: round1Trades }),
+      getSmart: smart,
+      fetchPrice: async () => 0.5,
+      getMeta: async () => ({}),
+      nowSec: 1000,
+    });
+    // prevTilt 在第一轮进入 ctx 时必然是空 Map(数据库里还没有任何快照)——
+    // resolved 策略这一轮不可能有候选,不该开仓。
+    expect(r1.opened).toBe(0);
+
+    // 快照必须已经落库:轮末 write 发生在结算/markout 之后,但早于函数返回。
+    const afterRound1 = readMarketTiltSnapshots(db);
+    const snap = afterRound1.get("c1");
+    expect(snap).toEqual({
+      conditionId: "c1",
+      leadOutcome: "Yes", // weightedUsd 更大(w1 score 80 > w2 score 75)
+      minorOutcome: "No",
+      minorNetUsd: 10000,
+      tiltPct: 8400 / (8400 + 8000), // Σweighted(Yes) / Σweighted(总)
+      ts: 1000,
+    });
+
+    // 第二轮(nowSec=2000):窗口沿用第一轮的两笔成交(模拟滚动窗口仍覆盖旧
+    // 成交)+ w2 新增一笔卖出 30000@0.5=$15k —— netShares=-10000,No 边转净卖,
+    // 市场本轮不再 contested(No 边 walletCount 归零,sides.length<2)。
+    const round2Trades: Trade[] = [
+      ...round1Trades,
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "r3",
+        side: "SELL",
+        asset: "tokNo",
+        outcome: "No",
+        outcomeIndex: 1,
+        conditionId: "c1",
+        size: 30000,
+        price: 0.5,
+        timestamp: 1500,
+      }),
+    ];
+    const r2 = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: round2Trades }),
+      getSmart: smart,
+      fetchPrice: async () => 0.5,
+      getMeta: async () => ({}),
+      nowSec: 2000,
+    });
+    expect(r2.opened).toBe(1); // 恰好一仓:resolved 档跟 Yes,consensus 两档本轮仍不够格
+
+    const strat = db
+      .prepare("SELECT id FROM follow_strategies WHERE name = ?")
+      .get("分歧解除测试档") as { id: number };
+    const positions = db
+      .prepare(
+        "SELECT condition_id, outcome, formation_ts, entry_price FROM follow_positions WHERE strategy_id = ?",
+      )
+      .all(strat.id) as {
+      condition_id: string;
+      outcome: string;
+      formation_ts: number;
+      entry_price: number;
+    }[];
+    expect(positions).toHaveLength(1);
+    expect(positions[0].condition_id).toBe("c1");
+    expect(positions[0].outcome).toBe("Yes"); // 跟主导边,不是转净卖的 No
+    expect(positions[0].formation_ts).toBe(2000); // = 第二轮 nowSec,不是任何一笔成交 ts
+    expect(positions[0].entry_price).toBeCloseTo(0.5);
+
     db.close();
   });
 });

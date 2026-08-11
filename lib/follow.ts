@@ -1,11 +1,16 @@
 import type { ConsensusGroup, ConsensusOptions } from "./consensus";
 import type { DB } from "./db";
-import { DEFAULT_DISAGREEMENT, detectDisagreement } from "./disagreement";
+import {
+  DEFAULT_DISAGREEMENT,
+  detectDisagreement,
+  type DisagreementMarket,
+} from "./disagreement";
 import { takerFeeUsd } from "./fees";
 import { DETECTORS, isFollowSourceKind } from "./followCandidate";
 import type {
   DetectorCtx,
   FollowCandidate,
+  MarketTiltSnapshot,
   StrategyParams,
 } from "./followCandidate";
 import type { MarketMeta } from "./gamma";
@@ -115,6 +120,154 @@ const DEFAULT_MAX_ENTRY_DEVIATION_CENTS = 10;
 const DEFAULT_MAX_PRICE = 0.95;
 // 新鲜度闸门默认值,从 FollowCycleDeps 的全局参数下放到每策略(A5 首发共识要 300)。
 const DEFAULT_FRESH_SEC = 900;
+
+// ---------------------------------------------------------------------------
+// Task 9: market_tilt_history 读写 + 保留期清理。C2(sourceResolved,「分歧
+// 解除」)判定"少数边转净卖"需要跨轮对比 —— 本轮重新聚合的净额,要跟"上一次
+// 我们观察到这个市场处于分歧状态"时的快照相减,单轮数据看不出"转变"。
+// ---------------------------------------------------------------------------
+
+// 保留期与 MARKOUT_MAX_AGE_SEC(runFollowCycle 内,7 天)同量级:快照只服务
+// 下一轮 C2 判定,没有 7 天之外的价值,轮末顺手清理,不单独起定时任务。
+const TILT_HISTORY_RETENTION_SEC = 7 * 86400;
+
+/**
+ * 读上一轮各市场的 tilt 快照:每个 condition_id 只取 ts 最大的那一条 ——
+ * "上一次观察到的状态",不是历史全量。JOIN 一个按 condition_id 分组取
+ * MAX(ts) 的子查询,而不是相关子查询(逐行 SELECT MAX),两者语义等价但
+ * JOIN 版本能用上 PRIMARY KEY (condition_id, ts) 自带的索引一次扫完,不会
+ * 对每个 condition_id 各起一次子查询。
+ *
+ * 四个业务字段(lead_outcome/minor_outcome/minor_net_usd/tilt_pct)在表结构
+ * 里都允许 NULL,但 writeMarketTiltSnapshots 写入时永远四个一起给值 —— 一行
+ * 读出来缺任何一个都说明数据不是这条写入路径产生的(手工改库 / 未来某次
+ * 迁移留下的半行),整行不可信,直接跳过而不是拿 null 兜底喂给 C2(fail-closed:
+ * 宁可这个市场本轮没有 prevTilt、C2 不触发,也不要用残缺快照硬算出一个
+ * 三不知的"转变")。
+ *
+ * ⚠️ 调用时机纪律(整个读写链路的核心不变量):必须在本轮 writeMarketTiltSnapshots
+ * 之前调用。JS 单线程同步执行,没有并发路径能让写抢在读之前跑 —— 这条不变量
+ * 完全靠"读的调用点在 runFollowCycle 里写在写的调用点前面"这个纯粹的代码顺序
+ * 保证,不是靠锁或事务。写反了的后果:读到的会是本轮自己刚写的行,
+ * prev.minorNetUsd 恒等于本轮重新算出的净额,C2 的判据(prev>0 且本轮<0)
+ * 永远不成立,整档静默失效且没有任何报错 —— 这类 bug 除了看这行注释 +
+ * followCycle.test.ts 里锁死顺序的用例,没有别的办法在运行时自己暴露出来,
+ * 所以特别在这里写清楚"为什么不能顺手挪到 writeMarketTiltSnapshots 后面"。
+ */
+export function readMarketTiltSnapshots(
+  db: DB,
+): Map<string, MarketTiltSnapshot> {
+  const rows = db
+    .prepare(
+      `SELECT t.condition_id AS conditionId, t.ts AS ts,
+              t.lead_outcome AS leadOutcome, t.minor_outcome AS minorOutcome,
+              t.minor_net_usd AS minorNetUsd, t.tilt_pct AS tiltPct
+       FROM market_tilt_history t
+       JOIN (
+         SELECT condition_id, MAX(ts) AS max_ts
+         FROM market_tilt_history
+         GROUP BY condition_id
+       ) latest
+         ON latest.condition_id = t.condition_id AND latest.max_ts = t.ts`,
+    )
+    .all() as {
+    conditionId: string;
+    ts: number;
+    leadOutcome: string | null;
+    minorOutcome: string | null;
+    minorNetUsd: number | null;
+    tiltPct: number | null;
+  }[];
+  const out = new Map<string, MarketTiltSnapshot>();
+  for (const r of rows) {
+    if (
+      r.leadOutcome == null ||
+      r.minorOutcome == null ||
+      r.minorNetUsd == null ||
+      r.tiltPct == null
+    ) {
+      continue; // 残缺行(见函数头注释),不可信,跳过
+    }
+    out.set(r.conditionId, {
+      conditionId: r.conditionId,
+      leadOutcome: r.leadOutcome,
+      minorOutcome: r.minorOutcome,
+      minorNetUsd: r.minorNetUsd,
+      tiltPct: r.tiltPct,
+      ts: r.ts,
+    });
+  }
+  return out;
+}
+
+/**
+ * 轮末写:为本轮每个 contested 市场写一条快照(sides[0]=主导边、sides[1]=
+ * 少数边 —— DisagreementMarket.sides 恒 >= 2 且按 weightedUsd 降序,contested
+ * 数组里的市场都满足这个前提,见 lib/disagreement.ts)。INSERT OR REPLACE:
+ * PRIMARY KEY 是 (condition_id, ts),同一秒同一市场重复写(理论上不会发生,
+ * nowSec 是每轮的入参、轮次之间必然推进)会覆盖而不是抛 UNIQUE 冲突,幂等
+ * 总是更安全。
+ *
+ * 写失败只记日志、不向上抛出(归因列纪律,同 exec_ 系列字段/markout 的既有写法):
+ * 这张表只服务 C2 detector 的下一轮判定,不是任何一仓开仓判定的输入,写失败
+ * 不该拖累已经跑完的开仓/结算/markout 段——那些副作用必须保留。
+ *
+ * 返回写入的行数(供调用方日志汇总;失败时返回 0,不是"写了 0 个市场"与
+ * "写失败"的区别在日志里会与 contested.length 一起读,不会混淆)。
+ */
+export function writeMarketTiltSnapshots(
+  db: DB,
+  contested: DisagreementMarket[],
+  nowSec: number,
+): number {
+  if (contested.length === 0) return 0;
+  try {
+    const ins = db.prepare(
+      `INSERT OR REPLACE INTO market_tilt_history
+         (condition_id, ts, lead_outcome, minor_outcome, minor_net_usd, tilt_pct)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    const tx = db.transaction((rows: DisagreementMarket[]) => {
+      for (const m of rows) {
+        ins.run(
+          m.conditionId,
+          nowSec,
+          m.sides[0].outcome,
+          m.sides[1].outcome,
+          m.sides[1].netUsd,
+          m.tiltPct,
+        );
+      }
+    });
+    tx(contested);
+    return contested.length;
+  } catch (e) {
+    console.warn(
+      "[follow] market_tilt_history 写入失败(下轮 C2 判定可能缺这一条快照,不阻塞本轮开仓/结算):",
+      e,
+    );
+    return 0;
+  }
+}
+
+/**
+ * 保留期清理:与 markout 的 MARKOUT_MAX_AGE_SEC 同量级(7 天)。不像
+ * lib/seen.ts 的 maybePruneSeen 那样按天数门控 —— seen_trades 是每笔成交
+ * 一行、多进程(embedded engine + standalone worker)共享同一张表,门控是为了
+ * 不在每次开库时都跑一次全表量级的 DELETE 抢 WAL 锁;market_tilt_history 只由
+ * follow 引擎本轮的 contested 市场(个位数)写入,单表量级天然小,按索引列
+ * (idx_market_tilt_history_ts)删也很便宜,没有必要额外引入门控状态。
+ */
+export function pruneMarketTiltHistory(db: DB, nowSec: number): number {
+  try {
+    return db
+      .prepare("DELETE FROM market_tilt_history WHERE ts < ?")
+      .run(nowSec - TILT_HISTORY_RETENTION_SEC).changes;
+  } catch (e) {
+    console.warn("[follow] market_tilt_history 保留期清理失败(下轮再试):", e);
+    return 0;
+  }
+}
 
 export interface FollowCycleDeps {
   db: DB;
@@ -351,6 +504,12 @@ export async function runFollowCycle(
   // 非 consensus 策略误送进 consensus 的检测逻辑,即便其 params_json 残留了
   // minWallets/minPerWalletUsd 字段 —— 见 followCycle.test.ts 的多 source 集成用例)。
   const candidatesByStrategy = new Map<number, FollowCandidate[]>();
+  // 本轮 contested 市场,轮末喂给 writeMarketTiltSnapshots(见函数尾部)——
+  // 声明在 if 块外面,好让"轮末才写"这句话字面成立:写用的是本轮真实检测到的
+  // contested(哪怕它在下面的 if 里才被赋值),不是另开一次独立的 detectDisagreement
+  // 调用。截断/无策略/空窗口时保持 []:与"opening skipped"同一套 fail-closed 纪律,
+  // 不拿不可信的窗口写脏 market_tilt_history。
+  let contestedThisCycle: DisagreementMarket[] = [];
   if (!truncated && strategies.length > 0 && trades.length > 0) {
     // 分歧市场互斥:detectConsensus 按 (conditionId, outcome) 分组,不同的聪明钱
     // 各买同一市场的对立结果时会产出两个单边「假共识」组(其对冲者剔除只防同一钱包
@@ -359,12 +518,19 @@ export async function runFollowCycle(
     // 默认阈值 + excludeContestedFromConsensus 市场级互斥,后者在 detector 内部
     // 调用)把分歧市场整体剔除,双边都不跟。
     const contested = detectDisagreement(trades, smart, DEFAULT_DISAGREEMENT);
+    contestedThisCycle = contested;
+    // ⚠️ 读写顺序(Task 9 核心不变量):readMarketTiltSnapshots 必须在
+    // writeMarketTiltSnapshots(函数尾部,结算/markout 之后)之前调用 —— 这里
+    // 就是"之前":JS 单线程同步执行,这一行永远先于函数尾部那行跑完。读到的是
+    // 上一轮(或更早)写入的快照,不会读到本轮自己即将写的行。详细论证见
+    // readMarketTiltSnapshots 的函数头注释。
+    const prevTilt = readMarketTiltSnapshots(db);
     const ctx: DetectorCtx = {
       smart,
       nowSec,
       contested,
       earlyWinnerWallets: new Set(), // Task 11 填充,在此之前是空 Set
-      prevTilt: new Map(), // Task 9 填充,在此之前是空 Map
+      prevTilt,
     };
     for (const s of strategies) {
       try {
@@ -681,8 +847,18 @@ export async function runFollowCycle(
     }
   }
 
+  // market_tilt_history:轮末写(结算/markout 之后)+ 保留期清理。C2
+  // (sourceResolved)下一轮靠 readMarketTiltSnapshots 读回这里写的行 —— 顺序
+  // 上这一段必须在函数顶部的 readMarketTiltSnapshots 调用之后(它已经是了,
+  // 见那里的注释),两者合起来才是"读上一轮、写本轮"这条链路的完整闭环。
+  // contestedThisCycle 在截断/无策略/空窗口时是 []([]时 writeMarketTiltSnapshots
+  // 直接 no-op),不会用不可信窗口写脏这张表。写/清理失败都只记日志,不影响
+  // 已经跑完的 opened/settled/markouts。
+  const tiltWritten = writeMarketTiltSnapshots(db, contestedThisCycle, nowSec);
+  const tiltPruned = pruneMarketTiltHistory(db, nowSec);
+
   console.log(
-    `[follow] cycle done · strategies=${strategies.length} · opened=${opened} · settled=${settled} · markouts=${markouts}`,
+    `[follow] cycle done · strategies=${strategies.length} · opened=${opened} · settled=${settled} · markouts=${markouts} · tiltSnapshots=${tiltWritten} · tiltPruned=${tiltPruned}`,
   );
   return { opened, settled };
 }

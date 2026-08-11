@@ -24,8 +24,10 @@ export function openDb(path = "data.sqlite") {
     CREATE INDEX IF NOT EXISTS idx_cycle_metrics_ts ON cycle_metrics(loop, ts);
     CREATE TABLE IF NOT EXISTS follow_strategies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, enabled INTEGER DEFAULT 1, params_json TEXT, created_at INTEGER);
     CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, formation_ts INTEGER, formation_price REAL, markout_30m REAL, markout_2h REAL, exec_price REAL, exec_best_ask REAL, exec_filled_usd REAL, fee_usd REAL, UNIQUE(strategy_id, condition_id, outcome));
+    CREATE TABLE IF NOT EXISTS market_tilt_history (condition_id TEXT NOT NULL, ts INTEGER NOT NULL, lead_outcome TEXT, minor_outcome TEXT, minor_net_usd REAL, tilt_pct REAL, PRIMARY KEY (condition_id, ts));
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
     CREATE INDEX IF NOT EXISTS idx_candidates_evidence_ts ON wallet_candidates(evidence_ts);
+    CREATE INDEX IF NOT EXISTS idx_market_tilt_history_ts ON market_tilt_history(ts);
   `);
   // wallet_stats gained markets_traded (the high-frequency market-maker
   // classifier) after the table already shipped; add it to pre-existing DBs.
