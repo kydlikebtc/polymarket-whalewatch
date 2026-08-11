@@ -1389,7 +1389,18 @@ CREATE TABLE IF NOT EXISTS market_tilt_history (
 );
 ```
 
-**判据（D8：少数边开始净卖）:**
+> ### ⚠️ 草案作废：下面那段实现走不通（实施中发现）
+>
+> `detectDisagreement` 构建 side 时有两道过滤：`exposureUsd(acc) <= 0 → continue`（净卖者不构成这一边）、`netUsd < minPerSideUsd → continue`（要过 $5k floor）。所以：
+>
+> 1. **`DisagreementSide.netUsd` 恒为正** —— 草案的 `minor.netUsd < 0` 永远不成立，C2 一仓开不出来。
+> 2. **少数边真转净卖时，它根本不再构成 side** —— 市场随之 `sides.length < 2`，整个从 `ctx.contested` 消失。而草案遍历的正是 `ctx.contested`：它要找的那一刻，恰恰是目标从它眼前消失的一刻。
+>
+> **正确路径**：遍历 `ctx.prevTilt`（上轮快照）而非 `ctx.contested`，并**直接读 trades** 算少数边当前净额（同 `exposureUsd` 口径 + 同一套 MM/对冲者剔除）。主导边的开仓字段（`asset` / `outcomeIndex` / `avgBuyPrice` / `walletCount` / `netUsd`）在市场已不 contested 时也拿不到，同样要从 trades 算 —— 这需要 `lib/disagreement.ts` 导出一个可复用的「算某个 (市场, outcome) 边的聚合」函数，两处共用同一份口径。
+>
+> 推论（非缺陷，记录备查）：分歧解除后市场重回无争议，**A 族会自然接管**。C2 的独立价值在于能跟到 A 族够不到的情形（主导边只有 1 个钱包时 consensus 不成立），且 `formationTs` 锚的是「认输时刻」而非「共识形成时刻」。
+
+**判据（D8：少数边开始净卖）—— 以下代码仅存语义参考，实现按上面的正确路径:**
 
 ```ts
 /**
