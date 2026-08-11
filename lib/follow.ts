@@ -3,6 +3,8 @@ import { detectConsensus } from "./consensus";
 import type { DB } from "./db";
 import { DEFAULT_DISAGREEMENT, detectDisagreement } from "./disagreement";
 import { takerFeeUsd } from "./fees";
+import { isFollowSourceKind } from "./followCandidate";
+import type { StrategyParams } from "./followCandidate";
 import type { MarketMeta } from "./gamma";
 import { excludeContestedFromConsensus } from "./marketSignals";
 import type { AskBook } from "./orderBook";
@@ -92,22 +94,24 @@ export { latestPriceByAsset };
 // runConsensusCycle 的写法),便于测试与复用。副作用仅落在 follow_positions 表。
 // ---------------------------------------------------------------------------
 
-// 一条启用中的跟单策略(params_json 解析结果 + 行 id)。exitRule 目前只支持
-// "settlement"(市场结算即平仓),保留字段以便后续扩展。
-interface FollowStrategy {
-  id: number;
-  minWallets: number;
-  minPerWalletUsd: number;
-  sizeUsd: number;
-  exitRule: string;
-  // 进场价偏离护栏(¢):|现价 − 聪明钱均价|×100 超过该值即不开仓。默认 10。
-  maxEntryDeviationCents: number;
-}
+// 一条启用中的跟单策略(params_json 解析结果 + 行 id)复用 followCandidate.ts 的
+// StrategyParams —— 该类型本就是为「解析后的策略参数」设计的通用契约,detector
+// 注册表(Task 4)与这里的开仓循环消费的是同一个对象,不必另立一套只在本文件
+// 使用的窄接口。exitRule 目前只支持 "settlement"(市场结算即平仓)。
 
 // 进场价偏离护栏默认阈值(¢)。开仓侧 parseStrategy 与展示侧 parseParamsView 共用,
 // 保证两侧默认值永远一致(真机实证:in-play 体育盘 30min 内能跑 20¢,10¢ 是
 // 「正常盘口抖动」与「行情已反向」的分界)。
 const DEFAULT_MAX_ENTRY_DEVIATION_CENTS = 10;
+// 最高进场价(0-1 小数)。与 alertConditions 的 maxPrice 同口径。
+// 生产实测(见 alertConditions.ts 的 DEFAULT_CONDITIONS 注释):28.6% 的告警落在
+// >=0.90 —— 近确定结果上的结算清扫单,零信息量。跟单此前没有任何价格上限,账本里
+// 混着「买 0.97 赚 3¢」的仓:胜率被拉得很高很好看,但每次翻车亏掉 30 次的利润
+// (赔率极度不对称,Wilson 区间衡量的是胜率不确定性,救不了这个)。故设为全局基础
+// 参数而非某档的可选项。
+const DEFAULT_MAX_PRICE = 0.95;
+// 新鲜度闸门默认值,从 FollowCycleDeps 的全局参数下放到每策略(A5 首发共识要 300)。
+const DEFAULT_FRESH_SEC = 900;
 
 export interface FollowCycleDeps {
   db: DB;
@@ -150,10 +154,16 @@ export interface FollowCycleDeps {
 // params_json 是 seed/后台写入的可信来源,但 JSON.parse 后仍做一次形状校验:
 // 阈值字段缺失/非有限数会污染下游 Math.min 与 positionShares(NaN 扩散),宁可
 // 跳过该策略并留日志,也不静默开出脏仓。
+//
+// source 扩展(12 档/4 类信号源改造)的向后兼容契约:既有库两条策略("保守"
+// "激进")的 params_json 没有 source 字段 —— 缺失即 "consensus",零迁移,
+// 它们的解析结果(id/minWallets/minPerWalletUsd/sizeUsd/exitRule/
+// maxEntryDeviationCents)必须与改造前逐字段相同。这是整个 12 档扩充的守门员:
+// 见 lib/follow.test.ts 的 "parseStrategy — source/maxPrice/freshSec 扩展"。
 function parseStrategy(
   id: number,
   paramsJson: string | null,
-): FollowStrategy | null {
+): StrategyParams | null {
   if (!paramsJson) return null;
   let p: Record<string, unknown>;
   try {
@@ -164,33 +174,71 @@ function parseStrategy(
   }
   const numOr = (v: unknown): number | null =>
     typeof v === "number" && Number.isFinite(v) ? v : null;
-  const minWallets = numOr(p.minWallets);
-  const minPerWalletUsd = numOr(p.minPerWalletUsd);
-  const sizeUsd = numOr(p.sizeUsd);
-  if (
-    minWallets == null ||
-    minPerWalletUsd == null ||
-    sizeUsd == null ||
-    sizeUsd <= 0
-  ) {
+
+  // source:缺失 → "consensus"(既有两条策略零迁移);未知值 → 跳过整条策略
+  // (宁可少一档也不要一个 detector 注册表分派不到的“影子策略”悄悄不生效)。
+  const rawSource = p.source ?? "consensus";
+  if (!isFollowSourceKind(rawSource)) {
     console.warn(
-      `[follow] strategy ${id}: 阈值字段无效(minWallets/minPerWalletUsd/sizeUsd),跳过`,
+      `[follow] strategy ${id}: 未知 source "${String(rawSource)}",跳过`,
     );
     return null;
   }
-  // 护栏阈值:显式合法值(有限数且 >0)生效;缺失/非法退默认 10 —— 既有库的
-  // params_json 没有该字段,靠这里兜底,无需数据迁移。
+
+  const sizeUsd = numOr(p.sizeUsd);
+  if (sizeUsd == null || sizeUsd <= 0) {
+    console.warn(`[follow] strategy ${id}: sizeUsd 无效,跳过`);
+    return null;
+  }
+
+  // consensus 源仍强制要求这两个阈值(它们决定 formationTs 的跨线时刻);
+  // 其它源各有自己的必需字段,由对应 detector 校验并在缺失时产出空候选
+  // (detector 是纯函数、无法在此处提前校验各自的专属字段)。
+  const minWallets = numOr(p.minWallets);
+  const minPerWalletUsd = numOr(p.minPerWalletUsd);
+  if (
+    rawSource === "consensus" &&
+    (minWallets == null || minPerWalletUsd == null)
+  ) {
+    console.warn(
+      `[follow] strategy ${id}: consensus 源缺 minWallets/minPerWalletUsd,跳过`,
+    );
+    return null;
+  }
+
+  // 护栏/价格/新鲜度:显式合法值生效,缺失或非法退默认(既有库无这些字段,靠这里
+  // 兜底,无需数据迁移)。
   const maxDev = numOr(p.maxEntryDeviationCents);
+  const maxPrice = numOr(p.maxPrice);
+  const freshSec = numOr(p.freshSec);
+
   return {
     id,
-    minWallets,
-    minPerWalletUsd,
+    source: rawSource,
     sizeUsd,
     exitRule: typeof p.exitRule === "string" ? p.exitRule : "settlement",
     maxEntryDeviationCents:
       maxDev != null && maxDev > 0 ? maxDev : DEFAULT_MAX_ENTRY_DEVIATION_CENTS,
+    // 价格是 0-1 小数,>1 一律视为非法(防把 95 当成 95¢ 写进来)。
+    maxPrice:
+      maxPrice != null && maxPrice > 0 && maxPrice <= 1
+        ? maxPrice
+        : DEFAULT_MAX_PRICE,
+    freshSec: freshSec != null && freshSec > 0 ? freshSec : DEFAULT_FRESH_SEC,
+    minWallets: minWallets ?? undefined,
+    minPerWalletUsd: minPerWalletUsd ?? undefined,
+    minTotalNetUsd: numOr(p.minTotalNetUsd) ?? undefined,
+    minWalletScore: numOr(p.minWalletScore) ?? undefined,
+    minSingleFillUsd: numOr(p.minSingleFillUsd) ?? undefined,
+    minTiltPct: numOr(p.minTiltPct) ?? undefined,
+    minPerSideUsd: numOr(p.minPerSideUsd) ?? undefined,
+    minNetUsd: numOr(p.minNetUsd) ?? undefined,
   };
 }
+
+// 测试导出:parseStrategy 是模块私有的,但它的兼容性是整个扩充的守门员,
+// 必须能被直接单测(而不是只能透过 runFollowCycle 间接观察)。
+export const parseStrategyForTest = parseStrategy;
 
 /**
  * 一轮跟单模拟:
@@ -247,7 +295,7 @@ export async function runFollowCycle(
     .all() as { id: number; params_json: string | null }[];
   const strategies = stratRows
     .map((r) => parseStrategy(r.id, r.params_json))
-    .filter((s): s is FollowStrategy => s !== null);
+    .filter((s): s is StrategyParams => s !== null);
 
   const { trades, truncated = false } = await fetchWindow();
   if (truncated) {
@@ -269,9 +317,17 @@ export async function runFollowCycle(
     // 双边都不跟。
     const contested = detectDisagreement(trades, smart, DEFAULT_DISAGREEMENT);
     for (const s of strategies) {
+      // StrategyParams.minWallets/minPerWalletUsd 现在是可选的(其它 source 不
+      // 需要它们),但这段代码是 consensus 专属检测,尚未接入 detector 注册表。
+      // parseStrategy 已保证 source==="consensus" 时这两个字段必有值,非
+      // consensus 源本不该跑到这里 —— 这里只是把类型收窄成 ConsensusOptions
+      // 要求的 number,不改变任何运行时行为。Task 4 接入 detector 注册表后
+      // 整段(含这个守卫)移除。
+      const { minWallets, minPerWalletUsd } = s;
+      if (minWallets == null || minPerWalletUsd == null) continue;
       const groups = detectConsensus(trades, smart, {
-        minWallets: s.minWallets,
-        minPerWalletUsd: s.minPerWalletUsd,
+        minWallets,
+        minPerWalletUsd,
       });
       const uncontested = excludeContestedFromConsensus(groups, contested);
       const dropped = groups.length - uncontested.length;
@@ -1046,6 +1102,13 @@ export interface FollowStrategyView {
     sizeUsd: number;
     exitRule: string;
     maxEntryDeviationCents: number;
+    // source 是展示用的自由字符串(非 FollowSourceKind):展示侧的纪律是「任何
+    // 字段缺失/坏值都退安全默认,绝不因此丢弃整条策略」,即便 params_json 里
+    // 塞了个 isFollowSourceKind 认不出的值也要能显示出来,不能因为一个展示字段
+    // 打回 parseStrategy 那种「未知即跳过」的严格校验。
+    source: string;
+    maxPrice: number;
+    freshSec: number;
   };
   metrics: StrategyMetrics;
   fund: FundMetrics; // 基金式档案:成立/运行/峰值占用/年化(仅展示,不参与任何决策)
@@ -1071,6 +1134,11 @@ function parseParamsView(
     // 展示侧默认与开仓侧 parseStrategy 同源:字段缺失时开仓实际生效的就是 10¢,
     // 界面不能展示成 0(会被误读为「无护栏」)。
     maxEntryDeviationCents: DEFAULT_MAX_ENTRY_DEVIATION_CENTS,
+    // source/maxPrice/freshSec 同样与开仓侧同源默认(见同名常量定义处的注释)——
+    // 两侧默认值永远一致,否则界面会展示出一套跟实际开仓行为对不上的参数。
+    source: "consensus",
+    maxPrice: DEFAULT_MAX_PRICE,
+    freshSec: DEFAULT_FRESH_SEC,
   };
   if (!paramsJson) return fallback;
   let p: Record<string, unknown>;
@@ -1087,6 +1155,8 @@ function parseParamsView(
     p.maxEntryDeviationCents,
     DEFAULT_MAX_ENTRY_DEVIATION_CENTS,
   );
+  const maxPrice = numOr(p.maxPrice, DEFAULT_MAX_PRICE);
+  const freshSec = numOr(p.freshSec, DEFAULT_FRESH_SEC);
   return {
     minWallets: numOr(p.minWallets, 0),
     minPerWalletUsd: numOr(p.minPerWalletUsd, 0),
@@ -1095,6 +1165,10 @@ function parseParamsView(
     // 非正数同样退默认(与开仓侧一致:只有 >0 的显式值才生效)。
     maxEntryDeviationCents:
       maxDev > 0 ? maxDev : DEFAULT_MAX_ENTRY_DEVIATION_CENTS,
+    source: typeof p.source === "string" ? p.source : "consensus",
+    // 价格是 0-1 小数,>1 视为非法,与开仓侧同一判定式。
+    maxPrice: maxPrice > 0 && maxPrice <= 1 ? maxPrice : DEFAULT_MAX_PRICE,
+    freshSec: freshSec > 0 ? freshSec : DEFAULT_FRESH_SEC,
   };
 }
 

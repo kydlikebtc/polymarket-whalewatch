@@ -378,6 +378,11 @@ describe("buildFollowView", () => {
       exitRule: "settlement",
       // 字段缺失时展示侧退到与开仓侧一致的默认 10¢(不能显示成 0=「无护栏」)。
       maxEntryDeviationCents: 10,
+      // source/maxPrice/freshSec 同样字段缺失,退到与开仓侧 parseStrategy 同源
+      // 的默认值(见 lib/follow.ts DEFAULT_MAX_PRICE/DEFAULT_FRESH_SEC 注释)。
+      source: "consensus",
+      maxPrice: 0.95,
+      freshSec: 900,
     });
     expect(strategies[0].enabled).toBe(true);
   });
@@ -399,6 +404,9 @@ describe("buildFollowView", () => {
       exitRule: "settlement",
       // 护栏阈值的安全默认是 10(开仓侧实际生效值),不同于其余字段的 0 占位。
       maxEntryDeviationCents: 10,
+      source: "consensus",
+      maxPrice: 0.95,
+      freshSec: 900,
     };
     expect(strategies[0].params).toEqual(dflt);
     expect(strategies[1].params).toEqual(dflt);
@@ -879,5 +887,88 @@ describe("buildFollowView · account 推演透传", () => {
     expect(v.account.recommendedUsd).toBe(v.fund.maxConcurrentUsd);
     expect(v.account.rows.length).toBeGreaterThan(0);
     expect(v.account.annualizedOnRecommended).toBeCloseTo(1.0);
+  });
+});
+
+import { parseStrategyForTest } from "./follow";
+
+describe("parseStrategy — source/maxPrice/freshSec 扩展", () => {
+  it("向后兼容:无 source 字段 → consensus,且旧字段逐字段不变", () => {
+    const old = JSON.stringify({
+      minWallets: 3,
+      minPerWalletUsd: 10000,
+      sizeUsd: 500,
+      exitRule: "settlement",
+      maxEntryDeviationCents: 10,
+    });
+    const s = parseStrategyForTest(1, old);
+    expect(s).not.toBeNull();
+    expect(s!.source).toBe("consensus");
+    expect(s!.minWallets).toBe(3);
+    expect(s!.minPerWalletUsd).toBe(10000);
+    expect(s!.sizeUsd).toBe(500);
+    expect(s!.exitRule).toBe("settlement");
+    expect(s!.maxEntryDeviationCents).toBe(10);
+    // 新字段走默认
+    expect(s!.maxPrice).toBe(0.95);
+    expect(s!.freshSec).toBe(900);
+  });
+
+  it("未知 source → 跳过该策略(返回 null)", () => {
+    const s = parseStrategyForTest(
+      2,
+      JSON.stringify({ source: "accumulate", sizeUsd: 500 }),
+    );
+    expect(s).toBeNull();
+  });
+
+  it("非 consensus 源不再强制要求 minWallets/minPerWalletUsd", () => {
+    const s = parseStrategyForTest(
+      3,
+      JSON.stringify({
+        source: "heavy",
+        sizeUsd: 500,
+        minSingleFillUsd: 50000,
+      }),
+    );
+    expect(s).not.toBeNull();
+    expect(s!.source).toBe("heavy");
+    expect(s!.minSingleFillUsd).toBe(50000);
+  });
+
+  it("consensus 源仍强制要求 minWallets/minPerWalletUsd", () => {
+    const s = parseStrategyForTest(
+      4,
+      JSON.stringify({ source: "consensus", sizeUsd: 500 }),
+    );
+    expect(s).toBeNull();
+  });
+
+  it("maxPrice/freshSec 非法值退默认(只有 >0 的有限数生效)", () => {
+    const s = parseStrategyForTest(
+      5,
+      JSON.stringify({
+        minWallets: 2,
+        minPerWalletUsd: 5000,
+        sizeUsd: 500,
+        maxPrice: 0,
+        freshSec: -1,
+      }),
+    );
+    expect(s!.maxPrice).toBe(0.95);
+    expect(s!.freshSec).toBe(900);
+  });
+
+  it("maxPrice > 1 视为非法(价格是 0-1 小数)", () => {
+    const s = parseStrategyForTest(
+      6,
+      JSON.stringify({
+        minWallets: 2,
+        minPerWalletUsd: 5000,
+        sizeUsd: 500,
+        maxPrice: 95,
+      }),
+    );
+    expect(s!.maxPrice).toBe(0.95);
   });
 });

@@ -110,9 +110,13 @@ export interface StrategyParams {
   // consensus 专属
   minWallets?: number;
   minPerWalletUsd?: number;
-  minTotalNetUsd?: number | null;
+  // 与其余 minXxx 同型 `?: number`(而非 `| null`):numOr 从不区分「字段缺失」
+  // 与「字段显式为 null」,消费方也统一用 `== null` 判断,`| null` 不承载任何
+  // 独立于 undefined 的语义 —— 它是从设计文档的 JSON 示例机械转录来的不对称。
+  // 统一后面 5 个 detector 都少一个要考虑的分支。
+  minTotalNetUsd?: number;
   // consensus / heavy / lone_wolf 共用
-  minWalletScore?: number | null;
+  minWalletScore?: number;
   // heavy 专属
   minSingleFillUsd?: number;
   // lopsided / resolved 专属
