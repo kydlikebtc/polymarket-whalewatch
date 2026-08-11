@@ -177,6 +177,12 @@ export type Detector = (
  * source 专属字段可选 —— 各 detector 自己校验并在缺失时产出空候选 + 日志。
  */
 export interface StrategyParams {
+  /**
+   * follow_strategies 行 id。只用于日志定位 —— 12 档并行时,不带 id 的日志
+   * (「剔除 3 个共识组」)无法回答「是哪条策略」,可诊断性会比单档时代倒退。
+   * 不参与任何检测判定。
+   */
+  id: number;
   source: FollowSourceKind;
   sizeUsd: number;
   exitRule: string;
@@ -262,7 +268,10 @@ const ctx = (over: Partial<DetectorCtx> = {}): DetectorCtx => ({
     ["0xa", tag()],
     ["0xb", tag()],
   ]),
-  nowSec: 2000,
+  // 1500 而非 2000:mk() 默认 timestamp=1000、params() 默认 freshSec=900,
+  // 取 2000 会让 2000−1000=1000 > 900,默认 fixture 被新鲜度闸门剔成空,
+  // 与「产出一个候选」的用例自相矛盾。
+  nowSec: 1500,
   contested: [],
   earlyWinnerWallets: new Set(),
   prevTilt: new Map(),
@@ -276,6 +285,7 @@ const params = (over: Partial<StrategyParams> = {}): StrategyParams => ({
   maxEntryDeviationCents: 10,
   maxPrice: 0.95,
   freshSec: 900,
+  id: 1,
   minWallets: 2,
   minPerWalletUsd: 5000,
   ...over,
@@ -549,7 +559,9 @@ const DEFAULT_MAX_PRICE = 0.95;
 const DEFAULT_FRESH_SEC = 900;
 ```
 
-`FollowStrategy` 改为 `StrategyParams & { id: number }`（复用 `followCandidate.ts` 的定义，不再另立一套）。
+`FollowStrategy` 直接改成 `StrategyParams`（复用 `followCandidate.ts` 的定义，不再另立一套）。`id` 已是 `StrategyParams` 的必填字段（Task 2 的实测教训：12 档并行时不带 id 的 detector 日志无法定位是哪条策略），所以不需要再交叉类型。
+
+**顺手清一个契约瑕疵（Task 1 审查发现）：** `StrategyParams` 里 `minTotalNetUsd?: number | null` / `minWalletScore?: number | null` 与其余 `minXxx?: number` 的可空性不一致。`numOr` 从不区分「字段缺失」和「字段显式为 null」，消费方也统一用 `== null`，所以这个 `| null` **不承载任何独立于 `undefined` 的语义** —— 它是从设计文档的 JSON 示例机械转录来的。本任务把这两个字段统一成 `?: number`（`parseStrategy` 里对应改成 `?? undefined`），别让一个未经论证的不对称在后面 5 个 detector 里继续复制。
 
 `parseStrategy` 改造要点：
 
@@ -557,7 +569,7 @@ const DEFAULT_FRESH_SEC = 900;
 function parseStrategy(
   id: number,
   paramsJson: string | null,
-): (StrategyParams & { id: number }) | null {
+): StrategyParams | null {
   // ... 现有 JSON.parse + numOr 不变 ...
 
   // source:缺失 → "consensus"(既有两条策略零迁移);未知值 → 跳过整条策略。
@@ -609,8 +621,8 @@ function parseStrategy(
     freshSec: freshSec != null && freshSec > 0 ? freshSec : DEFAULT_FRESH_SEC,
     minWallets: minWallets ?? undefined,
     minPerWalletUsd: minPerWalletUsd ?? undefined,
-    minTotalNetUsd: numOr(p.minTotalNetUsd),
-    minWalletScore: numOr(p.minWalletScore),
+    minTotalNetUsd: numOr(p.minTotalNetUsd) ?? undefined,
+    minWalletScore: numOr(p.minWalletScore) ?? undefined,
     minSingleFillUsd: numOr(p.minSingleFillUsd) ?? undefined,
     minTiltPct: numOr(p.minTiltPct) ?? undefined,
     minPerSideUsd: numOr(p.minPerSideUsd) ?? undefined,
