@@ -24,7 +24,12 @@ type StrategyRow = {
 // 30min/2h 的回填价;老仓位/取价失败为 null,前端逐行兜底)。这些额外列在传给
 // buildFollowView 时结构无害(它只读 FollowPositionRow 字段),原样流入 open/settled
 // 数组,客户端无需额外请求即可渲染延迟成本与 markout。
+// PLUS asset(CLOB token id):持仓中列表「当前价」列需要它按 token 惰性取价
+// (见 app/useCurrentPrices.ts),之前这条 SQL 没选它——不是这张表没有这一列
+// (follow_positions 建表时就有 asset,写入侧 lib/follow.ts 一直在填),只是
+// 之前的视图不需要它,选出来才第一次流到客户端。
 type PositionRow = FollowPositionRow & {
+  asset: string;
   event_slug: string;
   title: string;
   formation_ts: number | null;
@@ -52,7 +57,7 @@ export async function GET() {
 
       const positions = db
         .prepare(
-          `SELECT strategy_id, condition_id, outcome, title, event_slug, size_usd,
+          `SELECT strategy_id, condition_id, outcome, asset, title, event_slug, size_usd,
                   entry_price, smart_avg_price, shares, status, entry_ts,
                   exit_ts, exit_price, realized_pnl,
                   formation_ts, formation_price, markout_30m, markout_2h,

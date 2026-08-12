@@ -3,8 +3,11 @@
 // 策略中心看板(产品名改版前叫「纸面跟单」,2026-08)。只读消费 /api/follow ——
 // 现价进场、持有到结算、固定 $/信号、仅结算盈亏(不做浮盈)。设计系统组件/类
 // 全部复用 app/ui.tsx + globals.css,
-// 净值曲线用内联 SVG 阶梯折线(无图表依赖),多策略靠"线型 × 颜色"组合区分
-// (12 档同屏叠画,仅线型不够用,颜色也要真正承担区分职责,见 STRATEGY_STROKES)。
+// 净值曲线用内联 SVG 平滑曲线(单调三次插值,无图表依赖;结算点本身仍是
+// 唯一真实数据,曲线只是连接方式——见 lib/followCardView.ts smoothCurvePath
+// 顶部注释「为什么能从阶梯改成平滑」),多策略靠"线型 × 颜色"组合区分
+// (同屏叠画档数多时仅线型不够用,颜色也要真正承担区分职责,组合表见
+// lib/followCardView.ts 的 STRATEGY_STROKES,容量与超限报警见其字段注释)。
 
 import {
   useCallback,
@@ -15,13 +18,17 @@ import {
   type ReactNode,
 } from "react";
 import { Icon, Modal, Segmented, Tag } from "../ui";
+import { useCurrentPrices } from "../useCurrentPrices";
 import {
   classifyCardState,
   computeTimeTicks,
   estimateAxisLabelWidth,
   formatAxisUsd,
+  smoothCurvePath,
   sparklineAreaPath,
-  sparklinePath,
+  strokeFor,
+  strokeOverflowCount,
+  STRATEGY_STROKES,
 } from "../../lib/followCardView";
 
 /* ------------------------------------------------------------- API types */
@@ -35,6 +42,10 @@ type FollowPositionRow = {
   outcome: string;
   title?: string;
   event_slug?: string;
+  // CLOB token id(route 直选)。持仓中列表「当前价」列按它惰性取价(见
+  // app/useCurrentPrices.ts)——类型上设可选以对旧响应/极端老仓位宽容,
+  // 缺失时该行当前价单元格按"不可取价"降级显示「—」,不是当成加载中。
+  asset?: string;
   size_usd: number;
   entry_price: number;
   smart_avg_price: number;
@@ -328,7 +339,16 @@ const FAMILY_META: Record<FamilyKey, { title: string; blurb: string }> = {
   },
   disagreement: {
     title: "分歧",
-    blurb: "聪明钱意见不一致时,能不能跟主导边。",
+    // 第二句(第 13 档「逆势少数边」上线新增)专门交代这一族里「一边倒分歧」
+    // 与「逆势少数边」的关系:不是两个碰巧同族的独立策略,是共用同一批市场、
+    // 同一个倾斜形成时刻的一组对照——两档战绩才可以互相印证着读(用户明确
+    // 要求把这层"怎么读"的说明放在族说明里,卡片视图的族标题下与列表/曲线
+    // 共用的 FamilyToggles 悬停提示都消费这同一份 blurb)。
+    blurb:
+      "聪明钱意见不一致时,跟主导边还是少数边——「一边倒分歧」跟多数、" +
+      "「逆势少数边」跟少数,同一批市场、同一个形成时刻的一组对照,不是两个" +
+      "独立策略:主导边持续赢说明质量权重判据有效,少数边持续赢则提示评分" +
+      "体系可能有盲区,或少数派掌握了权重算法看不见的信息。",
   },
   wallet: {
     title: "钱包画像",
@@ -414,6 +434,11 @@ const STRATEGY_EMOJI: Record<string, string> = {
   分歧解除: "🏳️",
   高分独狼: "🐺",
   早期赢家跟投: "🌱",
+  // 🔄(循环箭头,"反向/切换"语义)= 分歧族第三个成员「逆势少数边」,C1「一边
+  // 倒分歧」的对照组(跟同一批市场的相反方向)。与同族的 ⚖️(跟主导边)、
+  // 🏳️(认输/分歧解除)视觉上可区分,又直白传达"和另一档反着来"这个核心
+  // 特征,不会被误读成本文件已用过的其它任何语义。
+  逆势少数边: "🔄",
 };
 // 兜底:未来加新档、来不及补映射时不能让页面报 undefined 或崩掉——退回
 // 空字符串(不显示图标,而不是显示一个可能撞语义的占位符号)。
@@ -548,33 +573,12 @@ function marketLabel(p: FollowPositionRow): string {
 
 /* ---------------------------------------------------- equity curve (SVG) */
 
-// 多策略叠加(最多 12 档同屏):4 色 × 3 线型 = 12 种两两不重复的组合,颜色
-// 刻意避开 up/down(绿/红是盈亏语义,图例里紧挨着的净值数字就用这两色,撞了
-// 会让读者误以为线条颜色代表盈亏)。全部取设计系统 token,不写死 hex ——
-// globals.css 是色值单一真相源。
-//
-// 只有 3 种线型,4 条一组共享同一线型,所以颜色不再只是"辅助":同线型的 4 条
-// 之间,颜色是唯一的区分依据。为了不让色盲用户在"相邻"两档之间只能靠色相
-// 判断,下面按"颜色外层、线型内层"的顺序展开(COLORS.flatMap(color =>
-// DASHES.map(dash => ...))),这样任意相邻下标(i, i+1)之间线型必然不同
-// (同色的 3 条内部靠线型区分;跨色边界处线型和颜色一起变)——线型差异始终
-// 能独立承担"这是两条不同的线"这件事,颜色只在跨过 3 条之外时才成为唯一
-// 依据。
-const STRATEGY_DASHES: (string | undefined)[] = [
-  undefined, // 实线
-  "7 4", // 长虚线
-  "10 4 2 4", // 虚点相间(点状"2 4"在阶梯图的短线段上容易视觉消失,弃用)
-];
-const STRATEGY_COLORS = [
-  "var(--brand-500)", // 电蓝 · 品牌主色
-  "var(--n-900)", // 近黑 · 最强中性色
-  "var(--warn-700)", // 深琥珀 · 与蓝/黑拉开色相,兼容色觉差异
-  "var(--n-500)", // 中灰 · 弱中性色,与近黑靠明度而非色相区分
-];
-const STRATEGY_STROKES = STRATEGY_COLORS.flatMap((color) =>
-  STRATEGY_DASHES.map((dash) => ({ dash, color })),
-);
-const strokeFor = (i: number) => STRATEGY_STROKES[i % STRATEGY_STROKES.length];
+// 多策略叠加的"线型 × 颜色"组合表(STRATEGY_STROKES/strokeFor/
+// strokeOverflowCount)提到了 lib/followCardView.ts —— 这是这份组合表第一次
+// 被要求证明"相邻组合线型必不同""颜色不撞 up/down 语义色"这两条性质,纯函数
+// 里断言比只靠人眼审图可靠。当前容量见该文件 STRATEGY_STROKES 的字段注释
+// (含"超过容量会怎样"与"为什么不追求无限增长"的完整论证);超容量时的
+// console.warn 报警见下方 FollowPage 组件里对 strokeOverflowCount 的调用。
 
 type CurveSeries = {
   id: number;
@@ -586,23 +590,6 @@ type CurveSeries = {
   family: FamilyKey;
   curve: { ts: number; cum: number }[];
 };
-
-// 阶梯折线(step-after):每个结算点之前维持前一水平,到该点垂直跳变到新累计值。
-function stepPath(
-  curve: { ts: number; cum: number }[],
-  sx: (t: number) => number,
-  sy: (v: number) => number,
-): string {
-  if (curve.length === 0) return "";
-  const pts = [...curve].sort((a, b) => a.ts - b.ts);
-  let d = `M ${sx(pts[0].ts).toFixed(1)} ${sy(pts[0].cum).toFixed(1)}`;
-  for (let i = 1; i < pts.length; i++) {
-    const x = sx(pts[i].ts).toFixed(1);
-    d += ` L ${x} ${sy(pts[i - 1].cum).toFixed(1)}`;
-    d += ` L ${x} ${sy(pts[i].cum).toFixed(1)}`;
-  }
-  return d;
-}
 
 // 格式化逻辑下沉到 lib/followCardView.ts 的 formatAxisUsd:与下面
 // estimateAxisLabelWidth(算 padL 用的宽度估算)共享同一份格式化,保证
@@ -621,7 +608,7 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
   if (withData.length === 0) {
     return (
       <div className="ds-empty">
-        暂无已结算仓位 — 有策略平仓后这里会画出结算净值阶梯曲线
+        暂无已结算仓位 — 有策略平仓后这里会画出结算净值曲线
       </div>
     );
   }
@@ -713,7 +700,7 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
         width="100%"
         style={{ height: "auto", display: "block" }}
         role="img"
-        aria-label="各策略结算净值(累计已实现盈亏)阶梯曲线"
+        aria-label="各策略结算净值(累计已实现盈亏)平滑曲线,标记点为真实结算点"
       >
         {/* 0 基线 */}
         <line
@@ -785,10 +772,18 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
             </text>
           </g>
         ))}
-        {/* 各策略阶梯线 + 结算点。用 <g> 整组设 opacity——同一组里的线和它
-            的结算点一起淡化,不必在 path 和每个 circle 上分别算一遍(也不
-            会出现"线淡了、点还是实心"这种半淡化的观感,这正是圆点会浮在
-            淡化线上的问题的根)。 */}
+        {/* 各策略平滑曲线 + 结算点标记。用 <g> 整组设 opacity——同一组里的
+            线和它的结算点一起淡化,不必在 path 和每个 circle 上分别算一遍
+            (也不会出现"线淡了、点还是实心"这种半淡化的观感,这正是圆点
+            会浮在淡化线上的问题的根)。
+
+            标记点(bug 补偿,2026-08):曲线从阶梯改成平滑(单调三次插值,
+            见 lib/followCardView.ts smoothCurvePath)后,两次结算之间的
+            连线不再是"维持前值"的直角转折,视觉上容易被误读成净值连续
+            变化——而实际口径仍是"只在结算这一刻发生变化"(computeStrategyMetrics
+            顶部注释)。半透明白色描边环(stroke=n-0)+ 比线宽更粗的半径,
+            让每个结算点在任何线色/线型下都清晰凸出于曲线本身,提醒读者
+            "数据只存在于这些点上,中间只是插值连接",不是真实轨迹。 */}
         {withData.map((s) => {
           const st = strokeFor(s.strokeIdx);
           const isHovered = hoverId === s.id;
@@ -796,7 +791,7 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
           return (
             <g key={s.id} opacity={dimmed ? 0.2 : 1}>
               <path
-                d={stepPath(s.curve, sx, sy)}
+                d={smoothCurvePath(s.curve, sx, sy)}
                 fill="none"
                 stroke={st.color}
                 strokeWidth={isHovered ? 2.6 : 1.8}
@@ -809,8 +804,10 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
                   key={i}
                   cx={sx(pt.ts)}
                   cy={sy(pt.cum)}
-                  r={2.5}
+                  r={isHovered ? 4.2 : 3.2}
                   fill={st.color}
+                  stroke="var(--n-0)"
+                  strokeWidth={1.2}
                 />
               ))}
             </g>
@@ -945,32 +942,38 @@ function Metric({
 
 /**
  * 净值走势图(原「卡片 sparkline」,U6 从卡片移入详情弹窗并放大;本次追加
- * x 轴日期刻度 + 结算点选中交互)。详情弹窗改 tab 切换后挂在「总览」tab,
- * 与战绩全景一起——见 StrategyDetailDialog 顶部注释。
+ * x 轴日期刻度 + 结算点选中交互,再之后又从阶梯改成平滑曲线)。详情弹窗改
+ * tab 切换后挂在「总览」tab,与战绩全景一起——见 StrategyDetailDialog
+ * 顶部注释。
  *
  * U6 的起点:240×52 的卡片尺寸画不出可读坐标轴,形状又因各自缩放不可横比,
  * 只回答得了"大致涨还是跌"——这件事结算净值的正负号已经答过了,占卡片上
  * 最大一块视觉面积不值当。放大到详情弹窗(接近 1200px 宽)后这两个限制都
  * 不存在了,遂加上坐标轴,让它真正回答"这档的盈亏是怎么走出来的"。
  *
- * width/height 是入参,调用方按场地大小传。sparklinePath/sparklineAreaPath
- * (lib/followCardView.ts)本身的签名与"各自定域缩放"的逻辑都不动——这里把
- * padL/padT/padB 这部分留白从传给它们的 width/height 里预先扣掉,再用
- * <g transform="translate(...)"> 整体平移,腾出坐标轴文字的位置,不需要为
- * 了加坐标轴去改那两个纯函数。
+ * width/height 是入参,调用方按场地大小传。曲线路径用 lib/followCardView.ts
+ * 的 smoothCurvePath(与页面下方大图 EquityCurve 共用同一个函数)——那个
+ * 函数要求调用方传入 sx/sy,这里沿用改版前"局部坐标 + <g transform>
+ * 平移"的画法:把 padL/padT/padB 这部分留白从局部坐标系里预先扣掉,再用
+ * <g transform="translate(...)"> 整体平移腾出坐标轴文字的位置,局部
+ * sx/sy 直接从下面已经算好的绝对坐标 sx/sy 平移得到(细节见下方 localSx/
+ * localSy 定义处的注释)。
  *
  * x 轴日期刻度复用 lib/followCardView.ts 的 computeTimeTicks——与页面下方
  * 大图 EquityCurve 同一份选点/格式化逻辑,不新造第二套日期表达。
  *
- * 点选交互:曲线是阶梯图(step-after),每个数据点对应一次真实结算,不是
- * 连续函数——"选中"的目标必须是这些真实点本身,不能是鼠标/触摸位置插值
- * 出的中间点。每个结算点渲染一个可视圆点 + 一个更大的透明命中圆(方便
- * 鼠标/触屏精确点中);命中圆同时挂 onMouseEnter/onMouseLeave(鼠标悬停)
- * 与 onFocus/onBlur(键盘 Tab 聚焦),两者触发同一个选中态——纯键盘用户
- * Tab 到某个点也能看到与鼠标悬停完全相同的信息读出,不是鼠标专属功能
- * (与本文件 EquityCurve 图例 hover 高亮的既有约定同一原则)。选中结果
- * 显示在图表上方的信息条:日期复用 fmtDateTime,净值复用 fmtSignedUsd——
- * 都是页面已有的格式化函数,不新造第二套。
+ * 点选交互:每个数据点对应一次真实结算,不是连续函数的采样——曲线改成
+ * 平滑之后这一点反而更容易被忽略(阶梯图的直角转折本身就在提醒"这是离散
+ * 事件",平滑曲线看着更像连续过程),所以"选中"的目标必须仍然是这些真实
+ * 点本身,不能是鼠标/触摸位置插值出的中间点,标记点本身也要画得比曲线更
+ * 显眼(见下方 circle 的 stroke 描边环)。每个结算点渲染一个可视圆点 + 一个
+ * 更大的透明命中圆(方便鼠标/触屏精确点中);命中圆同时挂
+ * onMouseEnter/onMouseLeave(鼠标悬停)与 onFocus/onBlur(键盘 Tab 聚焦),
+ * 两者触发同一个选中态——纯键盘用户 Tab 到某个点也能看到与鼠标悬停完全
+ * 相同的信息读出,不是鼠标专属功能(与本文件 EquityCurve 图例 hover 高亮的
+ * 既有约定同一原则)。选中结果显示在图表上方的信息条:日期复用
+ * fmtDateTime,净值复用 fmtSignedUsd——都是页面已有的格式化函数,不新造
+ * 第二套。
  *
  * 颜色按终值正负取 up/down 语义色,与「结算净值」的着色一致。
  */
@@ -1034,8 +1037,8 @@ function Sparkline({
     minHeight: "1.4em",
   };
 
-  // 单点特判(逻辑不变,W/H 换成入参):sparklinePath 对唯一点只产出
-  // "M x y"(无 L 段),SVG 不会画出任何可见线段;sparklineAreaPath 仍会把
+  // 单点特判(逻辑不变,W/H 换成入参):smoothCurvePath 对唯一点只产出
+  // "M x y"(无 C 段),SVG 不会画出任何可见线段;sparklineAreaPath 仍会把
   // 这个孤点和两个底角连成一个与曲线形状无关的楔形色块(见
   // lib/followCardView.ts 顶部注释)。画一条贯穿绘图区的虚线 + 这一个值
   // 本身——只有一个样本点,谈不上走势,虚线明确传达"数据不足以连线"。
@@ -1100,14 +1103,17 @@ function Sparkline({
           {/* 可视圆点 + 透明命中圆:同一个点的双重表示,见函数顶部"点选
               交互"注释。role="button":SVG 图形元素没有隐式 role,补一个
               才能被读屏软件识别成可交互控件(与下面 EquityCurve 图例的
-              纯文本 <span> 不同,那里文字内容本身就能被朗读)。 */}
+              纯文本 <span> 不同,那里文字内容本身就能被朗读)。默认态也带
+              白色描边环(不再是"只有选中才有环"),与下面多点分支、
+              EquityCurve 的标记点统一——曲线改平滑后,标记必须无条件比线
+              本身醒目,不能只在交互态才凸显(见函数顶部"点选交互"注释)。 */}
           <circle
             cx={px}
             cy={y}
-            r={isSelected ? 4 : 2.5}
+            r={isSelected ? 4.5 : 3.2}
             fill={tone}
-            stroke={isSelected ? "var(--n-0)" : "none"}
-            strokeWidth={isSelected ? 1.5 : 0}
+            stroke="var(--n-0)"
+            strokeWidth={isSelected ? 1.5 : 1}
           />
           <circle
             cx={px}
@@ -1151,14 +1157,9 @@ function Sparkline({
   const plotW = width - padL;
   const plotH = height - padT - padB;
 
-  const line = sparklinePath(curve, plotW, plotH);
-  if (!line) return null;
-
-  // y 轴标签复用与 sparklinePath 内部完全相同的定域公式(该函数只返回一条
-  // path 字符串,不导出 lo/hi/sy;签名按要求不能改,这里只能就地重算同一份
-  // min/max——两行 Math.min/max,不是什么值得抽公共函数的重计算)。
-  // AXIS_PAD 常量与 lib/followCardView.ts 的 PAD 保持一致,否则标签位置会
-  // 和实际画出来的折线端点对不上。
+  // y 轴定域:峰值/谷底(下面会画出来的两个标签)。AXIS_PAD 常量与
+  // lib/followCardView.ts 的 PAD 保持一致,否则标签位置会和实际画出来的
+  // 曲线端点对不上。
   const AXIS_PAD = 4;
   const span = hi - lo;
   const sy = (v: number) =>
@@ -1169,8 +1170,8 @@ function Sparkline({
   const showZero = lo <= 0 && 0 <= hi;
 
   // 结算点的真实(ts, cum)列表(按时间排序)——x 轴刻度、逐点选中标记都
-  // 按这份数据算。与 sparklinePath 内部对入参做的排序是同一个比较器,
-  // 这里各自排一次不会得到不同的点序,保证圆点与它下面那条折线严丝合缝。
+  // 按这份数据算;smoothCurvePath 内部对入参做的排序是同一个比较器,这里
+  // 各自排一次不会得到不同的点序,保证圆点与它下面那条曲线严丝合缝。
   const pts = [...curve].sort((a, b) => a.ts - b.ts);
   const tMin = pts[0].ts;
   const tSpan = pts[pts.length - 1].ts - tMin;
@@ -1178,6 +1179,18 @@ function Sparkline({
     padL + (tSpan > 0 ? ((t - tMin) / tSpan) * plotW : plotW / 2);
   const ticks = computeTimeTicks(tMin, tMin + tSpan);
   const selectedPt = selectedIdx != null ? (pts[selectedIdx] ?? null) : null;
+
+  // 曲线路径:smoothCurvePath 要求调用方传入 sx/sy(统一给 EquityCurve 那种
+  // 多策略共享坐标系的场景用,见 lib/followCardView.ts 顶部注释)。这里沿用
+  // 改版前"局部坐标 + <g transform> 平移"的画法(下面 JSX 里的
+  // translate(padL, padT)):局部 sx/sy 就是上面已经算好的绝对坐标 sx/sy
+  // 各减掉一次平移量——不是又推了一遍定域公式,只是把同一个函数在两个
+  // 坐标原点下各求值一次,不会出现"两份公式各自维护、互相漂移"的老问题
+  // (这正是这次改造前 sy 那段注释在抱怨的事)。
+  const localSx = (t: number) => sx(t) - padL;
+  const localSy = (v: number) => sy(v) - padT;
+  const line = smoothCurvePath(curve, localSx, localSy);
+  if (!line) return null;
 
   return (
     <div>
@@ -1278,8 +1291,11 @@ function Sparkline({
           <path d={line} fill="none" stroke={tone} strokeWidth={1.6} />
         </g>
         {/* 逐个结算点的可视圆点 + 透明命中圆,见函数顶部"点选交互"注释:
-            曲线是阶梯图,这里遍历的是真实结算点(pts),不是曲线上的任意
-            位置——键盘 Tab 与鼠标悬停触发同一个选中态。 */}
+            曲线是平滑插值,这里遍历的是真实结算点(pts),不是曲线上的任意
+            位置——键盘 Tab 与鼠标悬停触发同一个选中态。默认态也带白色描边
+            环(不再是"只有选中才有环"):平滑曲线本身看着更像连续过程,
+            标记必须无条件比线更醒目,才能让读者确认"数据只在这些点上,
+            中间是插值连接"。 */}
         {pts.map((pt, i) => {
           const cx = sx(pt.ts);
           const cy = sy(pt.cum);
@@ -1289,10 +1305,10 @@ function Sparkline({
               <circle
                 cx={cx}
                 cy={cy}
-                r={isSelected ? 4 : 2.5}
+                r={isSelected ? 4.5 : 3.2}
                 fill={tone}
-                stroke={isSelected ? "var(--n-0)" : "none"}
-                strokeWidth={isSelected ? 1.5 : 0}
+                stroke="var(--n-0)"
+                strokeWidth={isSelected ? 1.5 : 1}
               />
               <circle
                 cx={cx}
@@ -2860,6 +2876,51 @@ function SettledTable({
   );
 }
 
+// 持仓中「当前价」单元格(前端惰性加载,见 app/useCurrentPrices.ts)。只显示
+// 当前价 + 相对进场价的 ¢ 差(涨绿跌红),不显示浮盈美元数——这个项目的口径
+// 是「只记结算盈亏,不做浮盈」(页面页头 hint、lib/follow.ts
+// computeStrategyMetrics 顶部注释同一句话),ROI/胜率/年化/回撤/净值曲线
+// 全部只认结算这一刻的 realized_pnl。浮盈美元数回答的是"赚了多少"(业绩),
+// 会与这条口径打架;¢ 差回答的是"这仓现在处在什么位置"(状态快照),
+// 两者不冲突,只有前者不该出现在这张表里。
+//
+// price 的三态(与 useCurrentPrices 返回值同一约定,调用方不需要自己再判断
+// 一次"是不是还没发请求"——absent/null/number 三种情况在这里穷举):
+// undefined(prices 记录里没这个 key)=仍在加载,null=已请求但取价失败/
+// 无数据(mock token、太新太冷的市场),number=当前价(0–1 概率)。
+function CurrentPriceCell({
+  p,
+  price,
+}: {
+  p: FollowPositionRow;
+  price: number | null | undefined;
+}) {
+  if (!p.asset) {
+    // 理论上不应发生(asset 是 route 直选的必填列),防御性兜底——没有
+    // token id 就没有可查的对象,不该显示成"加载中"卡死不动。
+    return <span className="muted">—</span>;
+  }
+  if (price === undefined) {
+    return <span className="mono muted">…</span>;
+  }
+  if (price === null) {
+    return (
+      <span className="muted" title="取价失败,或该市场暂无可用的近期行情数据">
+        —
+      </span>
+    );
+  }
+  const deltaCents = (price - p.entry_price) * 100;
+  return (
+    <span className="mono">
+      {cents(price)}{" "}
+      <span className={pnlTone(deltaCents)}>
+        ({fmtSignedCents(deltaCents)})
+      </span>
+    </span>
+  );
+}
+
 function OpenTable({
   rows,
   emptyText = "当前没有持仓中的纸面仓位",
@@ -2867,6 +2928,12 @@ function OpenTable({
   rows: LabeledRow[];
   emptyText?: string;
 }) {
+  // 当前价惰性加载:无条件放在任何 early return 之前(Hooks 规则,与本文件
+  // EquityCurve/Sparkline 的既有约定同一原则)。空表时 rows.map 是 [],
+  // useCurrentPrices 收到空数组直接短路、不发请求,调用这个 hook 本身零
+  // 成本。按 asset 去重是 hook 内部的职责(见 dedupeAssets),这里只管把
+  // 原始(可能重复的)asset 列表转发过去。
+  const { prices } = useCurrentPrices(rows.map((p) => p.asset));
   if (rows.length === 0) {
     return <div className="ds-empty">{emptyText}</div>;
   }
@@ -2880,6 +2947,12 @@ function OpenTable({
             <th>市场 · 结果</th>
             <th className="is-right" title="现价进场价(美分)">
               进价
+            </th>
+            <th
+              className="is-right"
+              title="当前市价快照(括号内为相对进场价的 ¢ 差,涨绿跌红),仅供参考——不进 ROI/胜率/年化等任何战绩口径;本页所有指标均为结算口径(只记结算盈亏,不做浮盈)。前端惰性加载,取价失败或该 token 暂无行情数据显示 —"
+            >
+              当前价
             </th>
             <th
               className="is-right"
@@ -2922,6 +2995,12 @@ function OpenTable({
                 </td>
                 <td className="mono is-right" data-label="进价">
                   {cents(p.entry_price)}
+                </td>
+                <td className="is-right" data-label="当前价">
+                  <CurrentPriceCell
+                    p={p}
+                    price={p.asset ? prices[p.asset] : null}
+                  />
                 </td>
                 {/* 主显示 ¢ 差(可跨仓横比),美元退居括号小字;中性色,超警示线转琥珀。 */}
                 <td
@@ -3065,6 +3144,22 @@ export default function FollowPage() {
     family: familyOf(s.params.source ?? "consensus"),
     curve: s.metrics.equityCurve,
   }));
+  // 线型+颜色组合表(lib/followCardView.ts STRATEGY_STROKES)容量有限、
+  // 超出后会静默回绕(见该文件字段注释)——不能让这件事只在代码注释里,真的
+  // 发生时必须有人看得到,故在此主动 console.warn。用 useEffect 而非直接在
+  // render 里 warn:自动刷新每 30s 触发一次重渲染,若不去重,超容量后浏览器
+  // 控制台会被同一条警告刷屏;依赖数组只放 shown.length,策略数不变时(绝大
+  // 多数刷新)不会重复告警,只有数量真的变化(比如新加了一档)才提醒一次。
+  useEffect(() => {
+    const overflow = strokeOverflowCount(shown.length);
+    if (overflow > 0) {
+      console.warn(
+        `[follow] 净值曲线线型+颜色组合已用尽(容量 ${STRATEGY_STROKES.length},当前 ${shown.length} 档启用中)—— ` +
+          `超出容量的 ${overflow} 档会与更早的策略共用同一条视觉表示,图例可能出现分不清的线,` +
+          `需要扩容 lib/followCardView.ts 的 STRATEGY_DASHES/STRATEGY_COLORS。`,
+      );
+    }
+  }, [shown.length]);
   const visibleSeries = series.filter((s) => activeFamilies.has(s.family));
   const toggleFamily = (key: FamilyKey) => {
     setActiveFamilies((prev) => {
@@ -3114,9 +3209,64 @@ export default function FollowPage() {
   return (
     <main className="ds-main">
       <header style={{ marginBottom: "var(--s-4)" }}>
-        <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-          🧾 策略中心
-        </h1>
+        {/* 标题行 + 刷新控件:原先"刷新/自动刷新 30s"单独占一行放在一个
+            只装了这两个控件的 ds-card 里,整行右侧全是空白(真机截图确认
+            的布局浪费)。改成挤进标题行右端——与 h1 同一行、右对齐,省掉
+            那层只为包两个控件而存在的卡片边框/内边距。用 flexWrap(不用
+            媒体查询)做窄屏降级:与本文件其它响应式行(FamilyToggles、
+            视图切换行)同一套既有约定——两组内容放不下同一行时,右边这组
+            整体换到标题下方,不需要单独写一条断点规则。「最后刷新」与
+            「加载中」两个状态文字跟刷新按钮/自动刷新勾选框放一起(它们是
+            同一件事的状态和动作,理应同组),原来所在的口径说明段落保持
+            完整不拆碎。 */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "var(--s-3)",
+            marginBottom: "var(--s-1)",
+          }}
+        >
+          <h1 style={{ fontSize: "var(--t-2xl)" }}>🧾 策略中心</h1>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "var(--s-3)",
+            }}
+          >
+            <button className="ds-btn ds-btn--ghost" onClick={() => load()}>
+              刷新
+            </button>
+            <label
+              className="ds-hint"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--s-1)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={(e) => setAutoRefresh(e.target.checked)}
+              />
+              自动刷新 30s
+            </label>
+            {lastRefreshed ? (
+              <span className="ds-hint">最后刷新 {lastRefreshed}</span>
+            ) : null}
+            {loading ? (
+              <span className="ds-hint" style={{ color: "var(--warn-700)" }}>
+                加载中…
+              </span>
+            ) : null}
+          </div>
+        </div>
         {/* 真实数据 · 模拟策略(诚实性要求,非装饰):产品名从「纸面跟单」
             改成「策略中心」后,「纸面」二字自带的"不动真金"含义从名字里
             消失了——这层意思必须显式补回来,否则「策略中心」读起来像是在
@@ -3154,44 +3304,8 @@ export default function FollowPage() {
           跟随共识/异常大额/分歧/钱包画像四类信号,新鲜度窗口因档而异(默认 15
           分钟,详见各卡片) · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)·
           按报价快照纸面成交,不含盘口执行成本(价差/深度),盈亏偏乐观;「执行滑点」列为该成本的实测估计
-          {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
-          {loading ? (
-            <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>
-          ) : null}
         </div>
       </header>
-
-      {/* Controls — 无筛选参数,仅刷新 / 自动刷新 */}
-      <section
-        className="ds-card"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--s-3)",
-          padding: "var(--s-3) var(--s-4)",
-          marginBottom: "var(--s-5)",
-        }}
-      >
-        <button className="ds-btn ds-btn--ghost" onClick={() => load()}>
-          刷新
-        </button>
-        <label
-          className="ds-hint"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--s-1)",
-            cursor: "pointer",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={autoRefresh}
-            onChange={(e) => setAutoRefresh(e.target.checked)}
-          />
-          自动刷新 30s
-        </label>
-      </section>
 
       {data?.error ? (
         <div

@@ -387,6 +387,17 @@ function parseStrategy(
         `(需 >0 的秒数),已退默认 ${DEFAULT_FRESH_SEC}`,
     );
   }
+  // side(lopsided 专属,第 13 档「逆势少数边」用):同上一套"显式合法值生效、
+  // 缺失静默退默认、存在但非法留痕"纪律。既有 12 条策略(含「一边倒分歧」)的
+  // params_json 都没有这个字段——缺失是正常情况,不 warn;只有显式写了
+  // 非 "lead"/"minor" 的值(配置手滑)才留痕。
+  const sideValid = p.side === "lead" || p.side === "minor";
+  if (p.side !== undefined && !sideValid) {
+    console.warn(
+      `[follow] strategy ${id}: side=${JSON.stringify(p.side)} 非法` +
+        `(需 "lead" 或 "minor"),已退默认 "lead"`,
+    );
+  }
 
   return {
     id,
@@ -408,6 +419,7 @@ function parseStrategy(
     minSingleFillUsd: numOr(p.minSingleFillUsd) ?? undefined,
     minTiltPct: numOr(p.minTiltPct) ?? undefined,
     minPerSideUsd: numOr(p.minPerSideUsd) ?? undefined,
+    side: sideValid ? (p.side as "lead" | "minor") : "lead",
     minNetUsd: numOr(p.minNetUsd) ?? undefined,
   };
 }
