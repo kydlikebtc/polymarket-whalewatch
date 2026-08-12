@@ -1940,7 +1940,7 @@ function AccountPlanDialog({ acct }: { acct: AccountPlan }) {
                     : undefined
                 }
               >
-                <td className="mono">
+                <td className="mono" data-label="若账户">
                   ${fmtUsd0(r.accountUsd)}
                   {r.accountUsd === acct.suggestedUsd ? (
                     <>
@@ -1954,7 +1954,7 @@ function AccountPlanDialog({ acct }: { acct: AccountPlan }) {
                     </>
                   ) : null}
                 </td>
-                <td className="mono">
+                <td className="mono" data-label="接住 · 错过">
                   {r.taken} ·{" "}
                   {r.missed > 0 ? (
                     <span style={{ color: "var(--warn-700)" }}>{r.missed}</span>
@@ -1962,12 +1962,12 @@ function AccountPlanDialog({ acct }: { acct: AccountPlan }) {
                     "0"
                   )}
                 </td>
-                <td>
+                <td data-label="落袋">
                   <span className={`mono ${pnlTone(r.realizedPnl)}`}>
                     {fmtSignedUsd(r.realizedPnl)}
                   </span>
                 </td>
-                <td>
+                <td data-label="年化">
                   {r.annualizedRoi == null ? (
                     <span className="muted">—</span>
                   ) : (
@@ -1976,7 +1976,9 @@ function AccountPlanDialog({ acct }: { acct: AccountPlan }) {
                     </span>
                   )}
                 </td>
-                <td className="mono">{fmtPct(r.utilization)}</td>
+                <td className="mono" data-label="效率">
+                  {fmtPct(r.utilization)}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -2061,11 +2063,12 @@ function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
               <tr key={`${e.p.condition_id}-${e.p.outcome}-${e.kind}-${i}`}>
                 <td
                   className="mono"
+                  data-label="时间"
                   title={new Date(e.ts * 1000).toLocaleString("zh-CN")}
                 >
                   {fmtDateTime(e.ts)}
                 </td>
-                <td>
+                <td data-label="动作">
                   {e.kind === "open" ? (
                     <span className="ds-tag">买入</span>
                   ) : (
@@ -2073,10 +2076,13 @@ function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
                   )}
                 </td>
                 {/* 市场列放开全局 nowrap:长标题换行而不是把表撑出横向滚动 */}
-                <td style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>
+                <td
+                  data-label="市场 · 结果"
+                  style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}
+                >
                   <MarketCell p={e.p} />
                 </td>
-                <td className="is-right">
+                <td className="is-right" data-label="价格">
                   {e.kind === "open" ? (
                     <>
                       <span className="mono">{cents(e.p.entry_price)}</span>
@@ -2103,7 +2109,7 @@ function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
                     </>
                   )}
                 </td>
-                <td className="is-right">
+                <td className="is-right" data-label="金额 / 盈亏">
                   {e.kind === "open" ? (
                     <span className="mono muted">${fmtUsd0(e.p.size_usd)}</span>
                   ) : (
@@ -2123,11 +2129,17 @@ function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
 
 /* ------------------------------------------------------ detail dialog */
 
-// 尽量占满视口宽(Modal 内部按 min(width, 100%) 收敛):五区共存,取原两个
-// 独立弹窗里较宽的那个——操作历史表格原本就是 1200(见上面 HistoryDialog
-// 曾经的调用点);账户推演原本是 680,共用 1200 只是给它的表格多一点留白,
-// 不会挤压或产生新的换行。
-const DETAIL_DIALOG_WIDTH = 1200;
+// 尽量占满视口宽:五区共存,取原两个独立弹窗里较宽的那个——操作历史表格
+// 原本就是 1200(见上面 HistoryDialog 曾经的调用点);账户推演原本是 680,
+// 共用 1200 只是给它的表格多一点留白,不会挤压或产生新的换行。
+//
+// 响应式(bug 修复,2026-08):曾经是裸的数字 1200,窄视口下用户反馈弹窗
+// 底部出现横向滚动条、右侧内容被截断。改成 CSS min() 表达式——大屏按
+// 1200 走(原设计宽度),视口不够宽时按 92vw 收窄,直接把"够不够宽"的
+// 决定权交给视口,不依赖 Modal 内部 flex 收缩的隐式行为(那个隐式行为
+// 这次一并加固了,见 ui.tsx Modal 的 minWidth:0 注释)。Modal 的 width
+// prop 因此从 number 放宽到 number | string。
+const DETAIL_DIALOG_WIDTH = "min(1200px, 92vw)";
 // 净值走势图(U6 从卡片移入的 Sparkline)尺寸:宽度按弹窗内容区域的量级取
 // (1200 减掉 Modal/section 的内边距后大致这个数量级,SVG 本身靠 viewBox +
 // width:100% 响应式伸缩,数字不用精确到像素);高度取协调方给的 160-200px

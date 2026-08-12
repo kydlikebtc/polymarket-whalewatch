@@ -652,7 +652,10 @@ export function Modal({
   onClose: () => void;
   title: ReactNode;
   children: ReactNode;
-  width?: number;
+  // number(px)一直够用,直到 /follow 的详情弹窗想要"大屏 1200、窄屏按
+  // vw 收窄"这种响应式上限——CSS `min(1200px, 92vw)` 表达力比单个数字强,
+  // 加 string 分支让调用方能直接传这类表达式,不用引入新的 prop。
+  width?: number | string;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -687,6 +690,13 @@ export function Modal({
         style={{
           width: "100%",
           maxWidth: width,
+          // 这个 div 是外层 flex 容器(justifyContent:center)里唯一的
+          // flex item。flex item 的默认 min-width 是 "auto"(= 内容的
+          // min-content 宽度),这个自动最小值会压过 max-width——弹窗内一旦
+          // 出现不可换行的宽内容(长表格、横向指标网格),会把整张卡撑得
+          // 比 max-width/视口还宽,内容区被迫出现横向滚动条。显式清零,让
+          // max-width 说了算,溢出交给下面内容区自己的 overflow:auto 处理。
+          minWidth: 0,
           maxHeight: "85vh",
           display: "flex",
           flexDirection: "column",
