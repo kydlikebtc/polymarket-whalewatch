@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   classifyCardState,
   computeTimeTicks,
+  equityCurveMarkerRadius,
   estimateAxisLabelWidth,
   formatAxisUsd,
   smoothCurvePath,
@@ -448,5 +449,67 @@ describe("strokeFor / STRATEGY_STROKES — 净值曲线线型 × 颜色组合表
     expect(strokeOverflowCount(16)).toBe(0); // 恰好用满容量,不算超出
     expect(strokeOverflowCount(17)).toBe(1);
     expect(strokeOverflowCount(20)).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// equityCurveMarkerRadius(2026-08 真机截图报告:「激进」档 30 个结算点在大图
+// 里挤成一条珠链,盖住曲线本身)——与详情弹窗 Sparkline"标记必须无条件比线
+// 粗"的规则刻意相反,这里锁住的正是这条分叉规则本身的三条性质:highlighted
+// 无条件覆盖点数、非 highlighted 时点数越多半径越小、半径有下限不会消失。
+// ---------------------------------------------------------------------------
+describe("equityCurveMarkerRadius — 大图结算点标记半径(按点数密度自适应)", () => {
+  it("highlighted=true 时固定返回放大半径,不受点数影响", () => {
+    const highlighted = [1, 5, 10, 29, 30, 200].map((n) =>
+      equityCurveMarkerRadius(n, true),
+    );
+    expect(new Set(highlighted).size).toBe(1); // 全部相等
+    expect(highlighted[0]).toBeGreaterThan(3); // 明确比任何非 highlighted 半径更大
+  });
+
+  it("非 highlighted:点数 <= 10(稀疏)返回同一个「明显」半径", () => {
+    const r1 = equityCurveMarkerRadius(1, false);
+    const r10 = equityCurveMarkerRadius(10, false);
+    expect(r1).toBe(r10);
+  });
+
+  it("非 highlighted:点数 >= 30(密集)收到下限,不会继续缩小", () => {
+    const r30 = equityCurveMarkerRadius(30, false);
+    const r100 = equityCurveMarkerRadius(100, false);
+    expect(r30).toBe(r100);
+    expect(r30).toBeGreaterThan(0); // 下限不是 0——再密也留一点可见度,不能彻底消失
+  });
+
+  it("非 highlighted:10~30 点之间,点数越多半径单调不增(不会出现「点更多反而更大」的反直觉结果)", () => {
+    const counts = [10, 12, 15, 18, 20, 22, 25, 28, 30];
+    const radii = counts.map((n) => equityCurveMarkerRadius(n, false));
+    for (let i = 1; i < radii.length; i++) {
+      expect(radii[i]).toBeLessThanOrEqual(radii[i - 1]);
+    }
+  });
+
+  it("非 highlighted:20(阈值区间中点)恰好是稀疏半径与下限的算术平均——验证线性插值而非跳变", () => {
+    const sparse = equityCurveMarkerRadius(10, false);
+    const min = equityCurveMarkerRadius(30, false);
+    const mid = equityCurveMarkerRadius(20, false);
+    expect(mid).toBeCloseTo((sparse + min) / 2, 5);
+  });
+
+  it("非 highlighted 的半径在任意点数下都不超过稀疏半径、不低于下限(全区间边界检查)", () => {
+    const sparse = equityCurveMarkerRadius(1, false);
+    const min = equityCurveMarkerRadius(30, false);
+    for (const n of [0, 1, 5, 10, 11, 15, 19, 20, 21, 25, 29, 30, 31, 500]) {
+      const r = equityCurveMarkerRadius(n, false);
+      expect(r).toBeLessThanOrEqual(sparse);
+      expect(r).toBeGreaterThanOrEqual(min);
+    }
+  });
+
+  it("highlighted 半径无条件大于该点数下的非 highlighted 半径(hover 必须让点变得更明显,不能反而更弱)", () => {
+    for (const n of [1, 10, 20, 30, 100]) {
+      expect(equityCurveMarkerRadius(n, true)).toBeGreaterThan(
+        equityCurveMarkerRadius(n, false),
+      );
+    }
   });
 });

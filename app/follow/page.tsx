@@ -22,6 +22,7 @@ import { useCurrentPrices } from "../useCurrentPrices";
 import {
   classifyCardState,
   computeTimeTicks,
+  equityCurveMarkerRadius,
   estimateAxisLabelWidth,
   formatAxisUsd,
   smoothCurvePath,
@@ -777,17 +778,31 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
             (也不会出现"线淡了、点还是实心"这种半淡化的观感,这正是圆点
             会浮在淡化线上的问题的根)。
 
-            标记点(bug 补偿,2026-08):曲线从阶梯改成平滑(单调三次插值,
+            标记点半径(2026-08 两次修订):曲线从阶梯改成平滑(单调三次插值,
             见 lib/followCardView.ts smoothCurvePath)后,两次结算之间的
             连线不再是"维持前值"的直角转折,视觉上容易被误读成净值连续
             变化——而实际口径仍是"只在结算这一刻发生变化"(computeStrategyMetrics
-            顶部注释)。半透明白色描边环(stroke=n-0)+ 比线宽更粗的半径,
-            让每个结算点在任何线色/线型下都清晰凸出于曲线本身,提醒读者
-            "数据只存在于这些点上,中间只是插值连接",不是真实轨迹。 */}
+            顶部注释)。第一次修订把标记加到固定 r=3.2+白色描边环,在任何
+            线色/线型下都清晰凸出;但真机截图很快暴露了反效果——「激进」
+            档 30 个结算点在这块 720×220 的共享画布上挤成一条实心珠链,
+            把曲线本身盖住了,与详情弹窗放大版 Sparkline(一次只画一条线,
+            标记加强只有好处)恰好相反。第二次修订把半径改成按点数密度
+            自适应,规则与理由见 lib/followCardView.ts 的
+            equityCurveMarkerRadius 顶部注释——那份注释是这个决定的完整
+            记录,这里不重复,只强调一点:下面两处半径不同不是遗留的不
+            一致,是同一个"标记要不要显眼"的决定在两种数据密度下刻意给出
+            的不同答案,不要为了"统一"把它们改成同一个值。
+            默认态(未 hover)去掉白色描边环并缩小半径,弱化到不再抢戏;
+            hover/聚焦该线时半径放大且恢复描边环,配合下面 dimmed 的整组
+            淡化,做到"平时看曲线整体形状、想看某条线的点就去 hover 图例"。 */}
         {withData.map((s) => {
           const st = strokeFor(s.strokeIdx);
           const isHovered = hoverId === s.id;
           const dimmed = hoverId != null && !isHovered;
+          const markerRadius = equityCurveMarkerRadius(
+            s.curve.length,
+            isHovered,
+          );
           return (
             <g key={s.id} opacity={dimmed ? 0.2 : 1}>
               <path
@@ -804,10 +819,10 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
                   key={i}
                   cx={sx(pt.ts)}
                   cy={sy(pt.cum)}
-                  r={isHovered ? 4.2 : 3.2}
+                  r={markerRadius}
                   fill={st.color}
-                  stroke="var(--n-0)"
-                  strokeWidth={1.2}
+                  stroke={isHovered ? "var(--n-0)" : "none"}
+                  strokeWidth={isHovered ? 1.2 : 0}
                 />
               ))}
             </g>
@@ -974,6 +989,13 @@ function Metric({
  * 既有约定同一原则)。选中结果显示在图表上方的信息条:日期复用
  * fmtDateTime,净值复用 fmtSignedUsd——都是页面已有的格式化函数,不新造
  * 第二套。
+ *
+ * 这里的标记半径固定、不随点数收缩(与上方 EquityCurve 刻意不同,
+ * 2026-08):本组件一次只画一条线,画布接近全宽,点数再多也不会像 EquityCurve
+ * 那样十几条线共享一块 720×220 画布挤成珠链——固定显眼的标记只有好处。
+ * 两处半径若看着不一样,是同一个"标记要不要显眼"的决定在两种数据密度下
+ * 给出的不同答案,不是实现漂移,不要"统一"成同一个值(完整推演见
+ * lib/followCardView.ts equityCurveMarkerRadius 顶部注释)。
  *
  * 颜色按终值正负取 up/down 语义色,与「结算净值」的着色一致。
  */
@@ -2325,17 +2347,26 @@ const DETAIL_SPARK_HEIGHT = 180;
 // 造一套滚动机制。
 const DETAIL_TAB_MIN_HEIGHT = 440;
 
-type DetailTab = "overview" | "cost" | "account" | "history";
+type DetailTab = "overview" | "cost" | "account" | "history" | "positions";
 
 /**
- * 策略详情弹窗(改版 Task 3,U6 追加区 1;本轮把"五区平铺向下罗列"改成
- * tab 切换):内容还是那五块,重新分进四个 tab:
+ * 策略详情弹窗(改版 Task 3,U6 追加区 1;先把"五区平铺向下罗列"改成 tab
+ * 切换,后又追加第五个 tab):内容分进五个 tab:
  *   总览     净值走势(Sparkline)+ 战绩全景(StrategyFullMetrics)一起放——
  *            走势是战绩的视觉引导,拆成两个 tab 反而要来回切才能对照着看,
  *            这两块本质是同一件事的两种呈现,不拆
  *   成本分解 成本四段分解,本任务唯一新增的信息组织,见 CostChain
  *   账户推演 AccountPlanDialog 内容原样(只换容器,内容一字不改)
  *   操作历史 HistoryDialog 内容原样(只换容器,内容一字不改)
+ *   仓位明细 该策略的仓位表(已结算/持有中),2026-08 追加——直接复用首页
+ *            「仓位明细」区同一套 SettledTable/OpenTable + Segmented,见
+ *            下方渲染处注释。放在最后一位:前四个 tab 的相对顺序原样不动
+ *            (不打乱已有的心智模型),仓位明细是这五个 tab 里颗粒度最细的
+ *            "原始数据"视图——总览是整体战绩,成本分解/账户推演是从同一批
+ *            仓位算出来的汇总结论,操作历史把仓位转成买入/兑现的时间线
+ *            叙事,仓位明细才是这些结论背后逐仓的原始行,放在最后正好是
+ *            "从宏观结论到最细粒度明细"这条阅读顺序的终点,也与首页本身把
+ *            「仓位明细」放在净值曲线之后、页面最底部的位置照应。
  * avgDelayCents/avgExecCents 在本层算一次(computeDelayExecAverages),
  * 通过 delayExec 传给"总览""成本分解"两个 tab 的消费者,不重复 reduce。
  * 设计见 docs/plans/2026-08-12-follow-page-card-redesign-design.md §3.2,
@@ -2351,16 +2382,27 @@ function StrategyDetailDialog({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<DetailTab>("overview");
+  // 仓位明细 tab 内部的二级切换(已结算/持有中),与首页同名 state
+  // (posTab/PosTab)是同一个概念在不同作用域的两份独立状态——特意不提到
+  // FollowPage 层通过 prop 共享:那样会把"在详情弹窗里切了一下 tab"和
+  // "首页仓位明细跟着一起变"绑在一起,这是两个读者预期不到的联动,弹窗
+  // 是"看这一档的细节",不该反过来影响首页正在看的视图。
+  const [posTab, setPosTab] = useState<PosTab>("settled");
   // tab 是弹窗级 state、不持久化:每次 open 从 false→true 都要回到"总览"
   // (这是"看某一档的细节",不是用户的长期偏好)。但组件本身在 open=false
   // 时只是提前 return null(见下面),并不会卸载——普通 useState 不会自己
   // 重置,必须主动比较 open 是否变化。用"渲染期间比较 prop 变化"而不是
   // useEffect:后者在 commit 之后才跑,open 翻转的第一帧会先画出上次选中
   // 的 tab、再跳回总览,这里把重置和 open 的变化钉在同一次渲染里,不闪烁。
+  // posTab 同一套逻辑一起重置——不然关掉「持有中」态的弹窗、换一档策略再
+  // 打开,会莫名其妙直接落在「持有中」而不是默认的「已结算」。
   const [prevOpen, setPrevOpen] = useState(open);
   if (open !== prevOpen) {
     setPrevOpen(open);
-    if (open) setTab("overview");
+    if (open) {
+      setTab("overview");
+      setPosTab("settled");
+    }
   }
   // Modal 自己在 !open 时也会返回 null;这里提前短路,避免弹窗关闭期间
   // 每次父组件重渲染(如 30s 自动刷新)都要为页面上 12 张卡各算一遍
@@ -2373,6 +2415,20 @@ function StrategyDetailDialog({
   const delayExec = computeDelayExecAverages(allPos);
   const acct = s.account;
   const hasPlan = !!acct && acct.rows.length > 0 && acct.suggestedUsd != null;
+  // 仓位明细 tab 用的两份表:与首页 FollowPage 里 settledRows/openRows 的
+  // 构造方式(map 贴策略名 + 已结算按结算时间倒序)完全一致,只是这里天然
+  // 只有一档策略,不需要再走首页那套"多策略拼一起 + 按 stratFilter 筛选"
+  // 的逻辑——直接用 s.settled/s.open 即可。放在 !open 短路之后:关闭状态
+  // 不必为每张卡都算一遍。当前价惰性取价(useCurrentPrices)在 OpenTable
+  // 组件内部,只有真正挂载 OpenTable 时才发起请求(见下方渲染处与该 hook
+  // 顶部注释)——这里只是拼数组,不涉及网络请求的时机。
+  const settledRows: LabeledRow[] = s.settled
+    .map((p) => ({ ...p, strategyName: s.name }))
+    .sort((a, b) => (b.exit_ts ?? 0) - (a.exit_ts ?? 0));
+  const openRows: LabeledRow[] = s.open.map((p) => ({
+    ...p,
+    strategyName: s.name,
+  }));
 
   return (
     <Modal
@@ -2399,7 +2455,10 @@ function StrategyDetailDialog({
           新造 tab 组件。className="ds-segmented--wrap" 是防御性的——四个
           选项本身够短,桌面/主流窄屏都不会真的换行,但 375px 是本项目实测
           踩过 .ds-segmented 溢出坑的宽度(见 globals.css 该修饰类注释),
-          按同一条既有约定处理,不单独验证"这次到底会不会溢出"。 */}
+          按同一条既有约定处理,不单独验证"这次到底会不会溢出"。追加第五个
+          「仓位明细」选项后同一条约定仍然成立——.ds-segmented--wrap 本身
+          就是"不管几个选项,装不下就换行"的通用防御,不是只为四个选项调
+          出来的数字,真机验证见对应提交说明。 */}
       <Segmented<DetailTab>
         ariaLabel="策略详情分区"
         className="ds-segmented--wrap"
@@ -2408,6 +2467,7 @@ function StrategyDetailDialog({
           { label: "成本分解", value: "cost" },
           { label: "账户推演", value: "account" },
           { label: "操作历史", value: "history" },
+          { label: "仓位明细", value: "positions" },
         ]}
         value={tab}
         onChange={setTab}
@@ -2477,12 +2537,75 @@ function StrategyDetailDialog({
               </div>
             )}
           </section>
-        ) : (
+        ) : tab === "history" ? (
           <section>
             <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
               操作历史
             </div>
             <HistoryDialog positions={allPos} />
+          </section>
+        ) : (
+          <section>
+            <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+              仓位明细
+            </div>
+            <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+              该策略的纸面仓位——与首页「仓位明细」区同一套表格,已按这一档
+              筛好,不用退回首页再按策略筛一遍
+            </div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--s-3)",
+                flexWrap: "wrap",
+                marginBottom: "var(--s-2)",
+              }}
+            >
+              <Segmented<PosTab>
+                ariaLabel="仓位状态"
+                options={[
+                  {
+                    label: `已结算 · 落袋(${settledRows.length})`,
+                    value: "settled",
+                  },
+                  {
+                    label: `持有中 · 待结算(${openRows.length})`,
+                    value: "open",
+                  },
+                ]}
+                value={posTab}
+                onChange={setPosTab}
+              />
+              {posTab === "open" ? (
+                <span className="ds-hint">不显示浮盈</span>
+              ) : null}
+            </div>
+            {/* SettledTable/OpenTable 与首页完全同一个组件、同一批列,一字
+                未改——「策略」列在这里逐行都是同一个值(纯冗余,弹窗标题
+                已经写明是哪一档),曾经考虑过为弹窗单独砍掉这一列或换一套
+                更紧凑的列宽/字号,但真机实测(1400/900/375 三档视口,
+                getBoundingClientRect 量 .ds-table-wrap 的 scrollWidth vs
+                clientWidth)两张表在弹窗当前内容区宽度(1400 视口下约
+                1133px、900 视口下约 761–776px)都不触发横向滚动,9 列内容
+                本身没有想象中宽(数字列都是 ¢/$ 短字符串,市场名列本来就
+                设了 maxWidth+自动换行)——用不着为一个空跑的假设特意拆出
+                第二套渲染逻辑或加一个新 prop,那样反而是在为不存在的问题
+                预先复杂化。真到未来某天列数继续增加、实测真的挤爆了,再
+                按那时的实际情况决定砍列/加 compact 变体/允许
+                .ds-table-wrap 自带的横向滚动兜底(它本来就是全站宽表格的
+                统一 fallback,不是这次新引入的机制)。 */}
+            {posTab === "settled" ? (
+              <SettledTable
+                rows={settledRows}
+                emptyText="该策略尚无已结算的纸面仓位"
+              />
+            ) : (
+              <OpenTable
+                rows={openRows}
+                emptyText="该策略当前没有持仓中的纸面仓位"
+              />
+            )}
           </section>
         )}
       </div>
@@ -3065,18 +3188,21 @@ export default function FollowPage() {
   const [activeFamilies, setActiveFamilies] = useState<Set<FamilyKey>>(
     () => new Set(FAMILY_ORDER),
   );
-  // 卡片/列表视图切换。初值必须是与服务端渲染一致的固定默认值("card"),
-  // 不能在这里直接读 localStorage——服务端渲染时没有 window,读不到;客户端
-  // 首次渲染如果读到了非默认值,两次渲染的 DOM 对不上就是 hydration
-  // mismatch。正确做法(与 app/useSound.ts 的 useSoundToggle 同一套写法):
-  // 首屏先出默认值,挂载后在 useEffect 里读 localStorage 再切换。
-  const [viewMode, setViewMode] = useState<ViewMode>("card");
+  // 卡片/列表视图切换。初值必须是与服务端渲染一致的固定默认值("list",
+  // 2026-08 从 "card" 改过来——只改这一个字面量,下面读 localStorage 的
+  // effect 原样不动:已经手动选过视图的用户,存在 VIEW_MODE_KEY 里的选择
+  // 必须继续生效,这次改的只是"没存过选择时给什么默认值",不是持久化逻辑
+  // 本身),不能在这里直接读 localStorage——服务端渲染时没有 window,读不
+  // 到;客户端首次渲染如果读到了非默认值,两次渲染的 DOM 对不上就是
+  // hydration mismatch。正确做法(与 app/useSound.ts 的 useSoundToggle 同一
+  // 套写法):首屏先出默认值,挂载后在 useEffect 里读 localStorage 再切换。
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
   useEffect(() => {
     try {
       const saved = localStorage.getItem(VIEW_MODE_KEY);
       if (saved === "card" || saved === "list") setViewMode(saved);
     } catch {
-      // localStorage 不可用(隐私模式等)——保持默认的卡片视图。
+      // localStorage 不可用(隐私模式等)——保持默认的列表视图。
     }
   }, []);
   const changeViewMode = (v: ViewMode) => {
@@ -3302,7 +3428,7 @@ export default function FollowPage() {
         <div className="ds-hint">
           现价进场 ·
           跟随共识/异常大额/分歧/钱包画像四类信号,新鲜度窗口因档而异(默认 15
-          分钟,详见各卡片) · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)·
+          分钟,详见各档详情) · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)·
           按报价快照纸面成交,不含盘口执行成本(价差/深度),盈亏偏乐观;「执行滑点」列为该成本的实测估计
         </div>
       </header>
@@ -3325,8 +3451,10 @@ export default function FollowPage() {
         </div>
       ) : (
         <>
-          {/* 卡片/列表视图切换 + 口径声明。默认卡片,选择记进 localStorage
-              (见 changeViewMode)。
+          {/* 卡片/列表视图切换 + 口径声明。默认列表(2026-08 从卡片改过来——
+              见上面 viewMode 的 useState 初值注释),选择记进 localStorage
+              (见 changeViewMode),已经手动选过视图的用户不受这次默认值
+              变化影响。
 
               口径声明(改版 U10,bug 修复):曾经是常驻在这一行上方的 warn
               callout,占首屏一整块面积。用户反馈默认不该占这么大地方,但
