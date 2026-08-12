@@ -16,6 +16,7 @@ import {
 import { Icon, Modal, Segmented, Tag } from "../ui";
 import {
   classifyCardState,
+  computeTimeTicks,
   estimateAxisLabelWidth,
   formatAxisUsd,
   sparklineAreaPath,
@@ -695,41 +696,14 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
 
   const yZero = sy(0);
 
-  // x 轴时间刻度:端点 + 两个三分点(等距,不追求整点对齐——结算是离散事件,
-  // 完整覆盖首尾比整点更重要)。跨度 ≥3 天只标日期,更短带时分;相邻重复标签
-  // 去重(极短窗口下四个刻度会格式化成同一串)。
-  const fmtTick = (ts: number) => {
-    const d = new Date(ts * 1000);
-    const md = `${d.getMonth() + 1}/${d.getDate()}`;
-    if (tSpan >= 3 * 86400) return md;
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mi = String(d.getMinutes()).padStart(2, "0");
-    return `${md} ${hh}:${mi}`;
-  };
-  const tickTs =
-    tSpan === 0 ? [tMin] : [0, 1 / 3, 2 / 3, 1].map((f) => tMin + f * tSpan);
-  const ticks: {
-    x: number;
-    label: string;
-    anchor: "start" | "middle" | "end";
-  }[] = [];
-  for (let i = 0; i < tickTs.length; i++) {
-    const label = fmtTick(tickTs[i]);
-    if (ticks.length > 0 && ticks[ticks.length - 1].label === label) continue;
-    ticks.push({
-      x: sx(tickTs[i]),
-      label,
-      // 端点标签朝内锚定,避免溢出绘图区(左端撞 y 轴刻度、右端出画布)。
-      anchor:
-        tSpan === 0
-          ? "middle"
-          : i === 0
-            ? "start"
-            : i === tickTs.length - 1
-              ? "end"
-              : "middle",
-    });
-  }
+  // x 轴时间刻度:选点/格式化/去重逻辑下沉到 lib/followCardView.ts 的
+  // computeTimeTicks(详情弹窗放大版 Sparkline 现在也要画同一套坐标轴,见
+  // 该函数顶部注释)——这里只按自己的 sx() 把 ts 换算成像素坐标 x,选点
+  // 和格式化本身不再是这个组件私有的实现。
+  const ticks = computeTimeTicks(tMin, tMax).map((t) => ({
+    ...t,
+    x: sx(t.ts),
+  }));
 
   return (
     <div>
@@ -969,18 +943,32 @@ function Metric({
 }
 
 /**
- * 净值走势图(原「卡片 sparkline」,U6 从卡片移入详情弹窗「区 1」并放大)。
+ * 净值走势图(原「卡片 sparkline」,U6 从卡片移入详情弹窗「区 1」并放大;
+ * 本次追加 x 轴日期刻度 + 结算点选中交互)。
  *
  * U6 的起点:240×52 的卡片尺寸画不出可读坐标轴,形状又因各自缩放不可横比,
  * 只回答得了"大致涨还是跌"——这件事结算净值的正负号已经答过了,占卡片上
  * 最大一块视觉面积不值当。放大到详情弹窗(接近 1200px 宽)后这两个限制都
  * 不存在了,遂加上坐标轴,让它真正回答"这档的盈亏是怎么走出来的"。
  *
- * width/height 现在是入参(不再是函数内部写死的 240×52),调用方按场地大小
- * 传。sparklinePath/sparklineAreaPath(lib/followCardView.ts)本身的签名与
- * "各自定域缩放"的逻辑都不动——这里把 padL/padTB 这部分留白从传给它们的
- * width/height 里预先扣掉,再用 <g transform="translate(...)"> 整体平移,
- * 腾出坐标轴文字的位置,不需要为了加坐标轴去改那两个纯函数。
+ * width/height 是入参,调用方按场地大小传。sparklinePath/sparklineAreaPath
+ * (lib/followCardView.ts)本身的签名与"各自定域缩放"的逻辑都不动——这里把
+ * padL/padT/padB 这部分留白从传给它们的 width/height 里预先扣掉,再用
+ * <g transform="translate(...)"> 整体平移,腾出坐标轴文字的位置,不需要为
+ * 了加坐标轴去改那两个纯函数。
+ *
+ * x 轴日期刻度复用 lib/followCardView.ts 的 computeTimeTicks——与页面下方
+ * 大图 EquityCurve 同一份选点/格式化逻辑,不新造第二套日期表达。
+ *
+ * 点选交互:曲线是阶梯图(step-after),每个数据点对应一次真实结算,不是
+ * 连续函数——"选中"的目标必须是这些真实点本身,不能是鼠标/触摸位置插值
+ * 出的中间点。每个结算点渲染一个可视圆点 + 一个更大的透明命中圆(方便
+ * 鼠标/触屏精确点中);命中圆同时挂 onMouseEnter/onMouseLeave(鼠标悬停)
+ * 与 onFocus/onBlur(键盘 Tab 聚焦),两者触发同一个选中态——纯键盘用户
+ * Tab 到某个点也能看到与鼠标悬停完全相同的信息读出,不是鼠标专属功能
+ * (与本文件 EquityCurve 图例 hover 高亮的既有约定同一原则)。选中结果
+ * 显示在图表上方的信息条:日期复用 fmtDateTime,净值复用 fmtSignedUsd——
+ * 都是页面已有的格式化函数,不新造第二套。
  *
  * 颜色按终值正负取 up/down 语义色,与「结算净值」的着色一致。
  */
@@ -993,6 +981,12 @@ function Sparkline({
   width: number;
   height: number;
 }) {
+  // 选中态:见上方"点选交互"段落。放在任何 early return 之前——Hooks
+  // 规则要求每次渲染都无条件调用,不能被下面"空曲线不渲染"的提前 return
+  // 跳过(与 EquityCurve 的 hoverId 状态同一处理方式)。索引指向排序后的
+  // 结算点数组(下面 pts/单点分支的 curve[0]),不是曲线上的坐标值——
+  // 选中的永远是真实结算点,没有"插值出一个索引"这回事。
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   if (curve.length === 0) return null;
   const net = curve[curve.length - 1]?.cum ?? 0;
   const tone = net >= 0 ? "var(--up-500)" : "var(--down-500)";
@@ -1007,7 +1001,36 @@ function Sparkline({
   const AXIS_FONT_SIZE = 11;
   const AXIS_LABEL_GAP = 6;
   const AXIS_LABEL_SAFETY = 2;
-  const padTB = 12;
+  // 上下留白改成非对称(原来 padTB=12 对称,上下相同):底部现在要放 x 轴
+  // 日期刻度文字,与 EquityCurve 的 padB=26 同一量级(这里字号 10、行距
+  // 略紧,26 仍够用)。
+  const padT = 12;
+  const padB = 26;
+
+  // 选中点信息条:hover/focus 任意结算点时显示该点日期+净值,否则显示
+  // 操作提示——不藏进 title/tip-pop,一眼可见(与卡片默认视图同一诚实
+  // 展示原则)。单点/多点两个分支共用同一段渲染,提成局部函数——纯 JSX,
+  // 不是值得放进 lib/ 的可测纯逻辑,留在组件内部就近复用即可。
+  const readout = (pt: { ts: number; cum: number } | null) =>
+    pt ? (
+      <>
+        <span className="mono">{fmtDateTime(pt.ts)}</span>
+        <span className="muted"> · </span>
+        <span className={`mono ${pnlTone(pt.cum)}`}>
+          {fmtSignedUsd(pt.cum)}
+        </span>
+      </>
+    ) : (
+      <span className="muted">
+        点选或用 Tab 聚焦任意结算点,查看该笔的日期与净值
+      </span>
+    );
+  // 固定最小高度,避免"提示文案"与"选中读数"两种内容行高不同时,图表
+  // 随选中状态上下跳动。
+  const readoutStyle: CSSProperties = {
+    marginBottom: "var(--s-1)",
+    minHeight: "1.4em",
+  };
 
   // 单点特判(逻辑不变,W/H 换成入参):sparklinePath 对唯一点只产出
   // "M x y"(无 L 段),SVG 不会画出任何可见线段;sparklineAreaPath 仍会把
@@ -1016,41 +1039,90 @@ function Sparkline({
   // 本身——只有一个样本点,谈不上走势,虚线明确传达"数据不足以连线"。
   // padL 只需要装下这一个标签,单独按 net 算(下面多点分支按 hi/lo 算)。
   if (curve.length === 1) {
+    const pt = curve[0];
     const padL = Math.max(
       56,
       Math.ceil(estimateAxisLabelWidth(net, AXIS_FONT_SIZE)) +
         AXIS_LABEL_GAP +
         AXIS_LABEL_SAFETY,
     );
-    const y = height / 2;
+    const y = padT + (height - padT - padB) / 2;
+    // 只有一个点,tMin===tMax → computeTimeTicks 恒返回单个 middle 锚定
+    // 刻度(见该函数顶部注释),复用而不是为这一个特判再写一遍日期格式化。
+    const tickLabel = computeTimeTicks(pt.ts, pt.ts)[0].label;
+    const px = (padL + width) / 2; // 与下方虚线的水平范围 [padL, width] 居中对齐
+    const isSelected = selectedIdx === 0;
     return (
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        style={{ width: "100%", height: "auto", display: "block" }}
-        role="img"
-        aria-label={`唯一一笔已结算:${fmtSignedUsd(net)}`}
-      >
-        <line
-          x1={padL}
-          y1={y}
-          x2={width}
-          y2={y}
-          stroke={tone}
-          strokeWidth={1.6}
-          strokeDasharray="3 3"
-        />
-        <text
-          x={padL - AXIS_LABEL_GAP}
-          y={y}
-          textAnchor="end"
-          dominantBaseline="middle"
-          fontSize={AXIS_FONT_SIZE}
-          fill={tone}
-          className="mono"
+      <div>
+        <div className="ds-hint" style={readoutStyle} aria-live="polite">
+          {readout(isSelected ? pt : null)}
+        </div>
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          style={{ width: "100%", height: "auto", display: "block" }}
+          role="img"
+          aria-label={`唯一一笔已结算:${fmtSignedUsd(net)}`}
         >
-          {axisFmt(net)}
-        </text>
-      </svg>
+          <line
+            x1={padL}
+            y1={y}
+            x2={width}
+            y2={y}
+            stroke={tone}
+            strokeWidth={1.6}
+            strokeDasharray="3 3"
+          />
+          <text
+            x={padL - AXIS_LABEL_GAP}
+            y={y}
+            textAnchor="end"
+            dominantBaseline="middle"
+            fontSize={AXIS_FONT_SIZE}
+            fill={tone}
+            className="mono"
+          >
+            {axisFmt(net)}
+          </text>
+          {/* x 轴日期(唯一一点,居中标注,不画网格线——只有一个点时竖线
+              没有可比较对象,不如留白干净)。 */}
+          <text
+            x={px}
+            y={height - 8}
+            textAnchor="middle"
+            fontSize={10}
+            fill="var(--n-500)"
+            className="mono"
+          >
+            {tickLabel}
+          </text>
+          {/* 可视圆点 + 透明命中圆:同一个点的双重表示,见函数顶部"点选
+              交互"注释。role="button":SVG 图形元素没有隐式 role,补一个
+              才能被读屏软件识别成可交互控件(与下面 EquityCurve 图例的
+              纯文本 <span> 不同,那里文字内容本身就能被朗读)。 */}
+          <circle
+            cx={px}
+            cy={y}
+            r={isSelected ? 4 : 2.5}
+            fill={tone}
+            stroke={isSelected ? "var(--n-0)" : "none"}
+            strokeWidth={isSelected ? 1.5 : 0}
+          />
+          <circle
+            cx={px}
+            cy={y}
+            r={8}
+            fill="transparent"
+            tabIndex={0}
+            role="button"
+            aria-label={`结算于 ${fmtDateTime(pt.ts)},净值 ${fmtSignedUsd(pt.cum)}`}
+            onMouseEnter={() => setSelectedIdx(0)}
+            onMouseLeave={() => setSelectedIdx(null)}
+            onFocus={() => setSelectedIdx(0)}
+            onBlur={() => setSelectedIdx(null)}
+            style={{ cursor: "pointer" }}
+          />
+        </svg>
+      </div>
     );
   }
 
@@ -1075,7 +1147,7 @@ function Sparkline({
       AXIS_LABEL_SAFETY,
   );
   const plotW = width - padL;
-  const plotH = height - padTB * 2;
+  const plotH = height - padT - padB;
 
   const line = sparklinePath(curve, plotW, plotH);
   if (!line) return null;
@@ -1088,79 +1160,157 @@ function Sparkline({
   const AXIS_PAD = 4;
   const span = hi - lo;
   const sy = (v: number) =>
-    padTB +
+    padT +
     (span > 0
       ? AXIS_PAD + (1 - (v - lo) / span) * (plotH - AXIS_PAD * 2)
       : plotH / 2);
   const showZero = lo <= 0 && 0 <= hi;
 
+  // 结算点的真实(ts, cum)列表(按时间排序)——x 轴刻度、逐点选中标记都
+  // 按这份数据算。与 sparklinePath 内部对入参做的排序是同一个比较器,
+  // 这里各自排一次不会得到不同的点序,保证圆点与它下面那条折线严丝合缝。
+  const pts = [...curve].sort((a, b) => a.ts - b.ts);
+  const tMin = pts[0].ts;
+  const tSpan = pts[pts.length - 1].ts - tMin;
+  const sx = (t: number) =>
+    padL + (tSpan > 0 ? ((t - tMin) / tSpan) * plotW : plotW / 2);
+  const ticks = computeTimeTicks(tMin, tMin + tSpan);
+  const selectedPt = selectedIdx != null ? (pts[selectedIdx] ?? null) : null;
+
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      style={{ width: "100%", height: "auto", display: "block" }}
-      role="img"
-      aria-label={`结算净值走势,当前 ${fmtSignedUsd(net)}`}
-    >
-      {/* 0 基线:只在 0 真的落在这条曲线的取值范围内才画,否则会在可视区
-          之外画一条不对应任何东西的线,比不画更误导。 */}
-      {showZero ? (
-        <line
-          x1={padL}
-          y1={sy(0)}
-          x2={width}
-          y2={sy(0)}
-          stroke="var(--n-300)"
-          strokeWidth={1}
-          strokeDasharray="3 3"
-        />
-      ) : null}
-      <text
-        x={padL - AXIS_LABEL_GAP}
-        y={sy(hi)}
-        textAnchor="end"
-        dominantBaseline="middle"
-        fontSize={AXIS_FONT_SIZE}
-        fill="var(--n-500)"
-        className="mono"
+    <div>
+      <div className="ds-hint" style={readoutStyle} aria-live="polite">
+        {readout(selectedPt)}
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        style={{ width: "100%", height: "auto", display: "block" }}
+        role="img"
+        aria-label={`结算净值走势,当前 ${fmtSignedUsd(net)}`}
       >
-        {axisFmt(hi)}
-      </text>
-      {showZero ? (
+        {/* 0 基线:只在 0 真的落在这条曲线的取值范围内才画,否则会在可视区
+            之外画一条不对应任何东西的线,比不画更误导。 */}
+        {showZero ? (
+          <line
+            x1={padL}
+            y1={sy(0)}
+            x2={width}
+            y2={sy(0)}
+            stroke="var(--n-300)"
+            strokeWidth={1}
+            strokeDasharray="3 3"
+          />
+        ) : null}
         <text
           x={padL - AXIS_LABEL_GAP}
-          y={sy(0)}
-          textAnchor="end"
-          dominantBaseline="middle"
-          fontSize={AXIS_FONT_SIZE}
-          fill="var(--n-400)"
-          className="mono"
-        >
-          $0
-        </text>
-      ) : null}
-      {/* span===0(全部结算点累计值相同)时峰值=谷底,不重复画同一个标签。 */}
-      {span > 0 ? (
-        <text
-          x={padL - AXIS_LABEL_GAP}
-          y={sy(lo)}
+          y={sy(hi)}
           textAnchor="end"
           dominantBaseline="middle"
           fontSize={AXIS_FONT_SIZE}
           fill="var(--n-500)"
           className="mono"
         >
-          {axisFmt(lo)}
+          {axisFmt(hi)}
         </text>
-      ) : null}
-      <g transform={`translate(${padL}, ${padTB})`}>
-        <path
-          d={sparklineAreaPath(line, plotW, plotH)}
-          fill={tone}
-          opacity={0.1}
-        />
-        <path d={line} fill="none" stroke={tone} strokeWidth={1.6} />
-      </g>
-    </svg>
+        {showZero ? (
+          <text
+            x={padL - AXIS_LABEL_GAP}
+            y={sy(0)}
+            textAnchor="end"
+            dominantBaseline="middle"
+            fontSize={AXIS_FONT_SIZE}
+            fill="var(--n-400)"
+            className="mono"
+          >
+            $0
+          </text>
+        ) : null}
+        {/* span===0(全部结算点累计值相同)时峰值=谷底,不重复画同一个标签。 */}
+        {span > 0 ? (
+          <text
+            x={padL - AXIS_LABEL_GAP}
+            y={sy(lo)}
+            textAnchor="end"
+            dominantBaseline="middle"
+            fontSize={AXIS_FONT_SIZE}
+            fill="var(--n-500)"
+            className="mono"
+          >
+            {axisFmt(lo)}
+          </text>
+        ) : null}
+        {/* x 轴日期刻度:浅色竖网格线 + 底部日期标签,与页面下方大图
+            EquityCurve 共用同一份 computeTimeTicks,同一种视觉语言。 */}
+        {ticks.map((t) => {
+          const x = sx(t.ts);
+          return (
+            <g key={x}>
+              <line
+                x1={x}
+                y1={padT}
+                x2={x}
+                y2={height - padB}
+                stroke="var(--n-200)"
+                strokeWidth={1}
+                strokeDasharray="2 4"
+              />
+              <text
+                x={x}
+                y={height - 8}
+                textAnchor={t.anchor}
+                fontSize={10}
+                fill="var(--n-500)"
+                className="mono"
+              >
+                {t.label}
+              </text>
+            </g>
+          );
+        })}
+        <g transform={`translate(${padL}, ${padT})`}>
+          <path
+            d={sparklineAreaPath(line, plotW, plotH)}
+            fill={tone}
+            opacity={0.1}
+          />
+          <path d={line} fill="none" stroke={tone} strokeWidth={1.6} />
+        </g>
+        {/* 逐个结算点的可视圆点 + 透明命中圆,见函数顶部"点选交互"注释:
+            曲线是阶梯图,这里遍历的是真实结算点(pts),不是曲线上的任意
+            位置——键盘 Tab 与鼠标悬停触发同一个选中态。 */}
+        {pts.map((pt, i) => {
+          const cx = sx(pt.ts);
+          const cy = sy(pt.cum);
+          const isSelected = selectedIdx === i;
+          return (
+            <g key={i}>
+              <circle
+                cx={cx}
+                cy={cy}
+                r={isSelected ? 4 : 2.5}
+                fill={tone}
+                stroke={isSelected ? "var(--n-0)" : "none"}
+                strokeWidth={isSelected ? 1.5 : 0}
+              />
+              <circle
+                cx={cx}
+                cy={cy}
+                r={8}
+                fill="transparent"
+                tabIndex={0}
+                role="button"
+                aria-label={`结算于 ${fmtDateTime(pt.ts)},当时净值 ${fmtSignedUsd(pt.cum)}`}
+                onMouseEnter={() => setSelectedIdx(i)}
+                onMouseLeave={() => setSelectedIdx(null)}
+                onFocus={() => setSelectedIdx(i)}
+                onBlur={() => setSelectedIdx(null)}
+                style={{ cursor: "pointer" }}
+              />
+            </g>
+          );
+        })}
+      </svg>
+    </div>
   );
 }
 

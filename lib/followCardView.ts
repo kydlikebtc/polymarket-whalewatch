@@ -126,3 +126,58 @@ const MONO_CHAR_WIDTH_RATIO = 0.6;
 export function estimateAxisLabelWidth(v: number, fontSize: number): number {
   return formatAxisUsd(v).length * fontSize * MONO_CHAR_WIDTH_RATIO;
 }
+
+/* ---------------------------------------------------------- time ticks */
+
+export type TimeTick = {
+  ts: number;
+  label: string;
+  anchor: "start" | "middle" | "end";
+};
+
+/**
+ * x 轴时间刻度:端点 + 两个三分点(等距,不追求整点对齐——结算是离散事件,
+ * 完整覆盖首尾比整点更重要)。跨度 ≥3 天只标日期("M/D"),更短带时分
+ * ("M/D HH:mm");相邻重复标签去重(极短窗口下四个刻度可能格式化成同一
+ * 串,例如全部落在同一分钟内)。
+ *
+ * 从 app/follow/page.tsx 的 EquityCurve 组件原地提取(那里最早实现这份
+ * 逻辑,详情弹窗放大版 Sparkline 现在也要用同一套坐标轴)——两处画的都是
+ * "结算时间"这同一个量,刻度选取与格式化必须是同一份计算,不允许两边
+ * 各自维护、随时间推移长出两套不一致的日期表达。只返回 {ts, label,
+ * anchor},不返回像素坐标 x——两个调用方的 sx() 定义域/值域不同(大图
+ * 720 宽、详情图 1120 宽),把 ts→x 的映射留给各自调用方按自己的 sx 算,
+ * 这个函数只管"选哪些点、标什么字、往哪边对齐"这个与画布尺寸无关的部分。
+ */
+export function computeTimeTicks(tMin: number, tMax: number): TimeTick[] {
+  const tSpan = tMax - tMin;
+  const fmtTick = (ts: number) => {
+    const d = new Date(ts * 1000);
+    const md = `${d.getMonth() + 1}/${d.getDate()}`;
+    if (tSpan >= 3 * 86400) return md;
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
+    return `${md} ${hh}:${mi}`;
+  };
+  const tickTs =
+    tSpan === 0 ? [tMin] : [0, 1 / 3, 2 / 3, 1].map((f) => tMin + f * tSpan);
+  const ticks: TimeTick[] = [];
+  for (let i = 0; i < tickTs.length; i++) {
+    const label = fmtTick(tickTs[i]);
+    if (ticks.length > 0 && ticks[ticks.length - 1].label === label) continue;
+    ticks.push({
+      ts: tickTs[i],
+      label,
+      // 端点标签朝内锚定,避免溢出绘图区(左端撞 y 轴刻度、右端出画布)。
+      anchor:
+        tSpan === 0
+          ? "middle"
+          : i === 0
+            ? "start"
+            : i === tickTs.length - 1
+              ? "end"
+              : "middle",
+    });
+  }
+  return ticks;
+}
