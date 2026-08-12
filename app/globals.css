@@ -319,6 +319,22 @@ h3 {
 .ds-btn--subtle:hover:not(:disabled) {
   background: var(--n-150);
 }
+/* "此项已选中" 的强调态(不是 --subtle 的近义词):用于筛选类切换按钮的
+   on 状态(例如 /follow 的信号族开关),必须比 --ghost(off 状态)在视觉上
+   更突出。故意不复用/加粗 --subtle —— 那个类在别处(如清除筛选按钮)只是
+   普通次级按钮样式,不带任何"选中"含义,改它会连带影响那些无关场景。
+   brand-500 边框 + brand-50 底色 + brand-700 文字,与 .ds-tag--brand、
+   「本窗口领先」徽标同一套"品牌色=被强调"视觉语言;brand-500 在文件顶部
+   token 注释里本就标注为 "primary action, active"。 */
+.ds-btn--active {
+  background: var(--brand-50);
+  border-color: var(--brand-500);
+  color: var(--brand-700);
+}
+.ds-btn--active:hover:not(:disabled) {
+  background: var(--brand-100);
+  border-color: var(--brand-600);
+}
 .ds-btn--danger {
   background: var(--down-500);
   color: var(--n-0);

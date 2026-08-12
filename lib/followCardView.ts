@@ -83,3 +83,101 @@ export function sparklineAreaPath(
   if (!linePath) return "";
   return `${linePath} L ${width.toFixed(1)} ${height} L 0 ${height} Z`;
 }
+
+/* ------------------------------------------------------- axis label width */
+// bug 修复(2026-08):EquityCurve/Sparkline 的 y 轴数字标签用 textAnchor="end"
+// 锚定在绘图区左边界往左偏移一个固定 gap 处。留白(padL)曾经是拍脑袋的固定
+// 值(48/56px),−$11,448 这类大额亏损在 10px mono 字体下要接近 50px 宽,
+// 从 42(=48-6)往左延伸会跑到负坐标,SVG viewBox 外的部分被裁掉——而负号
+// 恰好是最左侧的字符,第一个被裁,一笔巨额亏损因此显示成看似盈利的正数。
+// 这里把"给定数值,估算它的轴标签需要多宽"提成纯函数:留白必须按实际会
+// 画出来的文字内容动态算,不能再是另一个拍出来的、迟早在下一个数量级上
+// 重演同一个 bug 的固定值。
+
+// U+2212(数学减号),与 app/follow/page.tsx 的 MINUS 常量同一字符(不用
+// ASCII 连字符)。独立字面量而不是跨文件 import——两处都是文件顶部的稳定
+// 常量,ui.tsx fmtSignedUsdCompact 同样直接写字面量,是这个仓库已经在用的
+// 容忍模式。字符本身不会漂移,不值得为它建立跨文件依赖。
+const AXIS_MINUS = "−";
+
+/**
+ * 净值曲线 y 轴标签的美元格式化:正数 "$1,234",负数 "−$1,234"(0 记为不带
+ * 符号的 "$0")。app/follow/page.tsx 的 axisFmt 直接复用这个函数(而不是
+ * 各自维护一份格式化字面量),让"实际渲染的文字"与"下面用来估宽的文字"
+ * 永远是同一份计算结果——两者一旦分别维护、各自改动,就可能重新漂移出
+ * 这次修的裁切 bug。
+ */
+export function formatAxisUsd(v: number): string {
+  const abs = Math.round(Math.abs(v)).toLocaleString("en-US");
+  return `${v < 0 ? AXIS_MINUS : ""}$${abs}`;
+}
+
+// mono 等宽字体单字符宽度 ≈ 字号的 0.6 倍(JetBrains Mono / SF Mono 等等宽
+// 字体的通用比例,tabular-nums 保证同一字体下所有数字字符同宽)。不追求
+// 像素级字体度量精度(那需要真实测量或字体 metrics 表)——目标只是"留够
+// 空间不裁字符",按字符数估算足够达到这个目标。
+const MONO_CHAR_WIDTH_RATIO = 0.6;
+
+/**
+ * 估算数值 v 格式化成轴标签(见 formatAxisUsd)后,在给定字号下的渲染宽度
+ * (px,不含左侧 gap)。调用方(EquityCurve/Sparkline)据此决定 y 轴留白
+ * (padL)至少要多宽,避免最左侧字符(几乎总是负号)跑出 SVG viewBox 被裁。
+ */
+export function estimateAxisLabelWidth(v: number, fontSize: number): number {
+  return formatAxisUsd(v).length * fontSize * MONO_CHAR_WIDTH_RATIO;
+}
+
+/* ---------------------------------------------------------- time ticks */
+
+export type TimeTick = {
+  ts: number;
+  label: string;
+  anchor: "start" | "middle" | "end";
+};
+
+/**
+ * x 轴时间刻度:端点 + 两个三分点(等距,不追求整点对齐——结算是离散事件,
+ * 完整覆盖首尾比整点更重要)。跨度 ≥3 天只标日期("M/D"),更短带时分
+ * ("M/D HH:mm");相邻重复标签去重(极短窗口下四个刻度可能格式化成同一
+ * 串,例如全部落在同一分钟内)。
+ *
+ * 从 app/follow/page.tsx 的 EquityCurve 组件原地提取(那里最早实现这份
+ * 逻辑,详情弹窗放大版 Sparkline 现在也要用同一套坐标轴)——两处画的都是
+ * "结算时间"这同一个量,刻度选取与格式化必须是同一份计算,不允许两边
+ * 各自维护、随时间推移长出两套不一致的日期表达。只返回 {ts, label,
+ * anchor},不返回像素坐标 x——两个调用方的 sx() 定义域/值域不同(大图
+ * 720 宽、详情图 1120 宽),把 ts→x 的映射留给各自调用方按自己的 sx 算,
+ * 这个函数只管"选哪些点、标什么字、往哪边对齐"这个与画布尺寸无关的部分。
+ */
+export function computeTimeTicks(tMin: number, tMax: number): TimeTick[] {
+  const tSpan = tMax - tMin;
+  const fmtTick = (ts: number) => {
+    const d = new Date(ts * 1000);
+    const md = `${d.getMonth() + 1}/${d.getDate()}`;
+    if (tSpan >= 3 * 86400) return md;
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
+    return `${md} ${hh}:${mi}`;
+  };
+  const tickTs =
+    tSpan === 0 ? [tMin] : [0, 1 / 3, 2 / 3, 1].map((f) => tMin + f * tSpan);
+  const ticks: TimeTick[] = [];
+  for (let i = 0; i < tickTs.length; i++) {
+    const label = fmtTick(tickTs[i]);
+    if (ticks.length > 0 && ticks[ticks.length - 1].label === label) continue;
+    ticks.push({
+      ts: tickTs[i],
+      label,
+      // 端点标签朝内锚定,避免溢出绘图区(左端撞 y 轴刻度、右端出画布)。
+      anchor:
+        tSpan === 0
+          ? "middle"
+          : i === 0
+            ? "start"
+            : i === tickTs.length - 1
+              ? "end"
+              : "middle",
+    });
+  }
+  return ticks;
+}

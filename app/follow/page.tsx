@@ -1,7 +1,8 @@
 "use client";
 
-// 共识跟单 · 纸面模拟看板。只读消费 /api/follow —— 现价进场、持有到结算、固定
-// $/信号、仅结算盈亏(不做浮盈)。设计系统组件/类全部复用 app/ui.tsx + globals.css,
+// 策略中心看板(产品名改版前叫「纸面跟单」,2026-08)。只读消费 /api/follow ——
+// 现价进场、持有到结算、固定 $/信号、仅结算盈亏(不做浮盈)。设计系统组件/类
+// 全部复用 app/ui.tsx + globals.css,
 // 净值曲线用内联 SVG 阶梯折线(无图表依赖),多策略靠"线型 × 颜色"组合区分
 // (12 档同屏叠画,仅线型不够用,颜色也要真正承担区分职责,见 STRATEGY_STROKES)。
 
@@ -13,9 +14,12 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { Modal, Segmented, Tag } from "../ui";
+import { Icon, Modal, Segmented, Tag } from "../ui";
 import {
   classifyCardState,
+  computeTimeTicks,
+  estimateAxisLabelWidth,
+  formatAxisUsd,
   sparklineAreaPath,
   sparklinePath,
 } from "../../lib/followCardView";
@@ -600,7 +604,12 @@ function stepPath(
   return d;
 }
 
-const axisFmt = (v: number) => `${v < 0 ? MINUS : ""}$${fmtUsd0(Math.abs(v))}`;
+// 格式化逻辑下沉到 lib/followCardView.ts 的 formatAxisUsd:与下面
+// estimateAxisLabelWidth(算 padL 用的宽度估算)共享同一份格式化,保证
+// "实际画出来的文字"与"用来估宽的文字"永远是同一个计算结果——这正是
+// Bug 修复的关键,两者一旦分开维护、各自改动,负号裁切问题会以另一种
+// 数量级重新出现。这里保留 axisFmt 这个名字只是不用改下面一堆调用点。
+const axisFmt = formatAxisUsd;
 
 function EquityCurve({ series }: { series: CurveSeries[] }) {
   // hover 高亮(改版 Task 4):悬停/聚焦某条图例时,该线加粗、其余线连同
@@ -619,16 +628,13 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
 
   const W = 720;
   const H = 220;
-  const padL = 48;
   const padR = 12;
   const padT = 14;
   const padB = 26;
-  const x0 = padL;
-  const x1 = W - padR;
-  const y0 = padT;
-  const y1 = H - padB;
 
-  // x 域:所有策略的结算时间戳;y 域:累计已实现盈亏,始终含 0 基线。
+  // x 域:所有策略的结算时间戳;y 域:累计已实现盈亏,始终含 0 基线。放在
+  // padL 计算之前——padL(左侧留白)现在要按 cMin/cMax 的标签宽度动态算,
+  // 必须先知道这两个值。
   let tMin = Infinity;
   let tMax = -Infinity;
   let cMin = 0;
@@ -641,6 +647,43 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
       if (pt.cum > cMax) cMax = pt.cum;
     }
   }
+
+  // 左侧留白(y 轴文字锚定在 x0 - AXIS_LABEL_GAP,textAnchor="end")按峰值/
+  // 谷底两个标签里较宽的那个动态算(见 lib/followCardView.ts
+  // estimateAxisLabelWidth 顶部注释)。Bug 修复(2026-08):曾经固定 48px,
+  // 一笔 −$11,448 的大额亏损在 10px mono 字体下要接近 50px 宽,负号(标签
+  // 最左侧字符)被裁出 SVG viewBox,显示成看似盈利的 $11,448。48 仍作为
+  // 下限保留——小额场景维持原有留白观感,不会因为这次改动突然变窄;真正
+  // 需要更宽时(大额/负数)才会超过这个下限,不会像原来的固定值一样在
+  // 数据再大一个数量级时重演同一个裁切 bug。
+  //
+  // AXIS_LABEL_SAFETY:浏览器实测 --font-mono 字符宽度与 0.6 比例算出的
+  // 估算值分毫不差(用 canvas/DOM 量过 "−$11,448" 等样本,像素级吻合),
+  // 但那是本机装了 JetBrains Mono 的结果——globals.css 的字体栈还有 SF
+  // Mono/Menlo/Liberation Mono/系统 monospace 兜底,不同操作系统上真正
+  // 生效的字体不一样,前进宽度不保证跟这里完全一致。不留余量的话,估算值
+  // 和实际渲染值分毫不差时,文字左边缘恰好落在 x=0——不算裁切,但零容错,
+  // 换一种字体度量就可能变成裁一两个像素。留 2px 纯保险,换来的是"稍微
+  // 宽一点点"而不是"在别的系统上重新裁到负号"。
+  const AXIS_FONT_SIZE = 10; // 必须与下面 <text fontSize=...> 保持一致
+  const AXIS_LABEL_GAP = 6; // 必须与下面 x={x0 - AXIS_LABEL_GAP} 保持一致
+  const AXIS_LABEL_SAFETY = 2;
+  const padL = Math.max(
+    48,
+    Math.ceil(
+      Math.max(
+        estimateAxisLabelWidth(cMax, AXIS_FONT_SIZE),
+        estimateAxisLabelWidth(cMin, AXIS_FONT_SIZE),
+      ),
+    ) +
+      AXIS_LABEL_GAP +
+      AXIS_LABEL_SAFETY,
+  );
+  const x0 = padL;
+  const x1 = W - padR;
+  const y0 = padT;
+  const y1 = H - padB;
+
   const padY = (cMax - cMin) * 0.08 || 1; // 峰谷各留一点头部空间;全平时给 1
   const yMax = cMax + padY;
   const yMin = cMin - padY;
@@ -654,41 +697,14 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
 
   const yZero = sy(0);
 
-  // x 轴时间刻度:端点 + 两个三分点(等距,不追求整点对齐——结算是离散事件,
-  // 完整覆盖首尾比整点更重要)。跨度 ≥3 天只标日期,更短带时分;相邻重复标签
-  // 去重(极短窗口下四个刻度会格式化成同一串)。
-  const fmtTick = (ts: number) => {
-    const d = new Date(ts * 1000);
-    const md = `${d.getMonth() + 1}/${d.getDate()}`;
-    if (tSpan >= 3 * 86400) return md;
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mi = String(d.getMinutes()).padStart(2, "0");
-    return `${md} ${hh}:${mi}`;
-  };
-  const tickTs =
-    tSpan === 0 ? [tMin] : [0, 1 / 3, 2 / 3, 1].map((f) => tMin + f * tSpan);
-  const ticks: {
-    x: number;
-    label: string;
-    anchor: "start" | "middle" | "end";
-  }[] = [];
-  for (let i = 0; i < tickTs.length; i++) {
-    const label = fmtTick(tickTs[i]);
-    if (ticks.length > 0 && ticks[ticks.length - 1].label === label) continue;
-    ticks.push({
-      x: sx(tickTs[i]),
-      label,
-      // 端点标签朝内锚定,避免溢出绘图区(左端撞 y 轴刻度、右端出画布)。
-      anchor:
-        tSpan === 0
-          ? "middle"
-          : i === 0
-            ? "start"
-            : i === tickTs.length - 1
-              ? "end"
-              : "middle",
-    });
-  }
+  // x 轴时间刻度:选点/格式化/去重逻辑下沉到 lib/followCardView.ts 的
+  // computeTimeTicks(详情弹窗放大版 Sparkline 现在也要画同一套坐标轴,见
+  // 该函数顶部注释)——这里只按自己的 sx() 把 ts 换算成像素坐标 x,选点
+  // 和格式化本身不再是这个组件私有的实现。
+  const ticks = computeTimeTicks(tMin, tMax).map((t) => ({
+    ...t,
+    x: sx(t.ts),
+  }));
 
   return (
     <div>
@@ -709,35 +725,37 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
           strokeWidth={1}
           strokeDasharray="3 3"
         />
-        {/* y 轴刻度:峰值 / 0 / 谷底 */}
+        {/* y 轴刻度:峰值 / 0 / 谷底。x 偏移量、字号都取上面算 padL 时用的
+            同一对常量——三处必须保持一致,否则留白和实际渲染位置又会各算
+            各的,重新具备裁字符的条件。 */}
         <text
-          x={x0 - 6}
+          x={x0 - AXIS_LABEL_GAP}
           y={sy(cMax)}
           textAnchor="end"
           dominantBaseline="middle"
-          fontSize={10}
+          fontSize={AXIS_FONT_SIZE}
           fill="var(--n-500)"
           className="mono"
         >
           {axisFmt(cMax)}
         </text>
         <text
-          x={x0 - 6}
+          x={x0 - AXIS_LABEL_GAP}
           y={yZero}
           textAnchor="end"
           dominantBaseline="middle"
-          fontSize={10}
+          fontSize={AXIS_FONT_SIZE}
           fill="var(--n-400)"
           className="mono"
         >
           $0
         </text>
         <text
-          x={x0 - 6}
+          x={x0 - AXIS_LABEL_GAP}
           y={sy(cMin)}
           textAnchor="end"
           dominantBaseline="middle"
-          fontSize={10}
+          fontSize={AXIS_FONT_SIZE}
           fill="var(--n-500)"
           className="mono"
         >
@@ -855,10 +873,15 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
 // 族开关(改版 Task 4):默认全开,点击独立切换某族的可见性。用一排独立
 // 切换按钮而不是 Segmented——Segmented 是单选语义(同一时刻只有一个
 // value),但读者的真实需求是任意子集:可能只想看共识族,也可能想把共识族
-// 和异常大额族放在一起比。样式复用 ui.tsx SoundToggle 同一套写法
-// (ds-btn + ds-btn--subtle/ds-btn--ghost + aria-pressed),不新造 CSS。
-// groups 直接复用页面已经算好的按族分组结果(卡片分组用的同一份),只给
-// 「确实有策略」的族一个按钮——族数 <2 时开关没有意义(无从比较),不渲染。
+// 和异常大额族放在一起比。groups 直接复用页面已经算好的按族分组结果(卡片
+// 分组用的同一份),只给「确实有策略」的族一个按钮——族数 <2 时开关没有
+// 意义(无从比较),不渲染。
+//
+// 视觉状态(bug 修复,2026-08):曾经写成 ds-btn--subtle(on)/ds-btn--ghost
+// (off),但 --subtle 只有底色、没有边框声明,--ghost 反而有可见边框——
+// 结果关掉的族看起来比选中的族更突出,状态被视觉说反了。改用专门表达
+// "已选中"的 ds-btn--active(品牌色边框+底色+文字,见 globals.css 该类
+// 注释),--ghost 留给 off 状态——两者的强弱关系才是设计意图。
 function FamilyToggles({
   groups,
   active,
@@ -886,7 +909,7 @@ function FamilyToggles({
           <button
             key={g.key}
             type="button"
-            className={`ds-btn ${on ? "ds-btn--subtle" : "ds-btn--ghost"}`}
+            className={`ds-btn ${on ? "ds-btn--active" : "ds-btn--ghost"}`}
             aria-pressed={on}
             onClick={() => onToggle(g.key)}
             title={g.meta.blurb}
@@ -921,18 +944,32 @@ function Metric({
 }
 
 /**
- * 净值走势图(原「卡片 sparkline」,U6 从卡片移入详情弹窗「区 1」并放大)。
+ * 净值走势图(原「卡片 sparkline」,U6 从卡片移入详情弹窗「区 1」并放大;
+ * 本次追加 x 轴日期刻度 + 结算点选中交互)。
  *
  * U6 的起点:240×52 的卡片尺寸画不出可读坐标轴,形状又因各自缩放不可横比,
  * 只回答得了"大致涨还是跌"——这件事结算净值的正负号已经答过了,占卡片上
  * 最大一块视觉面积不值当。放大到详情弹窗(接近 1200px 宽)后这两个限制都
  * 不存在了,遂加上坐标轴,让它真正回答"这档的盈亏是怎么走出来的"。
  *
- * width/height 现在是入参(不再是函数内部写死的 240×52),调用方按场地大小
- * 传。sparklinePath/sparklineAreaPath(lib/followCardView.ts)本身的签名与
- * "各自定域缩放"的逻辑都不动——这里把 padL/padTB 这部分留白从传给它们的
- * width/height 里预先扣掉,再用 <g transform="translate(...)"> 整体平移,
- * 腾出坐标轴文字的位置,不需要为了加坐标轴去改那两个纯函数。
+ * width/height 是入参,调用方按场地大小传。sparklinePath/sparklineAreaPath
+ * (lib/followCardView.ts)本身的签名与"各自定域缩放"的逻辑都不动——这里把
+ * padL/padT/padB 这部分留白从传给它们的 width/height 里预先扣掉,再用
+ * <g transform="translate(...)"> 整体平移,腾出坐标轴文字的位置,不需要为
+ * 了加坐标轴去改那两个纯函数。
+ *
+ * x 轴日期刻度复用 lib/followCardView.ts 的 computeTimeTicks——与页面下方
+ * 大图 EquityCurve 同一份选点/格式化逻辑,不新造第二套日期表达。
+ *
+ * 点选交互:曲线是阶梯图(step-after),每个数据点对应一次真实结算,不是
+ * 连续函数——"选中"的目标必须是这些真实点本身,不能是鼠标/触摸位置插值
+ * 出的中间点。每个结算点渲染一个可视圆点 + 一个更大的透明命中圆(方便
+ * 鼠标/触屏精确点中);命中圆同时挂 onMouseEnter/onMouseLeave(鼠标悬停)
+ * 与 onFocus/onBlur(键盘 Tab 聚焦),两者触发同一个选中态——纯键盘用户
+ * Tab 到某个点也能看到与鼠标悬停完全相同的信息读出,不是鼠标专属功能
+ * (与本文件 EquityCurve 图例 hover 高亮的既有约定同一原则)。选中结果
+ * 显示在图表上方的信息条:日期复用 fmtDateTime,净值复用 fmtSignedUsd——
+ * 都是页面已有的格式化函数,不新造第二套。
  *
  * 颜色按终值正负取 up/down 语义色,与「结算净值」的着色一致。
  */
@@ -945,55 +982,173 @@ function Sparkline({
   width: number;
   height: number;
 }) {
+  // 选中态:见上方"点选交互"段落。放在任何 early return 之前——Hooks
+  // 规则要求每次渲染都无条件调用,不能被下面"空曲线不渲染"的提前 return
+  // 跳过(与 EquityCurve 的 hoverId 状态同一处理方式)。索引指向排序后的
+  // 结算点数组(下面 pts/单点分支的 curve[0]),不是曲线上的坐标值——
+  // 选中的永远是真实结算点,没有"插值出一个索引"这回事。
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   if (curve.length === 0) return null;
   const net = curve[curve.length - 1]?.cum ?? 0;
   const tone = net >= 0 ? "var(--up-500)" : "var(--down-500)";
-  // 左侧留白放 y 轴文字(峰值/0/谷底,美元额可能到 5 位数);上下留白放
-  // 峰值/谷底标签本身的字高,避免 dominantBaseline="middle" 的文字被顶部/
-  // 底部边缘裁掉一半。数值取自 EquityCurve 同类留白(padL=48)的量级,
-  // 这里字号更小、但金额可能更长,稍微放宽到 56/12。
-  const padL = 56;
-  const padTB = 12;
-  const plotW = width - padL;
-  const plotH = height - padTB * 2;
+  // 字号与下面每个 <text fontSize=...> 用同一个常量,gap 与每个
+  // x={padL - AXIS_LABEL_GAP} 用同一个常量——padL 的宽度估算必须按实际会
+  // 画出来的字号/偏移量算,三处一旦分开维护、各自改动,负号裁切 bug 会
+  // 在下一次调参时重新出现(2026-08 的教训,详见下面 padL 计算处的注释)。
+  // AXIS_LABEL_SAFETY 见 EquityCurve 同名常量的注释:估算比例(0.6)经浏览
+  // 器实测与本机字体像素级吻合,但字体栈还有 SF Mono/Menlo/系统 monospace
+  // 兜底,不同操作系统实际生效的字体前进宽度未必分毫不差,零余量时文字左
+  // 边缘恰好落在 x=0——不算裁切,但零容错。2px 纯保险。
+  const AXIS_FONT_SIZE = 11;
+  const AXIS_LABEL_GAP = 6;
+  const AXIS_LABEL_SAFETY = 2;
+  // 上下留白改成非对称(原来 padTB=12 对称,上下相同):底部现在要放 x 轴
+  // 日期刻度文字,与 EquityCurve 的 padB=26 同一量级(这里字号 10、行距
+  // 略紧,26 仍够用)。
+  const padT = 12;
+  const padB = 26;
+
+  // 选中点信息条:hover/focus 任意结算点时显示该点日期+净值,否则显示
+  // 操作提示——不藏进 title/tip-pop,一眼可见(与卡片默认视图同一诚实
+  // 展示原则)。单点/多点两个分支共用同一段渲染,提成局部函数——纯 JSX,
+  // 不是值得放进 lib/ 的可测纯逻辑,留在组件内部就近复用即可。
+  const readout = (pt: { ts: number; cum: number } | null) =>
+    pt ? (
+      <>
+        <span className="mono">{fmtDateTime(pt.ts)}</span>
+        <span className="muted"> · </span>
+        <span className={`mono ${pnlTone(pt.cum)}`}>
+          {fmtSignedUsd(pt.cum)}
+        </span>
+      </>
+    ) : (
+      <span className="muted">
+        点选或用 Tab 聚焦任意结算点,查看该笔的日期与净值
+      </span>
+    );
+  // 固定最小高度,避免"提示文案"与"选中读数"两种内容行高不同时,图表
+  // 随选中状态上下跳动。
+  const readoutStyle: CSSProperties = {
+    marginBottom: "var(--s-1)",
+    minHeight: "1.4em",
+  };
 
   // 单点特判(逻辑不变,W/H 换成入参):sparklinePath 对唯一点只产出
   // "M x y"(无 L 段),SVG 不会画出任何可见线段;sparklineAreaPath 仍会把
   // 这个孤点和两个底角连成一个与曲线形状无关的楔形色块(见
   // lib/followCardView.ts 顶部注释)。画一条贯穿绘图区的虚线 + 这一个值
   // 本身——只有一个样本点,谈不上走势,虚线明确传达"数据不足以连线"。
+  // padL 只需要装下这一个标签,单独按 net 算(下面多点分支按 hi/lo 算)。
   if (curve.length === 1) {
-    const y = height / 2;
+    const pt = curve[0];
+    const padL = Math.max(
+      56,
+      Math.ceil(estimateAxisLabelWidth(net, AXIS_FONT_SIZE)) +
+        AXIS_LABEL_GAP +
+        AXIS_LABEL_SAFETY,
+    );
+    const y = padT + (height - padT - padB) / 2;
+    // 只有一个点,tMin===tMax → computeTimeTicks 恒返回单个 middle 锚定
+    // 刻度(见该函数顶部注释),复用而不是为这一个特判再写一遍日期格式化。
+    const tickLabel = computeTimeTicks(pt.ts, pt.ts)[0].label;
+    const px = (padL + width) / 2; // 与下方虚线的水平范围 [padL, width] 居中对齐
+    const isSelected = selectedIdx === 0;
     return (
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        style={{ width: "100%", height: "auto", display: "block" }}
-        role="img"
-        aria-label={`唯一一笔已结算:${fmtSignedUsd(net)}`}
-      >
-        <line
-          x1={padL}
-          y1={y}
-          x2={width}
-          y2={y}
-          stroke={tone}
-          strokeWidth={1.6}
-          strokeDasharray="3 3"
-        />
-        <text
-          x={padL - 6}
-          y={y}
-          textAnchor="end"
-          dominantBaseline="middle"
-          fontSize={11}
-          fill={tone}
-          className="mono"
+      <div>
+        <div className="ds-hint" style={readoutStyle} aria-live="polite">
+          {readout(isSelected ? pt : null)}
+        </div>
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          style={{ width: "100%", height: "auto", display: "block" }}
+          role="img"
+          aria-label={`唯一一笔已结算:${fmtSignedUsd(net)}`}
         >
-          {axisFmt(net)}
-        </text>
-      </svg>
+          <line
+            x1={padL}
+            y1={y}
+            x2={width}
+            y2={y}
+            stroke={tone}
+            strokeWidth={1.6}
+            strokeDasharray="3 3"
+          />
+          <text
+            x={padL - AXIS_LABEL_GAP}
+            y={y}
+            textAnchor="end"
+            dominantBaseline="middle"
+            fontSize={AXIS_FONT_SIZE}
+            fill={tone}
+            className="mono"
+          >
+            {axisFmt(net)}
+          </text>
+          {/* x 轴日期(唯一一点,居中标注,不画网格线——只有一个点时竖线
+              没有可比较对象,不如留白干净)。 */}
+          <text
+            x={px}
+            y={height - 8}
+            textAnchor="middle"
+            fontSize={10}
+            fill="var(--n-500)"
+            className="mono"
+          >
+            {tickLabel}
+          </text>
+          {/* 可视圆点 + 透明命中圆:同一个点的双重表示,见函数顶部"点选
+              交互"注释。role="button":SVG 图形元素没有隐式 role,补一个
+              才能被读屏软件识别成可交互控件(与下面 EquityCurve 图例的
+              纯文本 <span> 不同,那里文字内容本身就能被朗读)。 */}
+          <circle
+            cx={px}
+            cy={y}
+            r={isSelected ? 4 : 2.5}
+            fill={tone}
+            stroke={isSelected ? "var(--n-0)" : "none"}
+            strokeWidth={isSelected ? 1.5 : 0}
+          />
+          <circle
+            cx={px}
+            cy={y}
+            r={8}
+            fill="transparent"
+            tabIndex={0}
+            role="button"
+            aria-label={`结算于 ${fmtDateTime(pt.ts)},净值 ${fmtSignedUsd(pt.cum)}`}
+            onMouseEnter={() => setSelectedIdx(0)}
+            onMouseLeave={() => setSelectedIdx(null)}
+            onFocus={() => setSelectedIdx(0)}
+            onBlur={() => setSelectedIdx(null)}
+            style={{ cursor: "pointer" }}
+          />
+        </svg>
+      </div>
     );
   }
+
+  // 左侧留白按峰值/谷底两个标签(下面会画出来)里较宽的那个动态算。
+  // Bug 修复(2026-08):曾经固定 56px(注释写"美元额可能到 5 位数"但没有
+  // 真的按位数算),大额亏损时负号(标签最左侧字符)会被裁出 SVG
+  // viewBox,显示成看似盈利的正数——与 EquityCurve 的 padL=48 是同一个
+  // bug。56 仍作为下限保留,小额场景维持原有留白观感;真正需要更宽时
+  // (大额/负数)才会超过这个下限。
+  const vals = curve.map((p) => p.cum);
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  const padL = Math.max(
+    56,
+    Math.ceil(
+      Math.max(
+        estimateAxisLabelWidth(hi, AXIS_FONT_SIZE),
+        estimateAxisLabelWidth(lo, AXIS_FONT_SIZE),
+      ),
+    ) +
+      AXIS_LABEL_GAP +
+      AXIS_LABEL_SAFETY,
+  );
+  const plotW = width - padL;
+  const plotH = height - padT - padB;
 
   const line = sparklinePath(curve, plotW, plotH);
   if (!line) return null;
@@ -1004,84 +1159,159 @@ function Sparkline({
   // AXIS_PAD 常量与 lib/followCardView.ts 的 PAD 保持一致,否则标签位置会
   // 和实际画出来的折线端点对不上。
   const AXIS_PAD = 4;
-  const vals = curve.map((p) => p.cum);
-  const lo = Math.min(...vals);
-  const hi = Math.max(...vals);
   const span = hi - lo;
   const sy = (v: number) =>
-    padTB +
+    padT +
     (span > 0
       ? AXIS_PAD + (1 - (v - lo) / span) * (plotH - AXIS_PAD * 2)
       : plotH / 2);
   const showZero = lo <= 0 && 0 <= hi;
 
+  // 结算点的真实(ts, cum)列表(按时间排序)——x 轴刻度、逐点选中标记都
+  // 按这份数据算。与 sparklinePath 内部对入参做的排序是同一个比较器,
+  // 这里各自排一次不会得到不同的点序,保证圆点与它下面那条折线严丝合缝。
+  const pts = [...curve].sort((a, b) => a.ts - b.ts);
+  const tMin = pts[0].ts;
+  const tSpan = pts[pts.length - 1].ts - tMin;
+  const sx = (t: number) =>
+    padL + (tSpan > 0 ? ((t - tMin) / tSpan) * plotW : plotW / 2);
+  const ticks = computeTimeTicks(tMin, tMin + tSpan);
+  const selectedPt = selectedIdx != null ? (pts[selectedIdx] ?? null) : null;
+
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      style={{ width: "100%", height: "auto", display: "block" }}
-      role="img"
-      aria-label={`结算净值走势,当前 ${fmtSignedUsd(net)}`}
-    >
-      {/* 0 基线:只在 0 真的落在这条曲线的取值范围内才画,否则会在可视区
-          之外画一条不对应任何东西的线,比不画更误导。 */}
-      {showZero ? (
-        <line
-          x1={padL}
-          y1={sy(0)}
-          x2={width}
-          y2={sy(0)}
-          stroke="var(--n-300)"
-          strokeWidth={1}
-          strokeDasharray="3 3"
-        />
-      ) : null}
-      <text
-        x={padL - 6}
-        y={sy(hi)}
-        textAnchor="end"
-        dominantBaseline="middle"
-        fontSize={11}
-        fill="var(--n-500)"
-        className="mono"
+    <div>
+      <div className="ds-hint" style={readoutStyle} aria-live="polite">
+        {readout(selectedPt)}
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        style={{ width: "100%", height: "auto", display: "block" }}
+        role="img"
+        aria-label={`结算净值走势,当前 ${fmtSignedUsd(net)}`}
       >
-        {axisFmt(hi)}
-      </text>
-      {showZero ? (
+        {/* 0 基线:只在 0 真的落在这条曲线的取值范围内才画,否则会在可视区
+            之外画一条不对应任何东西的线,比不画更误导。 */}
+        {showZero ? (
+          <line
+            x1={padL}
+            y1={sy(0)}
+            x2={width}
+            y2={sy(0)}
+            stroke="var(--n-300)"
+            strokeWidth={1}
+            strokeDasharray="3 3"
+          />
+        ) : null}
         <text
-          x={padL - 6}
-          y={sy(0)}
+          x={padL - AXIS_LABEL_GAP}
+          y={sy(hi)}
           textAnchor="end"
           dominantBaseline="middle"
-          fontSize={11}
-          fill="var(--n-400)"
-          className="mono"
-        >
-          $0
-        </text>
-      ) : null}
-      {/* span===0(全部结算点累计值相同)时峰值=谷底,不重复画同一个标签。 */}
-      {span > 0 ? (
-        <text
-          x={padL - 6}
-          y={sy(lo)}
-          textAnchor="end"
-          dominantBaseline="middle"
-          fontSize={11}
+          fontSize={AXIS_FONT_SIZE}
           fill="var(--n-500)"
           className="mono"
         >
-          {axisFmt(lo)}
+          {axisFmt(hi)}
         </text>
-      ) : null}
-      <g transform={`translate(${padL}, ${padTB})`}>
-        <path
-          d={sparklineAreaPath(line, plotW, plotH)}
-          fill={tone}
-          opacity={0.1}
-        />
-        <path d={line} fill="none" stroke={tone} strokeWidth={1.6} />
-      </g>
-    </svg>
+        {showZero ? (
+          <text
+            x={padL - AXIS_LABEL_GAP}
+            y={sy(0)}
+            textAnchor="end"
+            dominantBaseline="middle"
+            fontSize={AXIS_FONT_SIZE}
+            fill="var(--n-400)"
+            className="mono"
+          >
+            $0
+          </text>
+        ) : null}
+        {/* span===0(全部结算点累计值相同)时峰值=谷底,不重复画同一个标签。 */}
+        {span > 0 ? (
+          <text
+            x={padL - AXIS_LABEL_GAP}
+            y={sy(lo)}
+            textAnchor="end"
+            dominantBaseline="middle"
+            fontSize={AXIS_FONT_SIZE}
+            fill="var(--n-500)"
+            className="mono"
+          >
+            {axisFmt(lo)}
+          </text>
+        ) : null}
+        {/* x 轴日期刻度:浅色竖网格线 + 底部日期标签,与页面下方大图
+            EquityCurve 共用同一份 computeTimeTicks,同一种视觉语言。 */}
+        {ticks.map((t) => {
+          const x = sx(t.ts);
+          return (
+            <g key={x}>
+              <line
+                x1={x}
+                y1={padT}
+                x2={x}
+                y2={height - padB}
+                stroke="var(--n-200)"
+                strokeWidth={1}
+                strokeDasharray="2 4"
+              />
+              <text
+                x={x}
+                y={height - 8}
+                textAnchor={t.anchor}
+                fontSize={10}
+                fill="var(--n-500)"
+                className="mono"
+              >
+                {t.label}
+              </text>
+            </g>
+          );
+        })}
+        <g transform={`translate(${padL}, ${padT})`}>
+          <path
+            d={sparklineAreaPath(line, plotW, plotH)}
+            fill={tone}
+            opacity={0.1}
+          />
+          <path d={line} fill="none" stroke={tone} strokeWidth={1.6} />
+        </g>
+        {/* 逐个结算点的可视圆点 + 透明命中圆,见函数顶部"点选交互"注释:
+            曲线是阶梯图,这里遍历的是真实结算点(pts),不是曲线上的任意
+            位置——键盘 Tab 与鼠标悬停触发同一个选中态。 */}
+        {pts.map((pt, i) => {
+          const cx = sx(pt.ts);
+          const cy = sy(pt.cum);
+          const isSelected = selectedIdx === i;
+          return (
+            <g key={i}>
+              <circle
+                cx={cx}
+                cy={cy}
+                r={isSelected ? 4 : 2.5}
+                fill={tone}
+                stroke={isSelected ? "var(--n-0)" : "none"}
+                strokeWidth={isSelected ? 1.5 : 0}
+              />
+              <circle
+                cx={cx}
+                cy={cy}
+                r={8}
+                fill="transparent"
+                tabIndex={0}
+                role="button"
+                aria-label={`结算于 ${fmtDateTime(pt.ts)},当时净值 ${fmtSignedUsd(pt.cum)}`}
+                onMouseEnter={() => setSelectedIdx(i)}
+                onMouseLeave={() => setSelectedIdx(null)}
+                onFocus={() => setSelectedIdx(i)}
+                onBlur={() => setSelectedIdx(null)}
+                style={{ cursor: "pointer" }}
+              />
+            </g>
+          );
+        })}
+      </svg>
+    </div>
   );
 }
 
@@ -1861,7 +2091,7 @@ function AccountPlanDialog({ acct }: { acct: AccountPlan }) {
                     : undefined
                 }
               >
-                <td className="mono">
+                <td className="mono" data-label="若账户">
                   ${fmtUsd0(r.accountUsd)}
                   {r.accountUsd === acct.suggestedUsd ? (
                     <>
@@ -1875,7 +2105,7 @@ function AccountPlanDialog({ acct }: { acct: AccountPlan }) {
                     </>
                   ) : null}
                 </td>
-                <td className="mono">
+                <td className="mono" data-label="接住 · 错过">
                   {r.taken} ·{" "}
                   {r.missed > 0 ? (
                     <span style={{ color: "var(--warn-700)" }}>{r.missed}</span>
@@ -1883,12 +2113,12 @@ function AccountPlanDialog({ acct }: { acct: AccountPlan }) {
                     "0"
                   )}
                 </td>
-                <td>
+                <td data-label="落袋">
                   <span className={`mono ${pnlTone(r.realizedPnl)}`}>
                     {fmtSignedUsd(r.realizedPnl)}
                   </span>
                 </td>
-                <td>
+                <td data-label="年化">
                   {r.annualizedRoi == null ? (
                     <span className="muted">—</span>
                   ) : (
@@ -1897,7 +2127,9 @@ function AccountPlanDialog({ acct }: { acct: AccountPlan }) {
                     </span>
                   )}
                 </td>
-                <td className="mono">{fmtPct(r.utilization)}</td>
+                <td className="mono" data-label="效率">
+                  {fmtPct(r.utilization)}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1982,11 +2214,12 @@ function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
               <tr key={`${e.p.condition_id}-${e.p.outcome}-${e.kind}-${i}`}>
                 <td
                   className="mono"
+                  data-label="时间"
                   title={new Date(e.ts * 1000).toLocaleString("zh-CN")}
                 >
                   {fmtDateTime(e.ts)}
                 </td>
-                <td>
+                <td data-label="动作">
                   {e.kind === "open" ? (
                     <span className="ds-tag">买入</span>
                   ) : (
@@ -1994,10 +2227,13 @@ function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
                   )}
                 </td>
                 {/* 市场列放开全局 nowrap:长标题换行而不是把表撑出横向滚动 */}
-                <td style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>
+                <td
+                  data-label="市场 · 结果"
+                  style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}
+                >
                   <MarketCell p={e.p} />
                 </td>
-                <td className="is-right">
+                <td className="is-right" data-label="价格">
                   {e.kind === "open" ? (
                     <>
                       <span className="mono">{cents(e.p.entry_price)}</span>
@@ -2024,7 +2260,7 @@ function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
                     </>
                   )}
                 </td>
-                <td className="is-right">
+                <td className="is-right" data-label="金额 / 盈亏">
                   {e.kind === "open" ? (
                     <span className="mono muted">${fmtUsd0(e.p.size_usd)}</span>
                   ) : (
@@ -2044,11 +2280,17 @@ function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
 
 /* ------------------------------------------------------ detail dialog */
 
-// 尽量占满视口宽(Modal 内部按 min(width, 100%) 收敛):五区共存,取原两个
-// 独立弹窗里较宽的那个——操作历史表格原本就是 1200(见上面 HistoryDialog
-// 曾经的调用点);账户推演原本是 680,共用 1200 只是给它的表格多一点留白,
-// 不会挤压或产生新的换行。
-const DETAIL_DIALOG_WIDTH = 1200;
+// 尽量占满视口宽:五区共存,取原两个独立弹窗里较宽的那个——操作历史表格
+// 原本就是 1200(见上面 HistoryDialog 曾经的调用点);账户推演原本是 680,
+// 共用 1200 只是给它的表格多一点留白,不会挤压或产生新的换行。
+//
+// 响应式(bug 修复,2026-08):曾经是裸的数字 1200,窄视口下用户反馈弹窗
+// 底部出现横向滚动条、右侧内容被截断。改成 CSS min() 表达式——大屏按
+// 1200 走(原设计宽度),视口不够宽时按 92vw 收窄,直接把"够不够宽"的
+// 决定权交给视口,不依赖 Modal 内部 flex 收缩的隐式行为(那个隐式行为
+// 这次一并加固了,见 ui.tsx Modal 的 minWidth:0 注释)。Modal 的 width
+// prop 因此从 number 放宽到 number | string。
+const DETAIL_DIALOG_WIDTH = "min(1200px, 92vw)";
 // 净值走势图(U6 从卡片移入的 Sparkline)尺寸:宽度按弹窗内容区域的量级取
 // (1200 减掉 Modal/section 的内边距后大致这个数量级,SVG 本身靠 viewBox +
 // width:100% 响应式伸缩,数字不用精确到像素);高度取协调方给的 160-200px
@@ -2678,6 +2920,13 @@ function OpenTable({
 
 /* ----------------------------------------------------------------- page */
 
+// 口径声明的完整文案(改版 U10 从常驻 callout 收进 Icon 的悬停/点击弹出层,
+// 见下方渲染处的注释)。原样保留原 callout 的三句话,只是从 JSX(带
+// <strong> 强调)拍平成纯文本——data-tip/title 都只能渲染纯文本,拍平后的
+// 唯一代价是丢掉"不可跨档相加"六个字的加粗强调,信息本身一字不少。
+const CROSS_TIER_CAVEAT =
+  "各档持仓存在重叠(同一市场可能同时命中多个信号源——例如「激进」的持仓是「保守」的超集、「巨鲸精英」是「巨鲸」的子集)。每一档的战绩都是「只跟这一档」的独立假设下算出的,不可跨档相加;同理,每张卡的「建议跟单额度」也是单档口径——12 档一起跟所需的总资金,不是 12 个峰值之和。";
+
 export default function FollowPage() {
   const [data, setData] = useState<FollowResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -2821,8 +3070,40 @@ export default function FollowPage() {
     <main className="ds-main">
       <header style={{ marginBottom: "var(--s-4)" }}>
         <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-          🧾 共识跟单 · 纸面模拟
+          🧾 策略中心
         </h1>
+        {/* 真实数据 · 模拟策略(诚实性要求,非装饰):产品名从「纸面跟单」
+            改成「策略中心」后,「纸面」二字自带的"不动真金"含义从名字里
+            消失了——这层意思必须显式补回来,否则「策略中心」读起来像是在
+            做真实交易。放在标题正下方、下面这行详细口径说明之前:两个
+            Tag 本身的文字一眼可见(不依赖悬停才能看到核心结论),不满足
+            "藏进 tooltip"这条红线;Icon 的 title 只承载补充细节,是深挖
+            才会用到的第二层。颜色:真实数据用 brand——中性强调,不是财务
+            涨跌方向,不该借用 up(绿色在全站语义是"买入/盈利"这个不相干
+            的含义);模拟策略用 warn——复用全站既有的"琥珀色 = 赔率与
+            警示信息"语义(见 glossary「颜色语义」词条),提醒读者这一层
+            不是真钱,与下面 CROSS_TIER_CAVEAT 那个 warn 提示同一色语言。 */}
+        <div
+          style={{
+            display: "flex",
+            gap: "var(--s-2)",
+            flexWrap: "wrap",
+            marginBottom: "var(--s-2)",
+          }}
+        >
+          <Tag variant="brand">
+            <Icon
+              s="📡 真实数据"
+              title="真实市场行情 · 真实聪明钱成交 · 真实结算价——策略吃的是市场当时的真实报价,不是模拟盘口"
+            />
+          </Tag>
+          <Tag variant="warn">
+            <Icon
+              s="🧪 模拟策略"
+              title="策略本身不动真金:按报价快照纸面成交,不产生真实订单,用来检验「跟着信号买」这套策略有没有 alpha"
+            />
+          </Tag>
+        </div>
         <div className="ds-hint">
           现价进场 ·
           跟随共识/异常大额/分歧/钱包画像四类信号,新鲜度窗口因档而异(默认 15
@@ -2877,7 +3158,7 @@ export default function FollowPage() {
       ) : null}
 
       {!data ? (
-        <div className="ds-empty">⏳ 正在加载纸面跟单战绩…</div>
+        <div className="ds-empty">⏳ 正在加载策略中心战绩…</div>
       ) : shown.length === 0 ? (
         <div className="ds-empty">
           暂无启用中的跟单策略 —
@@ -2885,33 +3166,32 @@ export default function FollowPage() {
         </div>
       ) : (
         <>
-          {/* 口径声明:12 档同屏平铺时,读者的本能是把战绩加总——但持仓存在
-              大面积重叠(「激进」的持仓是「保守」的超集、「巨鲸精英」是
-              「巨鲸」的子集、A3/A4 与 A1/A2 大面积重叠),加出来的数字会被
-              严重放大。放在全部卡片之前、用醒目的 warn 语义呈现,复用既有
-              ds-callout 组件(单一真相源在 app/globals.css,不写内联硬编码
-              色值)。仅在 ≥2 张卡时渲染——只有一档时不存在"跨档相加"这回事,
-              与下方"仓位明细"的策略筛选 Segmented 同一条既有约定。 */}
-          {shown.length >= 2 ? (
-            <div
-              className="ds-callout ds-callout--warn"
-              style={{ marginBottom: "var(--s-5)" }}
-            >
-              ⚠️
-              各档持仓存在重叠(同一市场可能同时命中多个信号源——例如「激进」的持仓是「保守」的超集、「巨鲸精英」是「巨鲸」的子集)。
-              <strong>
-                每一档的战绩都是「只跟这一档」的独立假设下算出的,不可跨档相加
-              </strong>
-              ;同理,每张卡的「建议跟单额度」也是单档口径——12
-              档一起跟所需的总资金,不是 12 个峰值之和。
-            </div>
-          ) : null}
+          {/* 卡片/列表视图切换 + 口径声明。默认卡片,选择记进 localStorage
+              (见 changeViewMode)。
 
-          {/* 卡片/列表视图切换:默认卡片,选择记进 localStorage(见
-              changeViewMode)。放在口径声明 banner 下方、内容区上方——两种
-              视图消费同一份 shown/groups,口径声明对两边同样适用,不用
-              为列表再放一条。 */}
-          <div style={{ marginBottom: "var(--s-4)" }}>
+              口径声明(改版 U10,bug 修复):曾经是常驻在这一行上方的 warn
+              callout,占首屏一整块面积。用户反馈默认不该占这么大地方,但
+              内容本身仍然重要——12 张卡平铺时读者的本能是把盈亏加总,而
+              各档持仓大面积重叠(「激进」的持仓是「保守」的超集、「巨鲸
+              精英」是「巨鲸」的子集、A3/A4 与 A1/A2 大面积重叠),加出来
+              的数字会被严重放大,这条口径拦的就是这个误读,不能因为收起
+              来就变得不可发现。改成一行 warn 色小字 + 悬停(桌面)/点击
+              (触屏)展开完整说明——复用 ui.tsx 已有的 Icon 组件(内部就是
+              tip-pop 悬停/点击弹出机制,MarketSlugActions 等处同款),不
+              新造弹窗组件;color 走 --warn-700 token,不写十六进制硬编码。
+              仅在 ≥2 张卡时渲染——只有一档时不存在"跨档相加"这回事,与
+              下方"仓位明细"的策略筛选 Segmented 同一条既有约定。放在
+              视图切换同一行——两种视图消费同一份 shown/groups,口径声明
+              对两边同样适用,不用为列表再放一条。 */}
+          <div
+            style={{
+              marginBottom: "var(--s-4)",
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--s-3)",
+              flexWrap: "wrap",
+            }}
+          >
             <Segmented<ViewMode>
               ariaLabel="展示方式"
               options={[
@@ -2921,6 +3201,14 @@ export default function FollowPage() {
               value={viewMode}
               onChange={changeViewMode}
             />
+            {shown.length >= 2 ? (
+              <span className="ds-hint" style={{ color: "var(--warn-700)" }}>
+                <Icon
+                  s="⚠️ 各档持仓有重叠,战绩不可跨档相加"
+                  title={CROSS_TIER_CAVEAT}
+                />
+              </span>
+            ) : null}
           </div>
 
           {viewMode === "card" ? (
