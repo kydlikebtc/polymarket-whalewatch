@@ -828,6 +828,27 @@ function Sparkline({ curve }: { curve: { ts: number; cum: number }[] }) {
   );
 }
 
+// 策略卡标准尺寸(不自适应)。宽度固定值(见下方网格 `repeat(auto-fit,
+// ${CARD_WIDTH}px)`,不用 minmax(…, 1fr)——1fr 会把列宽拉伸到随容器变化,
+// 380px 容器和 900px 容器下同样 3 列但卡宽能差 100px,三种卡态高度又参差,
+// 整片卡片区显得凌乱。320 沿用改版前 minmax 的下限,不用推翻重定。
+const CARD_WIDTH = 320;
+// 高度取 normal/low_sample 态(两者结构相同,是三态里内容最多的)的估算自然
+// 高度,按代码结构逐块加总(卡内 padding 32 + 各区块行高/行距,均取 320px
+// 卡宽、真实种子数据里最长的名字/参数提示串为准):
+//   标题行(名字+可能的标签)                       1 行 ≈ 36px
+//   参数提示(最长串"重仓共识"那条实测在更宽的卡上
+//     就已经换行,320px 更窄,保守按 3 行估)         ≈ 70px
+//   sparkline(240×52,组件内写死)+ 到指标网格间距    ≈ 64px
+//   4 个核心指标 2×2 网格(结算胜率的 Wilson CI 文本
+//     "83% · 95%CI 44–97%" 较长,保守按换行 2 行估)  ≈119px
+//   元信息行(已结算·持有·运行,含上边框/内边距)      ≈ 39px
+//   CardActions(含上边框/内边距,单行按钮)            ≈ 57px
+// 合计 ≈417px,取整加一点余量 → 440,而不是卡死在算出来的数字上(字体渲染
+// 的行高误差、真实换行点都可能比手算多出几像素,minHeight 只是地板,偏高
+// 一点不会裁内容,偏低才会让长名字/长提示挤出这个"标准尺寸"的假象)。
+const CARD_MIN_HEIGHT = 440;
+
 function StrategyCard({
   s,
   leading,
@@ -843,6 +864,13 @@ function StrategyCard({
       className="ds-card"
       style={{
         padding: "var(--s-4)",
+        // 标准尺寸:宽由外层网格的固定列宽拉伸决定(grid 默认 stretch,这里
+        // 不必再显式写 width),高用 minHeight(非 height)兜底到 normal 态
+        // 的自然高度——策略名极端情况下换行,minHeight 只设下限,卡会自然
+        // 长高而不是裁内容,同行的 grid 会跟着等高,不会出现内容被切掉的卡。
+        minHeight: CARD_MIN_HEIGHT,
+        display: "flex",
+        flexDirection: "column",
         // 领先卡用品牌色描边 + 抬升阴影强调,全部走 token,不硬编码色。
         ...(leading
           ? {
@@ -875,93 +903,107 @@ function StrategyCard({
       <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
         {paramsHint(s.params)}
       </div>
-      {state === "empty" ? (
-        // 空档:10 条新档刚上线时全是这个状态。虚线边框 + 说明把「还没轮到
-        // 它」和「跑了但没赚到钱」在视觉上分开 —— 沿用正常卡样式会显示 12
-        // 张写满「—」的同样大小的卡,容易被误判成「新档都不工作」。
-        <div
-          className="ds-hint"
-          style={{
-            textAlign: "center",
-            padding: "var(--s-4) 0",
-            lineHeight: 1.7,
-          }}
-        >
-          {m.openCount > 0 ? (
-            <>
-              尚无已结算仓位
-              <br />
-              持有 {m.openCount} 仓 · 等待首次结算
-            </>
-          ) : (
-            <>
-              尚无仓位
-              <br />
-              等待信号命中
-            </>
-          )}
-        </div>
-      ) : (
-        <>
-          <Sparkline curve={m.equityCurve} />
+      {/* 中段:固定高度后 empty 态内容最少,原样顶对齐会在卡底留一整块空白、
+          说明文字贴在顶部很难看。用 flex:1 让这段吃掉 minHeight 撑出来的
+          富余空间,再按状态选 justifyContent——empty 态居中,其余状态维持
+          原来的顶对齐(sparkline/指标网格本来就接近撑满,居中与顶对齐视觉
+          上没有区别,不必分叉判断)。 */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: state === "empty" ? "center" : "flex-start",
+        }}
+      >
+        {state === "empty" ? (
+          // 空档:10 条新档刚上线时全是这个状态。虚线边框 + 说明把「还没轮到
+          // 它」和「跑了但没赚到钱」在视觉上分开 —— 沿用正常卡样式会显示 12
+          // 张写满「—」的同样大小的卡,容易被误判成「新档都不工作」。
           <div
+            className="ds-hint"
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-              gap: "var(--s-3) var(--s-4)",
-              marginTop: "var(--s-3)",
+              textAlign: "center",
+              padding: "var(--s-4) 0",
+              lineHeight: 1.7,
             }}
           >
-            <Metric
-              label="结算净值"
-              title="已结算仓位累计已实现盈亏(不含持仓浮盈)"
-              value={
-                <span
-                  className={`mono ${pnlTone(m.totalRealized)}`}
-                  style={{ fontSize: 20, fontWeight: 700 }}
-                >
-                  {fmtSignedUsd(m.totalRealized)}
-                </span>
-              }
-            />
-            <Metric
-              label="ROI"
-              title="结算净值 ÷ 已投入本金(仅已结算仓)"
-              value={
-                m.roi == null ? (
-                  <span className="muted">—</span>
-                ) : (
-                  <span
-                    className={`mono ${pnlTone(m.roi)}`}
-                    style={{ fontSize: 18, fontWeight: 600 }}
-                  >
-                    {m.roi >= 0 ? "+" : MINUS}
-                    {Math.abs(m.roi * 100).toFixed(1)}%
-                  </span>
-                )
-              }
-            />
-            <Metric
-              label="结算胜率"
-              title="盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间;平局不计入分母"
-              value={<span className="mono">{winRateLabel(m)}</span>}
-            />
-            <Metric
-              label="最大回撤"
-              title="净值曲线从峰值到后续谷底的最大跌幅(美元)"
-              value={
-                <span
-                  className={`mono ${m.maxDrawdown > 0 ? "down" : "muted"}`}
-                >
-                  {m.maxDrawdown > 0
-                    ? `${MINUS}$${fmtUsd0(m.maxDrawdown)}`
-                    : "$0"}
-                </span>
-              }
-            />
+            {m.openCount > 0 ? (
+              <>
+                尚无已结算仓位
+                <br />
+                持有 {m.openCount} 仓 · 等待首次结算
+              </>
+            ) : (
+              <>
+                尚无仓位
+                <br />
+                等待信号命中
+              </>
+            )}
           </div>
-        </>
-      )}
+        ) : (
+          <>
+            <Sparkline curve={m.equityCurve} />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+                gap: "var(--s-3) var(--s-4)",
+                marginTop: "var(--s-3)",
+              }}
+            >
+              <Metric
+                label="结算净值"
+                title="已结算仓位累计已实现盈亏(不含持仓浮盈)"
+                value={
+                  <span
+                    className={`mono ${pnlTone(m.totalRealized)}`}
+                    style={{ fontSize: 20, fontWeight: 700 }}
+                  >
+                    {fmtSignedUsd(m.totalRealized)}
+                  </span>
+                }
+              />
+              <Metric
+                label="ROI"
+                title="结算净值 ÷ 已投入本金(仅已结算仓)"
+                value={
+                  m.roi == null ? (
+                    <span className="muted">—</span>
+                  ) : (
+                    <span
+                      className={`mono ${pnlTone(m.roi)}`}
+                      style={{ fontSize: 18, fontWeight: 600 }}
+                    >
+                      {m.roi >= 0 ? "+" : MINUS}
+                      {Math.abs(m.roi * 100).toFixed(1)}%
+                    </span>
+                  )
+                }
+              />
+              <Metric
+                label="结算胜率"
+                title="盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间;平局不计入分母"
+                value={<span className="mono">{winRateLabel(m)}</span>}
+              />
+              <Metric
+                label="最大回撤"
+                title="净值曲线从峰值到后续谷底的最大跌幅(美元)"
+                value={
+                  <span
+                    className={`mono ${m.maxDrawdown > 0 ? "down" : "muted"}`}
+                  >
+                    {m.maxDrawdown > 0
+                      ? `${MINUS}$${fmtUsd0(m.maxDrawdown)}`
+                      : "$0"}
+                  </span>
+                }
+              />
+            </div>
+          </>
+        )}
+      </div>
       {/* 元信息行:取代被下沉的「已结算 · 持有」指标。low_sample 档在这里加
           警示色,提醒读者上面的 ROI/胜率是小样本(<10 仓)读数,而不是隐藏
           它们——藏起来会让读者误以为这档没数据,标警示才是诚实的做法。 */}
@@ -2256,7 +2298,15 @@ export default function FollowPage() {
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+                  // 固定列宽(不用 minmax(…, 1fr)):1fr 会把列宽拉伸到随容器
+                  // 宽度变化,同样 3 列在 1180px/900px 容器下卡宽能差出
+                  // 100px。auto-fit 在某一族卡片数量不足以填满一整行时会
+                  // 折叠多余的空轨道,配合下面的 justify-content 让实际卡片
+                  // 整体居中;若改用 auto-fill,折叠不会发生,空轨道仍占位,
+                  // justify-content 反而会把可见卡片推向一侧、右边露出一块
+                  // 不对称的空白(该行为已用具体尺寸推演验证过)。
+                  gridTemplateColumns: `repeat(auto-fit, ${CARD_WIDTH}px)`,
+                  justifyContent: "center",
                   gap: "var(--s-4)",
                 }}
               >
