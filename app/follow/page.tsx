@@ -3209,9 +3209,64 @@ export default function FollowPage() {
   return (
     <main className="ds-main">
       <header style={{ marginBottom: "var(--s-4)" }}>
-        <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-          🧾 策略中心
-        </h1>
+        {/* 标题行 + 刷新控件:原先"刷新/自动刷新 30s"单独占一行放在一个
+            只装了这两个控件的 ds-card 里,整行右侧全是空白(真机截图确认
+            的布局浪费)。改成挤进标题行右端——与 h1 同一行、右对齐,省掉
+            那层只为包两个控件而存在的卡片边框/内边距。用 flexWrap(不用
+            媒体查询)做窄屏降级:与本文件其它响应式行(FamilyToggles、
+            视图切换行)同一套既有约定——两组内容放不下同一行时,右边这组
+            整体换到标题下方,不需要单独写一条断点规则。「最后刷新」与
+            「加载中」两个状态文字跟刷新按钮/自动刷新勾选框放一起(它们是
+            同一件事的状态和动作,理应同组),原来所在的口径说明段落保持
+            完整不拆碎。 */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "var(--s-3)",
+            marginBottom: "var(--s-1)",
+          }}
+        >
+          <h1 style={{ fontSize: "var(--t-2xl)" }}>🧾 策略中心</h1>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "var(--s-3)",
+            }}
+          >
+            <button className="ds-btn ds-btn--ghost" onClick={() => load()}>
+              刷新
+            </button>
+            <label
+              className="ds-hint"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--s-1)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={(e) => setAutoRefresh(e.target.checked)}
+              />
+              自动刷新 30s
+            </label>
+            {lastRefreshed ? (
+              <span className="ds-hint">最后刷新 {lastRefreshed}</span>
+            ) : null}
+            {loading ? (
+              <span className="ds-hint" style={{ color: "var(--warn-700)" }}>
+                加载中…
+              </span>
+            ) : null}
+          </div>
+        </div>
         {/* 真实数据 · 模拟策略(诚实性要求,非装饰):产品名从「纸面跟单」
             改成「策略中心」后,「纸面」二字自带的"不动真金"含义从名字里
             消失了——这层意思必须显式补回来,否则「策略中心」读起来像是在
@@ -3249,44 +3304,8 @@ export default function FollowPage() {
           跟随共识/异常大额/分歧/钱包画像四类信号,新鲜度窗口因档而异(默认 15
           分钟,详见各卡片) · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)·
           按报价快照纸面成交,不含盘口执行成本(价差/深度),盈亏偏乐观;「执行滑点」列为该成本的实测估计
-          {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
-          {loading ? (
-            <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>
-          ) : null}
         </div>
       </header>
-
-      {/* Controls — 无筛选参数,仅刷新 / 自动刷新 */}
-      <section
-        className="ds-card"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--s-3)",
-          padding: "var(--s-3) var(--s-4)",
-          marginBottom: "var(--s-5)",
-        }}
-      >
-        <button className="ds-btn ds-btn--ghost" onClick={() => load()}>
-          刷新
-        </button>
-        <label
-          className="ds-hint"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--s-1)",
-            cursor: "pointer",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={autoRefresh}
-            onChange={(e) => setAutoRefresh(e.target.checked)}
-          />
-          自动刷新 30s
-        </label>
-      </section>
 
       {data?.error ? (
         <div
