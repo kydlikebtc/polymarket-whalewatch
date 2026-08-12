@@ -24,8 +24,10 @@ export function openDb(path = "data.sqlite") {
     CREATE INDEX IF NOT EXISTS idx_cycle_metrics_ts ON cycle_metrics(loop, ts);
     CREATE TABLE IF NOT EXISTS follow_strategies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, enabled INTEGER DEFAULT 1, params_json TEXT, created_at INTEGER);
     CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, formation_ts INTEGER, formation_price REAL, markout_30m REAL, markout_2h REAL, exec_price REAL, exec_best_ask REAL, exec_filled_usd REAL, fee_usd REAL, UNIQUE(strategy_id, condition_id, outcome));
+    CREATE TABLE IF NOT EXISTS market_tilt_history (condition_id TEXT NOT NULL, ts INTEGER NOT NULL, lead_outcome TEXT, minor_outcome TEXT, minor_net_usd REAL, tilt_pct REAL, PRIMARY KEY (condition_id, ts));
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
     CREATE INDEX IF NOT EXISTS idx_candidates_evidence_ts ON wallet_candidates(evidence_ts);
+    CREATE INDEX IF NOT EXISTS idx_market_tilt_history_ts ON market_tilt_history(ts);
   `);
   // wallet_stats gained markets_traded (the high-frequency market-maker
   // classifier) after the table already shipped; add it to pre-existing DBs.
@@ -301,15 +303,44 @@ export function openDb(path = "data.sqlite") {
       "INSERT OR REPLACE INTO config (key, value) VALUES ('wallet_stats_v', '5')",
     ).run();
   }
-  // follow_strategies seed v1: paper follow-the-consensus simulation ships with
-  // two built-in strategies (保守/激进). Version-gated like wallet_stats_v above
-  // so the seed INSERT runs once per DB — dashboard routes open a fresh
+  // follow_strategies seed v1→v2: paper follow-the-consensus simulation ships
+  // with two built-in strategies (保守/激进). Version-gated like wallet_stats_v
+  // above so the seed INSERT runs once per DB — dashboard routes open a fresh
   // connection per request, and INSERT OR IGNORE alone would keep probing the
   // unique index on every open for zero benefit after the first pass.
+  //
+  // v2(Task 12,12 档扩充):新增 10 档(A3-A5 共识族质量/总额/新鲜度门槛 /
+  // B1-B3 单笔巨额族 / C1 一边倒分歧 / C2 分歧解除 / D1 高分独狼 / D2 早期
+  // 赢家跟投)。红线:「保守」「激进」这两条生产策略已经积累了几周的仓位与
+  // 战绩,历史仓是按旧参数开的 —— 改它们的任何字段都会让这条策略的战绩失去
+  // 意义(不再对应任何一套一致的规则),故 v2 只 INSERT 新增的 10 条,绝不
+  // UPDATE 既有两条。
+  //
+  // 门控条件直接从 !== "1" 改成 !== "2"(单个 if 块整体加宽),而不是在这个
+  // if 块后面另开一个并列的 `if (!== "2")`:
+  //   1. 并列写法会有两个问题 —— 语法上 `ins` 是块作用域 const,第二个 if 块
+  //      看不见第一个块里声明的 `ins`,会需要重复 db.prepare 或直接报错;
+  //      语义上更隐蔽的坑是,若把原 `!== "1"` 条件原样留在第一个 if 里,
+  //      marker 一旦推进到 "2","2" !== "1" 依然成立 —— 第一个 if 会在
+  //      **每次** openDb 时重新触发,把 marker 写回 "1",下次打开又触发第二
+  //      个 if 写回 "2",两个 if 在其后每次开库时来回震荡,完全违背版本门控
+  //      "只跑一次"的设计初衷(见上面这段注释开头的理由)。
+  //   2. 单个加宽的 if 块没有这个问题:marker 一旦是 "2",整个块直接跳过。
+  //   3. 块内重跑「保守」「激进」的 ins.run(...) 是安全的 no-op ——
+  //      INSERT OR IGNORE + name 的 UNIQUE 约束保证:名字已存在时,SQLite
+  //      连新值都不看就跳过整条 INSERT,既有行(含 params_json)不会被触碰,
+  //      更不会被覆盖。这也是下面两条路径都成立的原因:
+  //        - 全新库(marker 不存在):表是空的,两条 no-op 检查全部落空,
+  //          12 条全部真实插入。
+  //        - 既有 v1 库(marker="1",已有保守/激进):这两条 INSERT 命中
+  //          UNIQUE 静默跳过,不写入也不覆盖;下面新增的 10 条全部真实插入。
+  //   同样的 OR IGNORE 语义也覆盖了另一种情况:如果运维手工改过某条策略的
+  //   名字、或手工加过同名策略,这里会静默跳过 —— 这是期望行为(不覆盖用户
+  //   的手工修改),不是 bug。
   const followVer = db
     .prepare("SELECT value FROM config WHERE key = 'follow_seed_v'")
     .get() as { value: string | null } | undefined;
-  if (followVer?.value !== "1") {
+  if (followVer?.value !== "2") {
     const ins = db.prepare(
       "INSERT OR IGNORE INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
     );
@@ -317,6 +348,7 @@ export function openDb(path = "data.sqlite") {
     // maxEntryDeviationCents: 进场价偏离护栏(¢),现价偏离聪明钱均价超阈不开仓。
     // 仅影响全新安装;既有库的 params_json 缺该字段时由 lib/follow parseStrategy
     // 按同值默认兜底,故无需 bump follow_seed_v 做迁移。
+    // ⚠️ 这两条 ins.run(...)(保守/激进)必须逐字节保持原样 —— 见上方红线说明。
     ins.run(
       "保守",
       JSON.stringify({
@@ -339,8 +371,112 @@ export function openDb(path = "data.sqlite") {
       }),
       now,
     );
+    // v2 新增的 10 档。全部继承 exitRule/maxEntryDeviationCents/maxPrice/
+    // freshSec 的默认值(parseStrategy 兜底,不必逐条写死 —— 将来调默认值时
+    // 不用改 12 处)。source 均已在 FOLLOW_SOURCE_KINDS(lib/followCandidate.ts)
+    // 注册,逐条核实过对应 detector 的必需参数都在场,不会成为开不出仓的死档:
+    //   consensus 三档(A3-A5)靠 minWallets/minPerWalletUsd 通过 parseStrategy
+    //     的强制校验;heavy 两档(B1-B2)与 lone_wolf/early_winner 各自的必需
+    //     字段(minSingleFillUsd / minWalletScore+minNetUsd / minNetUsd)都在
+    //     对应 detector(sourceHeavy.ts/sourceWallet.ts)读取的字段里。
+    const seeds: [string, Record<string, unknown>][] = [
+      // A3 精英共识:consensus + 质量门槛(仅 score>=80 的钱包计入 minWallets)。
+      [
+        "精英共识",
+        {
+          source: "consensus",
+          minWallets: 2,
+          minPerWalletUsd: 5000,
+          minWalletScore: 80,
+          sizeUsd: 500,
+        },
+      ],
+      // A4 重仓共识:consensus + 总额门槛(不看人数,看总净买 >= $100k)。
+      [
+        "重仓共识",
+        {
+          source: "consensus",
+          minWallets: 2,
+          minPerWalletUsd: 5000,
+          minTotalNetUsd: 100000,
+          sizeUsd: 500,
+        },
+      ],
+      // A5 首发共识:consensus + 更紧的新鲜度闸门(300s,抢在共识刚形成时跟)。
+      [
+        "首发共识",
+        {
+          source: "consensus",
+          minWallets: 3,
+          minPerWalletUsd: 10000,
+          freshSec: 300,
+          sizeUsd: 500,
+        },
+      ],
+      // B1 巨鲸:heavy,单笔 BUY notional >= $50k。
+      ["巨鲸", { source: "heavy", minSingleFillUsd: 50000, sizeUsd: 500 }],
+      // B2 超级巨鲸:heavy,单笔 >= $150k(金额门槛的边际收益)。
+      ["超级巨鲸", { source: "heavy", minSingleFillUsd: 150000, sizeUsd: 500 }],
+      // B3 巨鲸精英:heavy + 质量门槛(score>=80,金额 × 质量交叉)。
+      [
+        "巨鲸精英",
+        {
+          source: "heavy",
+          minSingleFillUsd: 50000,
+          minWalletScore: 80,
+          sizeUsd: 500,
+        },
+      ],
+      // C1 一边倒分歧:lopsided。minTiltPct/minPerSideUsd 在这里是给人看的
+      // 口径说明,不是 detectLopsidedCandidates 实际读取的开关字段 —— 该
+      // detector 只消费 runFollowCycle 用 DEFAULT_DISAGREEMENT(lib/
+      // disagreement.ts,同为 tiltPct>=0.7 / minPerSideUsd=$5000)预先算好的
+      // ctx.contested,不会为每条策略单独重跑一遍分歧检测(理由见
+      // lib/sourceLopsided.ts 文件头注释:避免出现"detectDisagreement 标了
+      // balanced 但 C1 却跟了"的自相矛盾)。minPerSideUsd 数值上与
+      // DEFAULT_DISAGREEMENT 一致,但改这个数字不会改变本档任何实际行为
+      // (无害冗余,不是死档风险 —— detectLopsidedCandidates 没有任何"必需
+      // 字段缺失即返回 []"的校验,永远会跑,只是产出多少取决于 ctx.contested)。
+      [
+        "一边倒分歧",
+        {
+          source: "lopsided",
+          minTiltPct: 0.7,
+          minPerSideUsd: 5000,
+          sizeUsd: 500,
+        },
+      ],
+      // C2 分歧解除:resolved。minPerSideUsd 同上是文档值而非开关 ——
+      // detectResolvedCandidates 完全不读 params.minPerSideUsd,判定只看
+      // ctx.prevTilt(上一轮由 DEFAULT_DISAGREEMENT 写入的快照)与本轮现金流
+      // 口径(isCapitulating),见 lib/sourceResolved.ts。同 C1,不是死档风险。
+      ["分歧解除", { source: "resolved", minPerSideUsd: 5000, sizeUsd: 500 }],
+      // D1 高分独狼:lone_wolf,score>=90 且净买(净股数口径)>= $10k ——
+      // 两个字段都是 detectLoneWolfCandidates/detectWalletCandidates 的必需
+      // 参数,缺一即恒空候选。
+      [
+        "高分独狼",
+        {
+          source: "lone_wolf",
+          minWalletScore: 90,
+          minNetUsd: 10000,
+          sizeUsd: 500,
+        },
+      ],
+      // D2 早期赢家跟投:early_winner,净买 >= $5k —— 比 D1 的 $10k 松,是
+      // 有意为之:D2 的钱包筛选轴(early_winner 渠道成员资格)已经比 D1 的
+      // score 更严格地把关过身份,金额门槛可以松一些。detectEarlyWinnerCandidates
+      // 与 D1 共用 detectWalletCandidates,同样读 params.minNetUsd 作为 floor。
+      [
+        "早期赢家跟投",
+        { source: "early_winner", minNetUsd: 5000, sizeUsd: 500 },
+      ],
+    ];
+    for (const [name, params] of seeds) {
+      ins.run(name, JSON.stringify(params), now);
+    }
     db.prepare(
-      "INSERT OR REPLACE INTO config (key, value) VALUES ('follow_seed_v', '1')",
+      "INSERT OR REPLACE INTO config (key, value) VALUES ('follow_seed_v', '2')",
     ).run();
   }
   return db;

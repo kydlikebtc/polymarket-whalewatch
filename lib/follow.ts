@@ -1,13 +1,23 @@
 import type { ConsensusGroup, ConsensusOptions } from "./consensus";
-import { detectConsensus } from "./consensus";
 import type { DB } from "./db";
-import { DEFAULT_DISAGREEMENT, detectDisagreement } from "./disagreement";
+import {
+  DEFAULT_DISAGREEMENT,
+  detectDisagreement,
+  type DisagreementMarket,
+} from "./disagreement";
 import { takerFeeUsd } from "./fees";
+import { DETECTORS, isFollowSourceKind } from "./followCandidate";
+import type {
+  DetectorCtx,
+  FollowCandidate,
+  MarketTiltSnapshot,
+  StrategyParams,
+} from "./followCandidate";
 import type { MarketMeta } from "./gamma";
-import { excludeContestedFromConsensus } from "./marketSignals";
 import type { AskBook } from "./orderBook";
 import { simulateBookBuy } from "./orderBook";
 import { wilsonInterval } from "./outcomeStats";
+import { createPromiseCache } from "./promiseCache";
 import type { SmartTag } from "./smartWallets";
 import { latestPriceByAsset } from "./trades";
 import type { Trade } from "./types";
@@ -92,22 +102,172 @@ export { latestPriceByAsset };
 // runConsensusCycle 的写法),便于测试与复用。副作用仅落在 follow_positions 表。
 // ---------------------------------------------------------------------------
 
-// 一条启用中的跟单策略(params_json 解析结果 + 行 id)。exitRule 目前只支持
-// "settlement"(市场结算即平仓),保留字段以便后续扩展。
-interface FollowStrategy {
-  id: number;
-  minWallets: number;
-  minPerWalletUsd: number;
-  sizeUsd: number;
-  exitRule: string;
-  // 进场价偏离护栏(¢):|现价 − 聪明钱均价|×100 超过该值即不开仓。默认 10。
-  maxEntryDeviationCents: number;
-}
+// 一条启用中的跟单策略(params_json 解析结果 + 行 id)复用 followCandidate.ts 的
+// StrategyParams —— 该类型本就是为「解析后的策略参数」设计的通用契约,detector
+// 注册表(Task 4)与这里的开仓循环消费的是同一个对象,不必另立一套只在本文件
+// 使用的窄接口。exitRule 目前只支持 "settlement"(市场结算即平仓)。
 
 // 进场价偏离护栏默认阈值(¢)。开仓侧 parseStrategy 与展示侧 parseParamsView 共用,
 // 保证两侧默认值永远一致(真机实证:in-play 体育盘 30min 内能跑 20¢,10¢ 是
 // 「正常盘口抖动」与「行情已反向」的分界)。
 const DEFAULT_MAX_ENTRY_DEVIATION_CENTS = 10;
+// 最高进场价(0-1 小数)。与 alertConditions 的 maxPrice 同口径。
+// 生产实测(见 alertConditions.ts 的 DEFAULT_CONDITIONS 注释):28.6% 的告警落在
+// >=0.90 —— 近确定结果上的结算清扫单,零信息量。跟单此前没有任何价格上限,账本里
+// 混着「买 0.97 赚 3¢」的仓:胜率被拉得很高很好看,但每次翻车亏掉 30 次的利润
+// (赔率极度不对称,Wilson 区间衡量的是胜率不确定性,救不了这个)。故设为全局基础
+// 参数而非某档的可选项。
+const DEFAULT_MAX_PRICE = 0.95;
+// 新鲜度闸门默认值,从 FollowCycleDeps 的全局参数下放到每策略(A5 首发共识要 300)。
+const DEFAULT_FRESH_SEC = 900;
+
+// ---------------------------------------------------------------------------
+// Task 9: market_tilt_history 读写 + 保留期清理。C2(sourceResolved,「分歧
+// 解除」)判定"少数边转净卖"需要跨轮对比 —— 本轮重新聚合的净额,要跟"上一次
+// 我们观察到这个市场处于分歧状态"时的快照相减,单轮数据看不出"转变"。
+// ---------------------------------------------------------------------------
+
+// 保留期与 MARKOUT_MAX_AGE_SEC(runFollowCycle 内,7 天)同量级:快照只服务
+// 下一轮 C2 判定,没有 7 天之外的价值,轮末顺手清理,不单独起定时任务。
+const TILT_HISTORY_RETENTION_SEC = 7 * 86400;
+
+/**
+ * 读上一轮各市场的 tilt 快照:每个 condition_id 只取 ts 最大的那一条 ——
+ * "上一次观察到的状态",不是历史全量。JOIN 一个按 condition_id 分组取
+ * MAX(ts) 的子查询,而不是相关子查询(逐行 SELECT MAX),两者语义等价但
+ * JOIN 版本能用上 PRIMARY KEY (condition_id, ts) 自带的索引一次扫完,不会
+ * 对每个 condition_id 各起一次子查询。
+ *
+ * 四个业务字段(lead_outcome/minor_outcome/minor_net_usd/tilt_pct)在表结构
+ * 里都允许 NULL,但 writeMarketTiltSnapshots 写入时永远四个一起给值 —— 一行
+ * 读出来缺任何一个都说明数据不是这条写入路径产生的(手工改库 / 未来某次
+ * 迁移留下的半行),整行不可信,直接跳过而不是拿 null 兜底喂给 C2(fail-closed:
+ * 宁可这个市场本轮没有 prevTilt、C2 不触发,也不要用残缺快照硬算出一个
+ * 三不知的"转变")。
+ *
+ * ⚠️ 调用时机纪律(整个读写链路的核心不变量):必须在本轮 writeMarketTiltSnapshots
+ * 之前调用。JS 单线程同步执行,没有并发路径能让写抢在读之前跑 —— 这条不变量
+ * 完全靠"读的调用点在 runFollowCycle 里写在写的调用点前面"这个纯粹的代码顺序
+ * 保证,不是靠锁或事务。写反了的后果:读到的会是本轮自己刚写的行,
+ * prev.minorNetUsd 恒等于本轮重新算出的净额,C2 的判据(prev>0 且本轮<0)
+ * 永远不成立,整档静默失效且没有任何报错 —— 这类 bug 除了看这行注释 +
+ * followCycle.test.ts 里锁死顺序的用例,没有别的办法在运行时自己暴露出来,
+ * 所以特别在这里写清楚"为什么不能顺手挪到 writeMarketTiltSnapshots 后面"。
+ */
+export function readMarketTiltSnapshots(
+  db: DB,
+): Map<string, MarketTiltSnapshot> {
+  const rows = db
+    .prepare(
+      `SELECT t.condition_id AS conditionId, t.ts AS ts,
+              t.lead_outcome AS leadOutcome, t.minor_outcome AS minorOutcome,
+              t.minor_net_usd AS minorNetUsd, t.tilt_pct AS tiltPct
+       FROM market_tilt_history t
+       JOIN (
+         SELECT condition_id, MAX(ts) AS max_ts
+         FROM market_tilt_history
+         GROUP BY condition_id
+       ) latest
+         ON latest.condition_id = t.condition_id AND latest.max_ts = t.ts`,
+    )
+    .all() as {
+    conditionId: string;
+    ts: number;
+    leadOutcome: string | null;
+    minorOutcome: string | null;
+    minorNetUsd: number | null;
+    tiltPct: number | null;
+  }[];
+  const out = new Map<string, MarketTiltSnapshot>();
+  for (const r of rows) {
+    if (
+      r.leadOutcome == null ||
+      r.minorOutcome == null ||
+      r.minorNetUsd == null ||
+      r.tiltPct == null
+    ) {
+      continue; // 残缺行(见函数头注释),不可信,跳过
+    }
+    out.set(r.conditionId, {
+      conditionId: r.conditionId,
+      leadOutcome: r.leadOutcome,
+      minorOutcome: r.minorOutcome,
+      minorNetUsd: r.minorNetUsd,
+      tiltPct: r.tiltPct,
+      ts: r.ts,
+    });
+  }
+  return out;
+}
+
+/**
+ * 轮末写:为本轮每个 contested 市场写一条快照(sides[0]=主导边、sides[1]=
+ * 少数边 —— DisagreementMarket.sides 恒 >= 2 且按 weightedUsd 降序,contested
+ * 数组里的市场都满足这个前提,见 lib/disagreement.ts)。INSERT OR REPLACE:
+ * PRIMARY KEY 是 (condition_id, ts),同一秒同一市场重复写(理论上不会发生,
+ * nowSec 是每轮的入参、轮次之间必然推进)会覆盖而不是抛 UNIQUE 冲突,幂等
+ * 总是更安全。
+ *
+ * 写失败只记日志、不向上抛出(归因列纪律,同 exec_ 系列字段/markout 的既有写法):
+ * 这张表只服务 C2 detector 的下一轮判定,不是任何一仓开仓判定的输入,写失败
+ * 不该拖累已经跑完的开仓/结算/markout 段——那些副作用必须保留。
+ *
+ * 返回写入的行数(供调用方日志汇总;失败时返回 0,不是"写了 0 个市场"与
+ * "写失败"的区别在日志里会与 contested.length 一起读,不会混淆)。
+ */
+export function writeMarketTiltSnapshots(
+  db: DB,
+  contested: DisagreementMarket[],
+  nowSec: number,
+): number {
+  if (contested.length === 0) return 0;
+  try {
+    const ins = db.prepare(
+      `INSERT OR REPLACE INTO market_tilt_history
+         (condition_id, ts, lead_outcome, minor_outcome, minor_net_usd, tilt_pct)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    const tx = db.transaction((rows: DisagreementMarket[]) => {
+      for (const m of rows) {
+        ins.run(
+          m.conditionId,
+          nowSec,
+          m.sides[0].outcome,
+          m.sides[1].outcome,
+          m.sides[1].netUsd,
+          m.tiltPct,
+        );
+      }
+    });
+    tx(contested);
+    return contested.length;
+  } catch (e) {
+    console.warn(
+      "[follow] market_tilt_history 写入失败(下轮 C2 判定可能缺这一条快照,不阻塞本轮开仓/结算):",
+      e,
+    );
+    return 0;
+  }
+}
+
+/**
+ * 保留期清理:与 markout 的 MARKOUT_MAX_AGE_SEC 同量级(7 天)。不像
+ * lib/seen.ts 的 maybePruneSeen 那样按天数门控 —— seen_trades 是每笔成交
+ * 一行、多进程(embedded engine + standalone worker)共享同一张表,门控是为了
+ * 不在每次开库时都跑一次全表量级的 DELETE 抢 WAL 锁;market_tilt_history 只由
+ * follow 引擎本轮的 contested 市场(个位数)写入,单表量级天然小,按索引列
+ * (idx_market_tilt_history_ts)删也很便宜,没有必要额外引入门控状态。
+ */
+export function pruneMarketTiltHistory(db: DB, nowSec: number): number {
+  try {
+    return db
+      .prepare("DELETE FROM market_tilt_history WHERE ts < ?")
+      .run(nowSec - TILT_HISTORY_RETENTION_SEC).changes;
+  } catch (e) {
+    console.warn("[follow] market_tilt_history 保留期清理失败(下轮再试):", e);
+    return 0;
+  }
+}
 
 export interface FollowCycleDeps {
   db: DB;
@@ -135,25 +295,31 @@ export interface FollowCycleDeps {
   // → exec_* 存 null,绝不阻塞开仓;红线:不参与任何开仓判定与 realized_pnl。
   fetchBook?: (asset: string) => Promise<AskBook | null>;
   getMeta: (cids: string[]) => Promise<Record<string, MarketMeta>>;
-  // 新鲜度闸门(秒):只对「formationTs(第 N 个合格钱包跨线时刻)距 now <=
-  // freshSec」的共识组开仓。默认 900(15min:10min 会和 5min 轮询周期冲突 ——
-  // 一个共识最多只被看见 1~2 次,漏检风险高;15min 是「够新鲜」与「至少 2~3 次
-  // 轮询机会」的折中)。锚点为什么不是 lastTs:lastTs 被组内任何白名单成交
-  // (含 SELL、含不达标非成员)刷新,5 小时前形成的老共识会被一笔 $2k 卖单
-  // "续命"成新鲜,按现价跟入 → 买入成本失控(真实尾部 0~6h)。注意新鲜度闸门
-  // 拦不住 in-play 体育盘:15min 内现价照样能跑不少,故另有每策略的进场价偏离
-  // 护栏(maxEntryDeviationCents,基准 formationPrice)在开仓时二次把关。
-  freshSec?: number;
+  // 新鲜度闸门不再是这里的全局参数 —— 12 档/4 类信号源改造(Task 4)把它下放到
+  // StrategyParams.freshSec(每策略各自的值,parseStrategy 已兜底默认 900),由
+  // DETECTORS 注册表分派到的各 detector(见 lib/sourceConsensus.ts 等)在检测
+  // 阶段自行按 nowSec - formationTs <= params.freshSec 过滤。核实过全仓库:
+  // worker/embeddedEngine.ts 与 lib/followCycle.test.ts 均未传入过这个字段
+  // (靠这里曾经的默认值 900),故直接删除不是破坏性变更。formationTs 而非
+  // lastTs 锚定、以及 in-play 体育盘新鲜度闸门拦不住需靠 maxEntryDeviationCents
+  // 二次把关的论证,原样保留在 lib/consensus.ts 的 ConsensusGroup.formationTs
+  // 与本文件 DEFAULT_MAX_ENTRY_DEVIATION_CENTS 的字段注释里,未随这段一起删。
   nowSec?: number;
 }
 
 // params_json 是 seed/后台写入的可信来源,但 JSON.parse 后仍做一次形状校验:
 // 阈值字段缺失/非有限数会污染下游 Math.min 与 positionShares(NaN 扩散),宁可
 // 跳过该策略并留日志,也不静默开出脏仓。
+//
+// source 扩展(12 档/4 类信号源改造)的向后兼容契约:既有库两条策略("保守"
+// "激进")的 params_json 没有 source 字段 —— 缺失即 "consensus",零迁移,
+// 它们的解析结果(id/minWallets/minPerWalletUsd/sizeUsd/exitRule/
+// maxEntryDeviationCents)必须与改造前逐字段相同。这是整个 12 档扩充的守门员:
+// 见 lib/follow.test.ts 的 "parseStrategy — source/maxPrice/freshSec 扩展"。
 function parseStrategy(
   id: number,
   paramsJson: string | null,
-): FollowStrategy | null {
+): StrategyParams | null {
   if (!paramsJson) return null;
   let p: Record<string, unknown>;
   try {
@@ -164,53 +330,114 @@ function parseStrategy(
   }
   const numOr = (v: unknown): number | null =>
     typeof v === "number" && Number.isFinite(v) ? v : null;
-  const minWallets = numOr(p.minWallets);
-  const minPerWalletUsd = numOr(p.minPerWalletUsd);
-  const sizeUsd = numOr(p.sizeUsd);
-  if (
-    minWallets == null ||
-    minPerWalletUsd == null ||
-    sizeUsd == null ||
-    sizeUsd <= 0
-  ) {
+
+  // source:缺失 → "consensus"(既有两条策略零迁移);未知值 → 跳过整条策略
+  // (宁可少一档也不要一个 detector 注册表分派不到的“影子策略”悄悄不生效)。
+  const rawSource = p.source ?? "consensus";
+  if (!isFollowSourceKind(rawSource)) {
     console.warn(
-      `[follow] strategy ${id}: 阈值字段无效(minWallets/minPerWalletUsd/sizeUsd),跳过`,
+      `[follow] strategy ${id}: 未知 source "${String(rawSource)}",跳过`,
     );
     return null;
   }
-  // 护栏阈值:显式合法值(有限数且 >0)生效;缺失/非法退默认 10 —— 既有库的
-  // params_json 没有该字段,靠这里兜底,无需数据迁移。
+
+  const sizeUsd = numOr(p.sizeUsd);
+  if (sizeUsd == null || sizeUsd <= 0) {
+    console.warn(`[follow] strategy ${id}: sizeUsd 无效,跳过`);
+    return null;
+  }
+
+  // consensus 源仍强制要求这两个阈值(它们决定 formationTs 的跨线时刻);
+  // 其它源各有自己的必需字段,由对应 detector 校验并在缺失时产出空候选
+  // (detector 是纯函数、无法在此处提前校验各自的专属字段)。
+  const minWallets = numOr(p.minWallets);
+  const minPerWalletUsd = numOr(p.minPerWalletUsd);
+  if (
+    rawSource === "consensus" &&
+    (minWallets == null || minPerWalletUsd == null)
+  ) {
+    console.warn(
+      `[follow] strategy ${id}: consensus 源缺 minWallets/minPerWalletUsd,跳过`,
+    );
+    return null;
+  }
+
+  // 护栏/价格/新鲜度:显式合法值生效,缺失或非法退默认(既有库无这些字段,靠这里
+  // 兜底,无需数据迁移)。「字段缺失」与「字段存在但非法」区别对待:前者是正常
+  // 情况(既有库没有这些字段),静默退默认;后者留痕 —— 最典型的现实成因是配置
+  // 手滑(比如把 0-1 小数的 maxPrice 误写成百分数 50),而 maxPrice 这道护栏
+  // 存在的唯一理由就是拦住 DEFAULT_MAX_PRICE 注释里说的那类高价清扫单,配置
+  // 错误此时恰好静默落回护栏本该拦住的区间。Task 4 会直接消费这里吐出的
+  // 「已消毒」值、不再重新校验,此刻不留痕以后就永远查不出这个值被改写过。
   const maxDev = numOr(p.maxEntryDeviationCents);
+  const maxPrice = numOr(p.maxPrice);
+  if (
+    p.maxPrice !== undefined &&
+    !(maxPrice != null && maxPrice > 0 && maxPrice <= 1)
+  ) {
+    console.warn(
+      `[follow] strategy ${id}: maxPrice=${JSON.stringify(p.maxPrice)} 非法` +
+        `(需 0<x<=1 的小数),已退默认 ${DEFAULT_MAX_PRICE}`,
+    );
+  }
+  const freshSec = numOr(p.freshSec);
+  if (p.freshSec !== undefined && !(freshSec != null && freshSec > 0)) {
+    console.warn(
+      `[follow] strategy ${id}: freshSec=${JSON.stringify(p.freshSec)} 非法` +
+        `(需 >0 的秒数),已退默认 ${DEFAULT_FRESH_SEC}`,
+    );
+  }
+
   return {
     id,
-    minWallets,
-    minPerWalletUsd,
+    source: rawSource,
     sizeUsd,
     exitRule: typeof p.exitRule === "string" ? p.exitRule : "settlement",
     maxEntryDeviationCents:
       maxDev != null && maxDev > 0 ? maxDev : DEFAULT_MAX_ENTRY_DEVIATION_CENTS,
+    // 价格是 0-1 小数,>1 一律视为非法(防把 95 当成 95¢ 写进来)。
+    maxPrice:
+      maxPrice != null && maxPrice > 0 && maxPrice <= 1
+        ? maxPrice
+        : DEFAULT_MAX_PRICE,
+    freshSec: freshSec != null && freshSec > 0 ? freshSec : DEFAULT_FRESH_SEC,
+    minWallets: minWallets ?? undefined,
+    minPerWalletUsd: minPerWalletUsd ?? undefined,
+    minTotalNetUsd: numOr(p.minTotalNetUsd) ?? undefined,
+    minWalletScore: numOr(p.minWalletScore) ?? undefined,
+    minSingleFillUsd: numOr(p.minSingleFillUsd) ?? undefined,
+    minTiltPct: numOr(p.minTiltPct) ?? undefined,
+    minPerSideUsd: numOr(p.minPerSideUsd) ?? undefined,
+    minNetUsd: numOr(p.minNetUsd) ?? undefined,
   };
 }
+
+// 测试导出:parseStrategy 是模块私有的,但它的兼容性是整个扩充的守门员,
+// 必须能被直接单测(而不是只能透过 runFollowCycle 间接观察)。
+export const parseStrategyForTest = parseStrategy;
 
 /**
  * 一轮跟单模拟:
  *  1. 空白名单(getSmart().size===0)→ 直接 no-op,与 consensus 一致(种子未跑/失败
  *     时不应假装无信号)。
- *  2. 读启用策略;**每策略各跑一次 detectConsensus**(trades 在内存、纯函数,S 个
- *     策略成本微秒级)—— 不能用最松阈值跑一次再复筛:formationTs/qualifiedTs 的
- *     跨线时刻依赖各策略自己的 minPerWalletUsd,复筛拿到的是错误 floor 的形成时刻。
- *     分歧互斥保持现状:用 DEFAULT_DISAGREEMENT 检测一次,剔除 contested cid,对
- *     所有策略生效(聪明钱两边都买 → 不是共识,双边都不跟,口径与共识页一致)。
- *     再用新鲜度闸门(nowSec - g.formationTs <= freshSec)筛掉陈旧组 —— 只跟刚
- *     形成的共识,不补开历史/接飞刀,也不吃杂音续命(见 freshSec 注释)。
- *  3. 一次性取 meta:对「各策略新鲜组的 distinct condition_id」∪「现有 open 仓的
+ *  2. 读启用策略;按每条策略的 source 从 DETECTORS 注册表(lib/followCandidate.ts)
+ *     查表分派到对应 detector(trades, params, ctx)—— 新增信号源只需写一个纯函数 +
+ *     注册表加一行,这里零改动。分歧互斥仍每轮只算一次:用 DEFAULT_DISAGREEMENT
+ *     检测,剔除 contested cid,通过 ctx.contested 对所有策略生效(聪明钱两边都买
+ *     → 不是共识,双边都不跟,口径与共识页一致)。新鲜度闸门(曾经的全局 freshSec)
+ *     已下放到各 detector 内部按 params.freshSec 自行过滤(见 FollowCycleDeps 里
+ *     freshSec 字段删除处的注释)。单个 detector 抛错只置该策略本轮候选为空,不
+ *     掀翻其它策略与后面的结算段。
+ *  3. 一次性取 meta:对「各策略候选的 distinct condition_id」∪「现有 open 仓的
  *     condition_id」调用 getMeta(抛错则降级为空 meta,不 reject 整轮);开仓阶段
  *     用它跳过已 closed 的市场,结算阶段复用同一份。
- *  4. 每个(策略 × 该策略的新鲜组)开一仓:先查重(UNIQUE(strategy_id,condition_id,outcome)),
+ *  4. 每个(策略 × 该策略的候选)开一仓:先查重(UNIQUE(strategy_id,condition_id,outcome)),
  *     若市场 meta.closed===true 跳过(meta 缺失=未知≠已结算,仍照常开),再取现价
- *     (fetchPrice→窗口最近价回退),缺价/非正价则跳过等下轮;entry 用现价而非聪明钱
- *     均价(诚实反映「我们跟进时的成本」)。偏离护栏基准 = formationPrice(形成
- *     时刻的市价,fetchFormationPrice 回查;null 时回退 avgBuyPrice)。INSERT 落
+ *     (fetchPrice→窗口最近价回退,轮内按 asset+nowSec 缓存),缺价/非正价则跳过
+ *     等下轮;entry 用现价而非聪明钱均价(诚实反映「我们跟进时的成本」)。价格上限
+ *     (entry > s.maxPrice 即跳过,拦近确定结果的结算清扫单)先于偏离护栏判定。
+ *     偏离护栏基准 = formationPrice(形成时刻的市价,fetchFormationPrice 回查,轮内
+ *     按 asset+formationTs 缓存;null 时回退 candidate.referencePrice)。INSERT 落
  *     formation_ts/formation_price 归因列;OR IGNORE,changes===1 才计入 opened。
  *  5. 结算:开仓前已存在的 status='open' 仓位,市场 closed 且对应 outcomePrices 有限
  *     → 按 positionRealizedPnl 回填并标 settled。本轮新开的仓必落在非 closed 市场
@@ -219,6 +446,8 @@ function parseStrategy(
  *     的仓位(open+settled 都要),fetchPrice(asset, formation_ts+Δ) 回填
  *     markout_30m(Δ=1800)/markout_2h(Δ=7200),每轮每列最多 ~10 仓防风暴,失败跳过
  *     下轮再试。红线:formation_price/markout 只用于归因展示,绝不参与 realized_pnl。
+ *     这段不走第 4 步的轮内缓存 —— 按 (asset, formation_ts+Δ) 取,key 天然与开仓
+ *     取价不同,且单仓失败要能逐仓重试(缓存的失败驱逐语义与"整批各自重试"不匹配)。
  */
 export async function runFollowCycle(
   deps: FollowCycleDeps,
@@ -231,9 +460,20 @@ export async function runFollowCycle(
     fetchFormationPrice,
     fetchBook,
     getMeta,
-    freshSec = 900,
     nowSec = Math.floor(Date.now() / 1000),
   } = deps;
+
+  // 轮内共享缓存:12 档下同一 asset 会被多条策略反复取价(参数完全相同 ——
+  // 开仓现价按 asset+nowSec 取,形成价按 asset+formationTs 取)。createPromiseCache
+  // 缓存的是 PROMISE 而非值,所以即使多条策略在下面串行 await 的循环里先后走到
+  // 同一个 key,第一个发起后其余直接拿到同一个 in-flight promise,一次往返都不
+  // 多花。每轮 new 实例(而非设时间 TTL):语义最干净 —— 轮内共享、轮间必须重取,
+  // 不会有陈旧价格跨轮泄漏。markout 回填段(本函数末尾)按 (asset, formation_ts+Δ)
+  // 取,key 天然与这里不同,且它的失败要能逐仓重试,故不复用这三个缓存,见该段
+  // 注释。
+  const priceCache = createPromiseCache<number | null>(Infinity);
+  const formationPriceCache = createPromiseCache<number | null>(Infinity);
+  const bookCache = createPromiseCache<AskBook | null>(Infinity);
 
   const smart = getSmart();
   if (smart.size === 0) {
@@ -247,7 +487,7 @@ export async function runFollowCycle(
     .all() as { id: number; params_json: string | null }[];
   const strategies = stratRows
     .map((r) => parseStrategy(r.id, r.params_json))
-    .filter((s): s is FollowStrategy => s !== null);
+    .filter((s): s is StrategyParams => s !== null);
 
   const { trades, truncated = false } = await fetchWindow();
   if (truncated) {
@@ -256,45 +496,85 @@ export async function runFollowCycle(
     );
   }
 
-  // 每策略各自的新鲜候选组。分歧互斥只检测一次(DEFAULT_DISAGREEMENT 与策略阈值
-  // 无关),剔除的 contested 市场对所有策略生效;detectConsensus 则必须每策略重跑
-  // —— formationTs 的跨线时刻依赖该策略自己的 minPerWalletUsd(见函数头注释 2)。
-  const freshByStrategy = new Map<number, ConsensusGroup[]>();
+  // 每策略各自的候选。分歧互斥只检测一次(DEFAULT_DISAGREEMENT 与策略阈值无关),
+  // 剔除的 contested 市场对所有策略生效(通过 ctx.contested 传给每个 detector);
+  // 各 detector 按 source 从 DETECTORS 注册表(lib/followCandidate.ts)查表分派 ——
+  // 新增信号源 = 写一个纯函数 + 注册表加一行,这段代码零改动,不再需要 Task 3 那种
+  // 临时的 source 显式门禁(注册表按 source 查表分派,天然不会把 heavy 之类的
+  // 非 consensus 策略误送进 consensus 的检测逻辑,即便其 params_json 残留了
+  // minWallets/minPerWalletUsd 字段 —— 见 followCycle.test.ts 的多 source 集成用例)。
+  const candidatesByStrategy = new Map<number, FollowCandidate[]>();
+  // 本轮 contested 市场,轮末喂给 writeMarketTiltSnapshots(见函数尾部)——
+  // 声明在 if 块外面,好让"轮末才写"这句话字面成立:写用的是本轮真实检测到的
+  // contested(哪怕它在下面的 if 里才被赋值),不是另开一次独立的 detectDisagreement
+  // 调用。截断/无策略/空窗口时保持 []:与"opening skipped"同一套 fail-closed 纪律,
+  // 不拿不可信的窗口写脏 market_tilt_history。
+  let contestedThisCycle: DisagreementMarket[] = [];
   if (!truncated && strategies.length > 0 && trades.length > 0) {
     // 分歧市场互斥:detectConsensus 按 (conditionId, outcome) 分组,不同的聪明钱
     // 各买同一市场的对立结果时会产出两个单边「假共识」组(其对冲者剔除只防同一钱包
     // 买两边)—— 真机实锤:激进策略同时持有同一 O/U 盘的 Over 和 Under 双边仓。
     // 产品语义是「只跟共识,不跟分歧」,故复用共识页同一口径(detectDisagreement
-    // 默认阈值 + excludeContestedFromConsensus 市场级互斥)把分歧市场整体剔除,
-    // 双边都不跟。
+    // 默认阈值 + excludeContestedFromConsensus 市场级互斥,后者在 detector 内部
+    // 调用)把分歧市场整体剔除,双边都不跟。
     const contested = detectDisagreement(trades, smart, DEFAULT_DISAGREEMENT);
+    contestedThisCycle = contested;
+    // ⚠️ 读写顺序(Task 9 核心不变量):readMarketTiltSnapshots 必须在
+    // writeMarketTiltSnapshots(函数尾部,结算/markout 之后)之前调用 —— 这里
+    // 就是"之前":JS 单线程同步执行,这一行永远先于函数尾部那行跑完。读到的是
+    // 上一轮(或更早)写入的快照,不会读到本轮自己即将写的行。详细论证见
+    // readMarketTiltSnapshots 的函数头注释。
+    const prevTilt = readMarketTiltSnapshots(db);
+    // D2(early_winner)钱包预取:每轮一次,与 prevTilt 同级 —— 由 discovery 侧
+    // (lib/earlyWinner.ts runEarlyWinnerScan)持续写入 wallet_candidates 的
+    // channel='early_winner' 行,这里只读、不写,供本轮所有策略共享(不必每条
+    // 策略各查一次)。DISTINCT 是因为该表 PRIMARY KEY 是
+    // (address, channel, condition_id) —— 同一钱包在多个市场上都留下过
+    // early_winner 证据时会有多行,detectEarlyWinnerCandidates 只关心钱包本身
+    // 是否曾经入选,不关心具体是哪个/几个市场。
+    //
+    // 查询失败(表损坏等极端情况)降级为空 Set —— D2 本轮无候选,不影响其它
+    // source 的策略,与 getMeta/fetchPrice 等既有降级纪律一致:局部依赖失败
+    // 不该拖垮整轮。
+    let earlyWinnerWallets = new Set<string>();
+    try {
+      const ewRows = db
+        .prepare(
+          "SELECT DISTINCT address FROM wallet_candidates WHERE channel = 'early_winner'",
+        )
+        .all() as { address: string }[];
+      // recordEvidence(lib/discovery.ts)写入前已经 toLowerCase 过 ——
+      // CandidateEvidence.address 字段注释明确「lowercased」,
+      // extractEarlyWinnerEvidence(lib/earlyWinner.ts)构造证据行时也是
+      // `t.proxyWallet.toLowerCase()`。这里再 toLowerCase 一次纯属防御性:
+      // 万一未来某个写入路径疏漏了小写化,这里不会因此与 detector 里同样小写
+      // 的 wallet 比较静默失配(detectWalletCandidates 里 `t.proxyWallet.
+      // toLowerCase()` 是比较的另一侧,两边必须口径一致)。
+      earlyWinnerWallets = new Set(ewRows.map((r) => r.address.toLowerCase()));
+    } catch (e) {
+      console.warn("[follow] early_winner 钱包预取失败,D2 本轮无候选:", e);
+    }
+    const ctx: DetectorCtx = {
+      smart,
+      nowSec,
+      contested,
+      earlyWinnerWallets,
+      prevTilt,
+    };
     for (const s of strategies) {
-      const groups = detectConsensus(trades, smart, {
-        minWallets: s.minWallets,
-        minPerWalletUsd: s.minPerWalletUsd,
-      });
-      const uncontested = excludeContestedFromConsensus(groups, contested);
-      const dropped = groups.length - uncontested.length;
-      if (dropped > 0) {
-        console.log(
-          `[follow] strategy ${s.id} 分歧互斥:剔除 ${dropped} 个单边共识组(聪明钱两边都买 → 不跟)`,
+      try {
+        candidatesByStrategy.set(s.id, DETECTORS[s.source](trades, s, ctx));
+      } catch (e) {
+        // 单个 detector 的异常只该影响这一条策略,杀不死其它策略与后面的结算段。
+        console.warn(
+          `[follow] strategy ${s.id} (${s.source}) detector 抛错,本轮无候选:`,
+          e,
         );
+        candidatesByStrategy.set(s.id, []);
       }
-      // 新鲜度闸门:锚 formationTs(第 minWallets 个合格钱包跨线时刻),不锚
-      // lastTs —— 后者会被组内任何白名单成交(含 SELL、含不达标非成员)"续命"。
-      const fresh = uncontested.filter(
-        (g) => nowSec - g.formationTs <= freshSec,
-      );
-      const stale = uncontested.length - fresh.length;
-      if (stale > 0) {
-        console.log(
-          `[follow] strategy ${s.id} 新鲜度闸门:跳过 ${stale} 个陈旧共识组(formationTs 距 now > ${freshSec}s),不补开历史`,
-        );
-      }
-      freshByStrategy.set(s.id, fresh);
     }
   }
-  const allFreshGroups = [...freshByStrategy.values()].flat();
+  const allCandidates = [...candidatesByStrategy.values()].flat();
 
   // 开仓前已存在的 open 仓 —— 结算集(本轮新开的仓必落在非 closed 市场,不必纳入)。
   const openRows = db
@@ -309,13 +589,13 @@ export async function runFollowCycle(
     size_usd: number;
   }[];
 
-  // 一次性取 meta:各策略新鲜组 ∪ 现有 open 仓的 distinct condition_id。开仓阶段判
+  // 一次性取 meta:各策略候选 ∪ 现有 open 仓的 distinct condition_id。开仓阶段判
   // closed、结算阶段复用同一份。getMeta 抛错(真实 getMarketMeta 内部已降级,但注入
   // 类型允许裸 fetcher)降级为空 meta —— 不 reject 整轮(对齐 computeAlertOutcomes);
   // 此时开仓侧视为「市场状态未知」照常开(缺失≠已结算),结算侧本轮不平任何仓。
   const metaCids = [
     ...new Set([
-      ...allFreshGroups.map((g) => g.conditionId),
+      ...allCandidates.map((c) => c.conditionId),
       ...openRows.map((r) => r.condition_id),
     ]),
   ];
@@ -329,7 +609,7 @@ export async function runFollowCycle(
   }
 
   let opened = 0;
-  if (allFreshGroups.length > 0) {
+  if (allCandidates.length > 0) {
     const latest = latestPriceByAsset(trades);
     const exists = db.prepare(
       "SELECT 1 FROM follow_positions WHERE strategy_id = ? AND condition_id = ? AND outcome = ?",
@@ -343,45 +623,65 @@ export async function runFollowCycle(
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
     );
     for (const s of strategies) {
-      for (const g of freshByStrategy.get(s.id) ?? []) {
+      for (const c of candidatesByStrategy.get(s.id) ?? []) {
         // 先查重再取价:已持仓则跳过,避免对已开仓组做无谓的现价请求。
-        if (exists.get(s.id, g.conditionId, g.outcome)) continue;
+        if (exists.get(s.id, c.conditionId, c.outcome)) continue;
         // 已结算市场不开仓:meta.closed===true 才跳过;meta 缺失(未知)≠已结算,仍照常
         // 开(严格 ===true,别把 undefined/false 误判成 closed)。
-        if (meta[g.conditionId]?.closed === true) {
+        if (meta[c.conditionId]?.closed === true) {
           console.warn(
-            `[follow] strategy ${s.id} 组 ${g.conditionId}/${g.outcome}: 市场已结算(closed),跳过开仓`,
+            `[follow] strategy ${s.id} 组 ${c.conditionId}/${c.outcome}: 市场已结算(closed),跳过开仓`,
           );
           continue;
         }
         // 真实注入的 fetchPriceAt 在 CLOB 非 ok 时 throw —— 必须兜住,否则一次 5xx
         // 会 reject 整轮,连带跳过后面独立的结算阶段(参考 computeAlertOutcomes)。
-        // 价格抖动只该影响这一仓的开仓,杀不死结算与其它组。
+        // 价格抖动只该影响这一仓的开仓,杀不死结算与其它组。轮内缓存:同一 asset
+        // 被多条策略命中时(参数完全相同的现价请求)只发一次往返,见函数头缓存
+        // 声明处的注释。
         let priced: number | null = null;
         try {
-          priced = await fetchPrice(g.asset, nowSec);
+          priced = await priceCache(`price:${c.asset}:${nowSec}`, () =>
+            fetchPrice(c.asset, nowSec),
+          );
         } catch (e) {
-          console.warn(`[follow] fetchPrice failed for ${g.asset}:`, e);
+          console.warn(`[follow] fetchPrice failed for ${c.asset}:`, e);
         }
-        const entry = priced ?? latest.get(g.asset) ?? null;
+        const entry = priced ?? latest.get(c.asset) ?? null;
         if (entry == null || entry <= 0) {
           // 缺价/异常价:不开这一仓,下轮重试(不写脏 entry_price)。
           console.warn(
-            `[follow] strategy ${s.id} 组 ${g.conditionId}/${g.outcome}: 无有效现价(${String(
+            `[follow] strategy ${s.id} 组 ${c.conditionId}/${c.outcome}: 无有效现价(${String(
               entry,
             )}),跳过本轮开仓`,
           );
           continue;
         }
+        // 价格上限:拦的是 entry(我们的实际入场价),不是 referencePrice —— 清扫仓的
+        // 问题是「我们买在 0.97」,不是「聪明钱买在 0.97」。严格 >:0.95 可开、0.951
+        // 不可。与偏离护栏同为瞬时态,不写查重,下轮价格回落仍可正常跟进。放在
+        // 偏离护栏判定之前:没有形成价意义的极端现价没必要再多花一次形成价查询。
+        if (entry > s.maxPrice) {
+          console.log(
+            `[follow] strategy ${s.id} 组 ${c.conditionId}/${c.outcome}: 现价 ${(entry * 100).toFixed(1)}¢ ` +
+              `> 价格上限 ${(s.maxPrice * 100).toFixed(1)}¢(近确定结果的结算清扫,零信息量),跳过开仓`,
+          );
+          continue;
+        }
         // 形成价:按 formationTs 回查彼时市价(atOrBefore 由注入方保证,防前视)。
-        // 失败/null 不阻塞开仓 —— formation_price 落 null,护栏回退旧基准。
+        // 失败/null 不阻塞开仓 —— formation_price 落 null,护栏回退旧基准。轮内
+        // 缓存 key 按 asset+formationTs(而非 nowSec)—— 与现价缓存是两个独立
+        // 命名空间,互不冲突。
         let formationPrice: number | null = null;
         if (fetchFormationPrice) {
           try {
-            formationPrice = await fetchFormationPrice(g.asset, g.formationTs);
+            formationPrice = await formationPriceCache(
+              `fprice:${c.asset}:${c.formationTs}`,
+              () => fetchFormationPrice(c.asset, c.formationTs),
+            );
           } catch (e) {
             console.warn(
-              `[follow] fetchFormationPrice failed for ${g.asset}@${g.formationTs}:`,
+              `[follow] fetchFormationPrice failed for ${c.asset}@${c.formationTs}:`,
               e,
             );
           }
@@ -396,20 +696,21 @@ export async function runFollowCycle(
         // in-play 体育盘 —— 现价偏离基准超阈说明行情已脱离信号价(追高或已反向/接
         // 飞刀),宁可错过也不开;偏离是瞬时态,不像已开仓那样需要查重,下轮价格回到
         // 阈内仍可正常跟进。基准 = formationPrice(形成后的真实漂移);为 null 时回退
-        // avgBuyPrice —— 均价差含聪明钱的信息租金(他们买得早/便宜),会误拦正常跟进
-        // 或漏拦真漂移,formation 价才是「形成后漂移」的正确基准。
-        const baseline = formationPrice ?? g.avgBuyPrice;
+        // referencePrice(聪明钱的成本基准 —— consensus 是加权均价、heavy 是那一笔
+        // 成交价)。均价差含聪明钱的信息租金(他们买得早/便宜),会误拦正常跟进或
+        // 漏拦真漂移,formation 价才是「形成后漂移」的正确基准。
+        const baseline = formationPrice ?? c.referencePrice;
         const baselineName =
           formationPrice != null ? "形成价" : "聪明钱均价(形成价缺失,回退)";
         if (formationPrice == null && fetchFormationPrice) {
           console.log(
-            `[follow] strategy ${s.id} 组 ${g.conditionId}/${g.outcome}: 形成价缺失,护栏回退聪明钱均价基准`,
+            `[follow] strategy ${s.id} 组 ${c.conditionId}/${c.outcome}: 形成价缺失,护栏回退聪明钱均价基准`,
           );
         }
         const deviationCents = Math.abs(entry - baseline) * 100;
         if (deviationCents > s.maxEntryDeviationCents) {
           console.log(
-            `[follow] strategy ${s.id} 组 ${g.conditionId}/${g.outcome}(${g.title}): ` +
+            `[follow] strategy ${s.id} 组 ${c.conditionId}/${c.outcome}(${c.title}): ` +
               `进场价偏离护栏 —— 现价 ${(entry * 100).toFixed(1)}¢ vs ${baselineName} ${(
                 baseline * 100
               ).toFixed(1)}¢,偏离 ${deviationCents.toFixed(1)}¢ > ${
@@ -426,7 +727,9 @@ export async function runFollowCycle(
         let execFilledUsd: number | null = null;
         if (fetchBook) {
           try {
-            const book = await fetchBook(g.asset);
+            const book = await bookCache(`book:${c.asset}`, () =>
+              fetchBook(c.asset),
+            );
             if (book && book.asks.length > 0) {
               execBestAsk = book.asks[0].price;
               const fill = simulateBookBuy(book.asks, s.sizeUsd);
@@ -436,7 +739,7 @@ export async function runFollowCycle(
               }
             }
           } catch (e) {
-            console.warn(`[follow] fetchBook failed for ${g.asset}:`, e);
+            console.warn(`[follow] fetchBook failed for ${c.asset}:`, e);
           }
         }
         // 协议 taker 费:2026-08-04 实测推翻「Polymarket 零手续费」——
@@ -444,7 +747,7 @@ export async function runFollowCycle(
         // 的盘口滑点实测 $0.00、taker 费约名义额 2.5%。执行成本里最大的一
         // 项此前完全没进账。价格优先用模拟成交均价(真实吃到的),回退报价。
         // 归因列纪律同 exec_*:未知落 null(绝不当 0),不参与 realized_pnl。
-        const m = meta[g.conditionId];
+        const m = meta[c.conditionId];
         const feeUsd = m
           ? takerFeeUsd({
               sizeUsd: s.sizeUsd,
@@ -456,18 +759,18 @@ export async function runFollowCycle(
         const shares = positionShares(entry, s.sizeUsd);
         const res = ins.run(
           s.id,
-          g.conditionId,
-          g.outcome,
-          g.asset,
-          g.outcomeIndex,
-          g.title,
-          g.eventSlug,
+          c.conditionId,
+          c.outcome,
+          c.asset,
+          c.outcomeIndex,
+          c.title,
+          c.eventSlug,
           nowSec,
           entry,
-          g.avgBuyPrice,
+          c.referencePrice,
           s.sizeUsd,
           shares,
-          g.formationTs,
+          c.formationTs,
           formationPrice,
           execPrice,
           execBestAsk,
@@ -573,8 +876,18 @@ export async function runFollowCycle(
     }
   }
 
+  // market_tilt_history:轮末写(结算/markout 之后)+ 保留期清理。C2
+  // (sourceResolved)下一轮靠 readMarketTiltSnapshots 读回这里写的行 —— 顺序
+  // 上这一段必须在函数顶部的 readMarketTiltSnapshots 调用之后(它已经是了,
+  // 见那里的注释),两者合起来才是"读上一轮、写本轮"这条链路的完整闭环。
+  // contestedThisCycle 在截断/无策略/空窗口时是 []([]时 writeMarketTiltSnapshots
+  // 直接 no-op),不会用不可信窗口写脏这张表。写/清理失败都只记日志,不影响
+  // 已经跑完的 opened/settled/markouts。
+  const tiltWritten = writeMarketTiltSnapshots(db, contestedThisCycle, nowSec);
+  const tiltPruned = pruneMarketTiltHistory(db, nowSec);
+
   console.log(
-    `[follow] cycle done · strategies=${strategies.length} · opened=${opened} · settled=${settled} · markouts=${markouts}`,
+    `[follow] cycle done · strategies=${strategies.length} · opened=${opened} · settled=${settled} · markouts=${markouts} · tiltSnapshots=${tiltWritten} · tiltPruned=${tiltPruned}`,
   );
   return { opened, settled };
 }
@@ -1046,6 +1359,28 @@ export interface FollowStrategyView {
     sizeUsd: number;
     exitRule: string;
     maxEntryDeviationCents: number;
+    // source 是展示用的自由字符串(非 FollowSourceKind):展示侧的纪律是「任何
+    // 字段缺失/坏值都退安全默认,绝不因此丢弃整条策略」,即便 params_json 里
+    // 塞了个 isFollowSourceKind 认不出的值也要能显示出来,不能因为一个展示字段
+    // 打回 parseStrategy 那种「未知即跳过」的严格校验。
+    source: string;
+    maxPrice: number;
+    freshSec: number;
+    // 12 档扩充(Task 13 展示层)新增:每个字段只被它对应的信号族读取 ——
+    // consensus 用 minWalletScore(A3)/minTotalNetUsd(A4),heavy 用
+    // minSingleFillUsd(必需)+minWalletScore(B3),lopsided 用 minTiltPct,
+    // lone_wolf 用 minWalletScore+minNetUsd,early_winner 用 minNetUsd。
+    // 与 minWallets/minPerWalletUsd(仅 consensus)同一套纪律:某条策略的
+    // params_json 里没有这个字段就是 undefined,不是「阈值为 0」—— 展示层
+    // 必须按 != null 判断要不要画出对应半句,不能直接当数字渲染(那会把
+    // 「未配置」误显示成「阈值 0」)。刻意不收 minPerSideUsd:它对 C1/C2 都是
+    // 纯文档字段(两个 detector 都不读),展示侧没有依据能替它宣称"这是一个
+    // 生效阈值",详见 lib/db.ts 种子里 C1/C2 两条注释。
+    minWalletScore?: number;
+    minTotalNetUsd?: number;
+    minSingleFillUsd?: number;
+    minTiltPct?: number;
+    minNetUsd?: number;
   };
   metrics: StrategyMetrics;
   fund: FundMetrics; // 基金式档案:成立/运行/峰值占用/年化(仅展示,不参与任何决策)
@@ -1071,6 +1406,11 @@ function parseParamsView(
     // 展示侧默认与开仓侧 parseStrategy 同源:字段缺失时开仓实际生效的就是 10¢,
     // 界面不能展示成 0(会被误读为「无护栏」)。
     maxEntryDeviationCents: DEFAULT_MAX_ENTRY_DEVIATION_CENTS,
+    // source/maxPrice/freshSec 同样与开仓侧同源默认(见同名常量定义处的注释)——
+    // 两侧默认值永远一致,否则界面会展示出一套跟实际开仓行为对不上的参数。
+    source: "consensus",
+    maxPrice: DEFAULT_MAX_PRICE,
+    freshSec: DEFAULT_FRESH_SEC,
   };
   if (!paramsJson) return fallback;
   let p: Record<string, unknown>;
@@ -1083,10 +1423,19 @@ function parseParamsView(
   }
   const numOr = (v: unknown, d: number): number =>
     typeof v === "number" && Number.isFinite(v) ? v : d;
+  // 与 numOr 的区别:这五个字段没有「跨 source 通用」的安全默认值可退 ——
+  // 0 对 minWalletScore/minSingleFillUsd/...都不是「未配置」的诚实占位(0 分/
+  // $0 门槛看着像"什么都能通过"的合法阈值,会被误读成"这条策略真的这么松"),
+  // 只有 undefined 才能诚实表达「这个 source 家族没有这项门槛/这条策略没配」。
+  // 展示层(paramsHint)据此用 != null 判断要不要画出对应半句。
+  const numOrUndef = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) ? v : undefined;
   const maxDev = numOr(
     p.maxEntryDeviationCents,
     DEFAULT_MAX_ENTRY_DEVIATION_CENTS,
   );
+  const maxPrice = numOr(p.maxPrice, DEFAULT_MAX_PRICE);
+  const freshSec = numOr(p.freshSec, DEFAULT_FRESH_SEC);
   return {
     minWallets: numOr(p.minWallets, 0),
     minPerWalletUsd: numOr(p.minPerWalletUsd, 0),
@@ -1095,6 +1444,15 @@ function parseParamsView(
     // 非正数同样退默认(与开仓侧一致:只有 >0 的显式值才生效)。
     maxEntryDeviationCents:
       maxDev > 0 ? maxDev : DEFAULT_MAX_ENTRY_DEVIATION_CENTS,
+    source: typeof p.source === "string" ? p.source : "consensus",
+    // 价格是 0-1 小数,>1 视为非法,与开仓侧同一判定式。
+    maxPrice: maxPrice > 0 && maxPrice <= 1 ? maxPrice : DEFAULT_MAX_PRICE,
+    freshSec: freshSec > 0 ? freshSec : DEFAULT_FRESH_SEC,
+    minWalletScore: numOrUndef(p.minWalletScore),
+    minTotalNetUsd: numOrUndef(p.minTotalNetUsd),
+    minSingleFillUsd: numOrUndef(p.minSingleFillUsd),
+    minTiltPct: numOrUndef(p.minTiltPct),
+    minNetUsd: numOrUndef(p.minNetUsd),
   };
 }
 

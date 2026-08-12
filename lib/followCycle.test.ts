@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { openDb } from "./db";
-import { runFollowCycle } from "./follow";
+import { readMarketTiltSnapshots, runFollowCycle } from "./follow";
 import type { SmartTag } from "./smartWallets";
 import type { MarketMeta } from "./gamma";
 import type { Trade } from "./types";
@@ -1373,5 +1373,726 @@ describe("runFollowCycle 执行滑点归因(fetchBook)", () => {
       )
       .get() as { exec_price: number | null };
     expect(row.exec_price).toBeNull();
+  });
+});
+
+// --- Task 4:DETECTORS 注册表接线 —— maxPrice 闸门 + 轮内缓存 + 多 source 集成 ---
+
+// maxPrice 闸门:拦的是 entry(我们的实际入场价),不是聪明钱的成本 referencePrice。
+// 用 0.9 价位的成交构造 referencePrice=0.9,让 entry 落在偏离护栏阈内(默认 10¢)
+// 的同时可控地贴住/穿越 maxPrice(默认 0.95)—— 若沿用别处 0.6 的默认成交价,
+// entry 必须 >0.95 才碰得到 maxPrice,但那样偏离基准(0.6)早超了 10¢ 偏离护栏,
+// 分不清究竟是哪道闸拦下的开仓。
+describe("runFollowCycle — maxPrice 闸门", () => {
+  const highRefTrades = (): Trade[] => [
+    trade({
+      proxyWallet: "w1",
+      transactionHash: "h1",
+      size: 10000,
+      price: 0.9,
+      timestamp: 1000,
+    }),
+    trade({
+      proxyWallet: "w2",
+      transactionHash: "h2",
+      size: 10000,
+      price: 0.9,
+      timestamp: 1000,
+    }),
+  ];
+
+  it("entry 高于 maxPrice → 不开仓", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: highRefTrades() }),
+      getSmart: smart,
+      // 0.96 vs referencePrice 0.9:偏离 6¢ < 默认偏离护栏 10¢(不会被那道闸拦),
+      // 但 0.96 > 默认 maxPrice 0.95 → 应被价格上限单独拦下。
+      fetchPrice: async () => 0.96,
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBe(0);
+    const cnt = db
+      .prepare("SELECT COUNT(*) AS n FROM follow_positions")
+      .get() as { n: number };
+    expect(cnt.n).toBe(0);
+    db.close();
+  });
+
+  it("entry 等于 maxPrice → 照常开仓(边界:严格 >)", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: highRefTrades() }),
+      getSmart: smart,
+      fetchPrice: async () => 0.95, // == maxPrice,严格 `>` 判定不拦
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    // highRefTrades 只有 2 个钱包 → 只有「激进」(2×$5k)命中,「保守」(3×$10k)
+    // 因钱包数不够不产生候选,精确值就是 1(而非 toBeGreaterThanOrEqual)。
+    expect(r.opened).toBe(1);
+    const pos = db
+      .prepare(
+        "SELECT entry_price FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as { entry_price: number };
+    expect(pos.entry_price).toBe(0.95);
+    db.close();
+  });
+});
+
+// 轮内缓存:12 档并行下同一 asset 会被多条策略反复取价(参数完全相同的
+// fetchPrice(asset, nowSec) 请求)。createPromiseCache 缓存的是 PROMISE,第一个
+// 发起后其余直接拿同一个 in-flight promise,一次往返都不多花(见 lib/promiseCache.ts)。
+describe("runFollowCycle — 轮内缓存(同 asset 只取一次价)", () => {
+  const smart3 = (): Map<string, SmartTag> =>
+    new Map([
+      ["w1", { score: 80, winRate: 0.7, netPnl: 1, isWhitelist: true }],
+      ["w2", { score: 75, winRate: 0.65, netPnl: 1, isWhitelist: true }],
+      ["w3", { score: 70, winRate: 0.6, netPnl: 1, isWhitelist: true }],
+    ]);
+
+  it("同一 asset 被多条策略命中时 fetchPrice 只调用一次", async () => {
+    const db = openDb(":memory:");
+    // 3 个钱包各净买 $10k @0.5(size=20000)→ 同时满足种子「保守」(3×$10k)与
+    // 「激进」(2×$5k)两条策略的阈值,两条策略各自对同一组(同一 asset=tok)
+    // 产出一个候选 —— 开仓阶段会为这两个候选分别请求现价,若无缓存则请求两次。
+    const trades = [
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "h1",
+        size: 20000,
+        price: 0.5,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "h2",
+        size: 20000,
+        price: 0.5,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w3",
+        transactionHash: "h3",
+        size: 20000,
+        price: 0.5,
+        timestamp: 1000,
+      }),
+    ];
+    let calls = 0;
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart3,
+      fetchPrice: async () => {
+        calls++;
+        return 0.55;
+      },
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(calls).toBe(1);
+    expect(r.opened).toBe(2);
+    db.close();
+  });
+
+  // 上一条用例只覆盖了「同 asset」命中两次的场景 —— 缓存 key 若漏写 asset(例如
+  // 误写成只按 `price:${nowSec}`),同 asset 场景一样能通过(反正只有一个 key,
+  // 命中几次都对)。真正能测出漏 asset 的,是两个不同 asset 各开一仓:key 若不
+  // 含 asset,第二个 asset 会命中第一个 asset 的缓存条目 —— fetchPrice 对它
+  // 恒不调用、且它的 entry_price 会被错误地"串"成第一个 asset 的价格。
+  it("不同 asset 各自独立取价,互不串价(缓存 key 必须含 asset)", async () => {
+    const db = openDb(":memory:");
+    // 两个独立市场(cA/tokA、cB/tokB),各 2 个钱包净买 $6k@0.6 → 都只满足
+    // 「激进」(2×$5k);「保守」(3×$10k)钱包数不够,两边都不产生候选。
+    const trades = [
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "hA1",
+        conditionId: "cA",
+        asset: "tokA",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "hA2",
+        conditionId: "cA",
+        asset: "tokA",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "hB1",
+        conditionId: "cB",
+        asset: "tokB",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "hB2",
+        conditionId: "cB",
+        asset: "tokB",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+    ];
+    const calls: Record<string, number> = {};
+    const priceByAsset: Record<string, number> = { tokA: 0.61, tokB: 0.58 };
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart,
+      fetchPrice: async (asset) => {
+        calls[asset] = (calls[asset] ?? 0) + 1;
+        return priceByAsset[asset];
+      },
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBe(2);
+    // 各 asset 各取一次价:key 缺 asset 时,第二个处理到的 asset 会直接命中
+    // 第一个的缓存条目,对应的 fetchPrice 调用数会是 0(undefined)而非 1。
+    expect(calls.tokA).toBe(1);
+    expect(calls.tokB).toBe(1);
+    const posA = db
+      .prepare(
+        "SELECT entry_price FROM follow_positions WHERE condition_id='cA'",
+      )
+      .get() as { entry_price: number };
+    const posB = db
+      .prepare(
+        "SELECT entry_price FROM follow_positions WHERE condition_id='cB'",
+      )
+      .get() as { entry_price: number };
+    // 精确核对各自应得的价格(而非只判"互不相等")—— 这样即使两者被整体对调
+    // (key 冲突的另一种表现形式)也逃不过断言。
+    expect(posA.entry_price).toBeCloseTo(0.61);
+    expect(posB.entry_price).toBeCloseTo(0.58);
+    db.close();
+  });
+});
+
+// 多 source 集成:注册表按 source 查表分派,天然不会被 params_json 里残留的
+// consensus 专属字段(minWallets/minPerWalletUsd)误导。这条测试锁的是 Task 3
+// 修掉的真实缺口(修复前实测会静默落一条 strategy_id=heavy 的仓位):当时的临时
+// 守卫只判 minWallets/minPerWalletUsd 是否非空,一条 source:"heavy" 但从
+// consensus 模板复制粘贴、残留了这两个字段的策略会被误当成 consensus 送进
+// detectConsensus。Task 4 的 DETECTORS 注册表按 source 严格查表分派,不检查这
+// 两个字段是否存在,从设计上杜绝这类误判,不再依赖一道专门补丁式的守卫。
+describe("runFollowCycle — 多 source 集成(注册表按 source 分派)", () => {
+  it("heavy 策略残留 consensus 专属字段不会误走共识路径,consensus 策略正常开仓", async () => {
+    const db = openDb(":memory:");
+    // 模拟运营从 consensus 模板复制粘贴新增 heavy 档,没删干净残留字段
+    // (minWallets/minPerWalletUsd),但没抄到 heavy 真正需要的
+    // minSingleFillUsd。DETECTORS.heavy 现在是 Task 6 落地的真实实现
+    // (detectHeavyCandidates,见 lib/sourceHeavy.ts)—— 这条测试仍然通过,
+    // 但通过的原因已经变了:不再是"占位实现恒空",而是注册表按 source 严格
+    // 分派到 detectHeavyCandidates 后,该函数发现自己的必需参数
+    // minSingleFillUsd 缺失(残留的 minWallets/minPerWalletUsd 对它没有任何
+    // 意义,它压根不读这两个字段)—— 按自身的必需参数校验产出空候选 +
+    // console.warn,而不是被误当成 consensus 送进 detectConsensus。
+    db.prepare(
+      "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
+    ).run(
+      "重仓单笔(占位)",
+      JSON.stringify({
+        source: "heavy",
+        minWallets: 2,
+        minPerWalletUsd: 5000,
+        sizeUsd: 500,
+        exitRule: "settlement",
+      }),
+      1000,
+    );
+    const trades = [
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "h1",
+        size: 10000,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "h2",
+        size: 10000,
+        timestamp: 1000,
+      }),
+    ];
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart,
+      fetchPrice: async () => 0.63,
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    // 种子「激进」(source 缺省 → consensus)命中并开仓。
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const heavyStrategy = db
+      .prepare("SELECT id FROM follow_strategies WHERE name = ?")
+      .get("重仓单笔(占位)") as { id: number };
+    const heavyPositions = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM follow_positions WHERE strategy_id = ?",
+      )
+      .get(heavyStrategy.id) as { n: number };
+    expect(heavyPositions.n).toBe(0);
+    db.close();
+  });
+});
+
+// Task 9:market_tilt_history 跨轮读写的端到端集成 —— 证明"读必须在写之前"
+// 这条不变量在真实两轮调用下确实成立:第一轮市场刚变 contested,prevTilt 还
+// 是空的(C2 无候选,只写快照);第二轮少数边转净卖、市场跌出 contested,
+// C2 靠第一轮写下的快照才能判定"转变"并开仓。若读写顺序反了(写在读之前),
+// 第二轮的 prevTilt 会读到的仍是空/或本轮自己的东西,C2 永远不会在这里开仓 ——
+// 这条集成测试直接锁死"第一轮不开仓、第二轮才开仓"这个可观察行为。
+describe("runFollowCycle — market_tilt_history 跨轮读写(C2 分歧解除,读写顺序核心不变量)", () => {
+  it("第一轮 contested 市场只写快照不开仓;第二轮少数边转净卖 → 靠上一轮快照产出候选并开仓", async () => {
+    const db = openDb(":memory:");
+    // Task 12(策略种子 v2)起,openDb(":memory:") 也会一次性种进全部 12 条
+    // 生产策略(含另一条同为 source:"resolved" 的「分歧解除」)。这条用例
+    // 断言的是 r1.opened/r2.opened 的精确计数,验证的是 C2 读写顺序这一个
+    // 不变量 —— 不该被"生产种子里恰好也有一条 resolved 策略,对同一市场独立
+    // 判定出同一个候选"这件事干扰(两条 resolved 策略给的 params 不同名但
+    // 判据等价,会各开一仓,把 opened 计数翻倍)。清空自动种入的策略,只留下
+    // 下面手工插入的这一条,把测试隔离回"只有这一个 source:resolved 策略"
+    // 的场景。
+    db.prepare("DELETE FROM follow_strategies").run();
+    db.prepare(
+      "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
+    ).run(
+      "分歧解除测试档",
+      JSON.stringify({
+        source: "resolved",
+        sizeUsd: 500,
+        exitRule: "settlement",
+      }),
+      900,
+    );
+
+    // 第一轮(nowSec=1000):w1 买 Yes $10k(score 80),w2 买 No $10k(score 75)
+    // —— 两边都过 $5k floor,市场 contested;quality weight 不同(0.84 vs 0.8)
+    // 使 Yes 确定性地成为主导边,不依赖排序平局规则。
+    const round1Trades: Trade[] = [
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "r1",
+        asset: "tokYes",
+        outcome: "Yes",
+        outcomeIndex: 0,
+        conditionId: "c1",
+        size: 20000,
+        price: 0.5,
+        timestamp: 900,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "r2",
+        asset: "tokNo",
+        outcome: "No",
+        outcomeIndex: 1,
+        conditionId: "c1",
+        size: 20000,
+        price: 0.5,
+        timestamp: 900,
+      }),
+    ];
+    const r1 = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: round1Trades }),
+      getSmart: smart,
+      fetchPrice: async () => 0.5,
+      getMeta: async () => ({}),
+      nowSec: 1000,
+    });
+    // prevTilt 在第一轮进入 ctx 时必然是空 Map(数据库里还没有任何快照)——
+    // resolved 策略这一轮不可能有候选,不该开仓。
+    expect(r1.opened).toBe(0);
+
+    // 快照必须已经落库:轮末 write 发生在结算/markout 之后,但早于函数返回。
+    const afterRound1 = readMarketTiltSnapshots(db);
+    const snap = afterRound1.get("c1");
+    expect(snap).toEqual({
+      conditionId: "c1",
+      leadOutcome: "Yes", // weightedUsd 更大(w1 score 80 > w2 score 75)
+      minorOutcome: "No",
+      minorNetUsd: 10000,
+      tiltPct: 8400 / (8400 + 8000), // Σweighted(Yes) / Σweighted(总)
+      ts: 1000,
+    });
+
+    // 第二轮(nowSec=2000):窗口沿用第一轮的两笔成交(模拟滚动窗口仍覆盖旧
+    // 成交)+ w2 新增一笔卖出 30000@0.4=$12k —— 现金流:buyUsd=10000,
+    // sellUsd=12000,卖均价(0.4)<买均价(0.5)→ 满足认输判据(isCapitulating);
+    // 同时 netShares=-10000<=0,exposureUsd 被 clamp 到 0,No 边 walletCount
+    // 归零,市场本轮不再 contested(sides.length<2)。
+    const round2Trades: Trade[] = [
+      ...round1Trades,
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "r3",
+        side: "SELL",
+        asset: "tokNo",
+        outcome: "No",
+        outcomeIndex: 1,
+        conditionId: "c1",
+        size: 30000,
+        price: 0.4,
+        timestamp: 1500,
+      }),
+    ];
+    const r2 = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: round2Trades }),
+      getSmart: smart,
+      fetchPrice: async () => 0.5,
+      getMeta: async () => ({}),
+      nowSec: 2000,
+    });
+    expect(r2.opened).toBe(1); // 恰好一仓:resolved 档跟 Yes,consensus 两档本轮仍不够格
+
+    const strat = db
+      .prepare("SELECT id FROM follow_strategies WHERE name = ?")
+      .get("分歧解除测试档") as { id: number };
+    const positions = db
+      .prepare(
+        "SELECT condition_id, outcome, formation_ts, entry_price FROM follow_positions WHERE strategy_id = ?",
+      )
+      .all(strat.id) as {
+      condition_id: string;
+      outcome: string;
+      formation_ts: number;
+      entry_price: number;
+    }[];
+    expect(positions).toHaveLength(1);
+    expect(positions[0].condition_id).toBe("c1");
+    expect(positions[0].outcome).toBe("Yes"); // 跟主导边,不是转净卖的 No
+    expect(positions[0].formation_ts).toBe(2000); // = 第二轮 nowSec,不是任何一笔成交 ts
+    expect(positions[0].entry_price).toBeCloseTo(0.5);
+
+    db.close();
+  });
+});
+
+// 复审 Important 3:对抗测试,专门构造"读写顺序颠倒会给出不同答案"的场景 ——
+// 之前那条跨轮集成测试证明不了这一点,因为"本轮被写入"(要求市场仍 contested,
+// 少数边净买者子集必须过 floor)与"本轮触发 C2"(要求少数边现金流已满足认输)
+// 对同一个 conditionId 结构性互斥:少数边只要还有一个够格的净买者,少数边整体
+// 就"仍 contested"会被写入,但该净买者的存在不妨碍*其它*钱包的巨额卖出把
+// 现金流聚合拖成"已认输" —— 这正是本用例构造的东西,两个条件在同一市场、
+// 同一轮里可以同时成立。
+describe("runFollowCycle — market_tilt_history 读写顺序对抗测试(mutation-tested,复审 Important 3)", () => {
+  const smartThreeWallets = (): Map<string, SmartTag> =>
+    new Map([
+      ["w1", { score: 90, winRate: 0.7, netPnl: 1, isWhitelist: true }], // Yes 边:score 更高,确定性地成为主导边
+      ["w2", { score: 80, winRate: 0.65, netPnl: 1, isWhitelist: true }], // No 边:唯一的净买者,单独就能让 No 边过 floor
+      ["w3", { score: 80, winRate: 0.65, netPnl: 1, isWhitelist: true }], // No 边:买一点、卖很多,net<=0 不进 netUsd,但现金流把 No 边拖成"已认输"
+    ]);
+
+  it("市场首次变 contested:少数边净买者子集够格入选(会被写入),但少数边现金流本轮已满足认输 —— 正确顺序(读在写之前)不产出虚假候选", async () => {
+    const db = openDb(":memory:");
+    // Task 12(策略种子 v2)起,openDb(":memory:") 也会一次性种进全部 12 条
+    // 生产策略。这条用例断言 r.opened 精确等于 0,验证的是"prevTilt 首次
+    // 观察必为空"这一个不变量 —— 但下面构造的 trades 里 w1(score 90)单独
+    // 净买 Yes $10k,同时满足生产种子「高分独狼」(lone_wolf,score>=90 且
+    // net>=$10k)的判据,且 D 族不受分歧互斥约束(见 lib/sourceWallet.ts),
+    // 会在与本测试意图无关的另一条策略上开出 1 仓,把 r.opened 从 0 污染成
+    // 1。清空自动种入的策略,只留下面手工插入的这一条,把测试隔离回"只有
+    // 这一个 source:resolved 策略"的场景。
+    db.prepare("DELETE FROM follow_strategies").run();
+    db.prepare(
+      "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
+    ).run(
+      "读写顺序对抗测试档",
+      JSON.stringify({
+        source: "resolved",
+        sizeUsd: 500,
+        exitRule: "settlement",
+      }),
+      900,
+    );
+
+    const trades: Trade[] = [
+      // Yes(lead):w1 买 $10k,健康,score 90(weightedUsd=10000×0.92=9200)。
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "b1",
+        asset: "tokYes",
+        outcome: "Yes",
+        outcomeIndex: 0,
+        conditionId: "cFirst",
+        size: 20000,
+        price: 0.5,
+        timestamp: 900,
+      }),
+      // No(minor)钳位口径够格入选的净买者:w2 买 $10k,不卖 —— 单独这一笔就让
+      // No 边过 $5k floor(walletCount=1,netUsd=10000,score 80,
+      // weightedUsd=8400<9200,No 确定是 minor 不是 lead)。
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "b2",
+        asset: "tokNo",
+        outcome: "No",
+        outcomeIndex: 1,
+        conditionId: "cFirst",
+        size: 20000,
+        price: 0.5,
+        timestamp: 900,
+      }),
+      // No 边另一个钱包 w3:买一点(exposureUsd 仍为正,不影响判定)、卖很多——
+      // netShares=1000-100000=-99000<=0,exposureUsd 被 clamp 到 0,不进
+      // No 边的 netUsd/walletCount(No 边"够格"完全靠 w2 一个人撑住)。但它的
+      // buyUsd/sellUsd 现金流贡献不受这道 clamp 影响,把 No 边的现金流聚合拖成
+      // sellUsd(40000)>buyUsd(10500) 且卖均价(0.4)<买均价(0.5)——本轮就已经
+      // 满足认输判据 isCapitulating。
+      trade({
+        proxyWallet: "w3",
+        transactionHash: "b3",
+        asset: "tokNo",
+        outcome: "No",
+        outcomeIndex: 1,
+        conditionId: "cFirst",
+        size: 1000,
+        price: 0.5,
+        timestamp: 900,
+      }),
+      trade({
+        proxyWallet: "w3",
+        transactionHash: "b4",
+        side: "SELL",
+        asset: "tokNo",
+        outcome: "No",
+        outcomeIndex: 1,
+        conditionId: "cFirst",
+        size: 100000,
+        price: 0.4,
+        timestamp: 950,
+      }),
+    ];
+
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smartThreeWallets,
+      fetchPrice: async () => 0.5,
+      getMeta: async () => ({}),
+      nowSec: 1000,
+    });
+
+    // 库里此前没有任何 market_tilt_history 记录(:memory: 全新库,首次观察)——
+    // 正确顺序下 ctx.prevTilt 读到空 Map,resolved 策略这一轮不可能有候选,
+    // 即便"cFirst"本轮同时满足"够格入选 contested"与"少数边现金流已认输"
+    // 这两个条件。
+    expect(r.opened).toBe(0);
+
+    // 快照仍然正常落库(轮末写,不受读的结果影响)——下一轮才轮到它被读到。
+    const snap = readMarketTiltSnapshots(db).get("cFirst");
+    expect(snap?.leadOutcome).toBe("Yes");
+    expect(snap?.minorOutcome).toBe("No");
+
+    db.close();
+  });
+
+  // 变异验证(手工执行,不作为常驻用例保留):把上面 it 块里 runFollowCycle 的
+  // 调用临时替换成"先写后读"—— 在 lib/follow.ts 的 readMarketTiltSnapshots(db)
+  // 调用之前临时插入一行 writeMarketTiltSnapshots(db, contested, nowSec),
+  // 模拟"写在读之前"的错误顺序,重跑本文件:上面这条用例从 r.opened===0
+  // 变为 r.opened===1(读到了本轮自己刚写的行,把"当前状态"误认成"上一轮
+  // 状态",凭空产出 1 个虚假候选)。验证完成后已还原 lib/follow.ts,不保留
+  // 这个临时改动 —— 这条注释只记录验证过程,供复核。
+});
+
+// Task 11:D2(early_winner)钱包预取的端到端集成 —— 证明 runFollowCycle 真的
+// 从 wallet_candidates 表读出 channel='early_winner' 的地址喂给 ctx,以及
+// 查询失败时的降级不拖累同轮其它策略。detector 内部判据(净买门槛/跨线语义/
+// MM 剔除/新鲜度/折叠规则)已在 lib/sourceWallet.test.ts 覆盖,这里只测预取
+// 这一层「读表 → 填 ctx → detector 真的用上了」的接线是否正确。
+describe("runFollowCycle — D2(early_winner)钱包预取", () => {
+  it("wallet_candidates 有 early_winner 渠道的行 → 能读到,D2 策略据此开仓;非 early_winner 渠道的行不算数", async () => {
+    const db = openDb(":memory:");
+    // Task 12(策略种子 v2)起,openDb(":memory:") 会自动种入一条同名的生产
+    // 策略「早期赢家跟投」—— 下面这条 INSERT 若不先清场会直接撞
+    // follow_strategies.name 的 UNIQUE 约束报错。这条用例只关心它自己插入
+    // 的这一条(后面按名字查 strat.id 精确 scoped 查询,不受其它策略干扰),
+    // 清空自动种入的策略,腾出这个名字,也避免其它生产策略在同一批 trades
+    // 上产出无关候选。
+    db.prepare("DELETE FROM follow_strategies").run();
+    db.prepare(
+      "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
+    ).run(
+      "早期赢家跟投",
+      JSON.stringify({
+        source: "early_winner",
+        minNetUsd: 5000,
+        sizeUsd: 500,
+        exitRule: "settlement",
+      }),
+      1000,
+    );
+    // w1:channel='early_winner',应当入选。w2:channel='echo'(其它渠道),
+    // 即使也有一笔够格的净买,也不该被 D2 当作渠道成员。
+    db.prepare(
+      `INSERT INTO wallet_candidates
+         (address, channel, condition_id, evidence_ts, usd, price, note, created_at)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    ).run("w1", "early_winner", "cSomeMarket", 900, 1000, 0.5, "note", 900);
+    db.prepare(
+      `INSERT INTO wallet_candidates
+         (address, channel, condition_id, evidence_ts, usd, price, note, created_at)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    ).run("w2", "echo", "cSomeMarket", 900, 1000, 0.5, "note", 900);
+
+    const trades = [
+      // w1(early_winner 成员):净买 $6,000 >= minNetUsd(5000)→ 应当开仓。
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "hEW1",
+        conditionId: "cD2a",
+        asset: "tokD2a",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      // w2(echo 成员,非 early_winner):同样净买 $6,000,但不该被 D2 开仓。
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "hEW2",
+        conditionId: "cD2b",
+        asset: "tokD2b",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+    ];
+
+    await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart, // w1/w2 都在白名单里(见文件头 smart() 工厂)
+      fetchPrice: async () => 0.6,
+      getMeta: async () => ({}),
+      nowSec: 1500, // 距 formationTs(1000)500s <= freshSec 默认 900,新鲜
+    });
+
+    const strat = db
+      .prepare("SELECT id FROM follow_strategies WHERE name = ?")
+      .get("早期赢家跟投") as { id: number };
+    const positions = db
+      .prepare(
+        "SELECT condition_id FROM follow_positions WHERE strategy_id = ?",
+      )
+      .all(strat.id) as { condition_id: string }[];
+    expect(positions).toHaveLength(1);
+    expect(positions[0].condition_id).toBe("cD2a"); // w1 的市场,不是 w2 的
+    db.close();
+  });
+
+  it("wallet_candidates 查询抛错 → 预取降级为空 Set,D2 本轮无候选,不影响同轮其它策略", async () => {
+    const db = openDb(":memory:");
+    // 破坏表本身,模拟"查询抛错"这个极端场景(而不是 mock db.prepare ——
+    // 直接损坏真实表,断言的是 runFollowCycle 面对真实 SQL 异常时的行为)。
+    // 用 .prepare(...).run() 而非 .exec(...) 执行 DDL,与 lib/db.ts 里
+    // ALTER TABLE 等既有 DDL 语句同一套写法。
+    db.prepare("DROP TABLE wallet_candidates").run();
+
+    // Task 12(策略种子 v2)起,openDb(":memory:") 会自动种入一条同名的生产
+    // 策略「早期赢家跟投」—— 下面这条 INSERT 若不先让出这个名字会直接撞
+    // follow_strategies.name 的 UNIQUE 约束报错。注意这里只删这一条同名的,
+    // 不是清空全表(DELETE FROM follow_strategies 不加 WHERE):本用例下面
+    // 的断言明确依赖种子自带的「激进」consensus 策略仍然存在且启用(见下面
+    // "种子自带的「激进」consensus 策略"那条注释与 consensusPos 断言)。
+    db.prepare(
+      "DELETE FROM follow_strategies WHERE name = '早期赢家跟投'",
+    ).run();
+    db.prepare(
+      "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
+    ).run(
+      "早期赢家跟投",
+      JSON.stringify({
+        source: "early_winner",
+        minNetUsd: 5000,
+        sizeUsd: 500,
+        exitRule: "settlement",
+      }),
+      1000,
+    );
+
+    const trades = [
+      // 同轮内还有一组正常的 2 钱包共识(w1+w2 各净买 $6k)—— 用来证明
+      // early_winner 预取失败不会拖垮同轮其它 source 的策略(种子自带的
+      // "激进" consensus 策略:2 钱包 × $5k)。
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "hC1",
+        conditionId: "cConsensus",
+        asset: "tokConsensus",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      trade({
+        proxyWallet: "w2",
+        transactionHash: "hC2",
+        conditionId: "cConsensus",
+        asset: "tokConsensus",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+      // 若预取没有正确降级(比如异常没被兜住导致整轮 reject),这笔本该被
+      // D2 开仓的交易也能反证:D2 本该产出候选但降级后必须是 0。
+      trade({
+        proxyWallet: "w1",
+        transactionHash: "hEW",
+        conditionId: "cD2",
+        asset: "tokD2",
+        size: 10000,
+        price: 0.6,
+        timestamp: 1000,
+      }),
+    ];
+
+    // 不 reject 整轮:预取失败被 runFollowCycle 内部 try/catch 兜住。
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades }),
+      getSmart: smart,
+      fetchPrice: async () => 0.6,
+      getMeta: async () => ({}),
+      nowSec: 1500,
+    });
+
+    // 激进(consensus)策略照常开仓 —— early_winner 预取失败不影响它。
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const consensusPos = db
+      .prepare(
+        "SELECT 1 FROM follow_positions WHERE condition_id = 'cConsensus'",
+      )
+      .all();
+    expect(consensusPos.length).toBeGreaterThanOrEqual(1);
+
+    // early_winner 策略本轮无候选(earlyWinnerWallets 降级为空 Set)。
+    const strat = db
+      .prepare("SELECT id FROM follow_strategies WHERE name = ?")
+      .get("早期赢家跟投") as { id: number };
+    const ewPos = db
+      .prepare(
+        "SELECT 1 FROM follow_positions WHERE strategy_id = ? AND condition_id = 'cD2'",
+      )
+      .all(strat.id);
+    expect(ewPos).toHaveLength(0);
+    db.close();
   });
 });
