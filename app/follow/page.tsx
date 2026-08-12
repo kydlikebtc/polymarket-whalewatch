@@ -500,6 +500,10 @@ type CurveSeries = {
   id: number;
   name: string;
   strokeIdx: number;
+  // 族开关(改版 Task 4)按这个字段过滤要不要画这条线;strokeIdx 仍按
+  // shown 的原始顺序分配、不受族过滤影响,保证同一策略的线型+颜色不会
+  // 因为切换族开关而改变(见 FollowPage 里 series 的构造注释)。
+  family: FamilyKey;
   curve: { ts: number; cum: number }[];
 };
 
@@ -523,6 +527,11 @@ function stepPath(
 const axisFmt = (v: number) => `${v < 0 ? MINUS : ""}$${fmtUsd0(Math.abs(v))}`;
 
 function EquityCurve({ series }: { series: CurveSeries[] }) {
+  // hover 高亮(改版 Task 4):悬停/聚焦某条图例时,该线加粗、其余线连同
+  // 结算点一起降到 20% 透明度,帮读者从 12 档同屏叠画里挑出一条线看。放在
+  // 最前面、任何 early return 之前——Hooks 规则要求每次渲染都无条件调用,
+  // 不能被下面「暂无已结算仓位」的提前 return 跳过。
+  const [hoverId, setHoverId] = useState<number | null>(null);
   const withData = series.filter((s) => s.curve.length > 0);
   if (withData.length === 0) {
     return (
@@ -682,16 +691,21 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
             </text>
           </g>
         ))}
-        {/* 各策略阶梯线 + 结算点 */}
+        {/* 各策略阶梯线 + 结算点。用 <g> 整组设 opacity——同一组里的线和它
+            的结算点一起淡化,不必在 path 和每个 circle 上分别算一遍(也不
+            会出现"线淡了、点还是实心"这种半淡化的观感,这正是圆点会浮在
+            淡化线上的问题的根)。 */}
         {withData.map((s) => {
           const st = strokeFor(s.strokeIdx);
+          const isHovered = hoverId === s.id;
+          const dimmed = hoverId != null && !isHovered;
           return (
-            <g key={s.id}>
+            <g key={s.id} opacity={dimmed ? 0.2 : 1}>
               <path
                 d={stepPath(s.curve, sx, sy)}
                 fill="none"
                 stroke={st.color}
-                strokeWidth={2}
+                strokeWidth={isHovered ? 2.6 : 1.8}
                 strokeDasharray={st.dash}
                 strokeLinejoin="round"
                 strokeLinecap="round"
@@ -709,7 +723,11 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
           );
         })}
       </svg>
-      {/* 图例:虚实样条 + 策略名 + 净值 */}
+      {/* 图例:虚实样条 + 策略名 + 净值。每项可 hover 也可键盘 Tab 到再用
+          onFocus/onBlur 触发——onMouseEnter/onMouseLeave 只覆盖鼠标用户,
+          纯键盘用户等于没有这个功能。tabIndex=0(不是 ui.tsx tip-pop 那种
+          -1)是特意的:-1 只能点击聚焦、永远不进 Tab 顺序,这里恰恰需要
+          Tab 能到达。 */}
       <div
         style={{
           display: "flex",
@@ -724,6 +742,11 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
           return (
             <span
               key={s.id}
+              tabIndex={0}
+              onMouseEnter={() => setHoverId(s.id)}
+              onMouseLeave={() => setHoverId(null)}
+              onFocus={() => setHoverId(s.id)}
+              onBlur={() => setHoverId(null)}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -749,6 +772,57 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// 族开关(改版 Task 4):默认全开,点击独立切换某族的可见性。用一排独立
+// 切换按钮而不是 Segmented——Segmented 是单选语义(同一时刻只有一个
+// value),但读者的真实需求是任意子集:可能只想看共识族,也可能想把共识族
+// 和异常大额族放在一起比。样式复用 ui.tsx SoundToggle 同一套写法
+// (ds-btn + ds-btn--subtle/ds-btn--ghost + aria-pressed),不新造 CSS。
+// groups 直接复用页面已经算好的按族分组结果(卡片分组用的同一份),只给
+// 「确实有策略」的族一个按钮——族数 <2 时开关没有意义(无从比较),不渲染。
+function FamilyToggles({
+  groups,
+  active,
+  onToggle,
+}: {
+  groups: {
+    key: FamilyKey;
+    meta: { title: string; blurb: string };
+    items: FollowStrategyView[];
+  }[];
+  active: Set<FamilyKey>;
+  onToggle: (key: FamilyKey) => void;
+}) {
+  if (groups.length < 2) return null;
+  return (
+    <div
+      role="group"
+      aria-label="按信号族筛选净值曲线"
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "var(--s-2)",
+        marginBottom: "var(--s-3)",
+      }}
+    >
+      {groups.map((g) => {
+        const on = active.has(g.key);
+        return (
+          <button
+            key={g.key}
+            type="button"
+            className={`ds-btn ${on ? "ds-btn--subtle" : "ds-btn--ghost"}`}
+            aria-pressed={on}
+            onClick={() => onToggle(g.key)}
+            title={g.meta.blurb}
+          >
+            {g.meta.title} · {g.items.length}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -2106,6 +2180,12 @@ export default function FollowPage() {
   // 仓位明细:tab(已结算/持有中)+ 策略筛选(FILTER_ALL=全部,否则策略 id)。
   const [posTab, setPosTab] = useState<PosTab>("settled");
   const [stratFilter, setStratFilter] = useState<number>(FILTER_ALL);
+  // 结算净值曲线的族开关(改版 Task 4):默认全开。FamilyKey 是固定的小
+  // 枚举,不像 stratFilter 那样需要在渲染期核对"选中的还存在吗"——某族
+  // 当前没有策略只是不渲染对应按钮,Set 里留着那个 key 不会造成任何问题。
+  const [activeFamilies, setActiveFamilies] = useState<Set<FamilyKey>>(
+    () => new Set(FAMILY_ORDER),
+  );
   const activeReq = useRef<number>(0);
 
   const load = useCallback(async () => {
@@ -2153,12 +2233,25 @@ export default function FollowPage() {
       ? ranked[0].id
       : null;
 
+  // strokeIdx 按 shown 的原始顺序分配(与族过滤无关)——这样切换族开关时
+  // 剩下的线不会因为「前面几条被隐藏了」而重新编号、变成另一种颜色/线型,
+  // 同一策略在任何开关组合下都是同一条视觉表示。
   const series: CurveSeries[] = shown.map((s, i) => ({
     id: s.id,
     name: s.name,
     strokeIdx: i,
+    family: familyOf(s.params.source ?? "consensus"),
     curve: s.metrics.equityCurve,
   }));
+  const visibleSeries = series.filter((s) => activeFamilies.has(s.family));
+  const toggleFamily = (key: FamilyKey) => {
+    setActiveFamilies((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const settledRows: LabeledRow[] = shown
     .flatMap((s) => s.settled.map((p) => ({ ...p, strategyName: s.name })))
@@ -2317,13 +2410,19 @@ export default function FollowPage() {
             </section>
           ))}
 
-          {/* 结算净值阶梯曲线 */}
+          {/* 结算净值阶梯曲线:族开关放卡片外(与"仓位明细"节的 Segmented
+              筛选行同一位置约定),曲线卡片本身只管画图。 */}
           <section style={{ marginBottom: "var(--s-5)" }}>
             <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
               结算净值曲线(累计已实现盈亏 · 实线/虚线区分策略)
             </div>
+            <FamilyToggles
+              groups={groups}
+              active={activeFamilies}
+              onToggle={toggleFamily}
+            />
             <div className="ds-card" style={{ padding: "var(--s-4)" }}>
-              <EquityCurve series={series} />
+              <EquityCurve series={visibleSeries} />
             </div>
           </section>
 
