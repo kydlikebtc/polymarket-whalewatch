@@ -18,6 +18,7 @@ import {
   type ReactNode,
 } from "react";
 import { Icon, Modal, Segmented, Tag } from "../ui";
+import { useCurrentPrices } from "../useCurrentPrices";
 import {
   classifyCardState,
   computeTimeTicks,
@@ -41,6 +42,10 @@ type FollowPositionRow = {
   outcome: string;
   title?: string;
   event_slug?: string;
+  // CLOB token id(route 直选)。持仓中列表「当前价」列按它惰性取价(见
+  // app/useCurrentPrices.ts)——类型上设可选以对旧响应/极端老仓位宽容,
+  // 缺失时该行当前价单元格按"不可取价"降级显示「—」,不是当成加载中。
+  asset?: string;
   size_usd: number;
   entry_price: number;
   smart_avg_price: number;
@@ -2871,6 +2876,51 @@ function SettledTable({
   );
 }
 
+// 持仓中「当前价」单元格(前端惰性加载,见 app/useCurrentPrices.ts)。只显示
+// 当前价 + 相对进场价的 ¢ 差(涨绿跌红),不显示浮盈美元数——这个项目的口径
+// 是「只记结算盈亏,不做浮盈」(页面页头 hint、lib/follow.ts
+// computeStrategyMetrics 顶部注释同一句话),ROI/胜率/年化/回撤/净值曲线
+// 全部只认结算这一刻的 realized_pnl。浮盈美元数回答的是"赚了多少"(业绩),
+// 会与这条口径打架;¢ 差回答的是"这仓现在处在什么位置"(状态快照),
+// 两者不冲突,只有前者不该出现在这张表里。
+//
+// price 的三态(与 useCurrentPrices 返回值同一约定,调用方不需要自己再判断
+// 一次"是不是还没发请求"——absent/null/number 三种情况在这里穷举):
+// undefined(prices 记录里没这个 key)=仍在加载,null=已请求但取价失败/
+// 无数据(mock token、太新太冷的市场),number=当前价(0–1 概率)。
+function CurrentPriceCell({
+  p,
+  price,
+}: {
+  p: FollowPositionRow;
+  price: number | null | undefined;
+}) {
+  if (!p.asset) {
+    // 理论上不应发生(asset 是 route 直选的必填列),防御性兜底——没有
+    // token id 就没有可查的对象,不该显示成"加载中"卡死不动。
+    return <span className="muted">—</span>;
+  }
+  if (price === undefined) {
+    return <span className="mono muted">…</span>;
+  }
+  if (price === null) {
+    return (
+      <span className="muted" title="取价失败,或该市场暂无可用的近期行情数据">
+        —
+      </span>
+    );
+  }
+  const deltaCents = (price - p.entry_price) * 100;
+  return (
+    <span className="mono">
+      {cents(price)}{" "}
+      <span className={pnlTone(deltaCents)}>
+        ({fmtSignedCents(deltaCents)})
+      </span>
+    </span>
+  );
+}
+
 function OpenTable({
   rows,
   emptyText = "当前没有持仓中的纸面仓位",
@@ -2878,6 +2928,12 @@ function OpenTable({
   rows: LabeledRow[];
   emptyText?: string;
 }) {
+  // 当前价惰性加载:无条件放在任何 early return 之前(Hooks 规则,与本文件
+  // EquityCurve/Sparkline 的既有约定同一原则)。空表时 rows.map 是 [],
+  // useCurrentPrices 收到空数组直接短路、不发请求,调用这个 hook 本身零
+  // 成本。按 asset 去重是 hook 内部的职责(见 dedupeAssets),这里只管把
+  // 原始(可能重复的)asset 列表转发过去。
+  const { prices } = useCurrentPrices(rows.map((p) => p.asset));
   if (rows.length === 0) {
     return <div className="ds-empty">{emptyText}</div>;
   }
@@ -2891,6 +2947,12 @@ function OpenTable({
             <th>市场 · 结果</th>
             <th className="is-right" title="现价进场价(美分)">
               进价
+            </th>
+            <th
+              className="is-right"
+              title="当前市价快照(括号内为相对进场价的 ¢ 差,涨绿跌红),仅供参考——不进 ROI/胜率/年化等任何战绩口径;本页所有指标均为结算口径(只记结算盈亏,不做浮盈)。前端惰性加载,取价失败或该 token 暂无行情数据显示 —"
+            >
+              当前价
             </th>
             <th
               className="is-right"
@@ -2933,6 +2995,12 @@ function OpenTable({
                 </td>
                 <td className="mono is-right" data-label="进价">
                   {cents(p.entry_price)}
+                </td>
+                <td className="is-right" data-label="当前价">
+                  <CurrentPriceCell
+                    p={p}
+                    price={p.asset ? prices[p.asset] : null}
+                  />
                 </td>
                 {/* 主显示 ¢ 差(可跨仓横比),美元退居括号小字;中性色,超警示线转琥珀。 */}
                 <td
