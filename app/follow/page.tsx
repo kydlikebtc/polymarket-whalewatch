@@ -154,6 +154,11 @@ type PosTab = "settled" | "open";
 // 策略筛选的「全部」哨兵值。策略 id 从 1 起(AUTOINCREMENT),0 不会撞真实 id。
 const FILTER_ALL = 0;
 
+// 卡片/列表视图切换,记住用户选择。key 沿用 app/useSound.ts 的 ww_ 前缀
+// 约定(该文件是本仓库目前唯一在用 localStorage 的先例)。
+type ViewMode = "card" | "list";
+const VIEW_MODE_KEY = "ww_follow_view";
+
 /* --------------------------------------------------------------- format */
 
 const MINUS = "−"; // U+2212,与 ui.tsx fmtSignedUsdCompact 一致(不用 ASCII 连字符)
@@ -342,6 +347,15 @@ const FAMILY_ORDER: FamilyKey[] = [
   "wallet",
   "other",
 ];
+
+// 按族分组后的一组(FollowPage 的 groups 就是这个形状)。FamilyToggles 与
+// 新增的 StrategyListView(卡片/列表切换)都要接这份数据,提成一个类型
+// 别名,不在两处各写一遍相同的内联对象类型。
+type FamilyGroup = {
+  key: FamilyKey;
+  meta: { title: string; blurb: string };
+  items: FollowStrategyView[];
+};
 
 // source → 信号族。与 lib/followCandidate.ts 的 FOLLOW_SOURCE_KINDS 六个值
 // 一一对应;任何不在这六种里的字符串(含 undefined,调用处已兜到 "consensus")
@@ -788,11 +802,7 @@ function FamilyToggles({
   active,
   onToggle,
 }: {
-  groups: {
-    key: FamilyKey;
-    meta: { title: string; blurb: string };
-    items: FollowStrategyView[];
-  }[];
+  groups: FamilyGroup[];
   active: Set<FamilyKey>;
   onToggle: (key: FamilyKey) => void;
 }) {
@@ -2092,6 +2102,223 @@ function StrategyDetailDialog({
   );
 }
 
+/* --------------------------------------------------------- list view */
+
+// 列表视图(卡片/列表切换新增):12 档一张整表。行序按信号族分组
+// (FAMILY_ORDER)+ 族内原有顺序,复用 groups——与卡片视图同一份分组结果,
+// 保证两种视图的策略顺序看起来是"同一件事的两种画法",不是两套互相对不上
+// 的排序。**不提供点列头排序**:小样本下按 ROI/结算净值排序,会让"3 仓刚好
+// 赢 2 仓"的运气档窜到第一名,排序动作本身就在撒谎——这与卡片"不做排序,
+// 固定按信号族分组"是同一条已裁决的口径,列表不重新开一次这个讨论。
+function StrategyListView({
+  groups,
+  leaderId,
+}: {
+  groups: FamilyGroup[];
+  leaderId: number | null;
+}) {
+  const rows = groups.flatMap((g) =>
+    g.items.map((s) => ({ s, familyTitle: g.meta.title })),
+  );
+  if (rows.length === 0) {
+    return <div className="ds-empty">暂无启用中的跟单策略</div>;
+  }
+  return (
+    <div className="ds-table-wrap">
+      <table className="ds-table">
+        <thead>
+          <tr>
+            <th>策略</th>
+            <th
+              className="is-right"
+              title="已结算仓位累计已实现盈亏(不含持仓浮盈)"
+            >
+              结算净值
+            </th>
+            <th className="is-right" title="结算净值 ÷ 已投入本金(仅已结算仓)">
+              ROI
+            </th>
+            <th
+              className="is-right"
+              title="结算净值 ÷ 峰值占用资金 × 365 ÷ 运行天数。短窗口/小样本外推极不可靠,仅供横向对比"
+            >
+              平均年化
+            </th>
+            <th
+              className="is-right"
+              title="盈利仓 ÷(盈利+亏损)仓,括号内为已结算样本数(<10 仓前面加 ⚠,与卡片同一个警示阈值)。Wilson 95% 置信区间不在这张表里——留在「详情」,表格容不下那么长的区间文本"
+            >
+              胜率
+            </th>
+            <th
+              className="is-right"
+              title="净值曲线从峰值到后续谷底的最大跌幅(美元)"
+            >
+              最大回撤
+            </th>
+            <th
+              className="is-right"
+              title="= 历史峰值占用 × 1.25(按单仓金额向上取整);推导细节与五档精确回放见「详情 → 账户推演」"
+            >
+              建议额度
+            </th>
+            <th className="is-right" title="当前持仓待结算数 / 策略运行天数">
+              持有 / 运行
+            </th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ s, familyTitle }) => (
+            <StrategyListRow
+              key={s.id}
+              s={s}
+              familyTitle={familyTitle}
+              leading={s.id === leaderId}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// 单行:三态判定复用 classifyCardState(lib/followCardView.ts)——与卡片
+// 用的是同一个函数、同一个 LOW_SAMPLE_THRESHOLD,不重写一份判定逻辑,不然
+// 两种视图迟早会因为各自维护阈值而对同一档给出不同的"这是小样本吗"结论。
+//
+// empty 态的呈现手法与卡片不同:卡片用虚线边框把"还没轮到它"和"跑了但没
+// 赚到钱"在视觉上分开;表格行没有边框可虚化,强行给单行加虚线边框会破坏
+// 列与列之间的横向对齐(边框只框住这一行,相邻行的同一列看起来就不再对齐
+// 了)。改用整行文字降 muted + 六个战绩列一律显示"—"(不满足读者去读一个
+// 没有意义的 $0/null 值),末列保留卡片同款的两句文案区分「持仓待结算」
+// 和「还没有仓位」。
+//
+// 「持有 / 运行」不算在"数值列显示 —"这条规则里——它是运行状态(当前持仓
+// 数、上线多久),不是战绩指标,哪怕 0 结算也是真实、有意义的数字,卡片的
+// 元信息行同样在 empty 态照常显示这两个数(见 StrategyCard),这里保持
+// 同一个口径,只是整行文字仍然是 muted 灰。
+//
+// 详情弹窗状态挂在每一行自己身上(与 CardActions 同一个模式:每张卡/每行
+// 各自持有自己的 open/close,不是页面级"当前打开哪一条"的单一状态)。
+function StrategyListRow({
+  s,
+  familyTitle,
+  leading,
+}: {
+  s: FollowStrategyView;
+  familyTitle: string;
+  leading: boolean;
+}) {
+  const [detailOpen, setDetailOpen] = useState(false);
+  const m = s.metrics;
+  const fund = s.fund;
+  const acct = s.account;
+  const hasPlan = !!acct && acct.rows.length > 0 && acct.suggestedUsd != null;
+  const state = classifyCardState(m);
+  const empty = state === "empty";
+  const dash = <span className="muted">—</span>;
+  return (
+    <tr className={empty ? "muted" : undefined}>
+      <td data-label="策略">
+        <Tag>{familyTitle}</Tag>
+        <div style={{ marginTop: "var(--s-1)", fontWeight: 600 }}>
+          {s.name}
+          {leading ? (
+            <span style={{ marginLeft: "var(--s-2)" }}>
+              <Tag variant="brand">领先</Tag>
+            </span>
+          ) : null}
+        </div>
+      </td>
+      <td className="is-right" data-label="结算净值">
+        {empty ? (
+          dash
+        ) : (
+          <span className={`mono ${pnlTone(m.totalRealized)}`}>
+            {fmtSignedUsd(m.totalRealized)}
+          </span>
+        )}
+      </td>
+      <td className="is-right" data-label="ROI">
+        {!empty && m.roi != null ? (
+          <span className={`mono ${pnlTone(m.roi)}`}>
+            {m.roi >= 0 ? "+" : MINUS}
+            {Math.abs(m.roi * 100).toFixed(1)}%
+          </span>
+        ) : (
+          dash
+        )}
+      </td>
+      <td className="is-right" data-label="平均年化">
+        {!empty && fund?.annualizedRoi != null ? (
+          <span className={`mono ${pnlTone(fund.annualizedRoi)}`}>
+            {fmtAnnualized(fund.annualizedRoi)}
+          </span>
+        ) : (
+          dash
+        )}
+      </td>
+      <td className="is-right" data-label="胜率">
+        {!empty && m.winRate != null ? (
+          <span className="mono">
+            {Math.round(m.winRate * 100)}%{" "}
+            <span className="muted">
+              ({state === "low_sample" ? `⚠ ${m.settledCount}` : m.settledCount}
+              )
+            </span>
+          </span>
+        ) : (
+          dash
+        )}
+      </td>
+      <td className="is-right" data-label="最大回撤">
+        {empty ? (
+          dash
+        ) : m.maxDrawdown > 0 ? (
+          <span className="mono down">
+            {MINUS}${fmtUsd0(m.maxDrawdown)}
+          </span>
+        ) : (
+          <span className="mono muted">$0</span>
+        )}
+      </td>
+      <td className="is-right" data-label="建议额度">
+        {!empty && hasPlan ? (
+          <span className="mono">${fmtUsd0(acct!.suggestedUsd!)}</span>
+        ) : (
+          dash
+        )}
+      </td>
+      <td className="is-right" data-label="持有 / 运行">
+        <span className="mono">
+          {m.openCount} /{" "}
+          {fund?.runDays != null ? `${Math.floor(fund.runDays)}天` : "—"}
+        </span>
+      </td>
+      <td className="is-right" data-label="操作">
+        {empty ? (
+          <div className="kpi-sub">
+            {m.openCount > 0 ? "等待首次结算" : "等待信号命中"}
+          </div>
+        ) : null}
+        <button
+          type="button"
+          className="ds-btn ds-btn--sm"
+          onClick={() => setDetailOpen(true)}
+        >
+          详情
+        </button>
+        <StrategyDetailDialog
+          s={s}
+          open={detailOpen}
+          onClose={() => setDetailOpen(false)}
+        />
+      </td>
+    </tr>
+  );
+}
+
 /* --------------------------------------------------------------- tables */
 
 // 策略归属小标签(合并表里标注该行来自哪条策略)。
@@ -2365,6 +2592,28 @@ export default function FollowPage() {
   const [activeFamilies, setActiveFamilies] = useState<Set<FamilyKey>>(
     () => new Set(FAMILY_ORDER),
   );
+  // 卡片/列表视图切换。初值必须是与服务端渲染一致的固定默认值("card"),
+  // 不能在这里直接读 localStorage——服务端渲染时没有 window,读不到;客户端
+  // 首次渲染如果读到了非默认值,两次渲染的 DOM 对不上就是 hydration
+  // mismatch。正确做法(与 app/useSound.ts 的 useSoundToggle 同一套写法):
+  // 首屏先出默认值,挂载后在 useEffect 里读 localStorage 再切换。
+  const [viewMode, setViewMode] = useState<ViewMode>("card");
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(VIEW_MODE_KEY);
+      if (saved === "card" || saved === "list") setViewMode(saved);
+    } catch {
+      // localStorage 不可用(隐私模式等)——保持默认的卡片视图。
+    }
+  }, []);
+  const changeViewMode = (v: ViewMode) => {
+    setViewMode(v);
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, v);
+    } catch {
+      // 忽略持久化失败,不影响本次切换本身。
+    }
+  };
   const activeReq = useRef<number>(0);
 
   const load = useCallback(async () => {
@@ -2558,36 +2807,64 @@ export default function FollowPage() {
             </div>
           ) : null}
 
-          {/* 策略卡:按信号族分组(共识 → 异常大额 → 分歧 → 钱包画像,按
-              信息强度递减排列,也是 FAMILY_ORDER 的实现顺序),每组一个小
-              标题 + 一句"这一族在回答什么"。 */}
-          {groups.map((g) => (
-            <section key={g.key} style={{ marginBottom: "var(--s-5)" }}>
-              <div style={{ marginBottom: "var(--s-2)" }}>
-                <div className="ds-label">{g.meta.title}</div>
-                <div className="ds-hint">{g.meta.blurb}</div>
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  // 固定列宽(不用 minmax(…, 1fr)):1fr 会把列宽拉伸到随容器
-                  // 宽度变化,同样 3 列在 1180px/900px 容器下卡宽能差出
-                  // 100px。auto-fit 在某一族卡片数量不足以填满一整行时会
-                  // 折叠多余的空轨道,配合下面的 justify-content 让实际卡片
-                  // 整体居中;若改用 auto-fill,折叠不会发生,空轨道仍占位,
-                  // justify-content 反而会把可见卡片推向一侧、右边露出一块
-                  // 不对称的空白(该行为已用具体尺寸推演验证过)。
-                  gridTemplateColumns: `repeat(auto-fit, ${CARD_WIDTH}px)`,
-                  justifyContent: "center",
-                  gap: "var(--s-4)",
-                }}
-              >
-                {g.items.map((s) => (
-                  <StrategyCard key={s.id} s={s} leading={s.id === leaderId} />
-                ))}
-              </div>
+          {/* 卡片/列表视图切换:默认卡片,选择记进 localStorage(见
+              changeViewMode)。放在口径声明 banner 下方、内容区上方——两种
+              视图消费同一份 shown/groups,口径声明对两边同样适用,不用
+              为列表再放一条。 */}
+          <div style={{ marginBottom: "var(--s-4)" }}>
+            <Segmented<ViewMode>
+              ariaLabel="展示方式"
+              options={[
+                { label: "卡片", value: "card" },
+                { label: "列表", value: "list" },
+              ]}
+              value={viewMode}
+              onChange={changeViewMode}
+            />
+          </div>
+
+          {viewMode === "card" ? (
+            // 策略卡:按信号族分组(共识 → 异常大额 → 分歧 → 钱包画像,按
+            // 信息强度递减排列,也是 FAMILY_ORDER 的实现顺序),每组一个小
+            // 标题 + 一句"这一族在回答什么"。
+            groups.map((g) => (
+              <section key={g.key} style={{ marginBottom: "var(--s-5)" }}>
+                <div style={{ marginBottom: "var(--s-2)" }}>
+                  <div className="ds-label">{g.meta.title}</div>
+                  <div className="ds-hint">{g.meta.blurb}</div>
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    // 固定列宽(不用 minmax(…, 1fr)):1fr 会把列宽拉伸到随容器
+                    // 宽度变化,同样 3 列在 1180px/900px 容器下卡宽能差出
+                    // 100px。auto-fit 在某一族卡片数量不足以填满一整行时会
+                    // 折叠多余的空轨道,配合下面的 justify-content 让实际卡片
+                    // 整体居中;若改用 auto-fill,折叠不会发生,空轨道仍占位,
+                    // justify-content 反而会把可见卡片推向一侧、右边露出一块
+                    // 不对称的空白(该行为已用具体尺寸推演验证过)。
+                    gridTemplateColumns: `repeat(auto-fit, ${CARD_WIDTH}px)`,
+                    justifyContent: "center",
+                    gap: "var(--s-4)",
+                  }}
+                >
+                  {g.items.map((s) => (
+                    <StrategyCard
+                      key={s.id}
+                      s={s}
+                      leading={s.id === leaderId}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))
+          ) : (
+            // 列表:12 档一张整表,不按族分小节——见 StrategyListView 顶部
+            // 注释,行序仍按信号族分组(与卡片视图共用同一份 groups)。
+            <section style={{ marginBottom: "var(--s-5)" }}>
+              <StrategyListView groups={groups} leaderId={leaderId} />
             </section>
-          ))}
+          )}
 
           {/* 结算净值阶梯曲线:族开关放卡片外(与"仓位明细"节的 Segmented
               筛选行同一位置约定),曲线卡片本身只管画图。 */}
