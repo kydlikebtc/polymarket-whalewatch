@@ -849,55 +849,166 @@ function Metric({
 }
 
 /**
- * 卡片迷你净值曲线。240×52,不画坐标轴 —— 这个尺寸塞不下可读的刻度,
- * 卡上只负责传达"走势形状",具体数值由下面 4 个指标承担,横向对比由
- * 页面下方的大图承担(统一坐标系)。
- * 颜色按终值正负取 up/down 语义色,与卡上「结算净值」的着色一致。
+ * 净值走势图(原「卡片 sparkline」,U6 从卡片移入详情弹窗「区 1」并放大)。
+ *
+ * U6 的起点:240×52 的卡片尺寸画不出可读坐标轴,形状又因各自缩放不可横比,
+ * 只回答得了"大致涨还是跌"——这件事结算净值的正负号已经答过了,占卡片上
+ * 最大一块视觉面积不值当。放大到详情弹窗(接近 1200px 宽)后这两个限制都
+ * 不存在了,遂加上坐标轴,让它真正回答"这档的盈亏是怎么走出来的"。
+ *
+ * width/height 现在是入参(不再是函数内部写死的 240×52),调用方按场地大小
+ * 传。sparklinePath/sparklineAreaPath(lib/followCardView.ts)本身的签名与
+ * "各自定域缩放"的逻辑都不动——这里把 padL/padTB 这部分留白从传给它们的
+ * width/height 里预先扣掉,再用 <g transform="translate(...)"> 整体平移,
+ * 腾出坐标轴文字的位置,不需要为了加坐标轴去改那两个纯函数。
+ *
+ * 颜色按终值正负取 up/down 语义色,与「结算净值」的着色一致。
  */
-function Sparkline({ curve }: { curve: { ts: number; cum: number }[] }) {
-  const W = 240;
-  const H = 52;
+function Sparkline({
+  curve,
+  width,
+  height,
+}: {
+  curve: { ts: number; cum: number }[];
+  width: number;
+  height: number;
+}) {
   if (curve.length === 0) return null;
   const net = curve[curve.length - 1]?.cum ?? 0;
   const tone = net >= 0 ? "var(--up-500)" : "var(--down-500)";
-  // 单点特判:sparklinePath 对唯一点只产出 "M x y"(无 L 段),SVG 不会画出
-  // 任何可见线段;但 sparklineAreaPath 仍会把这个孤点和两个底角连成一个与
-  // 曲线形状无关的楔形色块(见 lib/followCardView.ts 顶部注释)。12 档刚
-  // 上线时"仅 1 笔已结算"是每一档必经的早期状态,这个分支会被频繁触发,
-  // 值得单独画成一条贯穿全宽的虚线 —— 实线会暗示"这条策略一直很平稳",
-  // 与事实(只有一个样本点,谈不上走势)不符;虚线明确传达"数据不足以连线"。
+  // 左侧留白放 y 轴文字(峰值/0/谷底,美元额可能到 5 位数);上下留白放
+  // 峰值/谷底标签本身的字高,避免 dominantBaseline="middle" 的文字被顶部/
+  // 底部边缘裁掉一半。数值取自 EquityCurve 同类留白(padL=48)的量级,
+  // 这里字号更小、但金额可能更长,稍微放宽到 56/12。
+  const padL = 56;
+  const padTB = 12;
+  const plotW = width - padL;
+  const plotH = height - padTB * 2;
+
+  // 单点特判(逻辑不变,W/H 换成入参):sparklinePath 对唯一点只产出
+  // "M x y"(无 L 段),SVG 不会画出任何可见线段;sparklineAreaPath 仍会把
+  // 这个孤点和两个底角连成一个与曲线形状无关的楔形色块(见
+  // lib/followCardView.ts 顶部注释)。画一条贯穿绘图区的虚线 + 这一个值
+  // 本身——只有一个样本点,谈不上走势,虚线明确传达"数据不足以连线"。
   if (curve.length === 1) {
-    const y = H / 2;
+    const y = height / 2;
     return (
       <svg
-        viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="none"
-        style={{ width: "100%", height: H, display: "block" }}
-        aria-hidden
+        viewBox={`0 0 ${width} ${height}`}
+        style={{ width: "100%", height: "auto", display: "block" }}
+        role="img"
+        aria-label={`唯一一笔已结算:${fmtSignedUsd(net)}`}
       >
         <line
-          x1={0}
+          x1={padL}
           y1={y}
-          x2={W}
+          x2={width}
           y2={y}
           stroke={tone}
           strokeWidth={1.6}
           strokeDasharray="3 3"
         />
+        <text
+          x={padL - 6}
+          y={y}
+          textAnchor="end"
+          dominantBaseline="middle"
+          fontSize={11}
+          fill={tone}
+          className="mono"
+        >
+          {axisFmt(net)}
+        </text>
       </svg>
     );
   }
-  const line = sparklinePath(curve, W, H);
+
+  const line = sparklinePath(curve, plotW, plotH);
   if (!line) return null;
+
+  // y 轴标签复用与 sparklinePath 内部完全相同的定域公式(该函数只返回一条
+  // path 字符串,不导出 lo/hi/sy;签名按要求不能改,这里只能就地重算同一份
+  // min/max——两行 Math.min/max,不是什么值得抽公共函数的重计算)。
+  // AXIS_PAD 常量与 lib/followCardView.ts 的 PAD 保持一致,否则标签位置会
+  // 和实际画出来的折线端点对不上。
+  const AXIS_PAD = 4;
+  const vals = curve.map((p) => p.cum);
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  const span = hi - lo;
+  const sy = (v: number) =>
+    padTB +
+    (span > 0
+      ? AXIS_PAD + (1 - (v - lo) / span) * (plotH - AXIS_PAD * 2)
+      : plotH / 2);
+  const showZero = lo <= 0 && 0 <= hi;
+
   return (
     <svg
-      viewBox={`0 0 ${W} ${H}`}
-      preserveAspectRatio="none"
-      style={{ width: "100%", height: H, display: "block" }}
-      aria-hidden
+      viewBox={`0 0 ${width} ${height}`}
+      style={{ width: "100%", height: "auto", display: "block" }}
+      role="img"
+      aria-label={`结算净值走势,当前 ${fmtSignedUsd(net)}`}
     >
-      <path d={sparklineAreaPath(line, W, H)} fill={tone} opacity={0.1} />
-      <path d={line} fill="none" stroke={tone} strokeWidth={1.6} />
+      {/* 0 基线:只在 0 真的落在这条曲线的取值范围内才画,否则会在可视区
+          之外画一条不对应任何东西的线,比不画更误导。 */}
+      {showZero ? (
+        <line
+          x1={padL}
+          y1={sy(0)}
+          x2={width}
+          y2={sy(0)}
+          stroke="var(--n-300)"
+          strokeWidth={1}
+          strokeDasharray="3 3"
+        />
+      ) : null}
+      <text
+        x={padL - 6}
+        y={sy(hi)}
+        textAnchor="end"
+        dominantBaseline="middle"
+        fontSize={11}
+        fill="var(--n-500)"
+        className="mono"
+      >
+        {axisFmt(hi)}
+      </text>
+      {showZero ? (
+        <text
+          x={padL - 6}
+          y={sy(0)}
+          textAnchor="end"
+          dominantBaseline="middle"
+          fontSize={11}
+          fill="var(--n-400)"
+          className="mono"
+        >
+          $0
+        </text>
+      ) : null}
+      {/* span===0(全部结算点累计值相同)时峰值=谷底,不重复画同一个标签。 */}
+      {span > 0 ? (
+        <text
+          x={padL - 6}
+          y={sy(lo)}
+          textAnchor="end"
+          dominantBaseline="middle"
+          fontSize={11}
+          fill="var(--n-500)"
+          className="mono"
+        >
+          {axisFmt(lo)}
+        </text>
+      ) : null}
+      <g transform={`translate(${padL}, ${padTB})`}>
+        <path
+          d={sparklineAreaPath(line, plotW, plotH)}
+          fill={tone}
+          opacity={0.1}
+        />
+        <path d={line} fill="none" stroke={tone} strokeWidth={1.6} />
+      </g>
     </svg>
   );
 }
@@ -909,19 +1020,22 @@ function Sparkline({ curve }: { curve: { ts: number; cum: number }[] }) {
 const CARD_WIDTH = 320;
 // 高度取 normal/low_sample 态(两者结构相同,是三态里内容最多的)的估算自然
 // 高度,按代码结构逐块加总(卡内 padding 32 + 各区块行高/行距,均取 320px
-// 卡宽、真实种子数据里最长的名字/参数提示串为准):
+// 卡宽、真实种子数据里最长的名字/参数提示串为准)。U6 去掉了 sparkline、
+// 卡片指标从 4 个(2×2)扩到 6 个(2×3),这里按新结构重新逐块加总,不是
+// 在旧的 440 上拍脑袋改一个数:
 //   标题行(名字+可能的标签)                       1 行 ≈ 36px
 //   参数提示(最长串"重仓共识"那条实测在更宽的卡上
 //     就已经换行,320px 更窄,保守按 3 行估)         ≈ 70px
-//   sparkline(240×52,组件内写死)+ 到指标网格间距    ≈ 64px
-//   4 个核心指标 2×2 网格(结算胜率的 Wilson CI 文本
-//     "83% · 95%CI 44–97%" 较长,保守按换行 2 行估)  ≈119px
+//   6 个核心指标 2×3 网格(结算胜率的 Wilson CI 文本
+//     "83% · 95%CI 44–97%" 较长,保守按换行 2 行估;
+//     3 行 + 2 道行间距)                            ≈170px
 //   元信息行(已结算·持有·运行,含上边框/内边距)      ≈ 39px
 //   CardActions(含上边框/内边距,单行按钮)            ≈ 57px
-// 合计 ≈417px,取整加一点余量 → 440,而不是卡死在算出来的数字上(字体渲染
-// 的行高误差、真实换行点都可能比手算多出几像素,minHeight 只是地板,偏高
-// 一点不会裁内容,偏低才会让长名字/长提示挤出这个"标准尺寸"的假象)。
-const CARD_MIN_HEIGHT = 440;
+// 合计 ≈404px(比旧结构的 417 少 13px:去掉 sparkline 区块的 64px,换来
+// 多一行指标的 51px,净减少)。取整加一点余量 → 420,理由同旧注释:
+// minHeight 只是地板,偏高一点不会裁内容,偏低才会让长文案挤出这个
+// "标准尺寸"的假象。
+const CARD_MIN_HEIGHT = 420;
 
 function StrategyCard({
   s,
@@ -933,6 +1047,9 @@ function StrategyCard({
   const m = s.metrics;
   const fund = s.fund; // 旧响应可能缺失 → 档案各项显示「—」
   const state = classifyCardState(m);
+  // 建议跟单额度(U6 从 CardActions 收进指标网格)所需。
+  const acct = s.account;
+  const hasPlan = !!acct && acct.rows.length > 0 && acct.suggestedUsd != null;
   return (
     <div
       className="ds-card"
@@ -1017,65 +1134,101 @@ function StrategyCard({
             )}
           </div>
         ) : (
-          <>
-            <Sparkline curve={m.equityCurve} />
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-                gap: "var(--s-3) var(--s-4)",
-                marginTop: "var(--s-3)",
-              }}
-            >
-              <Metric
-                label="结算净值"
-                title="已结算仓位累计已实现盈亏(不含持仓浮盈)"
-                value={
+          // U6:sparkline 移出卡片(详情弹窗区 1 放大展示),原地换成两个
+          // 从下沉区收回来的指标——平均年化(战绩全景同款,详情里仍保留
+          // 一份,全景本就该有重复)、建议跟单额度(原来在 CardActions 的
+          // 按钮行,现在按钮行只留「查看详情」)。4→6 个,320px 卡宽下
+          // minmax(130px,1fr) 自然出 2 列 3 行,不用改网格写法。
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+              gap: "var(--s-3) var(--s-4)",
+            }}
+          >
+            <Metric
+              label="结算净值"
+              title="已结算仓位累计已实现盈亏(不含持仓浮盈)"
+              value={
+                <span
+                  className={`mono ${pnlTone(m.totalRealized)}`}
+                  style={{ fontSize: 20, fontWeight: 700 }}
+                >
+                  {fmtSignedUsd(m.totalRealized)}
+                </span>
+              }
+            />
+            <Metric
+              label="ROI"
+              title="结算净值 ÷ 已投入本金(仅已结算仓)"
+              value={
+                m.roi == null ? (
+                  <span className="muted">—</span>
+                ) : (
                   <span
-                    className={`mono ${pnlTone(m.totalRealized)}`}
-                    style={{ fontSize: 20, fontWeight: 700 }}
+                    className={`mono ${pnlTone(m.roi)}`}
+                    style={{ fontSize: 18, fontWeight: 600 }}
                   >
-                    {fmtSignedUsd(m.totalRealized)}
+                    {m.roi >= 0 ? "+" : MINUS}
+                    {Math.abs(m.roi * 100).toFixed(1)}%
                   </span>
-                }
-              />
-              <Metric
-                label="ROI"
-                title="结算净值 ÷ 已投入本金(仅已结算仓)"
-                value={
-                  m.roi == null ? (
-                    <span className="muted">—</span>
-                  ) : (
-                    <span
-                      className={`mono ${pnlTone(m.roi)}`}
-                      style={{ fontSize: 18, fontWeight: 600 }}
-                    >
-                      {m.roi >= 0 ? "+" : MINUS}
-                      {Math.abs(m.roi * 100).toFixed(1)}%
-                    </span>
-                  )
-                }
-              />
-              <Metric
-                label="结算胜率"
-                title="盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间;平局不计入分母"
-                value={<span className="mono">{winRateLabel(m)}</span>}
-              />
-              <Metric
-                label="最大回撤"
-                title="净值曲线从峰值到后续谷底的最大跌幅(美元)"
-                value={
+                )
+              }
+            />
+            {/* 平均年化:小样本外推极不可靠(真实数据出现过 2.6 天窗口
+                外推 +20205% 的先例)。这条进了首屏就不再是可选装饰,下面
+                元信息行的 ⚠ 已结算仅 N 仓警示紧跟在这个网格之后(sparkline
+                拿掉后两者之间不再隔着 64px 的曲线区),title 里也把"短窗口
+                外推不可靠"这句话原样带上——与战绩全景的同一个 Metric 完全
+                同源,不是另写一份可能措辞不一致的说明。 */}
+            <Metric
+              label="平均年化"
+              title="结算净值 ÷ 峰值占用资金 × 365 ÷ 运行天数。把策略当一只小基金:按历史峰值备足本金、自成立日起折算年化。短窗口/小样本外推极不可靠,仅供横向对比;无结算仓或运行不足 1 天显示 —"
+              value={
+                fund?.annualizedRoi == null ? (
+                  <span className="muted">—</span>
+                ) : (
                   <span
-                    className={`mono ${m.maxDrawdown > 0 ? "down" : "muted"}`}
+                    className={`mono ${pnlTone(fund.annualizedRoi)}`}
+                    style={{ fontSize: 18, fontWeight: 600 }}
                   >
-                    {m.maxDrawdown > 0
-                      ? `${MINUS}$${fmtUsd0(m.maxDrawdown)}`
-                      : "$0"}
+                    {fmtAnnualized(fund.annualizedRoi)}
                   </span>
-                }
-              />
-            </div>
-          </>
+                )
+              }
+            />
+            <Metric
+              label="结算胜率"
+              title="盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间;平局不计入分母"
+              value={<span className="mono">{winRateLabel(m)}</span>}
+            />
+            <Metric
+              label="最大回撤"
+              title="净值曲线从峰值到后续谷底的最大跌幅(美元)"
+              value={
+                <span
+                  className={`mono ${m.maxDrawdown > 0 ? "down" : "muted"}`}
+                >
+                  {m.maxDrawdown > 0
+                    ? `${MINUS}$${fmtUsd0(m.maxDrawdown)}`
+                    : "$0"}
+                </span>
+              }
+            />
+            <Metric
+              label="建议跟单额度"
+              title="= 历史峰值占用 × 1.25(按单仓金额向上取整),即恰好接住全部历史信号的最小资金 + ~25% 冗余;历史窗口口径,未来峰值可能更高。推导细节与五档精确回放见「查看详情 → 账户推演」"
+              value={
+                hasPlan ? (
+                  <span className="mono" style={{ fontWeight: 600 }}>
+                    ${fmtUsd0(acct!.suggestedUsd!)}
+                  </span>
+                ) : (
+                  <span className="muted">—</span>
+                )
+              }
+            />
+          </div>
         )}
       </div>
       {/* 元信息行:取代被下沉的「已结算 · 持有」指标。low_sample 档在这里加
@@ -1151,9 +1304,12 @@ function computeDelayExecAverages(
 
 /**
  * 卡片瘦身(改版 Task 2)后被下沉的 10 个指标,从原 StrategyCard 原样搬迁
- * 而来,Task 3 挂进策略详情弹窗「区 1 战绩全景」(StrategyDetailDialog)。
+ * 而来,Task 3 挂进策略详情弹窗「区 2 战绩全景」(StrategyDetailDialog;
+ * U6 在前面加了一个「区 1 净值走势」,原来的区 1 顺移成区 2)。
  * 用「整体搬迁函数体」而不是删掉重写,是为了保证这些 Metric 的 title
  * (例如「平均年化」那条解释了短窗外推不可靠)不经过人手转录、零丢失风险。
+ * U6 之后「平均年化」这一条在卡片正文里也有一份同源渲染(见 StrategyCard),
+ * 是有意的重复——详情本就该有全景,不是漏删。
  *
  * delayExec 由调用方算好传入(见上面 computeDelayExecAverages 的注释),
  * 不在本函数内部重算;avgSlipCents 只在本区使用,仍然就地算。
@@ -1352,7 +1508,8 @@ const fmtPct = (u: number | null) =>
   u == null ? "—" : `${(u * 100).toFixed(0)}%`;
 
 /**
- * 成本四段分解(策略详情弹窗「区 2」,改版 Task 3 唯一新增的信息组织)。
+ * 成本四段分解(策略详情弹窗「区 3」,改版 Task 3 唯一新增的信息组织;
+ * U6 在前面加了「区 1 净值走势」后,原来的区 2 顺移成区 3)。
  * 追价成本→延迟成本→执行滑点→协议费四项此前是四个并列的 Metric(见
  * StrategyFullMetrics),读者看不出它们是一条链——串起来才回答「纸面盈亏
  * 和实盘差在哪」。呈现选横向流程条(auto-fit 网格 + label 前缀箭头)而不是
@@ -1497,21 +1654,20 @@ function CostChain({
   );
 }
 
-// 卡片底部动作行:「建议跟单额度」数字 + 一个「查看详情」弹窗入口(合并原
-// 「账户推演」「操作历史」两个按钮——内容没丢,并进同一个弹窗的两个区,见
-// 下方 StrategyDetailDialog)。细节全部收进弹窗,卡片保持紧凑。仅展示,不
-// 参与任何决策。
+// 卡片底部动作行:一个「查看详情」弹窗入口(合并原「账户推演」「操作历史」
+// 两个按钮——内容没丢,并进同一个弹窗的两个区,见下方 StrategyDetailDialog)。
+// 细节全部收进弹窗,卡片保持紧凑。仅展示,不参与任何决策。
 //
-// 与旧版的一处行为差异:旧版在 !hasPlan && !hasHistory 时整行隐藏(两个
-// 弹窗各自都没数据可看,按钮就没有意义)。合并后「查看详情」还解锁了恒有
-// 内容的「区 1 战绩全景」——哪怕 0 仓位,策略的创建日期/运行天数依然有值
-// (见 lib/follow.ts computeFundMetrics 的 startTs ?? firstEntryTs),所以
-// 这里不再整行隐藏,只有「建议跟单额度」这一小段仍按 hasPlan 显示(它确实
-// 可能真的没有)。
+// U6:「建议跟单额度」从这一行收进了卡片正文的指标网格(见 StrategyCard),
+// 这里不再重复渲染,按钮行只剩「查看详情」一个。
+//
+// 与更早版本的一处行为差异:更早版本在 !hasPlan && !hasHistory 时整行
+// 隐藏(两个弹窗各自都没数据可看,按钮就没有意义)。合并后「查看详情」还
+// 解锁了恒有内容的「区 2 战绩全景」——哪怕 0 仓位,策略的创建日期/运行
+// 天数依然有值(见 lib/follow.ts computeFundMetrics 的 startTs ??
+// firstEntryTs),所以这里不整行隐藏。
 function CardActions({ s }: { s: FollowStrategyView }) {
   const [detailOpen, setDetailOpen] = useState(false);
-  const acct = s.account;
-  const hasPlan = !!acct && acct.rows.length > 0 && acct.suggestedUsd != null;
   return (
     <div
       style={{
@@ -1524,19 +1680,11 @@ function CardActions({ s }: { s: FollowStrategyView }) {
         flexWrap: "wrap",
       }}
     >
-      {hasPlan ? (
-        <>
-          <span className="ds-hint">建议跟单额度</span>
-          <span className="mono" style={{ fontWeight: 600 }}>
-            ${fmtUsd0(acct!.suggestedUsd!)}
-          </span>
-        </>
-      ) : null}
       <button
         type="button"
         className="ds-btn"
         onClick={() => setDetailOpen(true)}
-        title="战绩全景 · 成本四段分解 · 账户推演 · 操作历史"
+        title="净值走势 · 战绩全景 · 成本四段分解 · 账户推演 · 操作历史"
       >
         查看详情
       </button>
@@ -1807,21 +1955,29 @@ function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
 
 /* ------------------------------------------------------ detail dialog */
 
-// 尽量占满视口宽(Modal 内部按 min(width, 100%) 收敛):四区共存,取原两个
+// 尽量占满视口宽(Modal 内部按 min(width, 100%) 收敛):五区共存,取原两个
 // 独立弹窗里较宽的那个——操作历史表格原本就是 1200(见上面 HistoryDialog
 // 曾经的调用点);账户推演原本是 680,共用 1200 只是给它的表格多一点留白,
 // 不会挤压或产生新的换行。
 const DETAIL_DIALOG_WIDTH = 1200;
+// 净值走势图(U6 从卡片移入的 Sparkline)尺寸:宽度按弹窗内容区域的量级取
+// (1200 减掉 Modal/section 的内边距后大致这个数量级,SVG 本身靠 viewBox +
+// width:100% 响应式伸缩,数字不用精确到像素);高度取协调方给的 160-200px
+// 区间中段。
+const DETAIL_SPARK_WIDTH = 1120;
+const DETAIL_SPARK_HEIGHT = 180;
 
 /**
- * 策略详情弹窗(改版 Task 3):合并原「账户推演」「操作历史」两个独立弹窗,
- * 加上 Task 2 下沉的 10 个指标,分四区呈现:
- *   区 1 战绩全景     StrategyFullMetrics 原样挂载
- *   区 2 成本四段分解 本任务唯一新增的信息组织,见 CostChain
- *   区 3 账户推演     AccountPlanDialog 内容原样搬入(只换容器,内容一字不改)
- *   区 4 操作历史     HistoryDialog 内容原样搬入(只换容器,内容一字不改)
+ * 策略详情弹窗(改版 Task 3,U6 追加区 1):合并原「账户推演」「操作历史」
+ * 两个独立弹窗,加上下沉的指标,分五区呈现:
+ *   区 1 净值走势     U6 从卡片移入的 Sparkline,放大 + 加坐标轴,作为
+ *                     整个弹窗的视觉引导
+ *   区 2 战绩全景     StrategyFullMetrics 原样挂载
+ *   区 3 成本四段分解 本任务唯一新增的信息组织,见 CostChain
+ *   区 4 账户推演     AccountPlanDialog 内容原样搬入(只换容器,内容一字不改)
+ *   区 5 操作历史     HistoryDialog 内容原样搬入(只换容器,内容一字不改)
  * avgDelayCents/avgExecCents 在本层算一次(computeDelayExecAverages),
- * 通过 delayExec 传给区 1、区 2 两处消费者,不重复 reduce。
+ * 通过 delayExec 传给区 2、区 3 两处消费者,不重复 reduce。
  * 设计见 docs/plans/2026-08-12-follow-page-card-redesign-design.md §3.2。
  */
 function StrategyDetailDialog({
@@ -1838,6 +1994,7 @@ function StrategyDetailDialog({
   // delayExec、拼一遍 allPos。
   if (!open) return null;
 
+  const m = s.metrics;
   const allPos = [...s.open, ...s.settled];
   const delayExec = computeDelayExecAverages(allPos);
   const acct = s.account;
@@ -1858,6 +2015,28 @@ function StrategyDetailDialog({
         }}
       >
         <section>
+          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+            净值走势
+          </div>
+          {m.equityCurve.length > 0 ? (
+            <Sparkline
+              curve={m.equityCurve}
+              width={DETAIL_SPARK_WIDTH}
+              height={DETAIL_SPARK_HEIGHT}
+            />
+          ) : (
+            <div className="ds-empty">
+              暂无已结算仓位 — 有仓位结算后这里会画出净值走势
+            </div>
+          )}
+        </section>
+
+        <section
+          style={{
+            borderTop: "1px solid var(--n-150)",
+            paddingTop: "var(--s-4)",
+          }}
+        >
           <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
             战绩全景
           </div>
