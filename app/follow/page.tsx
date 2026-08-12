@@ -14,6 +14,11 @@ import {
   type ReactNode,
 } from "react";
 import { Modal, Segmented, Tag } from "../ui";
+import {
+  classifyCardState,
+  sparklineAreaPath,
+  sparklinePath,
+} from "../../lib/followCardView";
 
 /* ------------------------------------------------------------- API types */
 // 客户端本地类型:镜像 lib/follow 的视图结构,但独立声明,避免把 server 侧
@@ -148,6 +153,11 @@ type PosTab = "settled" | "open";
 
 // 策略筛选的「全部」哨兵值。策略 id 从 1 起(AUTOINCREMENT),0 不会撞真实 id。
 const FILTER_ALL = 0;
+
+// 卡片/列表视图切换,记住用户选择。key 沿用 app/useSound.ts 的 ww_ 前缀
+// 约定(该文件是本仓库目前唯一在用 localStorage 的先例)。
+type ViewMode = "card" | "list";
+const VIEW_MODE_KEY = "ww_follow_view";
 
 /* --------------------------------------------------------------- format */
 
@@ -338,6 +348,15 @@ const FAMILY_ORDER: FamilyKey[] = [
   "other",
 ];
 
+// 按族分组后的一组(FollowPage 的 groups 就是这个形状)。FamilyToggles 与
+// 新增的 StrategyListView(卡片/列表切换)都要接这份数据,提成一个类型
+// 别名,不在两处各写一遍相同的内联对象类型。
+type FamilyGroup = {
+  key: FamilyKey;
+  meta: { title: string; blurb: string };
+  items: FollowStrategyView[];
+};
+
 // source → 信号族。与 lib/followCandidate.ts 的 FOLLOW_SOURCE_KINDS 六个值
 // 一一对应;任何不在这六种里的字符串(含 undefined,调用处已兜到 "consensus")
 // 都归入 "other",绝不抛错或让卡片消失。
@@ -356,6 +375,46 @@ function familyOf(source: string): FamilyKey {
     default:
       return "other";
   }
+}
+
+// 每档一个 emoji(卡片标题行、列表策略列都用同一份,单一映射源)。核实过
+// 项目里已经在用的 emoji 语义,避免撞车:
+//   🐳 = 大额成交"巨鲸"档位(lib/alert.ts WHALE_TIER_USD、page.tsx/
+//       accumulation.tsx/alerts.tsx 全站一致)——「巨鲸」这一档复用它,读者
+//       不用学新符号。
+//   💰 = "大单"(次于巨鲸的成交量级),🏆 = 聪明钱白名单(钱包身份,不是
+//       策略维度的东西)——两个都已被占满,不会再拿来标某个策略档。
+//   🔥 = 共识,⚖️ = 分歧(app/consensus/page.tsx「🔥 共识 · ⚖️ 分歧」、
+//       市场信号卡「⚖️ 聪明钱分歧」、Telegram 播报同一对):「分歧解除」
+//       所在的分歧族用 ⚖️ 是同一语义的延伸,不是新造。
+//   🎯 表面看合适(app/discovery/page.tsx 与 lib/walletTags.ts 都把
+//       early_winner 标成 🎯「早期赢家」,与「早期赢家跟投」这档同源),但
+//       它在全站的主要角色是 app/ui.tsx 的 MarketSlugActions 里"点开这个
+//       市场的信号卡"这个可点击动作(几乎每张列表/表格的市场列旁边都有)。
+//       在这里把它摆成纯装饰、不可点击的策略图标,容易让人以为点了会跳转。
+//       改用 🌱(早期/新生)避开这个"看着像按钮"的风险。
+//   🐋 是 app/ui.tsx TopNav 的站点品牌图标("🐋 Polymarket 监控",每页顶栏
+//       常驻),「超级巨鲸」原计划沿用 🐋 会和站点 logo 撞在同一屏——改用
+//       🌊,仍在"海洋"的视觉家族里,但不会被读成"这是另一个 logo"。
+// 其余 8 个此前未被占用,按"同族内视觉关联、跨族能区分"选定。
+const STRATEGY_EMOJI: Record<string, string> = {
+  保守: "🛡️",
+  激进: "⚡",
+  精英共识: "💎",
+  重仓共识: "🏋️",
+  首发共识: "🚀",
+  巨鲸: "🐳",
+  超级巨鲸: "🌊",
+  巨鲸精英: "🦈",
+  一边倒分歧: "⚖️",
+  分歧解除: "🏳️",
+  高分独狼: "🐺",
+  早期赢家跟投: "🌱",
+};
+// 兜底:未来加新档、来不及补映射时不能让页面报 undefined 或崩掉——退回
+// 空字符串(不显示图标,而不是显示一个可能撞语义的占位符号)。
+function strategyEmoji(name: string): string {
+  return STRATEGY_EMOJI[name] ?? "";
 }
 
 /* --------------------------------------------------------- params 展示口径 */
@@ -456,6 +515,28 @@ function paramsHint(p: FollowStrategyView["params"]): string {
   return parts.join(" · ");
 }
 
+// 卡片用的精简参数提示:只留跨档差异化的门槛(sourceCoreHint)+ 偏离默认值
+// 的护栏覆盖(新鲜度/价格上限,与 paramsHint 同一套判断,重复写一遍是因为
+// 只有两个廉价的 !== 比较,不值得为此把 paramsHint 拆成"核心部分+统一部分"
+// 两段——那样反而会改变 paramsHint 现有的拼接顺序,给一个已经在跑的函数
+// 引入不必要的风险)。丢掉的是 12 档全都一样的三项:$/信号、偏离护栏本身
+// 的数值、持有到结算——那三项要么已经在页面顶部说过一次("固定 $/信号 ·
+// 持有到结算"),要么完整版 paramsHint 原样搬进了详情弹窗(见
+// StrategyDetailDialog),不是丢了,只是卡片不重复。目标 1 行,而不是原来
+// 320px 卡宽下常见的 3 行。
+function cardParamsHint(p: FollowStrategyView["params"]): string {
+  const freshSec = p.freshSec ?? DEFAULT_FRESH_SEC_DISPLAY;
+  const maxPrice = p.maxPrice ?? DEFAULT_MAX_PRICE_DISPLAY;
+  const parts = [sourceCoreHint(p)];
+  if (freshSec !== DEFAULT_FRESH_SEC_DISPLAY) {
+    parts.push(`新鲜度≤${Math.round(freshSec / 60)}分`);
+  }
+  if (maxPrice !== DEFAULT_MAX_PRICE_DISPLAY) {
+    parts.push(`价格≤${Math.round(maxPrice * 100)}¢`);
+  }
+  return parts.join(" · ");
+}
+
 // 市场展示名:优先 title,回退到 event_slug / condition_id。
 function marketLabel(p: FollowPositionRow): string {
   return p.title || p.event_slug || p.condition_id;
@@ -495,6 +576,10 @@ type CurveSeries = {
   id: number;
   name: string;
   strokeIdx: number;
+  // 族开关(改版 Task 4)按这个字段过滤要不要画这条线;strokeIdx 仍按
+  // shown 的原始顺序分配、不受族过滤影响,保证同一策略的线型+颜色不会
+  // 因为切换族开关而改变(见 FollowPage 里 series 的构造注释)。
+  family: FamilyKey;
   curve: { ts: number; cum: number }[];
 };
 
@@ -518,6 +603,11 @@ function stepPath(
 const axisFmt = (v: number) => `${v < 0 ? MINUS : ""}$${fmtUsd0(Math.abs(v))}`;
 
 function EquityCurve({ series }: { series: CurveSeries[] }) {
+  // hover 高亮(改版 Task 4):悬停/聚焦某条图例时,该线加粗、其余线连同
+  // 结算点一起降到 20% 透明度,帮读者从 12 档同屏叠画里挑出一条线看。放在
+  // 最前面、任何 early return 之前——Hooks 规则要求每次渲染都无条件调用,
+  // 不能被下面「暂无已结算仓位」的提前 return 跳过。
+  const [hoverId, setHoverId] = useState<number | null>(null);
   const withData = series.filter((s) => s.curve.length > 0);
   if (withData.length === 0) {
     return (
@@ -677,16 +767,21 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
             </text>
           </g>
         ))}
-        {/* 各策略阶梯线 + 结算点 */}
+        {/* 各策略阶梯线 + 结算点。用 <g> 整组设 opacity——同一组里的线和它
+            的结算点一起淡化,不必在 path 和每个 circle 上分别算一遍(也不
+            会出现"线淡了、点还是实心"这种半淡化的观感,这正是圆点会浮在
+            淡化线上的问题的根)。 */}
         {withData.map((s) => {
           const st = strokeFor(s.strokeIdx);
+          const isHovered = hoverId === s.id;
+          const dimmed = hoverId != null && !isHovered;
           return (
-            <g key={s.id}>
+            <g key={s.id} opacity={dimmed ? 0.2 : 1}>
               <path
                 d={stepPath(s.curve, sx, sy)}
                 fill="none"
                 stroke={st.color}
-                strokeWidth={2}
+                strokeWidth={isHovered ? 2.6 : 1.8}
                 strokeDasharray={st.dash}
                 strokeLinejoin="round"
                 strokeLinecap="round"
@@ -704,7 +799,11 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
           );
         })}
       </svg>
-      {/* 图例:虚实样条 + 策略名 + 净值 */}
+      {/* 图例:虚实样条 + 策略名 + 净值。每项可 hover 也可键盘 Tab 到再用
+          onFocus/onBlur 触发——onMouseEnter/onMouseLeave 只覆盖鼠标用户,
+          纯键盘用户等于没有这个功能。tabIndex=0(不是 ui.tsx tip-pop 那种
+          -1)是特意的:-1 只能点击聚焦、永远不进 Tab 顺序,这里恰恰需要
+          Tab 能到达。 */}
       <div
         style={{
           display: "flex",
@@ -719,6 +818,11 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
           return (
             <span
               key={s.id}
+              tabIndex={0}
+              onMouseEnter={() => setHoverId(s.id)}
+              onMouseLeave={() => setHoverId(null)}
+              onFocus={() => setHoverId(s.id)}
+              onBlur={() => setHoverId(null)}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -748,6 +852,53 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
   );
 }
 
+// 族开关(改版 Task 4):默认全开,点击独立切换某族的可见性。用一排独立
+// 切换按钮而不是 Segmented——Segmented 是单选语义(同一时刻只有一个
+// value),但读者的真实需求是任意子集:可能只想看共识族,也可能想把共识族
+// 和异常大额族放在一起比。样式复用 ui.tsx SoundToggle 同一套写法
+// (ds-btn + ds-btn--subtle/ds-btn--ghost + aria-pressed),不新造 CSS。
+// groups 直接复用页面已经算好的按族分组结果(卡片分组用的同一份),只给
+// 「确实有策略」的族一个按钮——族数 <2 时开关没有意义(无从比较),不渲染。
+function FamilyToggles({
+  groups,
+  active,
+  onToggle,
+}: {
+  groups: FamilyGroup[];
+  active: Set<FamilyKey>;
+  onToggle: (key: FamilyKey) => void;
+}) {
+  if (groups.length < 2) return null;
+  return (
+    <div
+      role="group"
+      aria-label="按信号族筛选净值曲线"
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "var(--s-2)",
+        marginBottom: "var(--s-3)",
+      }}
+    >
+      {groups.map((g) => {
+        const on = active.has(g.key);
+        return (
+          <button
+            key={g.key}
+            type="button"
+            className={`ds-btn ${on ? "ds-btn--subtle" : "ds-btn--ghost"}`}
+            aria-pressed={on}
+            onClick={() => onToggle(g.key)}
+            title={g.meta.blurb}
+          >
+            {g.meta.title} · {g.items.length}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------- metric / cards */
 
 // 单个指标块:eyebrow 标签 + 值节点(值节点自带 up/down/mono 类,不套 kpi-value
@@ -769,6 +920,201 @@ function Metric({
   );
 }
 
+/**
+ * 净值走势图(原「卡片 sparkline」,U6 从卡片移入详情弹窗「区 1」并放大)。
+ *
+ * U6 的起点:240×52 的卡片尺寸画不出可读坐标轴,形状又因各自缩放不可横比,
+ * 只回答得了"大致涨还是跌"——这件事结算净值的正负号已经答过了,占卡片上
+ * 最大一块视觉面积不值当。放大到详情弹窗(接近 1200px 宽)后这两个限制都
+ * 不存在了,遂加上坐标轴,让它真正回答"这档的盈亏是怎么走出来的"。
+ *
+ * width/height 现在是入参(不再是函数内部写死的 240×52),调用方按场地大小
+ * 传。sparklinePath/sparklineAreaPath(lib/followCardView.ts)本身的签名与
+ * "各自定域缩放"的逻辑都不动——这里把 padL/padTB 这部分留白从传给它们的
+ * width/height 里预先扣掉,再用 <g transform="translate(...)"> 整体平移,
+ * 腾出坐标轴文字的位置,不需要为了加坐标轴去改那两个纯函数。
+ *
+ * 颜色按终值正负取 up/down 语义色,与「结算净值」的着色一致。
+ */
+function Sparkline({
+  curve,
+  width,
+  height,
+}: {
+  curve: { ts: number; cum: number }[];
+  width: number;
+  height: number;
+}) {
+  if (curve.length === 0) return null;
+  const net = curve[curve.length - 1]?.cum ?? 0;
+  const tone = net >= 0 ? "var(--up-500)" : "var(--down-500)";
+  // 左侧留白放 y 轴文字(峰值/0/谷底,美元额可能到 5 位数);上下留白放
+  // 峰值/谷底标签本身的字高,避免 dominantBaseline="middle" 的文字被顶部/
+  // 底部边缘裁掉一半。数值取自 EquityCurve 同类留白(padL=48)的量级,
+  // 这里字号更小、但金额可能更长,稍微放宽到 56/12。
+  const padL = 56;
+  const padTB = 12;
+  const plotW = width - padL;
+  const plotH = height - padTB * 2;
+
+  // 单点特判(逻辑不变,W/H 换成入参):sparklinePath 对唯一点只产出
+  // "M x y"(无 L 段),SVG 不会画出任何可见线段;sparklineAreaPath 仍会把
+  // 这个孤点和两个底角连成一个与曲线形状无关的楔形色块(见
+  // lib/followCardView.ts 顶部注释)。画一条贯穿绘图区的虚线 + 这一个值
+  // 本身——只有一个样本点,谈不上走势,虚线明确传达"数据不足以连线"。
+  if (curve.length === 1) {
+    const y = height / 2;
+    return (
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        style={{ width: "100%", height: "auto", display: "block" }}
+        role="img"
+        aria-label={`唯一一笔已结算:${fmtSignedUsd(net)}`}
+      >
+        <line
+          x1={padL}
+          y1={y}
+          x2={width}
+          y2={y}
+          stroke={tone}
+          strokeWidth={1.6}
+          strokeDasharray="3 3"
+        />
+        <text
+          x={padL - 6}
+          y={y}
+          textAnchor="end"
+          dominantBaseline="middle"
+          fontSize={11}
+          fill={tone}
+          className="mono"
+        >
+          {axisFmt(net)}
+        </text>
+      </svg>
+    );
+  }
+
+  const line = sparklinePath(curve, plotW, plotH);
+  if (!line) return null;
+
+  // y 轴标签复用与 sparklinePath 内部完全相同的定域公式(该函数只返回一条
+  // path 字符串,不导出 lo/hi/sy;签名按要求不能改,这里只能就地重算同一份
+  // min/max——两行 Math.min/max,不是什么值得抽公共函数的重计算)。
+  // AXIS_PAD 常量与 lib/followCardView.ts 的 PAD 保持一致,否则标签位置会
+  // 和实际画出来的折线端点对不上。
+  const AXIS_PAD = 4;
+  const vals = curve.map((p) => p.cum);
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  const span = hi - lo;
+  const sy = (v: number) =>
+    padTB +
+    (span > 0
+      ? AXIS_PAD + (1 - (v - lo) / span) * (plotH - AXIS_PAD * 2)
+      : plotH / 2);
+  const showZero = lo <= 0 && 0 <= hi;
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      style={{ width: "100%", height: "auto", display: "block" }}
+      role="img"
+      aria-label={`结算净值走势,当前 ${fmtSignedUsd(net)}`}
+    >
+      {/* 0 基线:只在 0 真的落在这条曲线的取值范围内才画,否则会在可视区
+          之外画一条不对应任何东西的线,比不画更误导。 */}
+      {showZero ? (
+        <line
+          x1={padL}
+          y1={sy(0)}
+          x2={width}
+          y2={sy(0)}
+          stroke="var(--n-300)"
+          strokeWidth={1}
+          strokeDasharray="3 3"
+        />
+      ) : null}
+      <text
+        x={padL - 6}
+        y={sy(hi)}
+        textAnchor="end"
+        dominantBaseline="middle"
+        fontSize={11}
+        fill="var(--n-500)"
+        className="mono"
+      >
+        {axisFmt(hi)}
+      </text>
+      {showZero ? (
+        <text
+          x={padL - 6}
+          y={sy(0)}
+          textAnchor="end"
+          dominantBaseline="middle"
+          fontSize={11}
+          fill="var(--n-400)"
+          className="mono"
+        >
+          $0
+        </text>
+      ) : null}
+      {/* span===0(全部结算点累计值相同)时峰值=谷底,不重复画同一个标签。 */}
+      {span > 0 ? (
+        <text
+          x={padL - 6}
+          y={sy(lo)}
+          textAnchor="end"
+          dominantBaseline="middle"
+          fontSize={11}
+          fill="var(--n-500)"
+          className="mono"
+        >
+          {axisFmt(lo)}
+        </text>
+      ) : null}
+      <g transform={`translate(${padL}, ${padTB})`}>
+        <path
+          d={sparklineAreaPath(line, plotW, plotH)}
+          fill={tone}
+          opacity={0.1}
+        />
+        <path d={line} fill="none" stroke={tone} strokeWidth={1.6} />
+      </g>
+    </svg>
+  );
+}
+
+// 策略卡标准尺寸(不自适应)。宽度固定值(见下方网格 `repeat(auto-fit,
+// ${CARD_WIDTH}px)`,不用 minmax(…, 1fr)——1fr 会把列宽拉伸到随容器变化,
+// 380px 容器和 900px 容器下同样 3 列但卡宽能差 100px,三种卡态高度又参差,
+// 整片卡片区显得凌乱。
+//
+// 紧凑化那轮考虑过把 320 缩窄到 280 左右换 1180px 容器下 4 列——算过账发现
+// 不划算:6 指标 2×3 网格靠 `minmax(130px, 1fr)` 撑开,2 列需要内容区
+// ≥130+16+130=276px;卡宽缩到 280、内边距按下面收紧到 12px 后,内容区只剩
+// 280-24=256px,不够 276,网格会从 2 列塌成 1 列,指标区从 3 行变 6 行——
+// 宽度省的那点空间,换来的是高度反涨,与"更紧凑"的目标正好相反。保持
+// 320 不动,把紧凑化全部压在高度上(见下方 CARD_MIN_HEIGHT)。
+const CARD_WIDTH = 320;
+// 高度取 normal/low_sample 态(两者结构相同,是三态里内容最多的)的估算自然
+// 高度,按紧凑化后的新结构逐块加总(均取 320px 卡宽、真实种子数据里最长的
+// 名字/参数提示串为准):
+//   卡内 padding(--s-4→--s-3,上下各 12px)          ≈ 24px
+//   标题行(emoji+名字+可能的标签)                   1 行 ≈ 36px
+//   参数提示(cardParamsHint 只剩差异化门槛,压到 1 行,
+//     不再是 paramsHint 全量版本那 3 行)             ≈ 18px
+//   6 个核心指标 2×3 网格(结算胜率的 Wilson CI 文本
+//     较长,保守按换行 2 行估;行间距收紧到 --s-2=8px,
+//     3 行 + 2 道行间距)                             ≈162px
+//   元信息行(已结算·持有·运行,含上边框/内边距)       ≈ 39px
+//   CardActions(含上边框/内边距,单行按钮)             ≈ 57px
+// 合计 ≈336px,取整加一点余量 → 350(比上一轮的 420 少 70,主要来自参数
+// 提示 3 行→1 行省下的 ~52px、padding 收紧省的 8px、网格行距收紧省的
+// 8px)。minHeight 仍然只是地板:偏高一点不会裁内容,偏低才会让长文案挤出
+// 这个"标准尺寸"的假象。
+const CARD_MIN_HEIGHT = 350;
+
 function StrategyCard({
   s,
   leading,
@@ -778,42 +1124,35 @@ function StrategyCard({
 }) {
   const m = s.metrics;
   const fund = s.fund; // 旧响应可能缺失 → 档案各项显示「—」
-  const slip = m.slippageCost;
-  // 均 ¢ 差/仓:所有仓位(open+settled,追价成本在进场即产生)的单仓 ¢ 差算术平均。
-  // 简单口径 —— 每仓等权、不按 usd 加权;目的只是把美元合计还原成可横比的偏离度。
-  const allPos = [...s.open, ...s.settled];
-  const avgSlipCents =
-    allPos.length > 0
-      ? allPos.reduce((sum, p) => sum + rowSlipCents(p), 0) / allPos.length
-      : null;
-  // 均延迟成本:仅统计有 formation_price 的仓位(老仓位/取价失败不进样本),
-  // 每仓等权算术平均;样本数以 n=N 标注,提醒读者小样本不可过度解读。
-  const delaySamples = allPos
-    .map(rowDelayCents)
-    .filter((c): c is number => c != null);
-  const avgDelayCents =
-    delaySamples.length > 0
-      ? delaySamples.reduce((sum, c) => sum + c, 0) / delaySamples.length
-      : null;
-  // 均执行滑点:仅统计有盘口快照的仓位(执行层上线后的新仓),每仓等权平均。
-  const execSamples = allPos
-    .map(rowExecCents)
-    .filter((c): c is number => c != null);
-  const avgExecCents =
-    execSamples.length > 0
-      ? execSamples.reduce((sum, c) => sum + c, 0) / execSamples.length
-      : null;
+  const state = classifyCardState(m);
+  // 建议跟单额度(U6 从 CardActions 收进指标网格)所需。
+  const acct = s.account;
+  const hasPlan = !!acct && acct.rows.length > 0 && acct.suggestedUsd != null;
   return (
     <div
       className="ds-card"
       style={{
-        padding: "var(--s-4)",
+        // 紧凑化:内边距从 --s-4(16px)收一档到 --s-3(12px)——仍是设计系统
+        // 里的标准间距值,不是压到 0,目标是紧凑不是拥挤。
+        padding: "var(--s-3)",
+        // 标准尺寸:宽由外层网格的固定列宽拉伸决定(grid 默认 stretch,这里
+        // 不必再显式写 width),高用 minHeight(非 height)兜底到 normal 态
+        // 的自然高度——策略名极端情况下换行,minHeight 只设下限,卡会自然
+        // 长高而不是裁内容,同行的 grid 会跟着等高,不会出现内容被切掉的卡。
+        minHeight: CARD_MIN_HEIGHT,
+        display: "flex",
+        flexDirection: "column",
         // 领先卡用品牌色描边 + 抬升阴影强调,全部走 token,不硬编码色。
         ...(leading
           ? {
               borderColor: "var(--brand-500)",
               boxShadow: "var(--shadow-md)",
             }
+          : null),
+        // 空档(尚无已结算仓位):虚线边框 + 浅灰底,把「还没轮到它」和「跑了
+        // 但没赚到钱」在视觉上分开 —— 见下方 empty 分支注释。
+        ...(state === "empty"
+          ? { borderStyle: "dashed", background: "var(--n-50)" }
           : null),
       }}
     >
@@ -826,15 +1165,264 @@ function StrategyCard({
           marginBottom: "var(--s-3)",
         }}
       >
+        {/* emoji 与列表视图共用同一份 STRATEGY_EMOJI 映射,同一档在两种视图
+            下永远是同一个符号。aria-hidden:纯装饰,策略名本身已经是可读的
+            文字标识,emoji 不承载屏幕阅读器需要的额外信息。 */}
+        <span aria-hidden>{strategyEmoji(s.name)}</span>
         <strong style={{ fontSize: "var(--t-lg)", color: "var(--n-900)" }}>
           {s.name}
         </strong>
         {leading ? <Tag variant="brand">本窗口领先</Tag> : null}
         {!s.enabled ? <Tag variant="warn">已停用</Tag> : null}
       </div>
-      <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
-        {paramsHint(s.params)}
+      {/* 精简参数提示(见 cardParamsHint 注释):只留跨档差异化门槛,压到
+          1 行——12 档统一的三项(单价/偏离护栏/退出规则)挪进了详情弹窗,
+          不是丢了。 */}
+      <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+        {cardParamsHint(s.params)}
       </div>
+      {/* 中段:固定高度后 empty 态内容最少,原样顶对齐会在卡底留一整块空白、
+          说明文字贴在顶部很难看。用 flex:1 让这段吃掉 minHeight 撑出来的
+          富余空间,再按状态选 justifyContent——empty 态居中,其余状态维持
+          原来的顶对齐(sparkline/指标网格本来就接近撑满,居中与顶对齐视觉
+          上没有区别,不必分叉判断)。 */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: state === "empty" ? "center" : "flex-start",
+        }}
+      >
+        {state === "empty" ? (
+          // 空档:10 条新档刚上线时全是这个状态。虚线边框 + 说明把「还没轮到
+          // 它」和「跑了但没赚到钱」在视觉上分开 —— 沿用正常卡样式会显示 12
+          // 张写满「—」的同样大小的卡,容易被误判成「新档都不工作」。
+          <div
+            className="ds-hint"
+            style={{
+              textAlign: "center",
+              padding: "var(--s-4) 0",
+              lineHeight: 1.7,
+            }}
+          >
+            {m.openCount > 0 ? (
+              <>
+                尚无已结算仓位
+                <br />
+                持有 {m.openCount} 仓 · 等待首次结算
+              </>
+            ) : (
+              <>
+                尚无仓位
+                <br />
+                等待信号命中
+              </>
+            )}
+          </div>
+        ) : (
+          // U6:sparkline 移出卡片(详情弹窗区 1 放大展示),原地换成两个
+          // 从下沉区收回来的指标——平均年化(战绩全景同款,详情里仍保留
+          // 一份,全景本就该有重复)、建议跟单额度(原来在 CardActions 的
+          // 按钮行,现在按钮行只留「查看详情」)。4→6 个,320px 卡宽下
+          // minmax(130px,1fr) 自然出 2 列 3 行,不用改网格写法。行间距从
+          // --s-3(12px)收紧到 --s-2(8px)——紧凑化的一部分,列间距不动
+          // (列间距不影响卡高)。
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+              gap: "var(--s-2) var(--s-4)",
+            }}
+          >
+            <Metric
+              label="结算净值"
+              title="已结算仓位累计已实现盈亏(不含持仓浮盈)"
+              value={
+                <span
+                  className={`mono ${pnlTone(m.totalRealized)}`}
+                  style={{ fontSize: 20, fontWeight: 700 }}
+                >
+                  {fmtSignedUsd(m.totalRealized)}
+                </span>
+              }
+            />
+            <Metric
+              label="ROI"
+              title="结算净值 ÷ 已投入本金(仅已结算仓)"
+              value={
+                m.roi == null ? (
+                  <span className="muted">—</span>
+                ) : (
+                  <span
+                    className={`mono ${pnlTone(m.roi)}`}
+                    style={{ fontSize: 18, fontWeight: 600 }}
+                  >
+                    {m.roi >= 0 ? "+" : MINUS}
+                    {Math.abs(m.roi * 100).toFixed(1)}%
+                  </span>
+                )
+              }
+            />
+            {/* 平均年化:小样本外推极不可靠(真实数据出现过 2.6 天窗口
+                外推 +20205% 的先例)。这条进了首屏就不再是可选装饰,下面
+                元信息行的 ⚠ 已结算仅 N 仓警示紧跟在这个网格之后(sparkline
+                拿掉后两者之间不再隔着 64px 的曲线区),title 里也把"短窗口
+                外推不可靠"这句话原样带上——与战绩全景的同一个 Metric 完全
+                同源,不是另写一份可能措辞不一致的说明。 */}
+            <Metric
+              label="平均年化"
+              title="结算净值 ÷ 峰值占用资金 × 365 ÷ 运行天数。把策略当一只小基金:按历史峰值备足本金、自成立日起折算年化。短窗口/小样本外推极不可靠,仅供横向对比;无结算仓或运行不足 1 天显示 —"
+              value={
+                fund?.annualizedRoi == null ? (
+                  <span className="muted">—</span>
+                ) : (
+                  <span
+                    className={`mono ${pnlTone(fund.annualizedRoi)}`}
+                    style={{ fontSize: 18, fontWeight: 600 }}
+                  >
+                    {fmtAnnualized(fund.annualizedRoi)}
+                  </span>
+                )
+              }
+            />
+            <Metric
+              label="结算胜率"
+              title="盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间;平局不计入分母"
+              value={<span className="mono">{winRateLabel(m)}</span>}
+            />
+            <Metric
+              label="最大回撤"
+              title="净值曲线从峰值到后续谷底的最大跌幅(美元)"
+              value={
+                <span
+                  className={`mono ${m.maxDrawdown > 0 ? "down" : "muted"}`}
+                >
+                  {m.maxDrawdown > 0
+                    ? `${MINUS}$${fmtUsd0(m.maxDrawdown)}`
+                    : "$0"}
+                </span>
+              }
+            />
+            <Metric
+              label="建议跟单额度"
+              title="= 历史峰值占用 × 1.25(按单仓金额向上取整),即恰好接住全部历史信号的最小资金 + ~25% 冗余;历史窗口口径,未来峰值可能更高。推导细节与五档精确回放见「查看详情 → 账户推演」"
+              value={
+                hasPlan ? (
+                  <span className="mono" style={{ fontWeight: 600 }}>
+                    ${fmtUsd0(acct!.suggestedUsd!)}
+                  </span>
+                ) : (
+                  <span className="muted">—</span>
+                )
+              }
+            />
+          </div>
+        )}
+      </div>
+      {/* 元信息行:取代被下沉的「已结算 · 持有」指标。low_sample 档在这里加
+          警示色,提醒读者上面的 ROI/胜率是小样本(<10 仓)读数,而不是隐藏
+          它们——藏起来会让读者误以为这档没数据,标警示才是诚实的做法。 */}
+      <div
+        className="ds-hint"
+        style={{
+          display: "flex",
+          gap: "var(--s-3)",
+          flexWrap: "wrap",
+          borderTop: "1px solid var(--n-100)",
+          paddingTop: "var(--s-2)",
+          marginTop: "var(--s-3)",
+        }}
+      >
+        {state === "low_sample" ? (
+          <span style={{ color: "var(--warn-700)" }}>
+            ⚠ 已结算仅 {m.settledCount} 仓
+          </span>
+        ) : (
+          <span>已结算 {m.settledCount} 仓</span>
+        )}
+        <span>持有 {m.openCount}</span>
+        {fund?.runDays != null ? (
+          <span>运行 {Math.floor(fund.runDays)} 天</span>
+        ) : null}
+      </div>
+      <CardActions s={s} />
+    </div>
+  );
+}
+
+// 均延迟成本 / 均执行滑点的派生计算。策略详情弹窗(Task 3)里战绩全景
+// (StrategyFullMetrics)与成本四段分解(CostChain)两区都要展示这两个数——
+// 在 StrategyDetailDialog 层级算一次、两区传参复用,避免同一个 reduce 在
+// 同一次弹窗渲染里跑两遍(两区口径一致,分别再算一遍也不会得到不同数字,
+// 纯粹是浪费)。
+type DelayExecAverages = {
+  avgDelayCents: number | null;
+  delaySamples: number;
+  avgExecCents: number | null;
+  execSamples: number;
+};
+
+function computeDelayExecAverages(
+  positions: FollowPositionRow[],
+): DelayExecAverages {
+  // 均延迟成本:仅统计有 formation_price 的仓位(老仓位/取价失败不进样本),
+  // 每仓等权算术平均;样本数以 n=N 标注,提醒读者小样本不可过度解读。
+  const delayVals = positions
+    .map(rowDelayCents)
+    .filter((c): c is number => c != null);
+  const avgDelayCents =
+    delayVals.length > 0
+      ? delayVals.reduce((sum, c) => sum + c, 0) / delayVals.length
+      : null;
+  // 均执行滑点:仅统计有盘口快照的仓位(执行层上线后的新仓),每仓等权平均。
+  const execVals = positions
+    .map(rowExecCents)
+    .filter((c): c is number => c != null);
+  const avgExecCents =
+    execVals.length > 0
+      ? execVals.reduce((sum, c) => sum + c, 0) / execVals.length
+      : null;
+  return {
+    avgDelayCents,
+    delaySamples: delayVals.length,
+    avgExecCents,
+    execSamples: execVals.length,
+  };
+}
+
+/**
+ * 卡片瘦身(改版 Task 2)后被下沉的 10 个指标,从原 StrategyCard 原样搬迁
+ * 而来,Task 3 挂进策略详情弹窗「区 2 战绩全景」(StrategyDetailDialog;
+ * U6 在前面加了一个「区 1 净值走势」,原来的区 1 顺移成区 2)。
+ * 用「整体搬迁函数体」而不是删掉重写,是为了保证这些 Metric 的 title
+ * (例如「平均年化」那条解释了短窗外推不可靠)不经过人手转录、零丢失风险。
+ * U6 之后「平均年化」这一条在卡片正文里也有一份同源渲染(见 StrategyCard),
+ * 是有意的重复——详情本就该有全景,不是漏删。
+ *
+ * delayExec 由调用方算好传入(见上面 computeDelayExecAverages 的注释),
+ * 不在本函数内部重算;avgSlipCents 只在本区使用,仍然就地算。
+ */
+function StrategyFullMetrics({
+  s,
+  delayExec,
+}: {
+  s: FollowStrategyView;
+  delayExec: DelayExecAverages;
+}) {
+  const m = s.metrics;
+  const fund = s.fund; // 旧响应可能缺失 → 档案各项显示「—」
+  const slip = m.slippageCost;
+  // 均 ¢ 差/仓:所有仓位(open+settled,追价成本在进场即产生)的单仓 ¢ 差算术平均。
+  // 简单口径 —— 每仓等权、不按 usd 加权;目的只是把美元合计还原成可横比的偏离度。
+  const allPos = [...s.open, ...s.settled];
+  const avgSlipCents =
+    allPos.length > 0
+      ? allPos.reduce((sum, p) => sum + rowSlipCents(p), 0) / allPos.length
+      : null;
+  const { avgDelayCents, delaySamples, avgExecCents, execSamples } = delayExec;
+  return (
+    <>
       <div
         style={{
           display: "grid",
@@ -842,35 +1430,6 @@ function StrategyCard({
           gap: "var(--s-3) var(--s-4)",
         }}
       >
-        <Metric
-          label="结算净值"
-          title="已结算仓位累计已实现盈亏(不含持仓浮盈)"
-          value={
-            <span
-              className={`mono ${pnlTone(m.totalRealized)}`}
-              style={{ fontSize: 20, fontWeight: 700 }}
-            >
-              {fmtSignedUsd(m.totalRealized)}
-            </span>
-          }
-        />
-        <Metric
-          label="ROI"
-          title="结算净值 ÷ 已投入本金(仅已结算仓)"
-          value={
-            m.roi == null ? (
-              <span className="muted">—</span>
-            ) : (
-              <span
-                className={`mono ${pnlTone(m.roi)}`}
-                style={{ fontSize: 18, fontWeight: 600 }}
-              >
-                {m.roi >= 0 ? "+" : MINUS}
-                {Math.abs(m.roi * 100).toFixed(1)}%
-              </span>
-            )
-          }
-        />
         <Metric
           label="平均年化"
           title="结算净值 ÷ 峰值占用资金 × 365 ÷ 运行天数。把策略当一只小基金:按历史峰值备足本金、自成立日起折算年化。短窗口/小样本外推极不可靠,仅供横向对比;无结算仓或运行不足 1 天显示 —"
@@ -886,11 +1445,6 @@ function StrategyCard({
               </span>
             )
           }
-        />
-        <Metric
-          label="结算胜率"
-          title="盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间;平局不计入分母"
-          value={<span className="mono">{winRateLabel(m)}</span>}
         />
         <Metric
           label="已结算 · 持有"
@@ -976,7 +1530,7 @@ function StrategyCard({
                 <span className="mono" style={slipWarnStyle(avgDelayCents)}>
                   {fmtSignedCents(avgDelayCents)}
                 </span>
-                <div className="kpi-sub mono">n={delaySamples.length}</div>
+                <div className="kpi-sub mono">n={delaySamples}</div>
               </>
             )
           }
@@ -991,18 +1545,9 @@ function StrategyCard({
               <>
                 {/* 配色中性:执行滑点是成本不是盈亏。 */}
                 <span className="mono">{fmtSignedCents(avgExecCents)}</span>
-                <div className="kpi-sub mono">n={execSamples.length}</div>
+                <div className="kpi-sub mono">n={execSamples}</div>
               </>
             )
-          }
-        />
-        <Metric
-          label="最大回撤"
-          title="净值曲线从峰值到后续谷底的最大跌幅(美元)"
-          value={
-            <span className={`mono ${m.maxDrawdown > 0 ? "down" : "muted"}`}>
-              {m.maxDrawdown > 0 ? `${MINUS}$${fmtUsd0(m.maxDrawdown)}` : "$0"}
-            </span>
           }
         />
         <Metric
@@ -1044,30 +1589,174 @@ function StrategyCard({
           平均持有 {m.avgHoldingDays.toFixed(1)} 天
         </div>
       ) : null}
-      <CardActions name={s.name} acct={s.account} positions={allPos} />
-    </div>
+    </>
   );
 }
 
 const fmtPct = (u: number | null) =>
   u == null ? "—" : `${(u * 100).toFixed(0)}%`;
 
-// 卡片底部动作行:「建议跟单额度」数字 + 两个弹窗入口(账户推演 / 操作历史),
-// 细节全部收进弹窗,卡片保持紧凑。仅展示,不参与任何决策。
-function CardActions({
-  name,
-  acct,
-  positions,
+/**
+ * 成本四段分解(策略详情弹窗「区 3」,改版 Task 3 唯一新增的信息组织;
+ * U6 在前面加了「区 1 净值走势」后,原来的区 2 顺移成区 3)。
+ * 追价成本→延迟成本→执行滑点→协议费四项此前是四个并列的 Metric(见
+ * StrategyFullMetrics),读者看不出它们是一条链——串起来才回答「纸面盈亏
+ * 和实盘差在哪」。呈现选横向流程条(auto-fit 网格 + label 前缀箭头)而不是
+ * 纵向列表:详情弹窗够宽(见 DETAIL_DIALOG_WIDTH),横向能让"链式推进"的
+ * 阅读顺序一眼可见;窄窗口下网格自动换行到单列,退化成事实上的纵向列表,
+ * 不会溢出(与 StrategyFullMetrics 的指标网格同一套机制,已验证不溢出)。
+ *
+ * ⚠️ 这条链不是严格可加总的:四项口径互不相同(追价成本 vs 聪明钱均价、
+ * 延迟成本 vs 信号形成价、执行滑点 vs 报价入场、协议费是协议抽成),链尾
+ * 「净盈亏(含成本)」目前只把追价成本 + 协议费两项实际计入净额(与
+ * lib/follow.ts netAfterCostsCovered 的定义一致),延迟成本/执行滑点是
+ * 归因诊断读数,不重复计入——不能因为摆成一条链就暗示四项相减得到链尾数字。
+ */
+function CostChain({
+  s,
+  delayExec,
 }: {
-  name: string;
-  acct?: AccountPlan;
-  positions: FollowPositionRow[];
+  s: FollowStrategyView;
+  delayExec: DelayExecAverages;
 }) {
-  const [planOpen, setPlanOpen] = useState(false);
-  const [histOpen, setHistOpen] = useState(false);
-  const hasPlan = !!acct && acct.rows.length > 0 && acct.suggestedUsd != null;
-  const hasHistory = positions.length > 0;
-  if (!hasPlan && !hasHistory) return null;
+  const m = s.metrics;
+  const { avgDelayCents, delaySamples, avgExecCents, execSamples } = delayExec;
+  // 追价成本用「已结算仓」口径(slippageCostSettled),不是战绩全景那个
+  // open+settled 全量的 slippageCost —— 这条链最终要和协议费、净盈亏在
+  // 同一批已结算仓上对得上,持有中仓位还没有已实现盈亏,没有"实盘差多少"
+  // 这回事。
+  const slip = m.slippageCostSettled;
+  return (
+    <div>
+      <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+        只看已结算仓(持有中仓位尚未产生已实现盈亏)。四项口径不同,不是同
+        口径数字的简单相加——链尾净盈亏目前只把追价成本、协议费两项计入净额,
+        延迟成本/执行滑点是归因诊断读数,悬停各项查看具体口径。
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+          gap: "var(--s-3) var(--s-4)",
+        }}
+      >
+        <Metric
+          label="追价成本"
+          title="已结算仓的追价成本合计:份额 ×(自己入场价 − 聪明钱建仓均价)之和(美元)。链的起点——我们比聪明钱买贵了多少,含拿不到的信息租金。口径与战绩全景「累计追价成本」相同但只算已结算仓,为了能与下面的协议费、净盈亏在同一批仓上相减。中性色:是成本不是盈亏"
+          value={
+            <span className="mono">
+              {slip >= 0 ? `$${fmtUsd0(slip)}` : `${MINUS}$${fmtUsd0(-slip)}`}
+            </span>
+          }
+        />
+        <Metric
+          label="→ 延迟成本"
+          title="有形成价的仓位的(进场价 − 形成价)¢ 算术平均。正=共识形成后我们追贵了 —— 检测+执行延迟造成的可优化成本;与「追价成本」(vs 聪明钱均价、含拿不到的信息租金)口径不同。老仓位无形成价,不进样本"
+          value={
+            avgDelayCents == null ? (
+              <span className="muted">—</span>
+            ) : (
+              <>
+                <span className="mono" style={slipWarnStyle(avgDelayCents)}>
+                  {fmtSignedCents(avgDelayCents)}
+                </span>
+                <div className="kpi-sub mono">n={delaySamples}</div>
+              </>
+            )
+          }
+        />
+        <Metric
+          label="→ 执行滑点"
+          title="有盘口快照的仓位的(模拟成交均价 − 报价入场价)¢ 算术平均 —— 真实执行成本(跨价差+吃深度)的实测估计。开仓瞬间抓 CLOB 订单簿、按本仓名义金额模拟市价吃单;盘口无历史,执行层上线前的老仓不进样本"
+          value={
+            avgExecCents == null ? (
+              <span className="muted">—</span>
+            ) : (
+              <>
+                <span className="mono">{fmtSignedCents(avgExecCents)}</span>
+                <div className="kpi-sub mono">n={execSamples}</div>
+              </>
+            )
+          }
+        />
+        <Metric
+          label="→ 协议费"
+          title="开仓瞬间按 gamma feeSchedule 算的协议 taker 费之和(仅已结算仓)。公式 fee = 份额 × rate × p ×(1−p);对定额买单等价于 金额 × rate ×(1−p) —— 随成交价单调递减,冷门票才是相对最贵的($500 @0.2 约 4%、@0.5 约 2.5%、@0.9 约 0.5%)。「Polymarket 零手续费」已于 2026-08-04 实测作废:头部 100 市场 72 个收费、占 24h 量 57.8%,横跨 7 个品类。费率表是当前值,老仓不回填,故带 n= 覆盖率"
+          value={
+            m.feeSamples === 0 ? (
+              <>
+                <span className="muted">—</span>
+                <div className="kpi-sub mono">n=0</div>
+              </>
+            ) : (
+              <>
+                <span className="mono">
+                  {MINUS}${fmtUsd0(m.feeCost)}
+                </span>
+                <div className="kpi-sub mono">
+                  n={m.feeSamples}
+                  {m.feeUnknown > 0 ? ` · ${m.feeUnknown} 仓未知` : null}
+                </div>
+              </>
+            )
+          }
+        />
+      </div>
+      {/* 链尾:净盈亏(含成本)。加底色框与上面四项拉开视觉层级——它是链的
+          结论,不是并列的第五项。覆盖率标注(feeSamples/settledCount)必须
+          跟着数字一起出现,否则读者会把"费用已知"的子集误读成全量,这正是
+          lib/follow.ts netAfterCostsCovered 注释警告过的坑。 */}
+      <div
+        style={{
+          marginTop: "var(--s-4)",
+          padding: "var(--s-3) var(--s-4)",
+          background: "var(--n-100)",
+          borderRadius: "var(--r-md)",
+        }}
+      >
+        <Metric
+          label="⇒ 净盈亏(含追价成本+协议费)"
+          title="三档口径里最接近实盘的一档:已实现盈亏 − 追价成本 − 协议费。上面的「已实现盈亏」是纸面档,不含任何执行成本。⚠️ 口径范围:三项都只在【协议费已知】的那批已结算仓上计算,而不是拿部分覆盖的费用去减全量盈亏(那会得到一个介于两档之间、无法解释的数)。协议费自 2026-08 起才采集、老仓不回填,所以这一档目前只覆盖一个子集;随着老仓陆续结算完毕会自然收敛到全量"
+          value={
+            m.feeSamples === 0 ? (
+              <>
+                <span className="muted">—</span>
+                <div className="kpi-sub mono">n=0</div>
+              </>
+            ) : (
+              <>
+                <span
+                  className={`mono ${pnlTone(m.netAfterCostsCovered)}`}
+                  style={{ fontSize: 18, fontWeight: 700 }}
+                >
+                  {fmtSignedUsd(m.netAfterCostsCovered)}
+                </span>
+                <div className="kpi-sub mono">
+                  覆盖 {m.feeSamples}/{m.settledCount} 仓
+                </div>
+              </>
+            )
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+// 卡片底部动作行:一个「查看详情」弹窗入口(合并原「账户推演」「操作历史」
+// 两个按钮——内容没丢,并进同一个弹窗的两个区,见下方 StrategyDetailDialog)。
+// 细节全部收进弹窗,卡片保持紧凑。仅展示,不参与任何决策。
+//
+// U6:「建议跟单额度」从这一行收进了卡片正文的指标网格(见 StrategyCard),
+// 这里不再重复渲染,按钮行只剩「查看详情」一个。
+//
+// 与更早版本的一处行为差异:更早版本在 !hasPlan && !hasHistory 时整行
+// 隐藏(两个弹窗各自都没数据可看,按钮就没有意义)。合并后「查看详情」还
+// 解锁了恒有内容的「区 2 战绩全景」——哪怕 0 仓位,策略的创建日期/运行
+// 天数依然有值(见 lib/follow.ts computeFundMetrics 的 startTs ??
+// firstEntryTs),所以这里不整行隐藏。
+function CardActions({ s }: { s: FollowStrategyView }) {
+  const [detailOpen, setDetailOpen] = useState(false);
   return (
     <div
       style={{
@@ -1080,54 +1769,19 @@ function CardActions({
         flexWrap: "wrap",
       }}
     >
-      {hasPlan ? (
-        <>
-          <span className="ds-hint">建议跟单额度</span>
-          <span className="mono" style={{ fontWeight: 600 }}>
-            ${fmtUsd0(acct!.suggestedUsd!)}
-          </span>
-          <button
-            type="button"
-            className="ds-btn"
-            onClick={() => setPlanOpen(true)}
-            title="额度依据与「若账户只备 $X」五档精确回放"
-          >
-            账户推演 · 该备多少钱
-          </button>
-        </>
-      ) : null}
-      {hasHistory ? (
-        <button
-          type="button"
-          className="ds-btn"
-          onClick={() => setHistOpen(true)}
-          title="出信号→买入、兑现卖出的完整动作记录,倒序排列"
-        >
-          操作历史
-        </button>
-      ) : null}
-      {hasPlan ? (
-        <Modal
-          open={planOpen}
-          onClose={() => setPlanOpen(false)}
-          title={`${name} · 建议跟单额度与账户推演`}
-          width={680}
-        >
-          <AccountPlanDialog acct={acct!} />
-        </Modal>
-      ) : null}
-      {hasHistory ? (
-        <Modal
-          open={histOpen}
-          onClose={() => setHistOpen(false)}
-          title={`${name} · 操作历史`}
-          // 尽量占满视口宽(Modal 内部按 min(width, 100%) 收敛),配合市场列
-          // 允许换行,表格不出现左右滚动。
-          width={1200}
-        >
-          <HistoryDialog positions={positions} />
-        </Modal>
-      ) : null}
+      <button
+        type="button"
+        className="ds-btn"
+        onClick={() => setDetailOpen(true)}
+        title="净值走势 · 战绩全景 · 成本四段分解 · 账户推演 · 操作历史"
+      >
+        查看详情
+      </button>
+      <StrategyDetailDialog
+        s={s}
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
+      />
     </div>
   );
 }
@@ -1385,6 +2039,383 @@ function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
         </table>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------ detail dialog */
+
+// 尽量占满视口宽(Modal 内部按 min(width, 100%) 收敛):五区共存,取原两个
+// 独立弹窗里较宽的那个——操作历史表格原本就是 1200(见上面 HistoryDialog
+// 曾经的调用点);账户推演原本是 680,共用 1200 只是给它的表格多一点留白,
+// 不会挤压或产生新的换行。
+const DETAIL_DIALOG_WIDTH = 1200;
+// 净值走势图(U6 从卡片移入的 Sparkline)尺寸:宽度按弹窗内容区域的量级取
+// (1200 减掉 Modal/section 的内边距后大致这个数量级,SVG 本身靠 viewBox +
+// width:100% 响应式伸缩,数字不用精确到像素);高度取协调方给的 160-200px
+// 区间中段。
+const DETAIL_SPARK_WIDTH = 1120;
+const DETAIL_SPARK_HEIGHT = 180;
+
+/**
+ * 策略详情弹窗(改版 Task 3,U6 追加区 1):合并原「账户推演」「操作历史」
+ * 两个独立弹窗,加上下沉的指标,分五区呈现:
+ *   区 1 净值走势     U6 从卡片移入的 Sparkline,放大 + 加坐标轴,作为
+ *                     整个弹窗的视觉引导
+ *   区 2 战绩全景     StrategyFullMetrics 原样挂载
+ *   区 3 成本四段分解 本任务唯一新增的信息组织,见 CostChain
+ *   区 4 账户推演     AccountPlanDialog 内容原样搬入(只换容器,内容一字不改)
+ *   区 5 操作历史     HistoryDialog 内容原样搬入(只换容器,内容一字不改)
+ * avgDelayCents/avgExecCents 在本层算一次(computeDelayExecAverages),
+ * 通过 delayExec 传给区 2、区 3 两处消费者,不重复 reduce。
+ * 设计见 docs/plans/2026-08-12-follow-page-card-redesign-design.md §3.2。
+ */
+function StrategyDetailDialog({
+  s,
+  open,
+  onClose,
+}: {
+  s: FollowStrategyView;
+  open: boolean;
+  onClose: () => void;
+}) {
+  // Modal 自己在 !open 时也会返回 null;这里提前短路,避免弹窗关闭期间
+  // 每次父组件重渲染(如 30s 自动刷新)都要为页面上 12 张卡各算一遍
+  // delayExec、拼一遍 allPos。
+  if (!open) return null;
+
+  const m = s.metrics;
+  const allPos = [...s.open, ...s.settled];
+  const delayExec = computeDelayExecAverages(allPos);
+  const acct = s.account;
+  const hasPlan = !!acct && acct.rows.length > 0 && acct.suggestedUsd != null;
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`${s.name} · 策略详情`}
+      width={DETAIL_DIALOG_WIDTH}
+    >
+      {/* 完整参数提示(paramsHint 全量版本,一字不改):卡片紧凑化那轮把
+          12 档统一的三项(单价/偏离护栏/退出规则)从卡上拿掉了,不是丢掉——
+          详情弹窗承接完整版,读者想看这档的确切规则,点开详情就有。 */}
+      <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
+        {paramsHint(s.params)}
+      </div>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--s-6)",
+        }}
+      >
+        <section>
+          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+            净值走势
+          </div>
+          {m.equityCurve.length > 0 ? (
+            <Sparkline
+              curve={m.equityCurve}
+              width={DETAIL_SPARK_WIDTH}
+              height={DETAIL_SPARK_HEIGHT}
+            />
+          ) : (
+            <div className="ds-empty">
+              暂无已结算仓位 — 有仓位结算后这里会画出净值走势
+            </div>
+          )}
+        </section>
+
+        <section
+          style={{
+            borderTop: "1px solid var(--n-150)",
+            paddingTop: "var(--s-4)",
+          }}
+        >
+          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+            战绩全景
+          </div>
+          <StrategyFullMetrics s={s} delayExec={delayExec} />
+        </section>
+
+        <section
+          style={{
+            borderTop: "1px solid var(--n-150)",
+            paddingTop: "var(--s-4)",
+          }}
+        >
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            成本四段分解
+          </div>
+          <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+            追价成本 → 延迟成本 → 执行滑点 → 协议费,回答「纸面盈亏和实盘差在哪」
+          </div>
+          <CostChain s={s} delayExec={delayExec} />
+        </section>
+
+        <section
+          style={{
+            borderTop: "1px solid var(--n-150)",
+            paddingTop: "var(--s-4)",
+          }}
+        >
+          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+            账户推演
+          </div>
+          {hasPlan ? (
+            <AccountPlanDialog acct={acct!} />
+          ) : (
+            <div className="ds-empty">
+              该档暂无账户推演数据(尚无仓位,或建议额度不可用)
+            </div>
+          )}
+        </section>
+
+        <section
+          style={{
+            borderTop: "1px solid var(--n-150)",
+            paddingTop: "var(--s-4)",
+          }}
+        >
+          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+            操作历史
+          </div>
+          <HistoryDialog positions={allPos} />
+        </section>
+      </div>
+    </Modal>
+  );
+}
+
+/* --------------------------------------------------------- list view */
+
+// 列表视图(卡片/列表切换新增):12 档一张整表。行序按信号族分组
+// (FAMILY_ORDER)+ 族内原有顺序,复用 groups——与卡片视图同一份分组结果,
+// 保证两种视图的策略顺序看起来是"同一件事的两种画法",不是两套互相对不上
+// 的排序。**不提供点列头排序**:小样本下按 ROI/结算净值排序,会让"3 仓刚好
+// 赢 2 仓"的运气档窜到第一名,排序动作本身就在撒谎——这与卡片"不做排序,
+// 固定按信号族分组"是同一条已裁决的口径,列表不重新开一次这个讨论。
+function StrategyListView({
+  groups,
+  leaderId,
+}: {
+  groups: FamilyGroup[];
+  leaderId: number | null;
+}) {
+  const rows = groups.flatMap((g) =>
+    g.items.map((s) => ({ s, familyTitle: g.meta.title })),
+  );
+  if (rows.length === 0) {
+    return <div className="ds-empty">暂无启用中的跟单策略</div>;
+  }
+  return (
+    <div className="ds-table-wrap">
+      <table className="ds-table">
+        <thead>
+          <tr>
+            {/* emoji + 名字 + 族标签 + 状态标签全部横排进一格,不单独开一列
+                放族——实测过两种排法:族独立成列会额外占一份列内边距
+                (.ds-table td 左右各 --s-3),合并成一格更省宽度,且每项本身
+                都很短(族名最多 4 字、emoji 一个字宽),合并后仍然一行放得
+                下,不需要族列单独对齐。 */}
+            <th>策略</th>
+            <th
+              className="is-right"
+              title="已结算仓位累计已实现盈亏(不含持仓浮盈)"
+            >
+              结算净值
+            </th>
+            <th className="is-right" title="结算净值 ÷ 已投入本金(仅已结算仓)">
+              ROI
+            </th>
+            <th
+              className="is-right"
+              title="结算净值 ÷ 峰值占用资金 × 365 ÷ 运行天数。短窗口/小样本外推极不可靠,仅供横向对比"
+            >
+              平均年化
+            </th>
+            <th
+              className="is-right"
+              title="盈利仓 ÷(盈利+亏损)仓,括号内为已结算样本数(<10 仓前面加 ⚠,与卡片同一个警示阈值)。Wilson 95% 置信区间不在这张表里——留在「详情」,表格容不下那么长的区间文本"
+            >
+              胜率
+            </th>
+            <th
+              className="is-right"
+              title="净值曲线从峰值到后续谷底的最大跌幅(美元)"
+            >
+              最大回撤
+            </th>
+            <th
+              className="is-right"
+              title="= 历史峰值占用 × 1.25(按单仓金额向上取整);推导细节与五档精确回放见「详情 → 账户推演」"
+            >
+              建议额度
+            </th>
+            <th className="is-right" title="当前持仓待结算数 / 策略运行天数">
+              持有 / 运行
+            </th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ s, familyTitle }) => (
+            <StrategyListRow
+              key={s.id}
+              s={s}
+              familyTitle={familyTitle}
+              leading={s.id === leaderId}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// 单行:三态判定复用 classifyCardState(lib/followCardView.ts)——与卡片
+// 用的是同一个函数、同一个 LOW_SAMPLE_THRESHOLD,不重写一份判定逻辑,不然
+// 两种视图迟早会因为各自维护阈值而对同一档给出不同的"这是小样本吗"结论。
+//
+// empty 态的呈现手法与卡片不同:卡片用虚线边框把"还没轮到它"和"跑了但没
+// 赚到钱"在视觉上分开;表格行没有边框可虚化,强行给单行加虚线边框会破坏
+// 列与列之间的横向对齐(边框只框住这一行,相邻行的同一列看起来就不再对齐
+// 了)。改用整行文字降 muted + 六个战绩列一律显示"—"(不满足读者去读一个
+// 没有意义的 $0/null 值)。区分「持仓待结算」和「还没有仓位」的两句文案
+// (沿用卡片同一处语义,措辞缩短成标签形态)现在跟着策略名一起放进第一列
+// 的小标签里,不再独占末列一行——那是这一轮"每档一行"改造的一部分,见
+// 上面「策略」单元格与下方 CardState 判定。末列现在只留「详情」按钮。
+//
+// 「持有 / 运行」不算在"数值列显示 —"这条规则里——它是运行状态(当前持仓
+// 数、上线多久),不是战绩指标,哪怕 0 结算也是真实、有意义的数字,卡片的
+// 元信息行同样在 empty 态照常显示这两个数(见 StrategyCard),这里保持
+// 同一个口径,只是整行文字仍然是 muted 灰。
+//
+// 详情弹窗状态挂在每一行自己身上(与 CardActions 同一个模式:每张卡/每行
+// 各自持有自己的 open/close,不是页面级"当前打开哪一条"的单一状态)。
+function StrategyListRow({
+  s,
+  familyTitle,
+  leading,
+}: {
+  s: FollowStrategyView;
+  familyTitle: string;
+  leading: boolean;
+}) {
+  const [detailOpen, setDetailOpen] = useState(false);
+  const m = s.metrics;
+  const fund = s.fund;
+  const acct = s.account;
+  const hasPlan = !!acct && acct.rows.length > 0 && acct.suggestedUsd != null;
+  const state = classifyCardState(m);
+  const empty = state === "empty";
+  const dash = <span className="muted">—</span>;
+  return (
+    <tr className={empty ? "muted" : undefined}>
+      {/* 每档一行:emoji + 名字 + 族标签(+ 领先/等待状态)全部横向并排在
+          同一个单元格里,不再有「族在上、名字在下」的纵向堆叠。族标签沿用
+          Tag 组件默认样式,与领先/等待标签同一套视觉语言,靠 flexWrap:
+          "wrap" 兜底——桌面宽度下内容够放,不会真的触发换行;窄到必须换行
+          时(理论上只有极端窗口宽度)才回退成两行,不会把内容裁掉或撑出
+          横向溢出。 */}
+      <td data-label="策略">
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "var(--s-2)",
+            flexWrap: "wrap",
+          }}
+        >
+          <span aria-hidden>{strategyEmoji(s.name)}</span>
+          <span style={{ fontWeight: 600 }}>{s.name}</span>
+          <Tag>{familyTitle}</Tag>
+          {leading ? <Tag variant="brand">领先</Tag> : null}
+          {empty ? (
+            <Tag>{m.openCount > 0 ? "等待结算" : "等待命中"}</Tag>
+          ) : null}
+        </span>
+      </td>
+      <td className="is-right" data-label="结算净值">
+        {empty ? (
+          dash
+        ) : (
+          <span className={`mono ${pnlTone(m.totalRealized)}`}>
+            {fmtSignedUsd(m.totalRealized)}
+          </span>
+        )}
+      </td>
+      <td className="is-right" data-label="ROI">
+        {!empty && m.roi != null ? (
+          <span className={`mono ${pnlTone(m.roi)}`}>
+            {m.roi >= 0 ? "+" : MINUS}
+            {Math.abs(m.roi * 100).toFixed(1)}%
+          </span>
+        ) : (
+          dash
+        )}
+      </td>
+      <td className="is-right" data-label="平均年化">
+        {!empty && fund?.annualizedRoi != null ? (
+          <span className={`mono ${pnlTone(fund.annualizedRoi)}`}>
+            {fmtAnnualized(fund.annualizedRoi)}
+          </span>
+        ) : (
+          dash
+        )}
+      </td>
+      <td className="is-right" data-label="胜率">
+        {!empty && m.winRate != null ? (
+          <span className="mono">
+            {Math.round(m.winRate * 100)}%{" "}
+            <span className="muted">
+              ({state === "low_sample" ? `⚠ ${m.settledCount}` : m.settledCount}
+              )
+            </span>
+          </span>
+        ) : (
+          dash
+        )}
+      </td>
+      <td className="is-right" data-label="最大回撤">
+        {empty ? (
+          dash
+        ) : m.maxDrawdown > 0 ? (
+          <span className="mono down">
+            {MINUS}${fmtUsd0(m.maxDrawdown)}
+          </span>
+        ) : (
+          <span className="mono muted">$0</span>
+        )}
+      </td>
+      <td className="is-right" data-label="建议额度">
+        {!empty && hasPlan ? (
+          <span className="mono">${fmtUsd0(acct!.suggestedUsd!)}</span>
+        ) : (
+          dash
+        )}
+      </td>
+      <td className="is-right" data-label="持有 / 运行">
+        <span className="mono">
+          {m.openCount} /{" "}
+          {fund?.runDays != null ? `${Math.floor(fund.runDays)}天` : "—"}
+        </span>
+      </td>
+      <td className="is-right" data-label="操作">
+        <button
+          type="button"
+          className="ds-btn ds-btn--sm"
+          onClick={() => setDetailOpen(true)}
+        >
+          详情
+        </button>
+        <StrategyDetailDialog
+          s={s}
+          open={detailOpen}
+          onClose={() => setDetailOpen(false)}
+        />
+      </td>
+    </tr>
   );
 }
 
@@ -1655,6 +2686,34 @@ export default function FollowPage() {
   // 仓位明细:tab(已结算/持有中)+ 策略筛选(FILTER_ALL=全部,否则策略 id)。
   const [posTab, setPosTab] = useState<PosTab>("settled");
   const [stratFilter, setStratFilter] = useState<number>(FILTER_ALL);
+  // 结算净值曲线的族开关(改版 Task 4):默认全开。FamilyKey 是固定的小
+  // 枚举,不像 stratFilter 那样需要在渲染期核对"选中的还存在吗"——某族
+  // 当前没有策略只是不渲染对应按钮,Set 里留着那个 key 不会造成任何问题。
+  const [activeFamilies, setActiveFamilies] = useState<Set<FamilyKey>>(
+    () => new Set(FAMILY_ORDER),
+  );
+  // 卡片/列表视图切换。初值必须是与服务端渲染一致的固定默认值("card"),
+  // 不能在这里直接读 localStorage——服务端渲染时没有 window,读不到;客户端
+  // 首次渲染如果读到了非默认值,两次渲染的 DOM 对不上就是 hydration
+  // mismatch。正确做法(与 app/useSound.ts 的 useSoundToggle 同一套写法):
+  // 首屏先出默认值,挂载后在 useEffect 里读 localStorage 再切换。
+  const [viewMode, setViewMode] = useState<ViewMode>("card");
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(VIEW_MODE_KEY);
+      if (saved === "card" || saved === "list") setViewMode(saved);
+    } catch {
+      // localStorage 不可用(隐私模式等)——保持默认的卡片视图。
+    }
+  }, []);
+  const changeViewMode = (v: ViewMode) => {
+    setViewMode(v);
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, v);
+    } catch {
+      // 忽略持久化失败,不影响本次切换本身。
+    }
+  };
   const activeReq = useRef<number>(0);
 
   const load = useCallback(async () => {
@@ -1702,12 +2761,25 @@ export default function FollowPage() {
       ? ranked[0].id
       : null;
 
+  // strokeIdx 按 shown 的原始顺序分配(与族过滤无关)——这样切换族开关时
+  // 剩下的线不会因为「前面几条被隐藏了」而重新编号、变成另一种颜色/线型,
+  // 同一策略在任何开关组合下都是同一条视觉表示。
   const series: CurveSeries[] = shown.map((s, i) => ({
     id: s.id,
     name: s.name,
     strokeIdx: i,
+    family: familyOf(s.params.source ?? "consensus"),
     curve: s.metrics.equityCurve,
   }));
+  const visibleSeries = series.filter((s) => activeFamilies.has(s.family));
+  const toggleFamily = (key: FamilyKey) => {
+    setActiveFamilies((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const settledRows: LabeledRow[] = shown
     .flatMap((s) => s.settled.map((p) => ({ ...p, strategyName: s.name })))
@@ -1835,36 +2907,78 @@ export default function FollowPage() {
             </div>
           ) : null}
 
-          {/* 策略卡:按信号族分组(共识 → 异常大额 → 分歧 → 钱包画像,按
-              信息强度递减排列,也是 FAMILY_ORDER 的实现顺序),每组一个小
-              标题 + 一句"这一族在回答什么"。 */}
-          {groups.map((g) => (
-            <section key={g.key} style={{ marginBottom: "var(--s-5)" }}>
-              <div style={{ marginBottom: "var(--s-2)" }}>
-                <div className="ds-label">{g.meta.title}</div>
-                <div className="ds-hint">{g.meta.blurb}</div>
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-                  gap: "var(--s-4)",
-                }}
-              >
-                {g.items.map((s) => (
-                  <StrategyCard key={s.id} s={s} leading={s.id === leaderId} />
-                ))}
-              </div>
-            </section>
-          ))}
+          {/* 卡片/列表视图切换:默认卡片,选择记进 localStorage(见
+              changeViewMode)。放在口径声明 banner 下方、内容区上方——两种
+              视图消费同一份 shown/groups,口径声明对两边同样适用,不用
+              为列表再放一条。 */}
+          <div style={{ marginBottom: "var(--s-4)" }}>
+            <Segmented<ViewMode>
+              ariaLabel="展示方式"
+              options={[
+                { label: "卡片", value: "card" },
+                { label: "列表", value: "list" },
+              ]}
+              value={viewMode}
+              onChange={changeViewMode}
+            />
+          </div>
 
-          {/* 结算净值阶梯曲线 */}
+          {viewMode === "card" ? (
+            // 策略卡:按信号族分组(共识 → 异常大额 → 分歧 → 钱包画像,按
+            // 信息强度递减排列,也是 FAMILY_ORDER 的实现顺序),每组一个小
+            // 标题 + 一句"这一族在回答什么"。
+            groups.map((g) => (
+              <section key={g.key} style={{ marginBottom: "var(--s-5)" }}>
+                <div style={{ marginBottom: "var(--s-2)" }}>
+                  <div className="ds-label">{g.meta.title}</div>
+                  <div className="ds-hint">{g.meta.blurb}</div>
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    // 固定列宽(不用 minmax(…, 1fr)):1fr 会把列宽拉伸到随容器
+                    // 宽度变化,同样 3 列在 1180px/900px 容器下卡宽能差出
+                    // 100px。auto-fit 在某一族卡片数量不足以填满一整行时会
+                    // 折叠多余的空轨道,配合下面的 justify-content 让实际卡片
+                    // 整体居中;若改用 auto-fill,折叠不会发生,空轨道仍占位,
+                    // justify-content 反而会把可见卡片推向一侧、右边露出一块
+                    // 不对称的空白(该行为已用具体尺寸推演验证过)。
+                    gridTemplateColumns: `repeat(auto-fit, ${CARD_WIDTH}px)`,
+                    justifyContent: "center",
+                    gap: "var(--s-4)",
+                  }}
+                >
+                  {g.items.map((s) => (
+                    <StrategyCard
+                      key={s.id}
+                      s={s}
+                      leading={s.id === leaderId}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))
+          ) : (
+            // 列表:12 档一张整表,不按族分小节——见 StrategyListView 顶部
+            // 注释,行序仍按信号族分组(与卡片视图共用同一份 groups)。
+            <section style={{ marginBottom: "var(--s-5)" }}>
+              <StrategyListView groups={groups} leaderId={leaderId} />
+            </section>
+          )}
+
+          {/* 结算净值阶梯曲线:族开关放卡片外(与"仓位明细"节的 Segmented
+              筛选行同一位置约定),曲线卡片本身只管画图。 */}
           <section style={{ marginBottom: "var(--s-5)" }}>
             <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
               结算净值曲线(累计已实现盈亏 · 实线/虚线区分策略)
             </div>
+            <FamilyToggles
+              groups={groups}
+              active={activeFamilies}
+              onToggle={toggleFamily}
+            />
             <div className="ds-card" style={{ padding: "var(--s-4)" }}>
-              <EquityCurve series={series} />
+              <EquityCurve series={visibleSeries} />
             </div>
           </section>
 
