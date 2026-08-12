@@ -377,6 +377,46 @@ function familyOf(source: string): FamilyKey {
   }
 }
 
+// 每档一个 emoji(卡片标题行、列表策略列都用同一份,单一映射源)。核实过
+// 项目里已经在用的 emoji 语义,避免撞车:
+//   🐳 = 大额成交"巨鲸"档位(lib/alert.ts WHALE_TIER_USD、page.tsx/
+//       accumulation.tsx/alerts.tsx 全站一致)——「巨鲸」这一档复用它,读者
+//       不用学新符号。
+//   💰 = "大单"(次于巨鲸的成交量级),🏆 = 聪明钱白名单(钱包身份,不是
+//       策略维度的东西)——两个都已被占满,不会再拿来标某个策略档。
+//   🔥 = 共识,⚖️ = 分歧(app/consensus/page.tsx「🔥 共识 · ⚖️ 分歧」、
+//       市场信号卡「⚖️ 聪明钱分歧」、Telegram 播报同一对):「分歧解除」
+//       所在的分歧族用 ⚖️ 是同一语义的延伸,不是新造。
+//   🎯 表面看合适(app/discovery/page.tsx 与 lib/walletTags.ts 都把
+//       early_winner 标成 🎯「早期赢家」,与「早期赢家跟投」这档同源),但
+//       它在全站的主要角色是 app/ui.tsx 的 MarketSlugActions 里"点开这个
+//       市场的信号卡"这个可点击动作(几乎每张列表/表格的市场列旁边都有)。
+//       在这里把它摆成纯装饰、不可点击的策略图标,容易让人以为点了会跳转。
+//       改用 🌱(早期/新生)避开这个"看着像按钮"的风险。
+//   🐋 是 app/ui.tsx TopNav 的站点品牌图标("🐋 Polymarket 监控",每页顶栏
+//       常驻),「超级巨鲸」原计划沿用 🐋 会和站点 logo 撞在同一屏——改用
+//       🌊,仍在"海洋"的视觉家族里,但不会被读成"这是另一个 logo"。
+// 其余 8 个此前未被占用,按"同族内视觉关联、跨族能区分"选定。
+const STRATEGY_EMOJI: Record<string, string> = {
+  保守: "🛡️",
+  激进: "⚡",
+  精英共识: "💎",
+  重仓共识: "🏋️",
+  首发共识: "🚀",
+  巨鲸: "🐳",
+  超级巨鲸: "🌊",
+  巨鲸精英: "🦈",
+  一边倒分歧: "⚖️",
+  分歧解除: "🏳️",
+  高分独狼: "🐺",
+  早期赢家跟投: "🌱",
+};
+// 兜底:未来加新档、来不及补映射时不能让页面报 undefined 或崩掉——退回
+// 空字符串(不显示图标,而不是显示一个可能撞语义的占位符号)。
+function strategyEmoji(name: string): string {
+  return STRATEGY_EMOJI[name] ?? "";
+}
+
 /* --------------------------------------------------------- params 展示口径 */
 // 与 lib/follow.ts(DEFAULT_FRESH_SEC/DEFAULT_MAX_PRICE,均未导出)、
 // lib/disagreement.ts(DEFAULT_DISAGREEMENT.lopsidedTiltPct)同步的展示侧
@@ -472,6 +512,28 @@ function paramsHint(p: FollowStrategyView["params"]): string {
     parts.push(`价格≤${Math.round(maxPrice * 100)}¢`);
   }
   parts.push(exit);
+  return parts.join(" · ");
+}
+
+// 卡片用的精简参数提示:只留跨档差异化的门槛(sourceCoreHint)+ 偏离默认值
+// 的护栏覆盖(新鲜度/价格上限,与 paramsHint 同一套判断,重复写一遍是因为
+// 只有两个廉价的 !== 比较,不值得为此把 paramsHint 拆成"核心部分+统一部分"
+// 两段——那样反而会改变 paramsHint 现有的拼接顺序,给一个已经在跑的函数
+// 引入不必要的风险)。丢掉的是 12 档全都一样的三项:$/信号、偏离护栏本身
+// 的数值、持有到结算——那三项要么已经在页面顶部说过一次("固定 $/信号 ·
+// 持有到结算"),要么完整版 paramsHint 原样搬进了详情弹窗(见
+// StrategyDetailDialog),不是丢了,只是卡片不重复。目标 1 行,而不是原来
+// 320px 卡宽下常见的 3 行。
+function cardParamsHint(p: FollowStrategyView["params"]): string {
+  const freshSec = p.freshSec ?? DEFAULT_FRESH_SEC_DISPLAY;
+  const maxPrice = p.maxPrice ?? DEFAULT_MAX_PRICE_DISPLAY;
+  const parts = [sourceCoreHint(p)];
+  if (freshSec !== DEFAULT_FRESH_SEC_DISPLAY) {
+    parts.push(`新鲜度≤${Math.round(freshSec / 60)}分`);
+  }
+  if (maxPrice !== DEFAULT_MAX_PRICE_DISPLAY) {
+    parts.push(`价格≤${Math.round(maxPrice * 100)}¢`);
+  }
   return parts.join(" · ");
 }
 
@@ -1026,26 +1088,32 @@ function Sparkline({
 // 策略卡标准尺寸(不自适应)。宽度固定值(见下方网格 `repeat(auto-fit,
 // ${CARD_WIDTH}px)`,不用 minmax(…, 1fr)——1fr 会把列宽拉伸到随容器变化,
 // 380px 容器和 900px 容器下同样 3 列但卡宽能差 100px,三种卡态高度又参差,
-// 整片卡片区显得凌乱。320 沿用改版前 minmax 的下限,不用推翻重定。
+// 整片卡片区显得凌乱。
+//
+// 紧凑化那轮考虑过把 320 缩窄到 280 左右换 1180px 容器下 4 列——算过账发现
+// 不划算:6 指标 2×3 网格靠 `minmax(130px, 1fr)` 撑开,2 列需要内容区
+// ≥130+16+130=276px;卡宽缩到 280、内边距按下面收紧到 12px 后,内容区只剩
+// 280-24=256px,不够 276,网格会从 2 列塌成 1 列,指标区从 3 行变 6 行——
+// 宽度省的那点空间,换来的是高度反涨,与"更紧凑"的目标正好相反。保持
+// 320 不动,把紧凑化全部压在高度上(见下方 CARD_MIN_HEIGHT)。
 const CARD_WIDTH = 320;
 // 高度取 normal/low_sample 态(两者结构相同,是三态里内容最多的)的估算自然
-// 高度,按代码结构逐块加总(卡内 padding 32 + 各区块行高/行距,均取 320px
-// 卡宽、真实种子数据里最长的名字/参数提示串为准)。U6 去掉了 sparkline、
-// 卡片指标从 4 个(2×2)扩到 6 个(2×3),这里按新结构重新逐块加总,不是
-// 在旧的 440 上拍脑袋改一个数:
-//   标题行(名字+可能的标签)                       1 行 ≈ 36px
-//   参数提示(最长串"重仓共识"那条实测在更宽的卡上
-//     就已经换行,320px 更窄,保守按 3 行估)         ≈ 70px
+// 高度,按紧凑化后的新结构逐块加总(均取 320px 卡宽、真实种子数据里最长的
+// 名字/参数提示串为准):
+//   卡内 padding(--s-4→--s-3,上下各 12px)          ≈ 24px
+//   标题行(emoji+名字+可能的标签)                   1 行 ≈ 36px
+//   参数提示(cardParamsHint 只剩差异化门槛,压到 1 行,
+//     不再是 paramsHint 全量版本那 3 行)             ≈ 18px
 //   6 个核心指标 2×3 网格(结算胜率的 Wilson CI 文本
-//     "83% · 95%CI 44–97%" 较长,保守按换行 2 行估;
-//     3 行 + 2 道行间距)                            ≈170px
-//   元信息行(已结算·持有·运行,含上边框/内边距)      ≈ 39px
-//   CardActions(含上边框/内边距,单行按钮)            ≈ 57px
-// 合计 ≈404px(比旧结构的 417 少 13px:去掉 sparkline 区块的 64px,换来
-// 多一行指标的 51px,净减少)。取整加一点余量 → 420,理由同旧注释:
-// minHeight 只是地板,偏高一点不会裁内容,偏低才会让长文案挤出这个
-// "标准尺寸"的假象。
-const CARD_MIN_HEIGHT = 420;
+//     较长,保守按换行 2 行估;行间距收紧到 --s-2=8px,
+//     3 行 + 2 道行间距)                             ≈162px
+//   元信息行(已结算·持有·运行,含上边框/内边距)       ≈ 39px
+//   CardActions(含上边框/内边距,单行按钮)             ≈ 57px
+// 合计 ≈336px,取整加一点余量 → 350(比上一轮的 420 少 70,主要来自参数
+// 提示 3 行→1 行省下的 ~52px、padding 收紧省的 8px、网格行距收紧省的
+// 8px)。minHeight 仍然只是地板:偏高一点不会裁内容,偏低才会让长文案挤出
+// 这个"标准尺寸"的假象。
+const CARD_MIN_HEIGHT = 350;
 
 function StrategyCard({
   s,
@@ -1064,7 +1132,9 @@ function StrategyCard({
     <div
       className="ds-card"
       style={{
-        padding: "var(--s-4)",
+        // 紧凑化:内边距从 --s-4(16px)收一档到 --s-3(12px)——仍是设计系统
+        // 里的标准间距值,不是压到 0,目标是紧凑不是拥挤。
+        padding: "var(--s-3)",
         // 标准尺寸:宽由外层网格的固定列宽拉伸决定(grid 默认 stretch,这里
         // 不必再显式写 width),高用 minHeight(非 height)兜底到 normal 态
         // 的自然高度——策略名极端情况下换行,minHeight 只设下限,卡会自然
@@ -1095,14 +1165,21 @@ function StrategyCard({
           marginBottom: "var(--s-3)",
         }}
       >
+        {/* emoji 与列表视图共用同一份 STRATEGY_EMOJI 映射,同一档在两种视图
+            下永远是同一个符号。aria-hidden:纯装饰,策略名本身已经是可读的
+            文字标识,emoji 不承载屏幕阅读器需要的额外信息。 */}
+        <span aria-hidden>{strategyEmoji(s.name)}</span>
         <strong style={{ fontSize: "var(--t-lg)", color: "var(--n-900)" }}>
           {s.name}
         </strong>
         {leading ? <Tag variant="brand">本窗口领先</Tag> : null}
         {!s.enabled ? <Tag variant="warn">已停用</Tag> : null}
       </div>
-      <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
-        {paramsHint(s.params)}
+      {/* 精简参数提示(见 cardParamsHint 注释):只留跨档差异化门槛,压到
+          1 行——12 档统一的三项(单价/偏离护栏/退出规则)挪进了详情弹窗,
+          不是丢了。 */}
+      <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+        {cardParamsHint(s.params)}
       </div>
       {/* 中段:固定高度后 empty 态内容最少,原样顶对齐会在卡底留一整块空白、
           说明文字贴在顶部很难看。用 flex:1 让这段吃掉 minHeight 撑出来的
@@ -1148,12 +1225,14 @@ function StrategyCard({
           // 从下沉区收回来的指标——平均年化(战绩全景同款,详情里仍保留
           // 一份,全景本就该有重复)、建议跟单额度(原来在 CardActions 的
           // 按钮行,现在按钮行只留「查看详情」)。4→6 个,320px 卡宽下
-          // minmax(130px,1fr) 自然出 2 列 3 行,不用改网格写法。
+          // minmax(130px,1fr) 自然出 2 列 3 行,不用改网格写法。行间距从
+          // --s-3(12px)收紧到 --s-2(8px)——紧凑化的一部分,列间距不动
+          // (列间距不影响卡高)。
           <div
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-              gap: "var(--s-3) var(--s-4)",
+              gap: "var(--s-2) var(--s-4)",
             }}
           >
             <Metric
@@ -2017,6 +2096,12 @@ function StrategyDetailDialog({
       title={`${s.name} · 策略详情`}
       width={DETAIL_DIALOG_WIDTH}
     >
+      {/* 完整参数提示(paramsHint 全量版本,一字不改):卡片紧凑化那轮把
+          12 档统一的三项(单价/偏离护栏/退出规则)从卡上拿掉了,不是丢掉——
+          详情弹窗承接完整版,读者想看这档的确切规则,点开详情就有。 */}
+      <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
+        {paramsHint(s.params)}
+      </div>
       <div
         style={{
           display: "flex",
@@ -2128,6 +2213,11 @@ function StrategyListView({
       <table className="ds-table">
         <thead>
           <tr>
+            {/* emoji + 名字 + 族标签 + 状态标签全部横排进一格,不单独开一列
+                放族——实测过两种排法:族独立成列会额外占一份列内边距
+                (.ds-table td 左右各 --s-3),合并成一格更省宽度,且每项本身
+                都很短(族名最多 4 字、emoji 一个字宽),合并后仍然一行放得
+                下,不需要族列单独对齐。 */}
             <th>策略</th>
             <th
               className="is-right"
@@ -2191,8 +2281,10 @@ function StrategyListView({
 // 赚到钱"在视觉上分开;表格行没有边框可虚化,强行给单行加虚线边框会破坏
 // 列与列之间的横向对齐(边框只框住这一行,相邻行的同一列看起来就不再对齐
 // 了)。改用整行文字降 muted + 六个战绩列一律显示"—"(不满足读者去读一个
-// 没有意义的 $0/null 值),末列保留卡片同款的两句文案区分「持仓待结算」
-// 和「还没有仓位」。
+// 没有意义的 $0/null 值)。区分「持仓待结算」和「还没有仓位」的两句文案
+// (沿用卡片同一处语义,措辞缩短成标签形态)现在跟着策略名一起放进第一列
+// 的小标签里,不再独占末列一行——那是这一轮"每档一行"改造的一部分,见
+// 上面「策略」单元格与下方 CardState 判定。末列现在只留「详情」按钮。
 //
 // 「持有 / 运行」不算在"数值列显示 —"这条规则里——它是运行状态(当前持仓
 // 数、上线多久),不是战绩指标,哪怕 0 结算也是真实、有意义的数字,卡片的
@@ -2220,16 +2312,29 @@ function StrategyListRow({
   const dash = <span className="muted">—</span>;
   return (
     <tr className={empty ? "muted" : undefined}>
+      {/* 每档一行:emoji + 名字 + 族标签(+ 领先/等待状态)全部横向并排在
+          同一个单元格里,不再有「族在上、名字在下」的纵向堆叠。族标签沿用
+          Tag 组件默认样式,与领先/等待标签同一套视觉语言,靠 flexWrap:
+          "wrap" 兜底——桌面宽度下内容够放,不会真的触发换行;窄到必须换行
+          时(理论上只有极端窗口宽度)才回退成两行,不会把内容裁掉或撑出
+          横向溢出。 */}
       <td data-label="策略">
-        <Tag>{familyTitle}</Tag>
-        <div style={{ marginTop: "var(--s-1)", fontWeight: 600 }}>
-          {s.name}
-          {leading ? (
-            <span style={{ marginLeft: "var(--s-2)" }}>
-              <Tag variant="brand">领先</Tag>
-            </span>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "var(--s-2)",
+            flexWrap: "wrap",
+          }}
+        >
+          <span aria-hidden>{strategyEmoji(s.name)}</span>
+          <span style={{ fontWeight: 600 }}>{s.name}</span>
+          <Tag>{familyTitle}</Tag>
+          {leading ? <Tag variant="brand">领先</Tag> : null}
+          {empty ? (
+            <Tag>{m.openCount > 0 ? "等待结算" : "等待命中"}</Tag>
           ) : null}
-        </div>
+        </span>
       </td>
       <td className="is-right" data-label="结算净值">
         {empty ? (
@@ -2297,11 +2402,6 @@ function StrategyListRow({
         </span>
       </td>
       <td className="is-right" data-label="操作">
-        {empty ? (
-          <div className="kpi-sub">
-            {m.openCount > 0 ? "等待首次结算" : "等待信号命中"}
-          </div>
-        ) : null}
         <button
           type="button"
           className="ds-btn ds-btn--sm"
