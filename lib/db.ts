@@ -316,8 +316,14 @@ export function openDb(path = "data.sqlite") {
   // 意义(不再对应任何一套一致的规则),故 v2 只 INSERT 新增的 10 条,绝不
   // UPDATE 既有两条。
   //
-  // 门控条件直接从 !== "1" 改成 !== "2"(单个 if 块整体加宽),而不是在这个
-  // if 块后面另开一个并列的 `if (!== "2")`:
+  // v3(第 13 档):新增「逆势少数边」—— 复用 lopsided source(见
+  // lib/followCandidate.ts StrategyParams.side),跟同一批一边倒市场的
+  // 少数边,是 C1「一边倒分歧」的对照组,不是新信号类型。同一条红线延续:
+  // v3 只 INSERT 这新增的 1 条,既有 12 条(含 v1 的保守/激进与 v2 的 10 档)
+  // 一个字段都不动。
+  //
+  // 门控条件从 !== "2" 改成 !== "3"(单个 if 块继续整体加宽,与 v1→v2 同一
+  // 手法),而不是在这个 if 块后面另开一个并列的 `if (!== "3")`:
   //   1. 并列写法会有两个问题 —— 语法上 `ins` 是块作用域 const,第二个 if 块
   //      看不见第一个块里声明的 `ins`,会需要重复 db.prepare 或直接报错;
   //      语义上更隐蔽的坑是,若把原 `!== "1"` 条件原样留在第一个 if 里,
@@ -326,21 +332,24 @@ export function openDb(path = "data.sqlite") {
   //      个 if 写回 "2",两个 if 在其后每次开库时来回震荡,完全违背版本门控
   //      "只跑一次"的设计初衷(见上面这段注释开头的理由)。
   //   2. 单个加宽的 if 块没有这个问题:marker 一旦是 "2",整个块直接跳过。
-  //   3. 块内重跑「保守」「激进」的 ins.run(...) 是安全的 no-op ——
-  //      INSERT OR IGNORE + name 的 UNIQUE 约束保证:名字已存在时,SQLite
-  //      连新值都不看就跳过整条 INSERT,既有行(含 params_json)不会被触碰,
-  //      更不会被覆盖。这也是下面两条路径都成立的原因:
-  //        - 全新库(marker 不存在):表是空的,两条 no-op 检查全部落空,
-  //          12 条全部真实插入。
-  //        - 既有 v1 库(marker="1",已有保守/激进):这两条 INSERT 命中
-  //          UNIQUE 静默跳过,不写入也不覆盖;下面新增的 10 条全部真实插入。
+  //   3. 块内重跑「保守」「激进」+ v2 那 10 档的 ins.run(...) 全部是安全的
+  //      no-op —— INSERT OR IGNORE + name 的 UNIQUE 约束保证:名字已存在时,
+  //      SQLite 连新值都不看就跳过整条 INSERT,既有行(含 params_json)不会
+  //      被触碰,更不会被覆盖。这也是下面几条路径都成立的原因:
+  //        - 全新库(marker 不存在):表是空的,前 12 条 no-op 检查全部落空,
+  //          13 条(v1 的 2 条 + v2 的 10 条 + v3 的 1 条)全部真实插入。
+  //        - 既有 v1 库(marker="1",只有保守/激进):这两条 INSERT 命中
+  //          UNIQUE 静默跳过;v2 的 10 档 + v3 的 1 档,共 11 条全部真实插入。
+  //        - 既有 v2 库(marker="2",已有全部 12 条):前 12 条 INSERT 全部
+  //          命中 UNIQUE 静默跳过,不写入也不覆盖;只有 v3 新增的这 1 条
+  //          真实插入 —— 这是当前生产库会走的路径。
   //   同样的 OR IGNORE 语义也覆盖了另一种情况:如果运维手工改过某条策略的
   //   名字、或手工加过同名策略,这里会静默跳过 —— 这是期望行为(不覆盖用户
   //   的手工修改),不是 bug。
   const followVer = db
     .prepare("SELECT value FROM config WHERE key = 'follow_seed_v'")
     .get() as { value: string | null } | undefined;
-  if (followVer?.value !== "2") {
+  if (followVer?.value !== "3") {
     const ins = db.prepare(
       "INSERT OR IGNORE INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
     );
@@ -471,12 +480,36 @@ export function openDb(path = "data.sqlite") {
         "早期赢家跟投",
         { source: "early_winner", minNetUsd: 5000, sizeUsd: 500 },
       ],
+      // v3 新增,第 13 档 —— 逆势少数边:仍是 lopsided source,靠 side:"minor"
+      // 跟同一批一边倒市场的少数边(sides[1]),而不是「一边倒分歧」跟的主导边
+      // (sides[0])。这不是一个新信号类型,是 C1 的对照组:主导边持续赢说明
+      // qualityWeight/tilt 判据有效,少数边若也持续赢则说明评分体系可能有
+      // 盲区,或少数派掌握了权重算法看不见的信息——两档共用同一批 contested
+      // 市场、同一个倾斜形成时刻(detectLopsidedCandidates 里 side="minor"
+      // 分支仍取 sides[0].formationTs,理由见 lib/sourceLopsided.ts 函数头
+      // 注释),只在跟哪一边这一步分叉,战绩才可比。
+      // minTiltPct/minPerSideUsd 与「一边倒分歧」种子同一套说明:前者是
+      // detectLopsidedCandidates 真会读的开关(`params.minTiltPct ??
+      // DEFAULT_DISAGREEMENT.lopsidedTiltPct`);minPerSideUsd 是给人看的
+      // 口径说明而非开关字段,detector 不读它,数值上抄自 DEFAULT_DISAGREEMENT
+      // 只为与 C1 保持一致,不是死档风险。side 才是真正让这一档区别于 C1 的
+      // 开关字段。
+      [
+        "逆势少数边",
+        {
+          source: "lopsided",
+          side: "minor",
+          minTiltPct: 0.7,
+          minPerSideUsd: 5000,
+          sizeUsd: 500,
+        },
+      ],
     ];
     for (const [name, params] of seeds) {
       ins.run(name, JSON.stringify(params), now);
     }
     db.prepare(
-      "INSERT OR REPLACE INTO config (key, value) VALUES ('follow_seed_v', '2')",
+      "INSERT OR REPLACE INTO config (key, value) VALUES ('follow_seed_v', '3')",
     ).run();
   }
   return db;

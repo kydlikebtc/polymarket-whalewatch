@@ -8,6 +8,10 @@ import {
 } from "./disagreement";
 import { detectConsensus, DEFAULT_CONSENSUS } from "./consensus";
 import type { DetectorCtx, StrategyParams } from "./followCandidate";
+// side 字段(第 13 档「逆势少数边」)的 parseStrategy 解析测试放在本文件而非
+// follow.test.ts —— 与 detectLopsidedCandidates 的 side 消费测试放在一起,
+// 一个文件覆盖"这个字段从解析到生效"的完整链路,不必来回切两个文件核对。
+import { parseStrategyForTest } from "./follow";
 import type { SmartTag } from "./smartWallets";
 import type { Trade } from "./types";
 
@@ -371,5 +375,186 @@ describe("detectLopsidedCandidates", () => {
     );
     expect(out).toHaveLength(1);
     expect(out[0].conditionId).toBe("0xc");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 第 13 档「逆势少数边」:C1 的对照组。复用同一个 lopsided source,只加一个
+// side 参数("lead"/"minor")选跟哪一边 —— 不是新信号类型,detectDisagreement
+// 的输出(sides/tiltPct/formationTs)完全不变,变的只是 detector 组装候选时
+// 挑 sides[0] 还是 sides[1]。见 lib/sourceLopsided.ts 函数头「side 选边」
+// 整段论证,尤其是 formationTs 恒取 sides[0] 那部分——这是本组测试里最重要
+// 的一条锁死项(下面第二条用例)。
+// ---------------------------------------------------------------------------
+describe("detectLopsidedCandidates — side 参数(第 13 档「逆势少数边」)", () => {
+  it('side: "minor" → 产出的候选是 sides[1](少数边)的 outcome/asset/referencePrice,不是 sides[0]', () => {
+    const contested = detectDisagreement(
+      lopsidedTrades(),
+      lopsidedSmart(),
+      DEFAULT_DISAGREEMENT,
+    );
+    // 锁定 fixture 本身的形状:少数边(sides[1])是 No,0xB 单独买入 $6k
+    // @0.4(15000 股)—— 与函数头注释里的 fixture 说明一致。
+    expect(contested[0].sides[1].outcome).toBe("No");
+    expect(contested[0].sides[1].outcomeIndex).toBe(1);
+    expect(contested[0].sides[1].asset).toBe("assetNo");
+    expect(contested[0].sides[1].avgBuyPrice).toBeCloseTo(0.4);
+    expect(contested[0].sides[1].netUsd).toBe(6000);
+    expect(contested[0].sides[1].walletCount).toBe(1);
+
+    const out = detectLopsidedCandidates(
+      [],
+      params({ side: "minor" }),
+      ctx({ contested, nowSec: 800 }), // nowSec-formationTs=500 <= freshSec 900,新鲜
+    );
+    expect(out).toHaveLength(1);
+    const c = out[0];
+    expect(c.conditionId).toBe("0xc");
+    expect(c.outcome).toBe("No"); // 少数边,不是主导边 Yes
+    expect(c.outcomeIndex).toBe(1);
+    expect(c.asset).toBe("assetNo");
+    expect(c.referencePrice).toBeCloseTo(0.4); // 少数边(No)加权均价,不是主导边的 ≈0.590909
+    expect(c.sourceKind).toBe("lopsided"); // 仍是同一个信号源,side 只影响跟哪一边
+    expect(c.walletCount).toBe(1); // 只有 0xB
+    expect(c.totalNetUsd).toBe(6000); // 少数边(No)净买,不是主导边的 26000
+  });
+
+  it('formationTs 与 side: "lead" 时完全相同 —— 对照成立的基础,必须锁死', () => {
+    const contested = detectDisagreement(
+      lopsidedTrades(),
+      lopsidedSmart(),
+      DEFAULT_DISAGREEMENT,
+    );
+    const leadOut = detectLopsidedCandidates(
+      [],
+      params({ side: "lead" }),
+      ctx({ contested, nowSec: 800 }),
+    );
+    const minorOut = detectLopsidedCandidates(
+      [],
+      params({ side: "minor" }),
+      ctx({ contested, nowSec: 800 }),
+    );
+    expect(leadOut).toHaveLength(1);
+    expect(minorOut).toHaveLength(1);
+    expect(leadOut[0].formationTs).toBe(300); // 锁定字面量,与既有 C1 测试同一个值
+    // 核心断言:两者是同一个值,不是各自巧合等于 300 —— 即便未来 fixture 的
+    // 具体数字变了,这条比较本身依然成立,才是"对照"这件事的真正基础。
+    expect(minorOut[0].formationTs).toBe(leadOut[0].formationTs);
+  });
+
+  it('side 缺省 → 行为与显式传 side: "lead" 逐字节一致(向后兼容,既有 12 条策略不受影响)', () => {
+    const contested = detectDisagreement(
+      lopsidedTrades(),
+      lopsidedSmart(),
+      DEFAULT_DISAGREEMENT,
+    );
+    const withoutSide = detectLopsidedCandidates(
+      [],
+      params(), // 不传 side —— 既有 12 条策略(含「一边倒分歧」自己)的真实形状
+      ctx({ contested, nowSec: 800 }),
+    );
+    const explicitLead = detectLopsidedCandidates(
+      [],
+      params({ side: "lead" }),
+      ctx({ contested, nowSec: 800 }),
+    );
+    // 深比较整个候选数组(不是抽样断言个别字段)—— 这才是"逐字节一致"这个
+    // 承诺的真实验证:任何一个字段(哪怕是不起眼的 walletCount)一旦因为
+    // side 改造而意外分叉,这里就会立刻失败。
+    expect(withoutSide).toEqual(explicitLead);
+    expect(withoutSide).toHaveLength(1);
+    expect(withoutSide[0].outcome).toBe("Yes"); // 仍是主导边,C1 既有行为未变
+  });
+
+  it('side: "minor" 但 sides[1] 不存在 → fail-closed(理论上不会发生,detectDisagreement 保证 sides.length>=2)', () => {
+    // 手工构造一个不满足"sides.length>=2"契约的 DisagreementMarket —— 真实
+    // detectDisagreement 永远不会产出这种形状(sides.length<2 时在函数内直接
+    // continue,不会被放进返回数组,见 lib/disagreement.ts),这里专门测
+    // detector 自己的防御性判空分支,不依赖上游契约不被未来重构打破。
+    const brokenMarket: DisagreementMarket = {
+      conditionId: "0xbroken",
+      title: "Broken Market",
+      slug: "broken-slug",
+      eventSlug: "broken-event",
+      sides: [
+        {
+          outcome: "Yes",
+          outcomeIndex: 0,
+          asset: "assetYes",
+          walletCount: 1,
+          netUsd: 10000,
+          weightedUsd: 8400,
+          avgBuyPrice: 0.5,
+          wallets: [],
+          formationTs: 300,
+        },
+      ],
+      totalNetUsd: 10000,
+      totalWeightedUsd: 8400,
+      tiltPct: 1, // 单边,占比 100%,轻松过 minTilt,不会在第一道门槛就被拦下
+      tilt: "lopsided",
+      excludedWallets: 0,
+      firstTs: 100,
+      lastTs: 300,
+    };
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const out = detectLopsidedCandidates(
+      [],
+      params({ side: "minor" }),
+      ctx({ contested: [brokenMarket], nowSec: 800 }),
+    );
+    expect(out).toHaveLength(0); // fail-closed,不产出候选,不用 `sides[1]!` 硬转崩溃
+    const lines = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes("sides[1] 不存在"))).toBe(true);
+    logSpy.mockRestore();
+  });
+});
+
+describe("parseStrategy — side 解析(第 13 档「逆势少数边」)", () => {
+  it('合法值 "lead"/"minor" 原样生效', () => {
+    const lead = parseStrategyForTest(
+      1,
+      JSON.stringify({ source: "lopsided", sizeUsd: 500, side: "lead" }),
+    );
+    expect(lead).not.toBeNull();
+    expect(lead!.side).toBe("lead");
+
+    const minor = parseStrategyForTest(
+      2,
+      JSON.stringify({ source: "lopsided", sizeUsd: 500, side: "minor" }),
+    );
+    expect(minor).not.toBeNull();
+    expect(minor!.side).toBe("minor");
+  });
+
+  it('缺省 → 退默认 "lead",且静默不留痕(既有 12 条策略没有这个字段,是正常情况)', () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const s = parseStrategyForTest(
+      3,
+      JSON.stringify({ source: "lopsided", sizeUsd: 500 }),
+    );
+    expect(s).not.toBeNull();
+    expect(s!.side).toBe("lead");
+    // 字段缺失是既有库(12 条策略,含「一边倒分歧」自己)的常态,不该被当成
+    // 异常留痕——与 maxPrice/freshSec 缺省时"静默不 warn"同一条纪律。
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('非法值(如误写成 "both")→ 退默认 "lead",console.warn 留痕并注明退默认值', () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const s = parseStrategyForTest(
+      4,
+      JSON.stringify({ source: "lopsided", sizeUsd: 500, side: "both" }),
+    );
+    expect(s).not.toBeNull();
+    expect(s!.side).toBe("lead");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('side="both"'),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"lead"'));
+    warnSpy.mockRestore();
   });
 });

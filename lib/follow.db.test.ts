@@ -13,9 +13,10 @@ import {
 } from "./follow";
 import { FOLLOW_SOURCE_KINDS, isFollowSourceKind } from "./followCandidate";
 
-// Task 12(策略种子 v2)新增的 10 档 + 既有「保守」「激进」= 12 条策略的完整
-// 名字集合。多个测试都要断言"全部种进去了"或"名字集合不多不少",抽成常量
-// 避免 12 个字符串字面量在文件里重复漂移。
+// Task 12(策略种子 v2)新增的 10 档 + 既有「保守」「激进」= 12 条,再加 v3
+// (第 13 档「逆势少数边」,C1 的对照组)= 13 条策略的完整名字集合。多个测试
+// 都要断言"全部种进去了"或"名字集合不多不少",抽成常量避免 13 个字符串
+// 字面量在文件里重复漂移。
 const ALL_STRATEGY_NAMES = [
   "保守",
   "激进",
@@ -29,10 +30,14 @@ const ALL_STRATEGY_NAMES = [
   "分歧解除",
   "高分独狼",
   "早期赢家跟投",
+  "逆势少数边",
 ];
 
-// 新增 10 档各自的 source —— Task 12 测试要求「每条新种子的 source 都在
-// FOLLOW_SOURCE_KINDS 里」要用到,与 db.ts 里的种子定义一一对应。
+// 新增档位各自的 source —— Task 12(10 档)+ v3(第 13 档)测试要求「每条新
+// 种子的 source 都在 FOLLOW_SOURCE_KINDS 里」要用到,与 db.ts 里的种子定义
+// 一一对应。「逆势少数边」的 source 仍是 "lopsided"(复用 C1 的信号源,靠
+// side 字段区分跟哪一边,不是新 kind),这里放进来能顺带跑一遍"能被
+// parseStrategy 成功解析"这条防死档校验。
 const NEW_STRATEGY_SOURCES: [string, string][] = [
   ["精英共识", "consensus"],
   ["重仓共识", "consensus"],
@@ -44,6 +49,7 @@ const NEW_STRATEGY_SOURCES: [string, string][] = [
   ["分歧解除", "resolved"],
   ["高分独狼", "lone_wolf"],
   ["早期赢家跟投", "early_winner"],
+  ["逆势少数边", "lopsided"],
 ];
 
 // P1 信号触发改造新增的归因列:formation_ts/formation_price(形成时刻三价记录)
@@ -72,7 +78,7 @@ const positionCols = (db: ReturnType<typeof openDb>): string[] =>
   ).map((r) => r.name);
 
 describe("follow tables migration", () => {
-  it("creates follow_strategies + follow_positions, seeds twelve strategies (v2), enforces the position UNIQUE key", () => {
+  it("creates follow_strategies + follow_positions, seeds thirteen strategies (v3), enforces the position UNIQUE key", () => {
     const db = openDb(":memory:");
     const tables = (
       db
@@ -85,9 +91,9 @@ describe("follow tables migration", () => {
       .sort();
     expect(tables).toEqual(["follow_positions", "follow_strategies"]);
 
-    // Task 12(v2):全新库一次性种进全部 12 条(既有「保守」「激进」+ 新增
-    // 10 档),不是曾经的 2 条。两侧各自 sort() 后比较,不依赖 SQLite 对
-    // 中文字符串的排序规则与 JS 一致。
+    // Task 12(v2)+ v3:全新库一次性种进全部 13 条(既有「保守」「激进」+
+    // v2 新增 10 档 + v3 新增第 13 档「逆势少数边」),不是曾经的 2 条。两侧
+    // 各自 sort() 后比较,不依赖 SQLite 对中文字符串的排序规则与 JS 一致。
     const strats = (
       db.prepare("SELECT name FROM follow_strategies").all() as {
         name: string;
@@ -140,7 +146,7 @@ describe("follow tables migration", () => {
     }
   });
 
-  it("seeds all twelve strategies exactly once via the follow_seed_v marker (reopen must not re-seed)", () => {
+  it("seeds all thirteen strategies exactly once via the follow_seed_v marker (reopen must not re-seed)", () => {
     const dir = mkdtempSync(join(tmpdir(), "whaledb-"));
     const path = join(dir, "t.sqlite");
     const names = (db: ReturnType<typeof openDb>) =>
@@ -158,19 +164,20 @@ describe("follow tables migration", () => {
           .get() as { value: string } | undefined
       )?.value;
     try {
-      // First open: marker missing → seed runs and writes follow_seed_v = "2"
-      // (Task 12 起,全新库一次种进全部 12 条,不再是 v1 时代的 2 条)。
+      // First open: marker missing → seed runs and writes follow_seed_v = "3"
+      // (v3 起,全新库一次种进全部 13 条 —— 既有 12 条 + 第 13 档「逆势少数
+      // 边」,不再是 v1 时代的 2 条或 v2 时代的 12 条)。
       const db1 = openDb(path);
       expect(names(db1)).toEqual([...ALL_STRATEGY_NAMES].sort());
-      expect(marker(db1)).toBe("2");
+      expect(marker(db1)).toBe("3");
       db1.close();
 
       // Plain reopen of the SAME file: marker present, so the count stays
-      // exactly 12 — the in-memory case can never exercise a reopen.
+      // exactly 13 — the in-memory case can never exercise a reopen.
       const db2 = openDb(path);
       expect(names(db2)).toEqual([...ALL_STRATEGY_NAMES].sort());
-      expect(marker(db2)).toBe("2");
-      // Delete one seeded strategy while the marker stays "2". A gated openDb
+      expect(marker(db2)).toBe("3");
+      // Delete one seeded strategy while the marker stays "3". A gated openDb
       // must SKIP the seed block on the next open, so the deleted row must NOT
       // come back. This is the real regression catcher: with the version gate
       // removed, the seed block would re-run and INSERT OR IGNORE would silently
@@ -183,7 +190,7 @@ describe("follow tables migration", () => {
       expect(names(db3)).toEqual(
         [...ALL_STRATEGY_NAMES].filter((n) => n !== "保守").sort(),
       );
-      expect(marker(db3)).toBe("2");
+      expect(marker(db3)).toBe("3");
       db3.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -193,15 +200,17 @@ describe("follow tables migration", () => {
 
 // ---------------------------------------------------------------------------
 // Task 12: follow_strategies seed v2 —— 新增 10 档(A3-A5/B1-B3/C1-C2/D1-D2)。
-// 五点必测(设计文档 §Task 12「测试必须断言」+ 实施时补的三点防死档校验):
-//   1. 全新库一次性种进全部 12 条,名字集合完全匹配预期
-//   2. 既有 v1 库升级 → 12 条,且「保守」「激进」的 params_json 逐字节未变
-//   3. 幂等:连续两次 openDb 同一文件,策略数仍是 12
+// v3(第 13 档「逆势少数边」,C1 的对照组)延续同一套必测项,数字从 12/"2"
+// 更新到 13/"3":
+//   1. 全新库一次性种进全部 13 条,名字集合完全匹配预期
+//   2. 既有 v1 库升级 → 13 条,且「保守」「激进」的 params_json 逐字节未变
+//   2'. 既有 v2 库升级 → 13 条,且既有 12 条的 params_json 逐字节未变(v3 新增)
+//   3. 幂等:连续两次 openDb 同一文件,策略数仍是 13
 //   4. 每条新种子都能被 parseStrategy 成功解析(不返回 null)—— 防死档
 //   5. 每条新种子的 source 都在 FOLLOW_SOURCE_KINDS 里
 // ---------------------------------------------------------------------------
-describe("follow_strategies seed v2(Task 12:新增 10 档)", () => {
-  it("全新库:一次性种进全部 12 条,名字集合完全匹配预期", () => {
+describe("follow_strategies seed v2(Task 12:新增 10 档)+ v3(第 13 档)", () => {
+  it("全新库:一次性种进全部 13 条,名字集合完全匹配预期", () => {
     const db = openDb(":memory:");
     const names = (
       db.prepare("SELECT name FROM follow_strategies").all() as {
@@ -216,17 +225,17 @@ describe("follow_strategies seed v2(Task 12:新增 10 档)", () => {
         .prepare("SELECT value FROM config WHERE key = 'follow_seed_v'")
         .get() as { value: string } | undefined
     )?.value;
-    expect(marker).toBe("2");
+    expect(marker).toBe("3");
     db.close();
   });
 
-  it("既有 v1 库升级:结果 12 条,且「保守」「激进」的 params_json 逐字节未变", () => {
+  it("既有 v1 库升级:结果 13 条,且「保守」「激进」的 params_json 逐字节未变", () => {
     const dir = mkdtempSync(join(tmpdir(), "whaledb-"));
     const path = join(dir, "v1.sqlite");
     try {
-      // 手工搭一个"已经跑过 v1 迁移、还没跑过 v2 迁移"的库形状 —— 与 v1
+      // 手工搭一个"已经跑过 v1 迁移、还没跑过 v2/v3 迁移"的库形状 —— 与 v1
       // 时代 db.ts 种子逻辑产出的内容逐字节一致(两条策略 + marker='1')。
-      // 不复用当前的 openDb(它现在直接种 v2/12 条,已经没有"只种 2 条就
+      // 不复用当前的 openDb(它现在直接种到 v3/13 条,已经没有"只种 2 条就
       // 停在 v1"这条路径了),改为自己起一个裸连接手工建表 + 插入,精确
       // 复刻红线场景:生产库里已经跑了几周、积累了历史仓位与战绩的那两条
       // 策略。两条 CREATE TABLE 分开 prepare().run()(而非一次 exec 多语句)
@@ -269,20 +278,21 @@ describe("follow_strategies seed v2(Task 12:新增 10 档)", () => {
         .run();
       raw.close();
 
-      // 真实升级路径:用生产代码的 openDb 打开这个"v1 库",触发 v2 迁移。
+      // 真实升级路径:用生产代码的 openDb 打开这个"v1 库",一次性触发 v2+v3
+      // 迁移(单个加宽 if 块,见 lib/db.ts 门控条件处的注释)。
       const db = openDb(path);
 
       const rows = db
         .prepare("SELECT name, params_json FROM follow_strategies")
         .all() as { name: string; params_json: string }[];
-      expect(rows.length).toBe(12);
+      expect(rows.length).toBe(13);
       expect(rows.map((r) => r.name).sort()).toEqual(
         [...ALL_STRATEGY_NAMES].sort(),
       );
 
       // 逐字节字符串比较,不是 JSON.parse 后比对象 —— 后者会把字段顺序/
       // 格式被意外改写的回归判等,前者才能抓出来。这是红线的直接断言:
-      // v2 迁移绝不 UPDATE 既有两条的任何字段。
+      // v2/v3 迁移绝不 UPDATE 既有两条的任何字段。
       const byName = new Map(rows.map((r) => [r.name, r.params_json]));
       expect(byName.get("保守")).toBe(conservativeParams);
       expect(byName.get("激进")).toBe(aggressiveParams);
@@ -292,7 +302,7 @@ describe("follow_strategies seed v2(Task 12:新增 10 档)", () => {
           .prepare("SELECT value FROM config WHERE key = 'follow_seed_v'")
           .get() as { value: string } | undefined
       )?.value;
-      expect(marker).toBe("2");
+      expect(marker).toBe("3");
 
       db.close();
     } finally {
@@ -300,7 +310,118 @@ describe("follow_strategies seed v2(Task 12:新增 10 档)", () => {
     }
   });
 
-  it("幂等:连续两次 openDb 打开同一文件,策略数仍是 12(不重复插入)", () => {
+  // v3 新增:与上面"既有 v1 库升级"同一手法,但起点换成"已经跑过 v2 迁移"
+  // 的库形状(12 条策略 + marker='2')—— 这是当前生产库实际会走的升级路径
+  // (线上库早已过了 v1,停在 v2)。12 条的 params_json 字面量逐字节抄自
+  // lib/db.ts v3 改动前的种子定义(用字符串直接比较,不 JSON.parse 后比
+  // 对象 —— 同上一条测试的理由,能抓出字段顺序/格式被意外改写的回归)。
+  it("既有 v2 库升级到 v3:新增「逆势少数边」,既有 12 条 params_json 逐字节未变", () => {
+    const dir = mkdtempSync(join(tmpdir(), "whaledb-"));
+    const path = join(dir, "v2.sqlite");
+    try {
+      const raw = new Database(path);
+      raw
+        .prepare("CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT)")
+        .run();
+      raw
+        .prepare(
+          "CREATE TABLE follow_strategies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, enabled INTEGER DEFAULT 1, params_json TEXT, created_at INTEGER)",
+        )
+        .run();
+      // 12 条既有策略的 params_json —— 与 lib/db.ts v3 改动前实际种下的内容
+      // 逐字节相同(字段顺序、值都一致)。
+      const existingParams: [string, string][] = [
+        [
+          "保守",
+          '{"minWallets":3,"minPerWalletUsd":10000,"sizeUsd":500,"exitRule":"settlement","maxEntryDeviationCents":10}',
+        ],
+        [
+          "激进",
+          '{"minWallets":2,"minPerWalletUsd":5000,"sizeUsd":500,"exitRule":"settlement","maxEntryDeviationCents":10}',
+        ],
+        [
+          "精英共识",
+          '{"source":"consensus","minWallets":2,"minPerWalletUsd":5000,"minWalletScore":80,"sizeUsd":500}',
+        ],
+        [
+          "重仓共识",
+          '{"source":"consensus","minWallets":2,"minPerWalletUsd":5000,"minTotalNetUsd":100000,"sizeUsd":500}',
+        ],
+        [
+          "首发共识",
+          '{"source":"consensus","minWallets":3,"minPerWalletUsd":10000,"freshSec":300,"sizeUsd":500}',
+        ],
+        ["巨鲸", '{"source":"heavy","minSingleFillUsd":50000,"sizeUsd":500}'],
+        [
+          "超级巨鲸",
+          '{"source":"heavy","minSingleFillUsd":150000,"sizeUsd":500}',
+        ],
+        [
+          "巨鲸精英",
+          '{"source":"heavy","minSingleFillUsd":50000,"minWalletScore":80,"sizeUsd":500}',
+        ],
+        [
+          "一边倒分歧",
+          '{"source":"lopsided","minTiltPct":0.7,"minPerSideUsd":5000,"sizeUsd":500}',
+        ],
+        [
+          "分歧解除",
+          '{"source":"resolved","minPerSideUsd":5000,"sizeUsd":500}',
+        ],
+        [
+          "高分独狼",
+          '{"source":"lone_wolf","minWalletScore":90,"minNetUsd":10000,"sizeUsd":500}',
+        ],
+        [
+          "早期赢家跟投",
+          '{"source":"early_winner","minNetUsd":5000,"sizeUsd":500}',
+        ],
+      ];
+      const rawIns = raw.prepare(
+        "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
+      );
+      for (const [name, json] of existingParams) rawIns.run(name, json, 1000);
+      raw
+        .prepare(
+          "INSERT INTO config (key, value) VALUES ('follow_seed_v', '2')",
+        )
+        .run();
+      raw.close();
+
+      // 真实升级路径:用生产代码的 openDb 打开这个"v2 库",触发 v3 迁移。
+      const db = openDb(path);
+      const rows = db
+        .prepare("SELECT name, params_json FROM follow_strategies")
+        .all() as { name: string; params_json: string }[];
+      expect(rows.length).toBe(13);
+      expect(rows.map((r) => r.name).sort()).toEqual(
+        [...ALL_STRATEGY_NAMES].sort(),
+      );
+
+      // 红线的直接断言:v3 迁移绝不 UPDATE 既有 12 条的任何字段 —— 逐条
+      // 字符串精确比较,不是 JSON.parse 后比对象。
+      const byName = new Map(rows.map((r) => [r.name, r.params_json]));
+      for (const [name, expected] of existingParams) {
+        expect(
+          byName.get(name),
+          `策略「${name}」的 params_json 应逐字节未变`,
+        ).toBe(expected);
+      }
+
+      const marker = (
+        db
+          .prepare("SELECT value FROM config WHERE key = 'follow_seed_v'")
+          .get() as { value: string } | undefined
+      )?.value;
+      expect(marker).toBe("3");
+
+      db.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("幂等:连续两次 openDb 打开同一文件,策略数仍是 13(不重复插入)", () => {
     const dir = mkdtempSync(join(tmpdir(), "whaledb-"));
     const path = join(dir, "idempotent.sqlite");
     const count = (db: ReturnType<typeof openDb>) =>
@@ -311,11 +432,11 @@ describe("follow_strategies seed v2(Task 12:新增 10 档)", () => {
       ).n;
     try {
       const db1 = openDb(path);
-      expect(count(db1)).toBe(12);
+      expect(count(db1)).toBe(13);
       db1.close();
 
       const db2 = openDb(path);
-      expect(count(db2)).toBe(12);
+      expect(count(db2)).toBe(13);
       db2.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -369,7 +490,15 @@ describe("follow_strategies seed v2(Task 12:新增 10 档)", () => {
   //     静默失效,见设计文档「已知设计边界」一节)。
   // 换言之:C2 的这条断言纯粹是防止文档注释与实际种子值失配;C1 的
   // minTiltPct 断言则是在保护一个真实生效的行为参数。
-  it("C1/C2 种子里的 minPerSideUsd/minTiltPct 字面量与 DEFAULT_DISAGREEMENT 同步", () => {
+  //
+  // 「逆势少数边」(第 13 档)与 C1 共用同一套 minPerSideUsd/minTiltPct 字面量
+  // (种子注释里明确说明"为与「一边倒分歧」种子保持一致而带上"),同步风险与
+  // C1 完全相同,一并纳入这条测试而不是另开一条——避免两处分别断言、将来只
+  // 改了一处而漏改另一处。另外补一条 C1 没有的检查:side 字段字面量必须是
+  // "minor"——这是唯一真正把这一档与 C1 区分开的开关,写错会让它变成
+  // C1 的重复档而不是对照组,后果比 minTiltPct 分叉更严重(见
+  // lib/sourceLopsided.ts 函数头「side 选边」注释)。
+  it("C1/逆势少数边/C2 种子里的 minPerSideUsd/minTiltPct/side 字面量与 DEFAULT_DISAGREEMENT 同步", () => {
     const db = openDb(":memory:");
     const paramsOf = (name: string): Record<string, unknown> => {
       const row = db
@@ -382,6 +511,12 @@ describe("follow_strategies seed v2(Task 12:新增 10 档)", () => {
     const c1 = paramsOf("一边倒分歧");
     expect(c1.minPerSideUsd).toBe(DEFAULT_DISAGREEMENT.minPerSideUsd);
     expect(c1.minTiltPct).toBe(DEFAULT_DISAGREEMENT.lopsidedTiltPct);
+
+    const minorSide = paramsOf("逆势少数边");
+    expect(minorSide.source).toBe("lopsided");
+    expect(minorSide.side).toBe("minor");
+    expect(minorSide.minPerSideUsd).toBe(DEFAULT_DISAGREEMENT.minPerSideUsd);
+    expect(minorSide.minTiltPct).toBe(DEFAULT_DISAGREEMENT.lopsidedTiltPct);
 
     const c2 = paramsOf("分歧解除");
     expect(c2.minPerSideUsd).toBe(DEFAULT_DISAGREEMENT.minPerSideUsd);

@@ -149,6 +149,18 @@ export interface StrategyParams {
   minPerSideUsd?: number;
   // lone_wolf / early_winner 专属
   minNetUsd?: number;
+  // lopsided 专属(第 13 档「逆势少数边」新增,resolved 不用):跟主导边
+  // (sides[0],既有 C1「一边倒分歧」行为)还是少数边(sides[1])。缺省/非法
+  // 都退默认 "lead"——既有 12 条策略(含「一边倒分歧」自己)的 params_json
+  // 都没有这个字段,必须零迁移保持现状不变。
+  //
+  // ⚠️ side 只决定跟哪一边的 outcome/asset/avgBuyPrice/walletCount/netUsd,
+  // 不影响 formationTs:detectLopsidedCandidates 里 "minor" 分支仍然复用
+  // sides[0].formationTs(唯一被算过跨线时刻的边,见 lib/disagreement.ts
+  // DisagreementSide.formationTs 字段注释),不会为 sides[1] 另算。这不是
+  // 遗漏——两档必须共用同一个"倾斜形成时刻"才构成干净的对照组(详细论证见
+  // lib/sourceLopsided.ts 的 detectLopsidedCandidates 函数头注释)。
+  side?: "lead" | "minor";
 }
 
 /**
