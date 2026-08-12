@@ -2347,17 +2347,26 @@ const DETAIL_SPARK_HEIGHT = 180;
 // 造一套滚动机制。
 const DETAIL_TAB_MIN_HEIGHT = 440;
 
-type DetailTab = "overview" | "cost" | "account" | "history";
+type DetailTab = "overview" | "cost" | "account" | "history" | "positions";
 
 /**
- * 策略详情弹窗(改版 Task 3,U6 追加区 1;本轮把"五区平铺向下罗列"改成
- * tab 切换):内容还是那五块,重新分进四个 tab:
+ * 策略详情弹窗(改版 Task 3,U6 追加区 1;先把"五区平铺向下罗列"改成 tab
+ * 切换,后又追加第五个 tab):内容分进五个 tab:
  *   总览     净值走势(Sparkline)+ 战绩全景(StrategyFullMetrics)一起放——
  *            走势是战绩的视觉引导,拆成两个 tab 反而要来回切才能对照着看,
  *            这两块本质是同一件事的两种呈现,不拆
  *   成本分解 成本四段分解,本任务唯一新增的信息组织,见 CostChain
  *   账户推演 AccountPlanDialog 内容原样(只换容器,内容一字不改)
  *   操作历史 HistoryDialog 内容原样(只换容器,内容一字不改)
+ *   仓位明细 该策略的仓位表(已结算/持有中),2026-08 追加——直接复用首页
+ *            「仓位明细」区同一套 SettledTable/OpenTable + Segmented,见
+ *            下方渲染处注释。放在最后一位:前四个 tab 的相对顺序原样不动
+ *            (不打乱已有的心智模型),仓位明细是这五个 tab 里颗粒度最细的
+ *            "原始数据"视图——总览是整体战绩,成本分解/账户推演是从同一批
+ *            仓位算出来的汇总结论,操作历史把仓位转成买入/兑现的时间线
+ *            叙事,仓位明细才是这些结论背后逐仓的原始行,放在最后正好是
+ *            "从宏观结论到最细粒度明细"这条阅读顺序的终点,也与首页本身把
+ *            「仓位明细」放在净值曲线之后、页面最底部的位置照应。
  * avgDelayCents/avgExecCents 在本层算一次(computeDelayExecAverages),
  * 通过 delayExec 传给"总览""成本分解"两个 tab 的消费者,不重复 reduce。
  * 设计见 docs/plans/2026-08-12-follow-page-card-redesign-design.md §3.2,
@@ -2373,16 +2382,27 @@ function StrategyDetailDialog({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<DetailTab>("overview");
+  // 仓位明细 tab 内部的二级切换(已结算/持有中),与首页同名 state
+  // (posTab/PosTab)是同一个概念在不同作用域的两份独立状态——特意不提到
+  // FollowPage 层通过 prop 共享:那样会把"在详情弹窗里切了一下 tab"和
+  // "首页仓位明细跟着一起变"绑在一起,这是两个读者预期不到的联动,弹窗
+  // 是"看这一档的细节",不该反过来影响首页正在看的视图。
+  const [posTab, setPosTab] = useState<PosTab>("settled");
   // tab 是弹窗级 state、不持久化:每次 open 从 false→true 都要回到"总览"
   // (这是"看某一档的细节",不是用户的长期偏好)。但组件本身在 open=false
   // 时只是提前 return null(见下面),并不会卸载——普通 useState 不会自己
   // 重置,必须主动比较 open 是否变化。用"渲染期间比较 prop 变化"而不是
   // useEffect:后者在 commit 之后才跑,open 翻转的第一帧会先画出上次选中
   // 的 tab、再跳回总览,这里把重置和 open 的变化钉在同一次渲染里,不闪烁。
+  // posTab 同一套逻辑一起重置——不然关掉「持有中」态的弹窗、换一档策略再
+  // 打开,会莫名其妙直接落在「持有中」而不是默认的「已结算」。
   const [prevOpen, setPrevOpen] = useState(open);
   if (open !== prevOpen) {
     setPrevOpen(open);
-    if (open) setTab("overview");
+    if (open) {
+      setTab("overview");
+      setPosTab("settled");
+    }
   }
   // Modal 自己在 !open 时也会返回 null;这里提前短路,避免弹窗关闭期间
   // 每次父组件重渲染(如 30s 自动刷新)都要为页面上 12 张卡各算一遍
@@ -2395,6 +2415,20 @@ function StrategyDetailDialog({
   const delayExec = computeDelayExecAverages(allPos);
   const acct = s.account;
   const hasPlan = !!acct && acct.rows.length > 0 && acct.suggestedUsd != null;
+  // 仓位明细 tab 用的两份表:与首页 FollowPage 里 settledRows/openRows 的
+  // 构造方式(map 贴策略名 + 已结算按结算时间倒序)完全一致,只是这里天然
+  // 只有一档策略,不需要再走首页那套"多策略拼一起 + 按 stratFilter 筛选"
+  // 的逻辑——直接用 s.settled/s.open 即可。放在 !open 短路之后:关闭状态
+  // 不必为每张卡都算一遍。当前价惰性取价(useCurrentPrices)在 OpenTable
+  // 组件内部,只有真正挂载 OpenTable 时才发起请求(见下方渲染处与该 hook
+  // 顶部注释)——这里只是拼数组,不涉及网络请求的时机。
+  const settledRows: LabeledRow[] = s.settled
+    .map((p) => ({ ...p, strategyName: s.name }))
+    .sort((a, b) => (b.exit_ts ?? 0) - (a.exit_ts ?? 0));
+  const openRows: LabeledRow[] = s.open.map((p) => ({
+    ...p,
+    strategyName: s.name,
+  }));
 
   return (
     <Modal
@@ -2421,7 +2455,10 @@ function StrategyDetailDialog({
           新造 tab 组件。className="ds-segmented--wrap" 是防御性的——四个
           选项本身够短,桌面/主流窄屏都不会真的换行,但 375px 是本项目实测
           踩过 .ds-segmented 溢出坑的宽度(见 globals.css 该修饰类注释),
-          按同一条既有约定处理,不单独验证"这次到底会不会溢出"。 */}
+          按同一条既有约定处理,不单独验证"这次到底会不会溢出"。追加第五个
+          「仓位明细」选项后同一条约定仍然成立——.ds-segmented--wrap 本身
+          就是"不管几个选项,装不下就换行"的通用防御,不是只为四个选项调
+          出来的数字,真机验证见对应提交说明。 */}
       <Segmented<DetailTab>
         ariaLabel="策略详情分区"
         className="ds-segmented--wrap"
@@ -2430,6 +2467,7 @@ function StrategyDetailDialog({
           { label: "成本分解", value: "cost" },
           { label: "账户推演", value: "account" },
           { label: "操作历史", value: "history" },
+          { label: "仓位明细", value: "positions" },
         ]}
         value={tab}
         onChange={setTab}
@@ -2499,12 +2537,75 @@ function StrategyDetailDialog({
               </div>
             )}
           </section>
-        ) : (
+        ) : tab === "history" ? (
           <section>
             <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
               操作历史
             </div>
             <HistoryDialog positions={allPos} />
+          </section>
+        ) : (
+          <section>
+            <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+              仓位明细
+            </div>
+            <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+              该策略的纸面仓位——与首页「仓位明细」区同一套表格,已按这一档
+              筛好,不用退回首页再按策略筛一遍
+            </div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--s-3)",
+                flexWrap: "wrap",
+                marginBottom: "var(--s-2)",
+              }}
+            >
+              <Segmented<PosTab>
+                ariaLabel="仓位状态"
+                options={[
+                  {
+                    label: `已结算 · 落袋(${settledRows.length})`,
+                    value: "settled",
+                  },
+                  {
+                    label: `持有中 · 待结算(${openRows.length})`,
+                    value: "open",
+                  },
+                ]}
+                value={posTab}
+                onChange={setPosTab}
+              />
+              {posTab === "open" ? (
+                <span className="ds-hint">不显示浮盈</span>
+              ) : null}
+            </div>
+            {/* SettledTable/OpenTable 与首页完全同一个组件、同一批列,一字
+                未改——「策略」列在这里逐行都是同一个值(纯冗余,弹窗标题
+                已经写明是哪一档),曾经考虑过为弹窗单独砍掉这一列或换一套
+                更紧凑的列宽/字号,但真机实测(1400/900/375 三档视口,
+                getBoundingClientRect 量 .ds-table-wrap 的 scrollWidth vs
+                clientWidth)两张表在弹窗当前内容区宽度(1400 视口下约
+                1133px、900 视口下约 761–776px)都不触发横向滚动,9 列内容
+                本身没有想象中宽(数字列都是 ¢/$ 短字符串,市场名列本来就
+                设了 maxWidth+自动换行)——用不着为一个空跑的假设特意拆出
+                第二套渲染逻辑或加一个新 prop,那样反而是在为不存在的问题
+                预先复杂化。真到未来某天列数继续增加、实测真的挤爆了,再
+                按那时的实际情况决定砍列/加 compact 变体/允许
+                .ds-table-wrap 自带的横向滚动兜底(它本来就是全站宽表格的
+                统一 fallback,不是这次新引入的机制)。 */}
+            {posTab === "settled" ? (
+              <SettledTable
+                rows={settledRows}
+                emptyText="该策略尚无已结算的纸面仓位"
+              />
+            ) : (
+              <OpenTable
+                rows={openRows}
+                emptyText="该策略当前没有持仓中的纸面仓位"
+              />
+            )}
           </section>
         )}
       </div>
