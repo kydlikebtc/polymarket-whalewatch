@@ -22,6 +22,7 @@ import { useCurrentPrices } from "../useCurrentPrices";
 import {
   classifyCardState,
   computeTimeTicks,
+  equityCurveMarkerRadius,
   estimateAxisLabelWidth,
   formatAxisUsd,
   smoothCurvePath,
@@ -777,17 +778,31 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
             (也不会出现"线淡了、点还是实心"这种半淡化的观感,这正是圆点
             会浮在淡化线上的问题的根)。
 
-            标记点(bug 补偿,2026-08):曲线从阶梯改成平滑(单调三次插值,
+            标记点半径(2026-08 两次修订):曲线从阶梯改成平滑(单调三次插值,
             见 lib/followCardView.ts smoothCurvePath)后,两次结算之间的
             连线不再是"维持前值"的直角转折,视觉上容易被误读成净值连续
             变化——而实际口径仍是"只在结算这一刻发生变化"(computeStrategyMetrics
-            顶部注释)。半透明白色描边环(stroke=n-0)+ 比线宽更粗的半径,
-            让每个结算点在任何线色/线型下都清晰凸出于曲线本身,提醒读者
-            "数据只存在于这些点上,中间只是插值连接",不是真实轨迹。 */}
+            顶部注释)。第一次修订把标记加到固定 r=3.2+白色描边环,在任何
+            线色/线型下都清晰凸出;但真机截图很快暴露了反效果——「激进」
+            档 30 个结算点在这块 720×220 的共享画布上挤成一条实心珠链,
+            把曲线本身盖住了,与详情弹窗放大版 Sparkline(一次只画一条线,
+            标记加强只有好处)恰好相反。第二次修订把半径改成按点数密度
+            自适应,规则与理由见 lib/followCardView.ts 的
+            equityCurveMarkerRadius 顶部注释——那份注释是这个决定的完整
+            记录,这里不重复,只强调一点:下面两处半径不同不是遗留的不
+            一致,是同一个"标记要不要显眼"的决定在两种数据密度下刻意给出
+            的不同答案,不要为了"统一"把它们改成同一个值。
+            默认态(未 hover)去掉白色描边环并缩小半径,弱化到不再抢戏;
+            hover/聚焦该线时半径放大且恢复描边环,配合下面 dimmed 的整组
+            淡化,做到"平时看曲线整体形状、想看某条线的点就去 hover 图例"。 */}
         {withData.map((s) => {
           const st = strokeFor(s.strokeIdx);
           const isHovered = hoverId === s.id;
           const dimmed = hoverId != null && !isHovered;
+          const markerRadius = equityCurveMarkerRadius(
+            s.curve.length,
+            isHovered,
+          );
           return (
             <g key={s.id} opacity={dimmed ? 0.2 : 1}>
               <path
@@ -804,10 +819,10 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
                   key={i}
                   cx={sx(pt.ts)}
                   cy={sy(pt.cum)}
-                  r={isHovered ? 4.2 : 3.2}
+                  r={markerRadius}
                   fill={st.color}
-                  stroke="var(--n-0)"
-                  strokeWidth={1.2}
+                  stroke={isHovered ? "var(--n-0)" : "none"}
+                  strokeWidth={isHovered ? 1.2 : 0}
                 />
               ))}
             </g>
@@ -974,6 +989,13 @@ function Metric({
  * 既有约定同一原则)。选中结果显示在图表上方的信息条:日期复用
  * fmtDateTime,净值复用 fmtSignedUsd——都是页面已有的格式化函数,不新造
  * 第二套。
+ *
+ * 这里的标记半径固定、不随点数收缩(与上方 EquityCurve 刻意不同,
+ * 2026-08):本组件一次只画一条线,画布接近全宽,点数再多也不会像 EquityCurve
+ * 那样十几条线共享一块 720×220 画布挤成珠链——固定显眼的标记只有好处。
+ * 两处半径若看着不一样,是同一个"标记要不要显眼"的决定在两种数据密度下
+ * 给出的不同答案,不是实现漂移,不要"统一"成同一个值(完整推演见
+ * lib/followCardView.ts equityCurveMarkerRadius 顶部注释)。
  *
  * 颜色按终值正负取 up/down 语义色,与「结算净值」的着色一致。
  */

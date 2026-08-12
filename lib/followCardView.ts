@@ -369,3 +369,55 @@ export function strokeFor(i: number): {
 export function strokeOverflowCount(totalStrategies: number): number {
   return Math.max(0, totalStrategies - STRATEGY_STROKES.length);
 }
+
+/* ------------------------------------------------- equity curve markers */
+// 大图(app/follow/page.tsx 的 EquityCurve)结算点标记半径,按该条策略曲线
+// 自身的点数动态算——2026-08 真机截图报告:「激进」档 30 个结算点在大图里
+// 挤成一条实心珠链,把曲线本身盖住了。
+//
+// 这条规则与详情弹窗放大版 Sparkline"标记必须无条件比线粗"的既有规则
+// (见 smoothCurvePath 顶部注释「为什么能从阶梯改成平滑」)刻意相反,不是
+// 两处实现漂移出的不一致——同一个补偿决策(曲线改平滑后,标记要足够显眼,
+// 提醒读者"数据只在这些点上,中间是插值")在两种数据密度下结论相反:
+//   - 详情弹窗一次只画一条线,点数从个位数到二三十,画布接近全宽(~1200px)
+//     独占,大把留白装得下醒目的圆点,标记加强只有好处。
+//   - 大图最多同屏叠画 16 条策略曲线(见 STRATEGY_STROKES 注释)、共享同一块
+//     720×220 画布,单条线点数一多,再叠上其他线的点,固定半径的标记会连成
+//     串——这时"曲线本身清晰可辨"比"每个点都突出"更重要,而且大图本身不
+//     支持点选查看单笔明细(那是 Sparkline 的职责),标记退化成纯粹的密度
+//     提示,不需要在默认状态就抢眼。
+//
+// 两级策略:
+//   - highlighted(该线被图例 hover/聚焦):不管点数多少固定放大——聚焦的
+//     意图就是"现在只看这一条线",不该因为点多而缩手缩脚。
+//   - 非 highlighted(默认,或因为聚焦了别的线而被淡化,两者共用同一半径,
+//     淡化本身已经由调用方在 <g> 整组设 opacity 完成,见 EquityCurve):按
+//     点数在 [MIN_RADIUS, SPARSE_RADIUS] 区间线性收缩,点数越多半径越小,
+//     但设下限——再密的曲线也留一点可见度,彻底消失会被误读成"这段没有
+//     结算",而不是"结算点很密"。
+//
+// 具体数值是真机(1400/900/375 三档视口 + mock 30 点场景)来回调出来的,不是
+// 纯算出来的——见 app/follow/page.tsx EquityCurve 组件的截图验收记录。
+export function equityCurveMarkerRadius(
+  pointCount: number,
+  highlighted: boolean,
+): number {
+  const HIGHLIGHTED_RADIUS = 4.2;
+  if (highlighted) return HIGHLIGHTED_RADIUS;
+
+  const SPARSE_POINT_COUNT = 10; // <= 这个点数:曲线本身够稀疏,给明显的半径
+  const DENSE_POINT_COUNT = 30; // >= 这个点数:收到下限,不再继续缩小
+  const SPARSE_RADIUS = 2.2;
+  const MIN_RADIUS = 1.3;
+
+  if (pointCount <= SPARSE_POINT_COUNT) return SPARSE_RADIUS;
+  if (pointCount >= DENSE_POINT_COUNT) return MIN_RADIUS;
+
+  // 两个阈值之间线性插值,不是在 SPARSE/MIN 之间跳变——点数从 11 涨到 29
+  // 时半径应该平滑收缩,不能在某个点数上突然跳一截,那样反而会让读者以为
+  // 这里发生了什么特殊事件。
+  const t =
+    (pointCount - SPARSE_POINT_COUNT) /
+    (DENSE_POINT_COUNT - SPARSE_POINT_COUNT);
+  return SPARSE_RADIUS - t * (SPARSE_RADIUS - MIN_RADIUS);
+}
