@@ -3188,18 +3188,21 @@ export default function FollowPage() {
   const [activeFamilies, setActiveFamilies] = useState<Set<FamilyKey>>(
     () => new Set(FAMILY_ORDER),
   );
-  // 卡片/列表视图切换。初值必须是与服务端渲染一致的固定默认值("card"),
-  // 不能在这里直接读 localStorage——服务端渲染时没有 window,读不到;客户端
-  // 首次渲染如果读到了非默认值,两次渲染的 DOM 对不上就是 hydration
-  // mismatch。正确做法(与 app/useSound.ts 的 useSoundToggle 同一套写法):
-  // 首屏先出默认值,挂载后在 useEffect 里读 localStorage 再切换。
-  const [viewMode, setViewMode] = useState<ViewMode>("card");
+  // 卡片/列表视图切换。初值必须是与服务端渲染一致的固定默认值("list",
+  // 2026-08 从 "card" 改过来——只改这一个字面量,下面读 localStorage 的
+  // effect 原样不动:已经手动选过视图的用户,存在 VIEW_MODE_KEY 里的选择
+  // 必须继续生效,这次改的只是"没存过选择时给什么默认值",不是持久化逻辑
+  // 本身),不能在这里直接读 localStorage——服务端渲染时没有 window,读不
+  // 到;客户端首次渲染如果读到了非默认值,两次渲染的 DOM 对不上就是
+  // hydration mismatch。正确做法(与 app/useSound.ts 的 useSoundToggle 同一
+  // 套写法):首屏先出默认值,挂载后在 useEffect 里读 localStorage 再切换。
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
   useEffect(() => {
     try {
       const saved = localStorage.getItem(VIEW_MODE_KEY);
       if (saved === "card" || saved === "list") setViewMode(saved);
     } catch {
-      // localStorage 不可用(隐私模式等)——保持默认的卡片视图。
+      // localStorage 不可用(隐私模式等)——保持默认的列表视图。
     }
   }, []);
   const changeViewMode = (v: ViewMode) => {
@@ -3425,7 +3428,7 @@ export default function FollowPage() {
         <div className="ds-hint">
           现价进场 ·
           跟随共识/异常大额/分歧/钱包画像四类信号,新鲜度窗口因档而异(默认 15
-          分钟,详见各卡片) · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)·
+          分钟,详见各档详情) · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)·
           按报价快照纸面成交,不含盘口执行成本(价差/深度),盈亏偏乐观;「执行滑点」列为该成本的实测估计
         </div>
       </header>
@@ -3448,8 +3451,10 @@ export default function FollowPage() {
         </div>
       ) : (
         <>
-          {/* 卡片/列表视图切换 + 口径声明。默认卡片,选择记进 localStorage
-              (见 changeViewMode)。
+          {/* 卡片/列表视图切换 + 口径声明。默认列表(2026-08 从卡片改过来——
+              见上面 viewMode 的 useState 初值注释),选择记进 localStorage
+              (见 changeViewMode),已经手动选过视图的用户不受这次默认值
+              变化影响。
 
               口径声明(改版 U10,bug 修复):曾经是常驻在这一行上方的 warn
               callout,占首屏一整块面积。用户反馈默认不该占这么大地方,但
