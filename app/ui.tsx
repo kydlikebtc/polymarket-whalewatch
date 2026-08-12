@@ -647,6 +647,7 @@ export function Modal({
   title,
   children,
   width = 560,
+  padding = "var(--s-4, 16px)",
 }: {
   open: boolean;
   onClose: () => void;
@@ -656,6 +657,13 @@ export function Modal({
   // vw 收窄"这种响应式上限——CSS `min(1200px, 92vw)` 表达力比单个数字强,
   // 加 string 分支让调用方能直接传这类表达式,不用引入新的 prop。
   width?: number | string;
+  // 默认沿用原有 16px(不动其余两个调用方 WhitelistDialog/discovery 的现状)。
+  // /follow 详情弹窗改宽到 24px 横向内边距——不是盲目加大:实测(getBoundingClientRect)
+  // 过内容与弹窗四边的间距,16px 是真实生效值且逐元素都不溢出,但比它自己内部的
+  // 节奏(区块间 gap 24px、背板到弹窗的外间距也是 24px)更窄,两侧看起来比上下/
+  // 外部更紧。调宽到与这两处对齐的 24px,垂直方向(标题行、内容区上下)维持
+  // 16px 不变——用户反馈明确是「两边」,不该连带动没人抱怨的垂直节奏。
+  padding?: string;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -709,10 +717,20 @@ export function Modal({
           // 影响,这也是更稳妥的做法:以后任何新的挂载点(卡片/列表之外)
           // 都不会重新踩到这个坑。
           whiteSpace: "normal",
+          // bug 修复(2026-08,/follow 详情弹窗 tab 化验收时发现):同一个
+          // "不用 portal,挂载点的祖先样式会继承进来"根因,这次是另一条继承
+          // 属性——列表视图那个 <td> 用的是 .is-right(text-align:right,
+          // 数值列右对齐的工具类)。white-space 当时单独重置过,text-align
+          // 没有,于是从列表视图打开时,弹窗里所有没有自己显式对齐方式的块
+          // (提示文案、tab 切换条等)会整体右对齐,从卡片视图打开则正常
+          // 左对齐——本次加 tab 切换条后这条继承第一次变得肉眼可见(tab 条
+          // 整体跑到弹窗右侧),此前的口径提示文案/区块标题字号小、行数少,
+          // 同样受影响但不易察觉。同样显式重置,不依赖挂载点样式。
+          textAlign: "left",
           maxHeight: "85vh",
           display: "flex",
           flexDirection: "column",
-          padding: "var(--s-4, 16px)",
+          padding,
         }}
       >
         <div

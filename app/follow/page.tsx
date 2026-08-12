@@ -944,8 +944,9 @@ function Metric({
 }
 
 /**
- * 净值走势图(原「卡片 sparkline」,U6 从卡片移入详情弹窗「区 1」并放大;
- * 本次追加 x 轴日期刻度 + 结算点选中交互)。
+ * 净值走势图(原「卡片 sparkline」,U6 从卡片移入详情弹窗并放大;本次追加
+ * x 轴日期刻度 + 结算点选中交互)。详情弹窗改 tab 切换后挂在「总览」tab,
+ * 与战绩全景一起——见 StrategyDetailDialog 顶部注释。
  *
  * U6 的起点:240×52 的卡片尺寸画不出可读坐标轴,形状又因各自缩放不可横比,
  * 只回答得了"大致涨还是跌"——这件事结算净值的正负号已经答过了,占卡片上
@@ -1451,7 +1452,7 @@ function StrategyCard({
             )}
           </div>
         ) : (
-          // U6:sparkline 移出卡片(详情弹窗区 1 放大展示),原地换成两个
+          // U6:sparkline 移出卡片(详情弹窗「总览」tab 放大展示),原地换成两个
           // 从下沉区收回来的指标——平均年化(战绩全景同款,详情里仍保留
           // 一份,全景本就该有重复)、建议跟单额度(原来在 CardActions 的
           // 按钮行,现在按钮行只留「查看详情」)。4→6 个,320px 卡宽下
@@ -1623,8 +1624,8 @@ function computeDelayExecAverages(
 
 /**
  * 卡片瘦身(改版 Task 2)后被下沉的 10 个指标,从原 StrategyCard 原样搬迁
- * 而来,Task 3 挂进策略详情弹窗「区 2 战绩全景」(StrategyDetailDialog;
- * U6 在前面加了一个「区 1 净值走势」,原来的区 1 顺移成区 2)。
+ * 而来,Task 3 挂进策略详情弹窗「战绩全景」区(StrategyDetailDialog)。
+ * tab 化后与净值走势同挂在「总览」tab——两者本是一体,见该函数顶部注释。
  * 用「整体搬迁函数体」而不是删掉重写,是为了保证这些 Metric 的 title
  * (例如「平均年化」那条解释了短窗外推不可靠)不经过人手转录、零丢失风险。
  * U6 之后「平均年化」这一条在卡片正文里也有一份同源渲染(见 StrategyCard),
@@ -1827,9 +1828,8 @@ const fmtPct = (u: number | null) =>
   u == null ? "—" : `${(u * 100).toFixed(0)}%`;
 
 /**
- * 成本四段分解(策略详情弹窗「区 3」,改版 Task 3 唯一新增的信息组织;
- * U6 在前面加了「区 1 净值走势」后,原来的区 2 顺移成区 3)。
- * 追价成本→延迟成本→执行滑点→协议费四项此前是四个并列的 Metric(见
+ * 成本四段分解(策略详情弹窗「成本分解」tab,改版 Task 3 唯一新增的信息
+ * 组织)。追价成本→延迟成本→执行滑点→协议费四项此前是四个并列的 Metric(见
  * StrategyFullMetrics),读者看不出它们是一条链——串起来才回答「纸面盈亏
  * 和实盘差在哪」。呈现选横向流程条(auto-fit 网格 + label 前缀箭头)而不是
  * 纵向列表:详情弹窗够宽(见 DETAIL_DIALOG_WIDTH),横向能让"链式推进"的
@@ -1982,9 +1982,9 @@ function CostChain({
 //
 // 与更早版本的一处行为差异:更早版本在 !hasPlan && !hasHistory 时整行
 // 隐藏(两个弹窗各自都没数据可看,按钮就没有意义)。合并后「查看详情」还
-// 解锁了恒有内容的「区 2 战绩全景」——哪怕 0 仓位,策略的创建日期/运行
-// 天数依然有值(见 lib/follow.ts computeFundMetrics 的 startTs ??
-// firstEntryTs),所以这里不整行隐藏。
+// 解锁了恒有内容的「总览」tab(战绩全景部分)——哪怕 0 仓位,策略的创建
+// 日期/运行天数依然有值(见 lib/follow.ts computeFundMetrics 的 startTs
+// ?? firstEntryTs),所以这里不整行隐藏。
 function CardActions({ s }: { s: FollowStrategyView }) {
   const [detailOpen, setDetailOpen] = useState(false);
   return (
@@ -2003,7 +2003,7 @@ function CardActions({ s }: { s: FollowStrategyView }) {
         type="button"
         className="ds-btn"
         onClick={() => setDetailOpen(true)}
-        title="净值走势 · 战绩全景 · 成本四段分解 · 账户推演 · 操作历史"
+        title="总览(净值走势 · 战绩全景) · 成本分解 · 账户推演 · 操作历史"
       >
         查看详情
       </button>
@@ -2298,18 +2298,32 @@ const DETAIL_DIALOG_WIDTH = "min(1200px, 92vw)";
 const DETAIL_SPARK_WIDTH = 1120;
 const DETAIL_SPARK_HEIGHT = 180;
 
+// tab 内容区地板高度(五区改 tab 切换新增):四个 tab 内容量差异很大——
+// 「总览」(净值走势+战绩全景)与「操作历史」相差近 10 倍(操作历史每笔仓位
+// 1-2 行,几十仓的档能到几十行)。不给地板的话切到内容少的 tab(成本分解/
+// 账户推演)弹窗会突然收缩,来回切换观感跳动。取实测最大的"可预期"tab
+// (总览,内容量只随指标是否为空小幅变化,不随仓位数暴涨)作为地板:1400px
+// 桌面宽度下 getBoundingClientRect 量得净值走势 230px + 区块间 gap 24px +
+// 战绩全景 181px ≈ 435px,取整加一点余量。超过地板的内容(操作历史)不再
+// 单独滚动,交给 Modal 自身已有的 maxHeight:85vh + overflow:auto,不重复
+// 造一套滚动机制。
+const DETAIL_TAB_MIN_HEIGHT = 440;
+
+type DetailTab = "overview" | "cost" | "account" | "history";
+
 /**
- * 策略详情弹窗(改版 Task 3,U6 追加区 1):合并原「账户推演」「操作历史」
- * 两个独立弹窗,加上下沉的指标,分五区呈现:
- *   区 1 净值走势     U6 从卡片移入的 Sparkline,放大 + 加坐标轴,作为
- *                     整个弹窗的视觉引导
- *   区 2 战绩全景     StrategyFullMetrics 原样挂载
- *   区 3 成本四段分解 本任务唯一新增的信息组织,见 CostChain
- *   区 4 账户推演     AccountPlanDialog 内容原样搬入(只换容器,内容一字不改)
- *   区 5 操作历史     HistoryDialog 内容原样搬入(只换容器,内容一字不改)
+ * 策略详情弹窗(改版 Task 3,U6 追加区 1;本轮把"五区平铺向下罗列"改成
+ * tab 切换):内容还是那五块,重新分进四个 tab:
+ *   总览     净值走势(Sparkline)+ 战绩全景(StrategyFullMetrics)一起放——
+ *            走势是战绩的视觉引导,拆成两个 tab 反而要来回切才能对照着看,
+ *            这两块本质是同一件事的两种呈现,不拆
+ *   成本分解 成本四段分解,本任务唯一新增的信息组织,见 CostChain
+ *   账户推演 AccountPlanDialog 内容原样(只换容器,内容一字不改)
+ *   操作历史 HistoryDialog 内容原样(只换容器,内容一字不改)
  * avgDelayCents/avgExecCents 在本层算一次(computeDelayExecAverages),
- * 通过 delayExec 传给区 2、区 3 两处消费者,不重复 reduce。
- * 设计见 docs/plans/2026-08-12-follow-page-card-redesign-design.md §3.2。
+ * 通过 delayExec 传给"总览""成本分解"两个 tab 的消费者,不重复 reduce。
+ * 设计见 docs/plans/2026-08-12-follow-page-card-redesign-design.md §3.2,
+ * tab 化 · 内边距 · minHeight 的实测依据见对应提交说明。
  */
 function StrategyDetailDialog({
   s,
@@ -2320,9 +2334,22 @@ function StrategyDetailDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  const [tab, setTab] = useState<DetailTab>("overview");
+  // tab 是弹窗级 state、不持久化:每次 open 从 false→true 都要回到"总览"
+  // (这是"看某一档的细节",不是用户的长期偏好)。但组件本身在 open=false
+  // 时只是提前 return null(见下面),并不会卸载——普通 useState 不会自己
+  // 重置,必须主动比较 open 是否变化。用"渲染期间比较 prop 变化"而不是
+  // useEffect:后者在 commit 之后才跑,open 翻转的第一帧会先画出上次选中
+  // 的 tab、再跳回总览,这里把重置和 open 的变化钉在同一次渲染里,不闪烁。
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (open) setTab("overview");
+  }
   // Modal 自己在 !open 时也会返回 null;这里提前短路,避免弹窗关闭期间
   // 每次父组件重渲染(如 30s 自动刷新)都要为页面上 12 张卡各算一遍
-  // delayExec、拼一遍 allPos。
+  // delayExec、拼一遍 allPos。上面两个 useState 必须留在这行之前——Hooks
+  // 规则要求每次渲染都无条件调用,不能被这个提前 return 跳过。
   if (!open) return null;
 
   const m = s.metrics;
@@ -2337,6 +2364,13 @@ function StrategyDetailDialog({
       onClose={onClose}
       title={`${s.name} · 策略详情`}
       width={DETAIL_DIALOG_WIDTH}
+      // 内边距实测(2026-08,getBoundingClientRect 量弹窗边缘与各内容块
+      // 边缘的实际间距):默认 16px 逐元素都不溢出,但比这个弹窗自己内部的
+      // 节奏更窄——区块间 gap 是 24px,背板到弹窗的外间距也是 24px,两侧
+      // 16px 夹在两个 24px 中间,视觉上比上下/外部更紧。改宽到 24px 与这两
+      // 处对齐;垂直方向(标题行、内容区上下)维持默认 16px 不变——反馈明确
+      // 说的是"两边",不连带动没人抱怨的垂直节奏。
+      padding="var(--s-4, 16px) var(--s-6, 24px)"
     >
       {/* 完整参数提示(paramsHint 全量版本,一字不改):卡片紧凑化那轮把
           12 档统一的三项(单价/偏离护栏/退出规则)从卡上拿掉了,不是丢掉——
@@ -2344,86 +2378,97 @@ function StrategyDetailDialog({
       <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
         {paramsHint(s.params)}
       </div>
+
+      {/* tab 切换:复用页面上"卡片/列表"视图切换同一个 Segmented 组件,不
+          新造 tab 组件。className="ds-segmented--wrap" 是防御性的——四个
+          选项本身够短,桌面/主流窄屏都不会真的换行,但 375px 是本项目实测
+          踩过 .ds-segmented 溢出坑的宽度(见 globals.css 该修饰类注释),
+          按同一条既有约定处理,不单独验证"这次到底会不会溢出"。 */}
+      <Segmented<DetailTab>
+        ariaLabel="策略详情分区"
+        className="ds-segmented--wrap"
+        options={[
+          { label: "总览", value: "overview" },
+          { label: "成本分解", value: "cost" },
+          { label: "账户推演", value: "account" },
+          { label: "操作历史", value: "history" },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
+
       <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: "var(--s-6)",
-        }}
+        style={{ minHeight: DETAIL_TAB_MIN_HEIGHT, marginTop: "var(--s-4)" }}
       >
-        <section>
-          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-            净值走势
+        {tab === "overview" ? (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--s-6)",
+            }}
+          >
+            <section>
+              <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+                净值走势
+              </div>
+              {m.equityCurve.length > 0 ? (
+                <Sparkline
+                  curve={m.equityCurve}
+                  width={DETAIL_SPARK_WIDTH}
+                  height={DETAIL_SPARK_HEIGHT}
+                />
+              ) : (
+                <div className="ds-empty">
+                  暂无已结算仓位 — 有仓位结算后这里会画出净值走势
+                </div>
+              )}
+            </section>
+
+            <section
+              style={{
+                borderTop: "1px solid var(--n-150)",
+                paddingTop: "var(--s-4)",
+              }}
+            >
+              <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+                战绩全景
+              </div>
+              <StrategyFullMetrics s={s} delayExec={delayExec} />
+            </section>
           </div>
-          {m.equityCurve.length > 0 ? (
-            <Sparkline
-              curve={m.equityCurve}
-              width={DETAIL_SPARK_WIDTH}
-              height={DETAIL_SPARK_HEIGHT}
-            />
-          ) : (
-            <div className="ds-empty">
-              暂无已结算仓位 — 有仓位结算后这里会画出净值走势
+        ) : tab === "cost" ? (
+          <section>
+            <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+              成本四段分解
             </div>
-          )}
-        </section>
-
-        <section
-          style={{
-            borderTop: "1px solid var(--n-150)",
-            paddingTop: "var(--s-4)",
-          }}
-        >
-          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-            战绩全景
-          </div>
-          <StrategyFullMetrics s={s} delayExec={delayExec} />
-        </section>
-
-        <section
-          style={{
-            borderTop: "1px solid var(--n-150)",
-            paddingTop: "var(--s-4)",
-          }}
-        >
-          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
-            成本四段分解
-          </div>
-          <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
-            追价成本 → 延迟成本 → 执行滑点 → 协议费,回答「纸面盈亏和实盘差在哪」
-          </div>
-          <CostChain s={s} delayExec={delayExec} />
-        </section>
-
-        <section
-          style={{
-            borderTop: "1px solid var(--n-150)",
-            paddingTop: "var(--s-4)",
-          }}
-        >
-          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-            账户推演
-          </div>
-          {hasPlan ? (
-            <AccountPlanDialog acct={acct!} />
-          ) : (
-            <div className="ds-empty">
-              该档暂无账户推演数据(尚无仓位,或建议额度不可用)
+            <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+              追价成本 → 延迟成本 → 执行滑点 →
+              协议费,回答「纸面盈亏和实盘差在哪」
             </div>
-          )}
-        </section>
-
-        <section
-          style={{
-            borderTop: "1px solid var(--n-150)",
-            paddingTop: "var(--s-4)",
-          }}
-        >
-          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-            操作历史
-          </div>
-          <HistoryDialog positions={allPos} />
-        </section>
+            <CostChain s={s} delayExec={delayExec} />
+          </section>
+        ) : tab === "account" ? (
+          <section>
+            <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+              账户推演
+            </div>
+            {hasPlan ? (
+              <AccountPlanDialog acct={acct!} />
+            ) : (
+              <div className="ds-empty">
+                该档暂无账户推演数据(尚无仓位,或建议额度不可用)
+              </div>
+            )}
+          </section>
+        ) : (
+          <section>
+            <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+              操作历史
+            </div>
+            <HistoryDialog positions={allPos} />
+          </section>
+        )}
       </div>
     </Modal>
   );
