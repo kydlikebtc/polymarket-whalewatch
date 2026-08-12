@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   classifyCardState,
+  estimateAxisLabelWidth,
+  formatAxisUsd,
   sparklinePath,
   sparklineAreaPath,
   LOW_SAMPLE_THRESHOLD,
@@ -142,5 +144,56 @@ describe("sparklineAreaPath — 面积填充路径", () => {
     expect(area.endsWith("Z")).toBe(true);
     expect(area).toContain(`L ${W.toFixed(1)} ${H}`);
     expect(area).toContain(`L 0 ${H}`);
+  });
+});
+
+describe("formatAxisUsd — 净值曲线 y 轴标签格式化", () => {
+  it("正数不带符号:$1,234", () => {
+    expect(formatAxisUsd(1234)).toBe("$1,234");
+  });
+
+  it("负数用数学减号(U+2212),不是 ASCII 连字符:−$1,234", () => {
+    expect(formatAxisUsd(-1234)).toBe("−$1,234");
+    expect(formatAxisUsd(-1234)).not.toContain("-"); // ASCII 连字符
+  });
+
+  it("0 记为不带符号的 $0(不是 −$0)", () => {
+    expect(formatAxisUsd(0)).toBe("$0");
+  });
+
+  it("四舍五入取整、千分位分组", () => {
+    expect(formatAxisUsd(1234.6)).toBe("$1,235");
+    expect(formatAxisUsd(1000000)).toBe("$1,000,000");
+  });
+});
+
+describe("estimateAxisLabelWidth — 轴标签宽度估算(bug 修复:负号被裁)", () => {
+  const FONT = 10;
+
+  it("负数比同位数的正数需要更多宽度(多一个负号字符)", () => {
+    // 回归本次 bug 的原始现场:−$11,448 这类大额亏损曾经被 padL=48 裁掉
+    // 负号,显示成看似盈利的 $11,448。
+    const positive = estimateAxisLabelWidth(11448, FONT);
+    const negative = estimateAxisLabelWidth(-11448, FONT);
+    expect(negative).toBeGreaterThan(positive);
+  });
+
+  it("大额比小额需要更多宽度(数位更多)", () => {
+    const small = estimateAxisLabelWidth(42, FONT);
+    const large = estimateAxisLabelWidth(1234567, FONT);
+    expect(large).toBeGreaterThan(small);
+  });
+
+  it("字号越大,估算宽度按比例放大", () => {
+    const small = estimateAxisLabelWidth(1000, 10);
+    const large = estimateAxisLabelWidth(1000, 20);
+    expect(large).toBeCloseTo(small * 2, 5);
+  });
+
+  it("宽度 = formatAxisUsd 输出的字符数 × 字号 × 固定比例(与实际渲染文字同源)", () => {
+    const v = -98765;
+    const fontSize = 12;
+    const expected = formatAxisUsd(v).length * fontSize * 0.6;
+    expect(estimateAxisLabelWidth(v, fontSize)).toBeCloseTo(expected, 5);
   });
 });

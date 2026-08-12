@@ -13,9 +13,11 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { Modal, Segmented, Tag } from "../ui";
+import { Icon, Modal, Segmented, Tag } from "../ui";
 import {
   classifyCardState,
+  estimateAxisLabelWidth,
+  formatAxisUsd,
   sparklineAreaPath,
   sparklinePath,
 } from "../../lib/followCardView";
@@ -600,7 +602,12 @@ function stepPath(
   return d;
 }
 
-const axisFmt = (v: number) => `${v < 0 ? MINUS : ""}$${fmtUsd0(Math.abs(v))}`;
+// 格式化逻辑下沉到 lib/followCardView.ts 的 formatAxisUsd:与下面
+// estimateAxisLabelWidth(算 padL 用的宽度估算)共享同一份格式化,保证
+// "实际画出来的文字"与"用来估宽的文字"永远是同一个计算结果——这正是
+// Bug 修复的关键,两者一旦分开维护、各自改动,负号裁切问题会以另一种
+// 数量级重新出现。这里保留 axisFmt 这个名字只是不用改下面一堆调用点。
+const axisFmt = formatAxisUsd;
 
 function EquityCurve({ series }: { series: CurveSeries[] }) {
   // hover 高亮(改版 Task 4):悬停/聚焦某条图例时,该线加粗、其余线连同
@@ -619,16 +626,13 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
 
   const W = 720;
   const H = 220;
-  const padL = 48;
   const padR = 12;
   const padT = 14;
   const padB = 26;
-  const x0 = padL;
-  const x1 = W - padR;
-  const y0 = padT;
-  const y1 = H - padB;
 
-  // x 域:所有策略的结算时间戳;y 域:累计已实现盈亏,始终含 0 基线。
+  // x 域:所有策略的结算时间戳;y 域:累计已实现盈亏,始终含 0 基线。放在
+  // padL 计算之前——padL(左侧留白)现在要按 cMin/cMax 的标签宽度动态算,
+  // 必须先知道这两个值。
   let tMin = Infinity;
   let tMax = -Infinity;
   let cMin = 0;
@@ -641,6 +645,43 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
       if (pt.cum > cMax) cMax = pt.cum;
     }
   }
+
+  // 左侧留白(y 轴文字锚定在 x0 - AXIS_LABEL_GAP,textAnchor="end")按峰值/
+  // 谷底两个标签里较宽的那个动态算(见 lib/followCardView.ts
+  // estimateAxisLabelWidth 顶部注释)。Bug 修复(2026-08):曾经固定 48px,
+  // 一笔 −$11,448 的大额亏损在 10px mono 字体下要接近 50px 宽,负号(标签
+  // 最左侧字符)被裁出 SVG viewBox,显示成看似盈利的 $11,448。48 仍作为
+  // 下限保留——小额场景维持原有留白观感,不会因为这次改动突然变窄;真正
+  // 需要更宽时(大额/负数)才会超过这个下限,不会像原来的固定值一样在
+  // 数据再大一个数量级时重演同一个裁切 bug。
+  //
+  // AXIS_LABEL_SAFETY:浏览器实测 --font-mono 字符宽度与 0.6 比例算出的
+  // 估算值分毫不差(用 canvas/DOM 量过 "−$11,448" 等样本,像素级吻合),
+  // 但那是本机装了 JetBrains Mono 的结果——globals.css 的字体栈还有 SF
+  // Mono/Menlo/Liberation Mono/系统 monospace 兜底,不同操作系统上真正
+  // 生效的字体不一样,前进宽度不保证跟这里完全一致。不留余量的话,估算值
+  // 和实际渲染值分毫不差时,文字左边缘恰好落在 x=0——不算裁切,但零容错,
+  // 换一种字体度量就可能变成裁一两个像素。留 2px 纯保险,换来的是"稍微
+  // 宽一点点"而不是"在别的系统上重新裁到负号"。
+  const AXIS_FONT_SIZE = 10; // 必须与下面 <text fontSize=...> 保持一致
+  const AXIS_LABEL_GAP = 6; // 必须与下面 x={x0 - AXIS_LABEL_GAP} 保持一致
+  const AXIS_LABEL_SAFETY = 2;
+  const padL = Math.max(
+    48,
+    Math.ceil(
+      Math.max(
+        estimateAxisLabelWidth(cMax, AXIS_FONT_SIZE),
+        estimateAxisLabelWidth(cMin, AXIS_FONT_SIZE),
+      ),
+    ) +
+      AXIS_LABEL_GAP +
+      AXIS_LABEL_SAFETY,
+  );
+  const x0 = padL;
+  const x1 = W - padR;
+  const y0 = padT;
+  const y1 = H - padB;
+
   const padY = (cMax - cMin) * 0.08 || 1; // 峰谷各留一点头部空间;全平时给 1
   const yMax = cMax + padY;
   const yMin = cMin - padY;
@@ -709,35 +750,37 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
           strokeWidth={1}
           strokeDasharray="3 3"
         />
-        {/* y 轴刻度:峰值 / 0 / 谷底 */}
+        {/* y 轴刻度:峰值 / 0 / 谷底。x 偏移量、字号都取上面算 padL 时用的
+            同一对常量——三处必须保持一致,否则留白和实际渲染位置又会各算
+            各的,重新具备裁字符的条件。 */}
         <text
-          x={x0 - 6}
+          x={x0 - AXIS_LABEL_GAP}
           y={sy(cMax)}
           textAnchor="end"
           dominantBaseline="middle"
-          fontSize={10}
+          fontSize={AXIS_FONT_SIZE}
           fill="var(--n-500)"
           className="mono"
         >
           {axisFmt(cMax)}
         </text>
         <text
-          x={x0 - 6}
+          x={x0 - AXIS_LABEL_GAP}
           y={yZero}
           textAnchor="end"
           dominantBaseline="middle"
-          fontSize={10}
+          fontSize={AXIS_FONT_SIZE}
           fill="var(--n-400)"
           className="mono"
         >
           $0
         </text>
         <text
-          x={x0 - 6}
+          x={x0 - AXIS_LABEL_GAP}
           y={sy(cMin)}
           textAnchor="end"
           dominantBaseline="middle"
-          fontSize={10}
+          fontSize={AXIS_FONT_SIZE}
           fill="var(--n-500)"
           className="mono"
         >
@@ -855,10 +898,15 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
 // 族开关(改版 Task 4):默认全开,点击独立切换某族的可见性。用一排独立
 // 切换按钮而不是 Segmented——Segmented 是单选语义(同一时刻只有一个
 // value),但读者的真实需求是任意子集:可能只想看共识族,也可能想把共识族
-// 和异常大额族放在一起比。样式复用 ui.tsx SoundToggle 同一套写法
-// (ds-btn + ds-btn--subtle/ds-btn--ghost + aria-pressed),不新造 CSS。
-// groups 直接复用页面已经算好的按族分组结果(卡片分组用的同一份),只给
-// 「确实有策略」的族一个按钮——族数 <2 时开关没有意义(无从比较),不渲染。
+// 和异常大额族放在一起比。groups 直接复用页面已经算好的按族分组结果(卡片
+// 分组用的同一份),只给「确实有策略」的族一个按钮——族数 <2 时开关没有
+// 意义(无从比较),不渲染。
+//
+// 视觉状态(bug 修复,2026-08):曾经写成 ds-btn--subtle(on)/ds-btn--ghost
+// (off),但 --subtle 只有底色、没有边框声明,--ghost 反而有可见边框——
+// 结果关掉的族看起来比选中的族更突出,状态被视觉说反了。改用专门表达
+// "已选中"的 ds-btn--active(品牌色边框+底色+文字,见 globals.css 该类
+// 注释),--ghost 留给 off 状态——两者的强弱关系才是设计意图。
 function FamilyToggles({
   groups,
   active,
@@ -886,7 +934,7 @@ function FamilyToggles({
           <button
             key={g.key}
             type="button"
-            className={`ds-btn ${on ? "ds-btn--subtle" : "ds-btn--ghost"}`}
+            className={`ds-btn ${on ? "ds-btn--active" : "ds-btn--ghost"}`}
             aria-pressed={on}
             onClick={() => onToggle(g.key)}
             title={g.meta.blurb}
@@ -948,21 +996,32 @@ function Sparkline({
   if (curve.length === 0) return null;
   const net = curve[curve.length - 1]?.cum ?? 0;
   const tone = net >= 0 ? "var(--up-500)" : "var(--down-500)";
-  // 左侧留白放 y 轴文字(峰值/0/谷底,美元额可能到 5 位数);上下留白放
-  // 峰值/谷底标签本身的字高,避免 dominantBaseline="middle" 的文字被顶部/
-  // 底部边缘裁掉一半。数值取自 EquityCurve 同类留白(padL=48)的量级,
-  // 这里字号更小、但金额可能更长,稍微放宽到 56/12。
-  const padL = 56;
+  // 字号与下面每个 <text fontSize=...> 用同一个常量,gap 与每个
+  // x={padL - AXIS_LABEL_GAP} 用同一个常量——padL 的宽度估算必须按实际会
+  // 画出来的字号/偏移量算,三处一旦分开维护、各自改动,负号裁切 bug 会
+  // 在下一次调参时重新出现(2026-08 的教训,详见下面 padL 计算处的注释)。
+  // AXIS_LABEL_SAFETY 见 EquityCurve 同名常量的注释:估算比例(0.6)经浏览
+  // 器实测与本机字体像素级吻合,但字体栈还有 SF Mono/Menlo/系统 monospace
+  // 兜底,不同操作系统实际生效的字体前进宽度未必分毫不差,零余量时文字左
+  // 边缘恰好落在 x=0——不算裁切,但零容错。2px 纯保险。
+  const AXIS_FONT_SIZE = 11;
+  const AXIS_LABEL_GAP = 6;
+  const AXIS_LABEL_SAFETY = 2;
   const padTB = 12;
-  const plotW = width - padL;
-  const plotH = height - padTB * 2;
 
   // 单点特判(逻辑不变,W/H 换成入参):sparklinePath 对唯一点只产出
   // "M x y"(无 L 段),SVG 不会画出任何可见线段;sparklineAreaPath 仍会把
   // 这个孤点和两个底角连成一个与曲线形状无关的楔形色块(见
   // lib/followCardView.ts 顶部注释)。画一条贯穿绘图区的虚线 + 这一个值
   // 本身——只有一个样本点,谈不上走势,虚线明确传达"数据不足以连线"。
+  // padL 只需要装下这一个标签,单独按 net 算(下面多点分支按 hi/lo 算)。
   if (curve.length === 1) {
+    const padL = Math.max(
+      56,
+      Math.ceil(estimateAxisLabelWidth(net, AXIS_FONT_SIZE)) +
+        AXIS_LABEL_GAP +
+        AXIS_LABEL_SAFETY,
+    );
     const y = height / 2;
     return (
       <svg
@@ -981,11 +1040,11 @@ function Sparkline({
           strokeDasharray="3 3"
         />
         <text
-          x={padL - 6}
+          x={padL - AXIS_LABEL_GAP}
           y={y}
           textAnchor="end"
           dominantBaseline="middle"
-          fontSize={11}
+          fontSize={AXIS_FONT_SIZE}
           fill={tone}
           className="mono"
         >
@@ -994,6 +1053,29 @@ function Sparkline({
       </svg>
     );
   }
+
+  // 左侧留白按峰值/谷底两个标签(下面会画出来)里较宽的那个动态算。
+  // Bug 修复(2026-08):曾经固定 56px(注释写"美元额可能到 5 位数"但没有
+  // 真的按位数算),大额亏损时负号(标签最左侧字符)会被裁出 SVG
+  // viewBox,显示成看似盈利的正数——与 EquityCurve 的 padL=48 是同一个
+  // bug。56 仍作为下限保留,小额场景维持原有留白观感;真正需要更宽时
+  // (大额/负数)才会超过这个下限。
+  const vals = curve.map((p) => p.cum);
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  const padL = Math.max(
+    56,
+    Math.ceil(
+      Math.max(
+        estimateAxisLabelWidth(hi, AXIS_FONT_SIZE),
+        estimateAxisLabelWidth(lo, AXIS_FONT_SIZE),
+      ),
+    ) +
+      AXIS_LABEL_GAP +
+      AXIS_LABEL_SAFETY,
+  );
+  const plotW = width - padL;
+  const plotH = height - padTB * 2;
 
   const line = sparklinePath(curve, plotW, plotH);
   if (!line) return null;
@@ -1004,9 +1086,6 @@ function Sparkline({
   // AXIS_PAD 常量与 lib/followCardView.ts 的 PAD 保持一致,否则标签位置会
   // 和实际画出来的折线端点对不上。
   const AXIS_PAD = 4;
-  const vals = curve.map((p) => p.cum);
-  const lo = Math.min(...vals);
-  const hi = Math.max(...vals);
   const span = hi - lo;
   const sy = (v: number) =>
     padTB +
@@ -1036,11 +1115,11 @@ function Sparkline({
         />
       ) : null}
       <text
-        x={padL - 6}
+        x={padL - AXIS_LABEL_GAP}
         y={sy(hi)}
         textAnchor="end"
         dominantBaseline="middle"
-        fontSize={11}
+        fontSize={AXIS_FONT_SIZE}
         fill="var(--n-500)"
         className="mono"
       >
@@ -1048,11 +1127,11 @@ function Sparkline({
       </text>
       {showZero ? (
         <text
-          x={padL - 6}
+          x={padL - AXIS_LABEL_GAP}
           y={sy(0)}
           textAnchor="end"
           dominantBaseline="middle"
-          fontSize={11}
+          fontSize={AXIS_FONT_SIZE}
           fill="var(--n-400)"
           className="mono"
         >
@@ -1062,11 +1141,11 @@ function Sparkline({
       {/* span===0(全部结算点累计值相同)时峰值=谷底,不重复画同一个标签。 */}
       {span > 0 ? (
         <text
-          x={padL - 6}
+          x={padL - AXIS_LABEL_GAP}
           y={sy(lo)}
           textAnchor="end"
           dominantBaseline="middle"
-          fontSize={11}
+          fontSize={AXIS_FONT_SIZE}
           fill="var(--n-500)"
           className="mono"
         >
@@ -2678,6 +2757,13 @@ function OpenTable({
 
 /* ----------------------------------------------------------------- page */
 
+// 口径声明的完整文案(改版 U10 从常驻 callout 收进 Icon 的悬停/点击弹出层,
+// 见下方渲染处的注释)。原样保留原 callout 的三句话,只是从 JSX(带
+// <strong> 强调)拍平成纯文本——data-tip/title 都只能渲染纯文本,拍平后的
+// 唯一代价是丢掉"不可跨档相加"六个字的加粗强调,信息本身一字不少。
+const CROSS_TIER_CAVEAT =
+  "各档持仓存在重叠(同一市场可能同时命中多个信号源——例如「激进」的持仓是「保守」的超集、「巨鲸精英」是「巨鲸」的子集)。每一档的战绩都是「只跟这一档」的独立假设下算出的,不可跨档相加;同理,每张卡的「建议跟单额度」也是单档口径——12 档一起跟所需的总资金,不是 12 个峰值之和。";
+
 export default function FollowPage() {
   const [data, setData] = useState<FollowResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -2885,33 +2971,32 @@ export default function FollowPage() {
         </div>
       ) : (
         <>
-          {/* 口径声明:12 档同屏平铺时,读者的本能是把战绩加总——但持仓存在
-              大面积重叠(「激进」的持仓是「保守」的超集、「巨鲸精英」是
-              「巨鲸」的子集、A3/A4 与 A1/A2 大面积重叠),加出来的数字会被
-              严重放大。放在全部卡片之前、用醒目的 warn 语义呈现,复用既有
-              ds-callout 组件(单一真相源在 app/globals.css,不写内联硬编码
-              色值)。仅在 ≥2 张卡时渲染——只有一档时不存在"跨档相加"这回事,
-              与下方"仓位明细"的策略筛选 Segmented 同一条既有约定。 */}
-          {shown.length >= 2 ? (
-            <div
-              className="ds-callout ds-callout--warn"
-              style={{ marginBottom: "var(--s-5)" }}
-            >
-              ⚠️
-              各档持仓存在重叠(同一市场可能同时命中多个信号源——例如「激进」的持仓是「保守」的超集、「巨鲸精英」是「巨鲸」的子集)。
-              <strong>
-                每一档的战绩都是「只跟这一档」的独立假设下算出的,不可跨档相加
-              </strong>
-              ;同理,每张卡的「建议跟单额度」也是单档口径——12
-              档一起跟所需的总资金,不是 12 个峰值之和。
-            </div>
-          ) : null}
+          {/* 卡片/列表视图切换 + 口径声明。默认卡片,选择记进 localStorage
+              (见 changeViewMode)。
 
-          {/* 卡片/列表视图切换:默认卡片,选择记进 localStorage(见
-              changeViewMode)。放在口径声明 banner 下方、内容区上方——两种
-              视图消费同一份 shown/groups,口径声明对两边同样适用,不用
-              为列表再放一条。 */}
-          <div style={{ marginBottom: "var(--s-4)" }}>
+              口径声明(改版 U10,bug 修复):曾经是常驻在这一行上方的 warn
+              callout,占首屏一整块面积。用户反馈默认不该占这么大地方,但
+              内容本身仍然重要——12 张卡平铺时读者的本能是把盈亏加总,而
+              各档持仓大面积重叠(「激进」的持仓是「保守」的超集、「巨鲸
+              精英」是「巨鲸」的子集、A3/A4 与 A1/A2 大面积重叠),加出来
+              的数字会被严重放大,这条口径拦的就是这个误读,不能因为收起
+              来就变得不可发现。改成一行 warn 色小字 + 悬停(桌面)/点击
+              (触屏)展开完整说明——复用 ui.tsx 已有的 Icon 组件(内部就是
+              tip-pop 悬停/点击弹出机制,MarketSlugActions 等处同款),不
+              新造弹窗组件;color 走 --warn-700 token,不写十六进制硬编码。
+              仅在 ≥2 张卡时渲染——只有一档时不存在"跨档相加"这回事,与
+              下方"仓位明细"的策略筛选 Segmented 同一条既有约定。放在
+              视图切换同一行——两种视图消费同一份 shown/groups,口径声明
+              对两边同样适用,不用为列表再放一条。 */}
+          <div
+            style={{
+              marginBottom: "var(--s-4)",
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--s-3)",
+              flexWrap: "wrap",
+            }}
+          >
             <Segmented<ViewMode>
               ariaLabel="展示方式"
               options={[
@@ -2921,6 +3006,14 @@ export default function FollowPage() {
               value={viewMode}
               onChange={changeViewMode}
             />
+            {shown.length >= 2 ? (
+              <span className="ds-hint" style={{ color: "var(--warn-700)" }}>
+                <Icon
+                  s="⚠️ 各档持仓有重叠,战绩不可跨档相加"
+                  title={CROSS_TIER_CAVEAT}
+                />
+              </span>
+            ) : null}
           </div>
 
           {viewMode === "card" ? (
