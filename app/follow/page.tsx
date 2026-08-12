@@ -838,7 +838,6 @@ function StrategyCard({
   const m = s.metrics;
   const fund = s.fund; // 旧响应可能缺失 → 档案各项显示「—」
   const state = classifyCardState(m);
-  const allPos = [...s.open, ...s.settled];
   return (
     <div
       className="ds-card"
@@ -989,19 +988,67 @@ function StrategyCard({
           <span>运行 {Math.floor(fund.runDays)} 天</span>
         ) : null}
       </div>
-      <CardActions name={s.name} acct={s.account} positions={allPos} />
+      <CardActions s={s} />
     </div>
   );
 }
 
+// 均延迟成本 / 均执行滑点的派生计算。策略详情弹窗(Task 3)里战绩全景
+// (StrategyFullMetrics)与成本四段分解(CostChain)两区都要展示这两个数——
+// 在 StrategyDetailDialog 层级算一次、两区传参复用,避免同一个 reduce 在
+// 同一次弹窗渲染里跑两遍(两区口径一致,分别再算一遍也不会得到不同数字,
+// 纯粹是浪费)。
+type DelayExecAverages = {
+  avgDelayCents: number | null;
+  delaySamples: number;
+  avgExecCents: number | null;
+  execSamples: number;
+};
+
+function computeDelayExecAverages(
+  positions: FollowPositionRow[],
+): DelayExecAverages {
+  // 均延迟成本:仅统计有 formation_price 的仓位(老仓位/取价失败不进样本),
+  // 每仓等权算术平均;样本数以 n=N 标注,提醒读者小样本不可过度解读。
+  const delayVals = positions
+    .map(rowDelayCents)
+    .filter((c): c is number => c != null);
+  const avgDelayCents =
+    delayVals.length > 0
+      ? delayVals.reduce((sum, c) => sum + c, 0) / delayVals.length
+      : null;
+  // 均执行滑点:仅统计有盘口快照的仓位(执行层上线后的新仓),每仓等权平均。
+  const execVals = positions
+    .map(rowExecCents)
+    .filter((c): c is number => c != null);
+  const avgExecCents =
+    execVals.length > 0
+      ? execVals.reduce((sum, c) => sum + c, 0) / execVals.length
+      : null;
+  return {
+    avgDelayCents,
+    delaySamples: delayVals.length,
+    avgExecCents,
+    execSamples: execVals.length,
+  };
+}
+
 /**
- * 卡片瘦身(改版 Task 2)后被下沉的 10 个指标 + 3 个专供它们使用的派生
- * 计算,从原 StrategyCard 原样搬迁而来。当前未被任何组件挂载 —— Task 3
- * 会把它塞进策略详情弹窗。用「整体搬迁函数体」而不是删掉重写,是为了保证
- * 这些 Metric 的 title(例如「平均年化」那条解释了短窗外推不可靠)不经过
- * 人手转录、零丢失风险。
+ * 卡片瘦身(改版 Task 2)后被下沉的 10 个指标,从原 StrategyCard 原样搬迁
+ * 而来,Task 3 挂进策略详情弹窗「区 1 战绩全景」(StrategyDetailDialog)。
+ * 用「整体搬迁函数体」而不是删掉重写,是为了保证这些 Metric 的 title
+ * (例如「平均年化」那条解释了短窗外推不可靠)不经过人手转录、零丢失风险。
+ *
+ * delayExec 由调用方算好传入(见上面 computeDelayExecAverages 的注释),
+ * 不在本函数内部重算;avgSlipCents 只在本区使用,仍然就地算。
  */
-function StrategyFullMetrics({ s }: { s: FollowStrategyView }) {
+function StrategyFullMetrics({
+  s,
+  delayExec,
+}: {
+  s: FollowStrategyView;
+  delayExec: DelayExecAverages;
+}) {
   const m = s.metrics;
   const fund = s.fund; // 旧响应可能缺失 → 档案各项显示「—」
   const slip = m.slippageCost;
@@ -1012,23 +1059,7 @@ function StrategyFullMetrics({ s }: { s: FollowStrategyView }) {
     allPos.length > 0
       ? allPos.reduce((sum, p) => sum + rowSlipCents(p), 0) / allPos.length
       : null;
-  // 均延迟成本:仅统计有 formation_price 的仓位(老仓位/取价失败不进样本),
-  // 每仓等权算术平均;样本数以 n=N 标注,提醒读者小样本不可过度解读。
-  const delaySamples = allPos
-    .map(rowDelayCents)
-    .filter((c): c is number => c != null);
-  const avgDelayCents =
-    delaySamples.length > 0
-      ? delaySamples.reduce((sum, c) => sum + c, 0) / delaySamples.length
-      : null;
-  // 均执行滑点:仅统计有盘口快照的仓位(执行层上线后的新仓),每仓等权平均。
-  const execSamples = allPos
-    .map(rowExecCents)
-    .filter((c): c is number => c != null);
-  const avgExecCents =
-    execSamples.length > 0
-      ? execSamples.reduce((sum, c) => sum + c, 0) / execSamples.length
-      : null;
+  const { avgDelayCents, delaySamples, avgExecCents, execSamples } = delayExec;
   return (
     <>
       <div
@@ -1138,7 +1169,7 @@ function StrategyFullMetrics({ s }: { s: FollowStrategyView }) {
                 <span className="mono" style={slipWarnStyle(avgDelayCents)}>
                   {fmtSignedCents(avgDelayCents)}
                 </span>
-                <div className="kpi-sub mono">n={delaySamples.length}</div>
+                <div className="kpi-sub mono">n={delaySamples}</div>
               </>
             )
           }
@@ -1153,7 +1184,7 @@ function StrategyFullMetrics({ s }: { s: FollowStrategyView }) {
               <>
                 {/* 配色中性:执行滑点是成本不是盈亏。 */}
                 <span className="mono">{fmtSignedCents(avgExecCents)}</span>
-                <div className="kpi-sub mono">n={execSamples.length}</div>
+                <div className="kpi-sub mono">n={execSamples}</div>
               </>
             )
           }
@@ -1204,22 +1235,167 @@ function StrategyFullMetrics({ s }: { s: FollowStrategyView }) {
 const fmtPct = (u: number | null) =>
   u == null ? "—" : `${(u * 100).toFixed(0)}%`;
 
-// 卡片底部动作行:「建议跟单额度」数字 + 两个弹窗入口(账户推演 / 操作历史),
-// 细节全部收进弹窗,卡片保持紧凑。仅展示,不参与任何决策。
-function CardActions({
-  name,
-  acct,
-  positions,
+/**
+ * 成本四段分解(策略详情弹窗「区 2」,改版 Task 3 唯一新增的信息组织)。
+ * 追价成本→延迟成本→执行滑点→协议费四项此前是四个并列的 Metric(见
+ * StrategyFullMetrics),读者看不出它们是一条链——串起来才回答「纸面盈亏
+ * 和实盘差在哪」。呈现选横向流程条(auto-fit 网格 + label 前缀箭头)而不是
+ * 纵向列表:详情弹窗够宽(见 DETAIL_DIALOG_WIDTH),横向能让"链式推进"的
+ * 阅读顺序一眼可见;窄窗口下网格自动换行到单列,退化成事实上的纵向列表,
+ * 不会溢出(与 StrategyFullMetrics 的指标网格同一套机制,已验证不溢出)。
+ *
+ * ⚠️ 这条链不是严格可加总的:四项口径互不相同(追价成本 vs 聪明钱均价、
+ * 延迟成本 vs 信号形成价、执行滑点 vs 报价入场、协议费是协议抽成),链尾
+ * 「净盈亏(含成本)」目前只把追价成本 + 协议费两项实际计入净额(与
+ * lib/follow.ts netAfterCostsCovered 的定义一致),延迟成本/执行滑点是
+ * 归因诊断读数,不重复计入——不能因为摆成一条链就暗示四项相减得到链尾数字。
+ */
+function CostChain({
+  s,
+  delayExec,
 }: {
-  name: string;
-  acct?: AccountPlan;
-  positions: FollowPositionRow[];
+  s: FollowStrategyView;
+  delayExec: DelayExecAverages;
 }) {
-  const [planOpen, setPlanOpen] = useState(false);
-  const [histOpen, setHistOpen] = useState(false);
+  const m = s.metrics;
+  const { avgDelayCents, delaySamples, avgExecCents, execSamples } = delayExec;
+  // 追价成本用「已结算仓」口径(slippageCostSettled),不是战绩全景那个
+  // open+settled 全量的 slippageCost —— 这条链最终要和协议费、净盈亏在
+  // 同一批已结算仓上对得上,持有中仓位还没有已实现盈亏,没有"实盘差多少"
+  // 这回事。
+  const slip = m.slippageCostSettled;
+  return (
+    <div>
+      <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+        只看已结算仓(持有中仓位尚未产生已实现盈亏)。四项口径不同,不是同
+        口径数字的简单相加——链尾净盈亏目前只把追价成本、协议费两项计入净额,
+        延迟成本/执行滑点是归因诊断读数,悬停各项查看具体口径。
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+          gap: "var(--s-3) var(--s-4)",
+        }}
+      >
+        <Metric
+          label="追价成本"
+          title="已结算仓的追价成本合计:份额 ×(自己入场价 − 聪明钱建仓均价)之和(美元)。链的起点——我们比聪明钱买贵了多少,含拿不到的信息租金。口径与战绩全景「累计追价成本」相同但只算已结算仓,为了能与下面的协议费、净盈亏在同一批仓上相减。中性色:是成本不是盈亏"
+          value={
+            <span className="mono">
+              {slip >= 0 ? `$${fmtUsd0(slip)}` : `${MINUS}$${fmtUsd0(-slip)}`}
+            </span>
+          }
+        />
+        <Metric
+          label="→ 延迟成本"
+          title="有形成价的仓位的(进场价 − 形成价)¢ 算术平均。正=共识形成后我们追贵了 —— 检测+执行延迟造成的可优化成本;与「追价成本」(vs 聪明钱均价、含拿不到的信息租金)口径不同。老仓位无形成价,不进样本"
+          value={
+            avgDelayCents == null ? (
+              <span className="muted">—</span>
+            ) : (
+              <>
+                <span className="mono" style={slipWarnStyle(avgDelayCents)}>
+                  {fmtSignedCents(avgDelayCents)}
+                </span>
+                <div className="kpi-sub mono">n={delaySamples}</div>
+              </>
+            )
+          }
+        />
+        <Metric
+          label="→ 执行滑点"
+          title="有盘口快照的仓位的(模拟成交均价 − 报价入场价)¢ 算术平均 —— 真实执行成本(跨价差+吃深度)的实测估计。开仓瞬间抓 CLOB 订单簿、按本仓名义金额模拟市价吃单;盘口无历史,执行层上线前的老仓不进样本"
+          value={
+            avgExecCents == null ? (
+              <span className="muted">—</span>
+            ) : (
+              <>
+                <span className="mono">{fmtSignedCents(avgExecCents)}</span>
+                <div className="kpi-sub mono">n={execSamples}</div>
+              </>
+            )
+          }
+        />
+        <Metric
+          label="→ 协议费"
+          title="开仓瞬间按 gamma feeSchedule 算的协议 taker 费之和(仅已结算仓)。公式 fee = 份额 × rate × p ×(1−p);对定额买单等价于 金额 × rate ×(1−p) —— 随成交价单调递减,冷门票才是相对最贵的($500 @0.2 约 4%、@0.5 约 2.5%、@0.9 约 0.5%)。「Polymarket 零手续费」已于 2026-08-04 实测作废:头部 100 市场 72 个收费、占 24h 量 57.8%,横跨 7 个品类。费率表是当前值,老仓不回填,故带 n= 覆盖率"
+          value={
+            m.feeSamples === 0 ? (
+              <>
+                <span className="muted">—</span>
+                <div className="kpi-sub mono">n=0</div>
+              </>
+            ) : (
+              <>
+                <span className="mono">
+                  {MINUS}${fmtUsd0(m.feeCost)}
+                </span>
+                <div className="kpi-sub mono">
+                  n={m.feeSamples}
+                  {m.feeUnknown > 0 ? ` · ${m.feeUnknown} 仓未知` : null}
+                </div>
+              </>
+            )
+          }
+        />
+      </div>
+      {/* 链尾:净盈亏(含成本)。加底色框与上面四项拉开视觉层级——它是链的
+          结论,不是并列的第五项。覆盖率标注(feeSamples/settledCount)必须
+          跟着数字一起出现,否则读者会把"费用已知"的子集误读成全量,这正是
+          lib/follow.ts netAfterCostsCovered 注释警告过的坑。 */}
+      <div
+        style={{
+          marginTop: "var(--s-4)",
+          padding: "var(--s-3) var(--s-4)",
+          background: "var(--n-100)",
+          borderRadius: "var(--r-md)",
+        }}
+      >
+        <Metric
+          label="⇒ 净盈亏(含追价成本+协议费)"
+          title="三档口径里最接近实盘的一档:已实现盈亏 − 追价成本 − 协议费。上面的「已实现盈亏」是纸面档,不含任何执行成本。⚠️ 口径范围:三项都只在【协议费已知】的那批已结算仓上计算,而不是拿部分覆盖的费用去减全量盈亏(那会得到一个介于两档之间、无法解释的数)。协议费自 2026-08 起才采集、老仓不回填,所以这一档目前只覆盖一个子集;随着老仓陆续结算完毕会自然收敛到全量"
+          value={
+            m.feeSamples === 0 ? (
+              <>
+                <span className="muted">—</span>
+                <div className="kpi-sub mono">n=0</div>
+              </>
+            ) : (
+              <>
+                <span
+                  className={`mono ${pnlTone(m.netAfterCostsCovered)}`}
+                  style={{ fontSize: 18, fontWeight: 700 }}
+                >
+                  {fmtSignedUsd(m.netAfterCostsCovered)}
+                </span>
+                <div className="kpi-sub mono">
+                  覆盖 {m.feeSamples}/{m.settledCount} 仓
+                </div>
+              </>
+            )
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+// 卡片底部动作行:「建议跟单额度」数字 + 一个「查看详情」弹窗入口(合并原
+// 「账户推演」「操作历史」两个按钮——内容没丢,并进同一个弹窗的两个区,见
+// 下方 StrategyDetailDialog)。细节全部收进弹窗,卡片保持紧凑。仅展示,不
+// 参与任何决策。
+//
+// 与旧版的一处行为差异:旧版在 !hasPlan && !hasHistory 时整行隐藏(两个
+// 弹窗各自都没数据可看,按钮就没有意义)。合并后「查看详情」还解锁了恒有
+// 内容的「区 1 战绩全景」——哪怕 0 仓位,策略的创建日期/运行天数依然有值
+// (见 lib/follow.ts computeFundMetrics 的 startTs ?? firstEntryTs),所以
+// 这里不再整行隐藏,只有「建议跟单额度」这一小段仍按 hasPlan 显示(它确实
+// 可能真的没有)。
+function CardActions({ s }: { s: FollowStrategyView }) {
+  const [detailOpen, setDetailOpen] = useState(false);
+  const acct = s.account;
   const hasPlan = !!acct && acct.rows.length > 0 && acct.suggestedUsd != null;
-  const hasHistory = positions.length > 0;
-  if (!hasPlan && !hasHistory) return null;
   return (
     <div
       style={{
@@ -1238,48 +1414,21 @@ function CardActions({
           <span className="mono" style={{ fontWeight: 600 }}>
             ${fmtUsd0(acct!.suggestedUsd!)}
           </span>
-          <button
-            type="button"
-            className="ds-btn"
-            onClick={() => setPlanOpen(true)}
-            title="额度依据与「若账户只备 $X」五档精确回放"
-          >
-            账户推演 · 该备多少钱
-          </button>
         </>
       ) : null}
-      {hasHistory ? (
-        <button
-          type="button"
-          className="ds-btn"
-          onClick={() => setHistOpen(true)}
-          title="出信号→买入、兑现卖出的完整动作记录,倒序排列"
-        >
-          操作历史
-        </button>
-      ) : null}
-      {hasPlan ? (
-        <Modal
-          open={planOpen}
-          onClose={() => setPlanOpen(false)}
-          title={`${name} · 建议跟单额度与账户推演`}
-          width={680}
-        >
-          <AccountPlanDialog acct={acct!} />
-        </Modal>
-      ) : null}
-      {hasHistory ? (
-        <Modal
-          open={histOpen}
-          onClose={() => setHistOpen(false)}
-          title={`${name} · 操作历史`}
-          // 尽量占满视口宽(Modal 内部按 min(width, 100%) 收敛),配合市场列
-          // 允许换行,表格不出现左右滚动。
-          width={1200}
-        >
-          <HistoryDialog positions={positions} />
-        </Modal>
-      ) : null}
+      <button
+        type="button"
+        className="ds-btn"
+        onClick={() => setDetailOpen(true)}
+        title="战绩全景 · 成本四段分解 · 账户推演 · 操作历史"
+      >
+        查看详情
+      </button>
+      <StrategyDetailDialog
+        s={s}
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
+      />
     </div>
   );
 }
@@ -1537,6 +1686,114 @@ function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
         </table>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------ detail dialog */
+
+// 尽量占满视口宽(Modal 内部按 min(width, 100%) 收敛):四区共存,取原两个
+// 独立弹窗里较宽的那个——操作历史表格原本就是 1200(见上面 HistoryDialog
+// 曾经的调用点);账户推演原本是 680,共用 1200 只是给它的表格多一点留白,
+// 不会挤压或产生新的换行。
+const DETAIL_DIALOG_WIDTH = 1200;
+
+/**
+ * 策略详情弹窗(改版 Task 3):合并原「账户推演」「操作历史」两个独立弹窗,
+ * 加上 Task 2 下沉的 10 个指标,分四区呈现:
+ *   区 1 战绩全景     StrategyFullMetrics 原样挂载
+ *   区 2 成本四段分解 本任务唯一新增的信息组织,见 CostChain
+ *   区 3 账户推演     AccountPlanDialog 内容原样搬入(只换容器,内容一字不改)
+ *   区 4 操作历史     HistoryDialog 内容原样搬入(只换容器,内容一字不改)
+ * avgDelayCents/avgExecCents 在本层算一次(computeDelayExecAverages),
+ * 通过 delayExec 传给区 1、区 2 两处消费者,不重复 reduce。
+ * 设计见 docs/plans/2026-08-12-follow-page-card-redesign-design.md §3.2。
+ */
+function StrategyDetailDialog({
+  s,
+  open,
+  onClose,
+}: {
+  s: FollowStrategyView;
+  open: boolean;
+  onClose: () => void;
+}) {
+  // Modal 自己在 !open 时也会返回 null;这里提前短路,避免弹窗关闭期间
+  // 每次父组件重渲染(如 30s 自动刷新)都要为页面上 12 张卡各算一遍
+  // delayExec、拼一遍 allPos。
+  if (!open) return null;
+
+  const allPos = [...s.open, ...s.settled];
+  const delayExec = computeDelayExecAverages(allPos);
+  const acct = s.account;
+  const hasPlan = !!acct && acct.rows.length > 0 && acct.suggestedUsd != null;
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`${s.name} · 策略详情`}
+      width={DETAIL_DIALOG_WIDTH}
+    >
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--s-6)",
+        }}
+      >
+        <section>
+          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+            战绩全景
+          </div>
+          <StrategyFullMetrics s={s} delayExec={delayExec} />
+        </section>
+
+        <section
+          style={{
+            borderTop: "1px solid var(--n-150)",
+            paddingTop: "var(--s-4)",
+          }}
+        >
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            成本四段分解
+          </div>
+          <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+            追价成本 → 延迟成本 → 执行滑点 → 协议费,回答「纸面盈亏和实盘差在哪」
+          </div>
+          <CostChain s={s} delayExec={delayExec} />
+        </section>
+
+        <section
+          style={{
+            borderTop: "1px solid var(--n-150)",
+            paddingTop: "var(--s-4)",
+          }}
+        >
+          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+            账户推演
+          </div>
+          {hasPlan ? (
+            <AccountPlanDialog acct={acct!} />
+          ) : (
+            <div className="ds-empty">
+              该档暂无账户推演数据(尚无仓位,或建议额度不可用)
+            </div>
+          )}
+        </section>
+
+        <section
+          style={{
+            borderTop: "1px solid var(--n-150)",
+            paddingTop: "var(--s-4)",
+          }}
+        >
+          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+            操作历史
+          </div>
+          <HistoryDialog positions={allPos} />
+        </section>
+      </div>
+    </Modal>
   );
 }
 
