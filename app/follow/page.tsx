@@ -4,7 +4,8 @@
 // 现价进场、持有到结算、固定 $/信号、仅结算盈亏(不做浮盈)。设计系统组件/类
 // 全部复用 app/ui.tsx + globals.css,
 // 净值曲线用内联 SVG 阶梯折线(无图表依赖),多策略靠"线型 × 颜色"组合区分
-// (12 档同屏叠画,仅线型不够用,颜色也要真正承担区分职责,见 STRATEGY_STROKES)。
+// (同屏叠画档数多时仅线型不够用,颜色也要真正承担区分职责,组合表见
+// lib/followCardView.ts 的 STRATEGY_STROKES,容量与超限报警见其字段注释)。
 
 import {
   useCallback,
@@ -22,6 +23,9 @@ import {
   formatAxisUsd,
   sparklineAreaPath,
   sparklinePath,
+  strokeFor,
+  strokeOverflowCount,
+  STRATEGY_STROKES,
 } from "../../lib/followCardView";
 
 /* ------------------------------------------------------------- API types */
@@ -562,33 +566,12 @@ function marketLabel(p: FollowPositionRow): string {
 
 /* ---------------------------------------------------- equity curve (SVG) */
 
-// 多策略叠加(最多 12 档同屏):4 色 × 3 线型 = 12 种两两不重复的组合,颜色
-// 刻意避开 up/down(绿/红是盈亏语义,图例里紧挨着的净值数字就用这两色,撞了
-// 会让读者误以为线条颜色代表盈亏)。全部取设计系统 token,不写死 hex ——
-// globals.css 是色值单一真相源。
-//
-// 只有 3 种线型,4 条一组共享同一线型,所以颜色不再只是"辅助":同线型的 4 条
-// 之间,颜色是唯一的区分依据。为了不让色盲用户在"相邻"两档之间只能靠色相
-// 判断,下面按"颜色外层、线型内层"的顺序展开(COLORS.flatMap(color =>
-// DASHES.map(dash => ...))),这样任意相邻下标(i, i+1)之间线型必然不同
-// (同色的 3 条内部靠线型区分;跨色边界处线型和颜色一起变)——线型差异始终
-// 能独立承担"这是两条不同的线"这件事,颜色只在跨过 3 条之外时才成为唯一
-// 依据。
-const STRATEGY_DASHES: (string | undefined)[] = [
-  undefined, // 实线
-  "7 4", // 长虚线
-  "10 4 2 4", // 虚点相间(点状"2 4"在阶梯图的短线段上容易视觉消失,弃用)
-];
-const STRATEGY_COLORS = [
-  "var(--brand-500)", // 电蓝 · 品牌主色
-  "var(--n-900)", // 近黑 · 最强中性色
-  "var(--warn-700)", // 深琥珀 · 与蓝/黑拉开色相,兼容色觉差异
-  "var(--n-500)", // 中灰 · 弱中性色,与近黑靠明度而非色相区分
-];
-const STRATEGY_STROKES = STRATEGY_COLORS.flatMap((color) =>
-  STRATEGY_DASHES.map((dash) => ({ dash, color })),
-);
-const strokeFor = (i: number) => STRATEGY_STROKES[i % STRATEGY_STROKES.length];
+// 多策略叠加的"线型 × 颜色"组合表(STRATEGY_STROKES/strokeFor/
+// strokeOverflowCount)提到了 lib/followCardView.ts —— 这是这份组合表第一次
+// 被要求证明"相邻组合线型必不同""颜色不撞 up/down 语义色"这两条性质,纯函数
+// 里断言比只靠人眼审图可靠。当前容量见该文件 STRATEGY_STROKES 的字段注释
+// (含"超过容量会怎样"与"为什么不追求无限增长"的完整论证);超容量时的
+// console.warn 报警见下方 FollowPage 组件里对 strokeOverflowCount 的调用。
 
 type CurveSeries = {
   id: number;
@@ -3079,6 +3062,22 @@ export default function FollowPage() {
     family: familyOf(s.params.source ?? "consensus"),
     curve: s.metrics.equityCurve,
   }));
+  // 线型+颜色组合表(lib/followCardView.ts STRATEGY_STROKES)容量有限、
+  // 超出后会静默回绕(见该文件字段注释)——不能让这件事只在代码注释里,真的
+  // 发生时必须有人看得到,故在此主动 console.warn。用 useEffect 而非直接在
+  // render 里 warn:自动刷新每 30s 触发一次重渲染,若不去重,超容量后浏览器
+  // 控制台会被同一条警告刷屏;依赖数组只放 shown.length,策略数不变时(绝大
+  // 多数刷新)不会重复告警,只有数量真的变化(比如新加了一档)才提醒一次。
+  useEffect(() => {
+    const overflow = strokeOverflowCount(shown.length);
+    if (overflow > 0) {
+      console.warn(
+        `[follow] 净值曲线线型+颜色组合已用尽(容量 ${STRATEGY_STROKES.length},当前 ${shown.length} 档启用中)—— ` +
+          `超出容量的 ${overflow} 档会与更早的策略共用同一条视觉表示,图例可能出现分不清的线,` +
+          `需要扩容 lib/followCardView.ts 的 STRATEGY_DASHES/STRATEGY_COLORS。`,
+      );
+    }
+  }, [shown.length]);
   const visibleSeries = series.filter((s) => activeFamilies.has(s.family));
   const toggleFamily = (key: FamilyKey) => {
     setActiveFamilies((prev) => {

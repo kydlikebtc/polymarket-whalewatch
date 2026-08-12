@@ -181,3 +181,90 @@ export function computeTimeTicks(tMin: number, tMax: number): TimeTick[] {
   }
   return ticks;
 }
+
+/* ------------------------------------------------------- strategy strokes */
+// 结算净值曲线多策略叠加(app/follow/page.tsx 的 EquityCurve)靠"线型 × 颜色"
+// 组合区分每一条线。提到 lib/ 是因为这是这份组合表第一次被要求证明自己的两条
+// 性质(见下方 followCardView.test.ts):相邻组合线型必不同、颜色不撞语义色——
+// 在纯函数里断言比只靠人眼审图可靠。
+
+/**
+ * 阶梯图(step-after)专用的 SVG stroke-dasharray 集合。每种非实线模式至少
+ * 有一段 "on"(奇数位是 off,偶数位是 on)长度 >= 7px:阶梯图的转折点多、
+ * 线段短,纯短促笔画(比如曾经试过的纯点状 "2 4")在短线段上会被裁得只剩
+ * 零星几个点,视觉上判若无线。"10 4 2 4"(长虚线+一个点)与
+ * "10 4 2 4 2 4"(长虚线+两个点)里较短的 "2" 只是伴随长笔画的点缀,不是
+ * 主要识别特征,整体仍然可读——这条约束(见 followCardView.test.ts)锁的是
+ * "至少一段够长",不是"每一段都够长"。
+ */
+export const STRATEGY_DASHES: (string | undefined)[] = [
+  undefined, // 实线
+  "7 4", // 长虚线
+  "10 4 2 4", // 虚点相间(dash-dot)
+  "10 4 2 4 2 4", // 虚点点相间(dash-dot-dot)—— 2026-08 第 13 档上线时新增第 4 种,
+  // 复用前一种已验证过的 10/4/2 三个数字,只是多重复一节"2 4",不引入新的
+  // 未验证笔画长度。
+];
+
+/**
+ * 净值曲线的非语义色板。up(绿)/down(红)是全站盈亏色语义——图例里紧挨着
+ * 的净值数字就用这两色,线条颜色若撞上会让读者误以为颜色代表盈亏,故排除。
+ * 设计系统里排除 up/down 后只剩 brand(蓝相)/warn(琥珀相)两种有色相的
+ * token,加两档中性灰(n-900/n-500,靠明度而非色相区分)凑够 4 种——这是
+ * 当前设计系统实际拥有的、非语义色相的上限,不是随手挑的数字(见下方
+ * STRATEGY_STROKES 注释"为什么不追求组合数无限增长")。
+ */
+export const STRATEGY_COLORS = [
+  "var(--brand-500)", // 电蓝 · 品牌主色
+  "var(--n-900)", // 近黑 · 最强中性色
+  "var(--warn-700)", // 深琥珀 · 与蓝/黑拉开色相,兼容色觉差异
+  "var(--n-500)", // 中灰 · 弱中性色,与近黑靠明度而非色相区分
+] as const;
+
+/**
+ * 线型 × 颜色的完整组合表,颜色外层、线型内层展开(`COLORS.flatMap(color =>
+ * DASHES.map(dash => ...))`)—— 这个展开顺序本身就是"相邻下标线型必不同"这条
+ * 性质的证明:同一种颜色内部的几条(线型下标 0..DASHES.length-1)靠线型互相
+ * 区分,颜色边界处线型从最后一种回到第一种(必然不同),所以任意相邻下标
+ * (i, i+1)之间线型永远不会相同——色盲读者不需要分辨色相就能确认"这是两条
+ * 不同的线",颜色只在跨过一整组线型(距离 >= DASHES.length)之后才成为唯一
+ * 依据。见 followCardView.test.ts 对这条性质的直接断言。
+ *
+ * ⚠️ 组合数上限 = STRATEGY_COLORS.length × STRATEGY_DASHES.length(当前
+ * 4×4=16)。2026-08 第 13 档「逆势少数边」上线时把这个数字从 12 扩到 16——
+ * 12 不是巧合,它就是当时的策略总数,硬编码一个刚好等于当前策略数的常量,
+ * 等于把"以后不会再加档"悄悄写进了代码。第 17 档及以后会与
+ * (第几档 − 16)号策略回绕成完全相同的线型+颜色,strokeFor 不会报错、
+ * 图上会静默出现两条视觉相同的线,只有主动去数策略数才会发现——
+ * app/follow/page.tsx 的 FollowPage 用 strokeOverflowCount 在这种情况下
+ * console.warn,不能让上限只活在这段注释里。
+ *
+ * 为什么这里选择"给一个比当前策略数宽裕的上限 + 用尽了主动报警",而不是
+ * 追求组合数随策略数无限增长:设计系统里可用的非语义色相已经见底(见上面
+ * STRATEGY_COLORS 注释),线型也有极限(过短的笔画在阶梯图短线段上会视觉
+ * 消失,见 STRATEGY_DASHES 注释)——硬凑更多维度只会让线型和颜色都变得难以
+ * 分辨。更根本的是,人眼同屏分辨十几条以上的线本身就已经很吃力,这是数据
+ * 可视化的普遍限制,不是这个组件能靠更聪明的取模算法解决的问题;真到了那个
+ * 规模,更合适的修法是产品层面限制同屏对比的策略数(比如加一个"最多同时选
+ * N 条"的曲线族筛选器),而不是无止境地往这张表里塞新的线型/颜色。
+ */
+export const STRATEGY_STROKES = STRATEGY_COLORS.flatMap((color) =>
+  STRATEGY_DASHES.map((dash) => ({ dash, color })),
+);
+
+/** 按策略在 `shown` 里的顺序下标取对应的线型+颜色,超出容量按 `i % 容量` 回绕。 */
+export function strokeFor(i: number): {
+  dash: string | undefined;
+  color: string;
+} {
+  return STRATEGY_STROKES[i % STRATEGY_STROKES.length];
+}
+
+/**
+ * 超出 STRATEGY_STROKES 容量的策略数——第 17 档及以后会与更早的策略共用
+ * 同一条线型+颜色,图上视觉不可区分。调用方据此决定要不要 console.warn
+ * (见 STRATEGY_STROKES 字段注释)。未超容量返回 0。
+ */
+export function strokeOverflowCount(totalStrategies: number): number {
+  return Math.max(0, totalStrategies - STRATEGY_STROKES.length);
+}

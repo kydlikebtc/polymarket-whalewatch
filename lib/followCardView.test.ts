@@ -7,6 +7,11 @@ import {
   sparklinePath,
   sparklineAreaPath,
   LOW_SAMPLE_THRESHOLD,
+  STRATEGY_COLORS,
+  STRATEGY_DASHES,
+  STRATEGY_STROKES,
+  strokeFor,
+  strokeOverflowCount,
 } from "./followCardView";
 
 describe("classifyCardState — 三种卡态", () => {
@@ -279,5 +284,75 @@ describe("computeTimeTicks — 净值曲线 x 轴时间刻度(EquityCurve/放大
       { ts: tMin, label: "1/15 10:30", anchor: "start" },
       { ts: tMin + 60, label: "1/15 10:31", anchor: "middle" },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 净值曲线多策略叠加的线型 × 颜色组合表(2026-08 第 13 档「逆势少数边」上线
+// 时从 4×3=12 扩到 4×4=16)。四条必测(对应 STRATEGY_STROKES 字段注释里
+// 写明的两条既有性质 + 这次扩容新加的两条):
+//   1. 相邻下标线型必不同(色盲友好,COLORS 外层/DASHES 内层展开的直接后果)
+//   2. 颜色不含 up/down 语义色(绿/红是盈亏语义,不能被线条颜色借用)
+//   3. 非实线的 dash 模式至少有一段足够长的"on"笔画(不会在阶梯图短线段上
+//      视觉消失)
+//   4. strokeOverflowCount 正确反映"超出组合表容量的策略数"——超容量后
+//      app/follow/page.tsx 靠这个值 console.warn,数值算错等于报警失效
+// ---------------------------------------------------------------------------
+describe("strokeFor / STRATEGY_STROKES — 净值曲线线型 × 颜色组合表", () => {
+  it("组合数 = 颜色数 × 线型数(当前 4 色 × 4 线型 = 16)", () => {
+    expect(STRATEGY_COLORS).toHaveLength(4);
+    expect(STRATEGY_DASHES).toHaveLength(4);
+    expect(STRATEGY_STROKES).toHaveLength(
+      STRATEGY_COLORS.length * STRATEGY_DASHES.length,
+    );
+    expect(STRATEGY_STROKES).toHaveLength(16);
+  });
+
+  it("容量内的组合两两不重复(dash+color 组合唯一,不存在两个策略天生撞成同一条线)", () => {
+    const keys = STRATEGY_STROKES.map((s) => `${s.dash}|${s.color}`);
+    expect(new Set(keys).size).toBe(STRATEGY_STROKES.length);
+  });
+
+  it("相邻下标(i, i+1)线型必不同 —— 色盲用户不能只靠色相分辨相邻两条线", () => {
+    for (let i = 0; i < STRATEGY_STROKES.length - 1; i++) {
+      expect(STRATEGY_STROKES[i].dash).not.toBe(STRATEGY_STROKES[i + 1].dash);
+    }
+  });
+
+  it("颜色不含 up/down 语义色 token(绿/红是盈亏语义,图例数字已经用了这两色)", () => {
+    for (const color of STRATEGY_COLORS) {
+      expect(color).not.toMatch(/--up-|--down-/);
+    }
+  });
+
+  it('非实线的 dash 模式里,"on" 笔画(偶数下标,0-based)至少有一段 >= 7px —— 若整段模式全是短促笔画,会在阶梯图短线段上视觉消失(此前因此弃用过纯点状 "2 4")', () => {
+    for (const dash of STRATEGY_DASHES) {
+      if (dash == null) continue; // 实线没有分段,不适用
+      const segments = dash.split(" ").map(Number);
+      const onSegments = segments.filter((_, idx) => idx % 2 === 0);
+      expect(Math.max(...onSegments)).toBeGreaterThanOrEqual(7);
+    }
+  });
+
+  it("strokeFor 按 i % 容量 回绕:第 17 个(i=16)与第 1 个(i=0)取到完全相同的组合", () => {
+    expect(strokeFor(16)).toEqual(strokeFor(0));
+    expect(strokeFor(17)).toEqual(strokeFor(1));
+  });
+
+  it("strokeFor 在容量之内(0..15)逐个不同 —— 与上面「两两不重复」断言互相印证", () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < STRATEGY_STROKES.length; i++) {
+      const s = strokeFor(i);
+      seen.add(`${s.dash}|${s.color}`);
+    }
+    expect(seen.size).toBe(STRATEGY_STROKES.length);
+  });
+
+  it("strokeOverflowCount:未超容量(含恰好用满)返回 0,超出返回超出的档数", () => {
+    expect(strokeOverflowCount(0)).toBe(0);
+    expect(strokeOverflowCount(13)).toBe(0); // 当前实际启用的策略数,留有余量
+    expect(strokeOverflowCount(16)).toBe(0); // 恰好用满容量,不算超出
+    expect(strokeOverflowCount(17)).toBe(1);
+    expect(strokeOverflowCount(20)).toBe(4);
   });
 });
