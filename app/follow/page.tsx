@@ -14,6 +14,11 @@ import {
   type ReactNode,
 } from "react";
 import { Modal, Segmented, Tag } from "../ui";
+import {
+  classifyCardState,
+  sparklineAreaPath,
+  sparklinePath,
+} from "../../lib/followCardView";
 
 /* ------------------------------------------------------------- API types */
 // 客户端本地类型:镜像 lib/follow 的视图结构,但独立声明,避免把 server 侧
@@ -769,6 +774,60 @@ function Metric({
   );
 }
 
+/**
+ * 卡片迷你净值曲线。240×52,不画坐标轴 —— 这个尺寸塞不下可读的刻度,
+ * 卡上只负责传达"走势形状",具体数值由下面 4 个指标承担,横向对比由
+ * 页面下方的大图承担(统一坐标系)。
+ * 颜色按终值正负取 up/down 语义色,与卡上「结算净值」的着色一致。
+ */
+function Sparkline({ curve }: { curve: { ts: number; cum: number }[] }) {
+  const W = 240;
+  const H = 52;
+  if (curve.length === 0) return null;
+  const net = curve[curve.length - 1]?.cum ?? 0;
+  const tone = net >= 0 ? "var(--up-500)" : "var(--down-500)";
+  // 单点特判:sparklinePath 对唯一点只产出 "M x y"(无 L 段),SVG 不会画出
+  // 任何可见线段;但 sparklineAreaPath 仍会把这个孤点和两个底角连成一个与
+  // 曲线形状无关的楔形色块(见 lib/followCardView.ts 顶部注释)。12 档刚
+  // 上线时"仅 1 笔已结算"是每一档必经的早期状态,这个分支会被频繁触发,
+  // 值得单独画成一条贯穿全宽的虚线 —— 实线会暗示"这条策略一直很平稳",
+  // 与事实(只有一个样本点,谈不上走势)不符;虚线明确传达"数据不足以连线"。
+  if (curve.length === 1) {
+    const y = H / 2;
+    return (
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        style={{ width: "100%", height: H, display: "block" }}
+        aria-hidden
+      >
+        <line
+          x1={0}
+          y1={y}
+          x2={W}
+          y2={y}
+          stroke={tone}
+          strokeWidth={1.6}
+          strokeDasharray="3 3"
+        />
+      </svg>
+    );
+  }
+  const line = sparklinePath(curve, W, H);
+  if (!line) return null;
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      style={{ width: "100%", height: H, display: "block" }}
+      aria-hidden
+    >
+      <path d={sparklineAreaPath(line, W, H)} fill={tone} opacity={0.1} />
+      <path d={line} fill="none" stroke={tone} strokeWidth={1.6} />
+    </svg>
+  );
+}
+
 function StrategyCard({
   s,
   leading,
@@ -776,6 +835,173 @@ function StrategyCard({
   s: FollowStrategyView;
   leading: boolean;
 }) {
+  const m = s.metrics;
+  const fund = s.fund; // 旧响应可能缺失 → 档案各项显示「—」
+  const state = classifyCardState(m);
+  const allPos = [...s.open, ...s.settled];
+  return (
+    <div
+      className="ds-card"
+      style={{
+        padding: "var(--s-4)",
+        // 领先卡用品牌色描边 + 抬升阴影强调,全部走 token,不硬编码色。
+        ...(leading
+          ? {
+              borderColor: "var(--brand-500)",
+              boxShadow: "var(--shadow-md)",
+            }
+          : null),
+        // 空档(尚无已结算仓位):虚线边框 + 浅灰底,把「还没轮到它」和「跑了
+        // 但没赚到钱」在视觉上分开 —— 见下方 empty 分支注释。
+        ...(state === "empty"
+          ? { borderStyle: "dashed", background: "var(--n-50)" }
+          : null),
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--s-2)",
+          flexWrap: "wrap",
+          marginBottom: "var(--s-3)",
+        }}
+      >
+        <strong style={{ fontSize: "var(--t-lg)", color: "var(--n-900)" }}>
+          {s.name}
+        </strong>
+        {leading ? <Tag variant="brand">本窗口领先</Tag> : null}
+        {!s.enabled ? <Tag variant="warn">已停用</Tag> : null}
+      </div>
+      <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
+        {paramsHint(s.params)}
+      </div>
+      {state === "empty" ? (
+        // 空档:10 条新档刚上线时全是这个状态。虚线边框 + 说明把「还没轮到
+        // 它」和「跑了但没赚到钱」在视觉上分开 —— 沿用正常卡样式会显示 12
+        // 张写满「—」的同样大小的卡,容易被误判成「新档都不工作」。
+        <div
+          className="ds-hint"
+          style={{
+            textAlign: "center",
+            padding: "var(--s-4) 0",
+            lineHeight: 1.7,
+          }}
+        >
+          {m.openCount > 0 ? (
+            <>
+              尚无已结算仓位
+              <br />
+              持有 {m.openCount} 仓 · 等待首次结算
+            </>
+          ) : (
+            <>
+              尚无仓位
+              <br />
+              等待信号命中
+            </>
+          )}
+        </div>
+      ) : (
+        <>
+          <Sparkline curve={m.equityCurve} />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+              gap: "var(--s-3) var(--s-4)",
+              marginTop: "var(--s-3)",
+            }}
+          >
+            <Metric
+              label="结算净值"
+              title="已结算仓位累计已实现盈亏(不含持仓浮盈)"
+              value={
+                <span
+                  className={`mono ${pnlTone(m.totalRealized)}`}
+                  style={{ fontSize: 20, fontWeight: 700 }}
+                >
+                  {fmtSignedUsd(m.totalRealized)}
+                </span>
+              }
+            />
+            <Metric
+              label="ROI"
+              title="结算净值 ÷ 已投入本金(仅已结算仓)"
+              value={
+                m.roi == null ? (
+                  <span className="muted">—</span>
+                ) : (
+                  <span
+                    className={`mono ${pnlTone(m.roi)}`}
+                    style={{ fontSize: 18, fontWeight: 600 }}
+                  >
+                    {m.roi >= 0 ? "+" : MINUS}
+                    {Math.abs(m.roi * 100).toFixed(1)}%
+                  </span>
+                )
+              }
+            />
+            <Metric
+              label="结算胜率"
+              title="盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间;平局不计入分母"
+              value={<span className="mono">{winRateLabel(m)}</span>}
+            />
+            <Metric
+              label="最大回撤"
+              title="净值曲线从峰值到后续谷底的最大跌幅(美元)"
+              value={
+                <span
+                  className={`mono ${m.maxDrawdown > 0 ? "down" : "muted"}`}
+                >
+                  {m.maxDrawdown > 0
+                    ? `${MINUS}$${fmtUsd0(m.maxDrawdown)}`
+                    : "$0"}
+                </span>
+              }
+            />
+          </div>
+        </>
+      )}
+      {/* 元信息行:取代被下沉的「已结算 · 持有」指标。low_sample 档在这里加
+          警示色,提醒读者上面的 ROI/胜率是小样本(<10 仓)读数,而不是隐藏
+          它们——藏起来会让读者误以为这档没数据,标警示才是诚实的做法。 */}
+      <div
+        className="ds-hint"
+        style={{
+          display: "flex",
+          gap: "var(--s-3)",
+          flexWrap: "wrap",
+          borderTop: "1px solid var(--n-100)",
+          paddingTop: "var(--s-2)",
+          marginTop: "var(--s-3)",
+        }}
+      >
+        {state === "low_sample" ? (
+          <span style={{ color: "var(--warn-700)" }}>
+            ⚠ 已结算仅 {m.settledCount} 仓
+          </span>
+        ) : (
+          <span>已结算 {m.settledCount} 仓</span>
+        )}
+        <span>持有 {m.openCount}</span>
+        {fund?.runDays != null ? (
+          <span>运行 {Math.floor(fund.runDays)} 天</span>
+        ) : null}
+      </div>
+      <CardActions name={s.name} acct={s.account} positions={allPos} />
+    </div>
+  );
+}
+
+/**
+ * 卡片瘦身(改版 Task 2)后被下沉的 10 个指标 + 3 个专供它们使用的派生
+ * 计算,从原 StrategyCard 原样搬迁而来。当前未被任何组件挂载 —— Task 3
+ * 会把它塞进策略详情弹窗。用「整体搬迁函数体」而不是删掉重写,是为了保证
+ * 这些 Metric 的 title(例如「平均年化」那条解释了短窗外推不可靠)不经过
+ * 人手转录、零丢失风险。
+ */
+function StrategyFullMetrics({ s }: { s: FollowStrategyView }) {
   const m = s.metrics;
   const fund = s.fund; // 旧响应可能缺失 → 档案各项显示「—」
   const slip = m.slippageCost;
@@ -804,37 +1030,7 @@ function StrategyCard({
       ? execSamples.reduce((sum, c) => sum + c, 0) / execSamples.length
       : null;
   return (
-    <div
-      className="ds-card"
-      style={{
-        padding: "var(--s-4)",
-        // 领先卡用品牌色描边 + 抬升阴影强调,全部走 token,不硬编码色。
-        ...(leading
-          ? {
-              borderColor: "var(--brand-500)",
-              boxShadow: "var(--shadow-md)",
-            }
-          : null),
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--s-2)",
-          flexWrap: "wrap",
-          marginBottom: "var(--s-3)",
-        }}
-      >
-        <strong style={{ fontSize: "var(--t-lg)", color: "var(--n-900)" }}>
-          {s.name}
-        </strong>
-        {leading ? <Tag variant="brand">本窗口领先</Tag> : null}
-        {!s.enabled ? <Tag variant="warn">已停用</Tag> : null}
-      </div>
-      <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
-        {paramsHint(s.params)}
-      </div>
+    <>
       <div
         style={{
           display: "grid",
@@ -842,35 +1038,6 @@ function StrategyCard({
           gap: "var(--s-3) var(--s-4)",
         }}
       >
-        <Metric
-          label="结算净值"
-          title="已结算仓位累计已实现盈亏(不含持仓浮盈)"
-          value={
-            <span
-              className={`mono ${pnlTone(m.totalRealized)}`}
-              style={{ fontSize: 20, fontWeight: 700 }}
-            >
-              {fmtSignedUsd(m.totalRealized)}
-            </span>
-          }
-        />
-        <Metric
-          label="ROI"
-          title="结算净值 ÷ 已投入本金(仅已结算仓)"
-          value={
-            m.roi == null ? (
-              <span className="muted">—</span>
-            ) : (
-              <span
-                className={`mono ${pnlTone(m.roi)}`}
-                style={{ fontSize: 18, fontWeight: 600 }}
-              >
-                {m.roi >= 0 ? "+" : MINUS}
-                {Math.abs(m.roi * 100).toFixed(1)}%
-              </span>
-            )
-          }
-        />
         <Metric
           label="平均年化"
           title="结算净值 ÷ 峰值占用资金 × 365 ÷ 运行天数。把策略当一只小基金:按历史峰值备足本金、自成立日起折算年化。短窗口/小样本外推极不可靠,仅供横向对比;无结算仓或运行不足 1 天显示 —"
@@ -886,11 +1053,6 @@ function StrategyCard({
               </span>
             )
           }
-        />
-        <Metric
-          label="结算胜率"
-          title="盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间;平局不计入分母"
-          value={<span className="mono">{winRateLabel(m)}</span>}
         />
         <Metric
           label="已结算 · 持有"
@@ -997,15 +1159,6 @@ function StrategyCard({
           }
         />
         <Metric
-          label="最大回撤"
-          title="净值曲线从峰值到后续谷底的最大跌幅(美元)"
-          value={
-            <span className={`mono ${m.maxDrawdown > 0 ? "down" : "muted"}`}>
-              {m.maxDrawdown > 0 ? `${MINUS}$${fmtUsd0(m.maxDrawdown)}` : "$0"}
-            </span>
-          }
-        />
-        <Metric
           label="开始时间"
           title="策略上线(成立)日期;运行时间与年化都以此为锚。老库缺创建时间时回退首仓开仓日"
           value={
@@ -1044,8 +1197,7 @@ function StrategyCard({
           平均持有 {m.avgHoldingDays.toFixed(1)} 天
         </div>
       ) : null}
-      <CardActions name={s.name} acct={s.account} positions={allPos} />
-    </div>
+    </>
   );
 }
 
