@@ -1,7 +1,8 @@
 "use client";
 
-// 共识跟单 · 纸面模拟看板。只读消费 /api/follow —— 现价进场、持有到结算、固定
-// $/信号、仅结算盈亏(不做浮盈)。设计系统组件/类全部复用 app/ui.tsx + globals.css,
+// 策略中心看板(产品名改版前叫「纸面跟单」,2026-08)。只读消费 /api/follow ——
+// 现价进场、持有到结算、固定 $/信号、仅结算盈亏(不做浮盈)。设计系统组件/类
+// 全部复用 app/ui.tsx + globals.css,
 // 净值曲线用内联 SVG 阶梯折线(无图表依赖),多策略靠"线型 × 颜色"组合区分
 // (12 档同屏叠画,仅线型不够用,颜色也要真正承担区分职责,见 STRATEGY_STROKES)。
 
@@ -3069,7 +3070,7 @@ export default function FollowPage() {
     <main className="ds-main">
       <header style={{ marginBottom: "var(--s-4)" }}>
         <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-          🧾 共识跟单 · 纸面模拟
+          🧾 策略中心
         </h1>
         <div className="ds-hint">
           现价进场 ·
@@ -3125,7 +3126,7 @@ export default function FollowPage() {
       ) : null}
 
       {!data ? (
-        <div className="ds-empty">⏳ 正在加载纸面跟单战绩…</div>
+        <div className="ds-empty">⏳ 正在加载策略中心战绩…</div>
       ) : shown.length === 0 ? (
         <div className="ds-empty">
           暂无启用中的跟单策略 —
