@@ -1,6 +1,6 @@
 // 跟单页策略卡的纯展示逻辑。提到 lib/ 是因为 app/ 下没有组件测试基建 ——
-// 卡态判定与 sparkline 定域是这次改版里仅有的两块可被自动化覆盖的逻辑,
-// 留在 page.tsx 里就只能靠目视。
+// 卡态判定、净值曲线的平滑插值(不过冲)是这次改版里仅有的几块可被自动化
+// 覆盖的逻辑,留在 page.tsx 里就只能靠目视。
 // 设计见 docs/plans/2026-08-12-follow-page-card-redesign-design.md §3.1。
 
 /**
@@ -28,42 +28,142 @@ export function classifyCardState(m: {
 }
 
 /**
- * 卡片 sparkline 的阶梯路径(step-after,与大图 stepPath[app/follow/page.tsx]
- * 同口径:每个结算点之前维持前一水平,到该点垂直跳变)。
+ * 净值曲线的平滑路径:单调三次 Hermite 插值(Fritsch–Carlson,1980)生成的
+ * 三次贝塞尔曲线,取代原先 EquityCurve 的本地 stepPath 与这里的
+ * sparklinePath 两份阶梯(step-after)实现——这次统一成同一个函数,两处
+ * 调用方共用(见 app/follow/page.tsx 的 EquityCurve/Sparkline)。
  *
- * **各自缩放**:按本条曲线自己的 min/max 定域,不接受外部统一值域 —— 统一
- * 缩放会把小额档压成一条平线。代价是两张卡的曲线不可直接横比,横比职责交给
- * 页面下方的大图(统一坐标系)。
+ * 为什么原来是阶梯、现在能改成平滑曲线:阶梯准确表达"下一次结算之前累计
+ * 净值保持不变"这条口径(见 lib/follow.ts computeStrategyMetrics 顶部
+ * 注释「只记结算盈亏,不做浮盈」)。平滑曲线在视觉上会暗示两次结算之间净值
+ * 连续变化,这不真实——补偿办法是把每个结算点的标记做得足够显著(调用方
+ * circle 的改动),让读者一眼看出"数据只存在于这些点上,中间只是连接",
+ * 不是插值出的真实轨迹。这也是为什么下面的退化情形防护、"不修改入参"这些
+ * 纪律原样保留自 sparklinePath——换的只是两点之间怎么连,不是整体设计原则。
  *
- * 值域为零(全部同值/单点)时退化成水平居中线,不做除法 —— 否则会产出 NaN
- * 污染整个 path 属性,SVG 静默不渲染,比画错更难排查。
+ * 为什么不能用最常见的 Catmull-Rom/自然三次样条:那类样条只保证曲线经过
+ * 每个数据点,不保证单调——在"平-平-陡升-平"这类形状上会在陡升段两侧的
+ * 平段"冲过头",画出一个从未真实发生过的净值峰值/谷底(见
+ * followCardView.test.ts 的过冲回归用例)。单调三次插值额外保证:曲线在
+ * 任意相邻两个数据点之间,取值不越出这两点 y 值的值域——这是财务图表不能
+ * 退让的底线,不是锦上添花的平滑度偏好。
+ *
+ * 不过冲的证明梗概(推导细节见下方 monotoneTangents 的注释):
+ *   1. 三次贝塞尔曲线的取值必然落在它四个控制点的凸包内(凸组合的基本
+ *      性质)——只要证明"每段的两个中间控制点的 y 值都落在该段两个端点
+ *      y 值的值域内",整条曲线就不可能越界,这是比逐点验证曲线本身更容易
+ *      核实的充分条件。
+ *   2. 标准 Hermite→Bezier 换算(每段区间宽度记 h,中间控制点从端点沿切线
+ *      方向偏移 h/3)下,中间控制点的 y 偏移量正比于 α=m_k/Δ_k(该点切线
+ *      与本段割线斜率之比;另一端点同理用 β)。只要 0 ≤ α ≤ 3(β 同理),
+ *      偏移量就不会超出端点 y 值的值域。
+ *   3. Fritsch–Carlson 条件(见 monotoneTangents)对每段强制 α,β ≥ 0
+ *      (符号不符说明该端点是局部极值或平段边界,切线该为 0)且
+ *      α²+β² ≤ 9(半径 3 的"圆测试",可以推出 α,β 都 ≤3)。两条件叠加,
+ *      上面的充分条件在每一段都成立。
+ *
+ * 与旧 stepPath 同一种"外部传入 sx/sy"签名,而不是旧 sparklinePath 那种
+ * "自带 width/height、各自定域"签名——EquityCurve 要求多条策略共享同一套
+ * 坐标系才能互相比较,自定域签名做不到这件事,这次统一按 EquityCurve 的
+ * 需求选了 sx/sy 签名;Sparkline(详情弹窗放大版)若要继续"局部坐标 +
+ * <g transform> 平移"的画法,调用方自己用现成的绝对坐标 sx/sy 平移出局部
+ * 版本即可(两行闭包,不需要这个函数再支持第二种签名)。
+ *
+ * 退化情形防护(沿用原 sparklinePath 的纪律,不产出 NaN):空数组→空
+ * 字符串;单点→只有 M、没有 C 段;相邻两点 x 坐标重合(同一时间戳结算多笔,
+ * 或调用方的 sx 在 tSpan===0 时把所有点映射到同一处)→该段割线斜率记 0,
+ * 退化成一条竖直线,不除零。不修改入参数组。
  */
-export function sparklinePath(
+export function smoothCurvePath(
   curve: { ts: number; cum: number }[],
-  width: number,
-  height: number,
+  sx: (t: number) => number,
+  sy: (v: number) => number,
 ): string {
   if (curve.length === 0) return "";
   const pts = [...curve].sort((a, b) => a.ts - b.ts);
-  const PAD = 4; // 上下各留 4px,避免极值点被裁掉一半
-  const vals = pts.map((p) => p.cum);
-  const lo = Math.min(...vals);
-  const hi = Math.max(...vals);
-  const span = hi - lo;
-  const tMin = pts[0].ts;
-  const tSpan = pts[pts.length - 1].ts - tMin;
-  const sx = (t: number) =>
-    tSpan > 0 ? ((t - tMin) / tSpan) * width : width / 2;
-  const sy = (v: number) =>
-    span > 0 ? PAD + (1 - (v - lo) / span) * (height - PAD * 2) : height / 2;
+  const xs = pts.map((p) => sx(p.ts));
+  const ys = pts.map((p) => sy(p.cum));
+  const n = xs.length;
 
-  let d = `M ${sx(pts[0].ts).toFixed(1)} ${sy(pts[0].cum).toFixed(1)}`;
-  for (let i = 1; i < pts.length; i++) {
-    const x = sx(pts[i].ts).toFixed(1);
-    d += ` L ${x} ${sy(pts[i - 1].cum).toFixed(1)}`;
-    d += ` L ${x} ${sy(pts[i].cum).toFixed(1)}`;
+  if (n === 1) {
+    return `M ${xs[0].toFixed(1)} ${ys[0].toFixed(1)}`;
+  }
+
+  const m = monotoneTangents(xs, ys);
+  let d = `M ${xs[0].toFixed(1)} ${ys[0].toFixed(1)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const h = xs[i + 1] - xs[i];
+    const c1x = xs[i] + h / 3;
+    const c1y = ys[i] + (m[i] * h) / 3;
+    const c2x = xs[i + 1] - h / 3;
+    const c2y = ys[i + 1] - (m[i + 1] * h) / 3;
+    d +=
+      ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ` +
+      `${c2x.toFixed(1)} ${c2y.toFixed(1)} ` +
+      `${xs[i + 1].toFixed(1)} ${ys[i + 1].toFixed(1)}`;
   }
   return d;
+}
+
+/**
+ * Fritsch–Carlson(1980)单调三次插值的切线估计,供 smoothCurvePath 使用。
+ * xs 必须已按升序排列(smoothCurvePath 排序后才调用)。
+ *
+ * 步骤:
+ *   1. 相邻点割线斜率 Δ_k(像素坐标系下的 dy/dx)。xs[k+1]===xs[k](同一
+ *      时间戳,或调用方的 sx 把多点映射到同一处)时记 0——不能除零,也是
+ *      唯一几何自洽的选择(该段没有水平范围,谈不上"斜率")。
+ *   2. 每个内部点初始切线取相邻两段割线斜率的算术平均,端点切线取唯一
+ *      相邻那段的割线斜率(标准初始估计,还未保证单调)。
+ *   3. 割线斜率为 0 的段(该段两端点 y 值相等),强制其两端切线也为 0——
+ *      否则曲线会在"本该走平"的一段里鼓出一个凸起:该段值域是单个值,
+ *      任何偏离都算过冲,不存在"轻微过冲可以接受"这回事。
+ *   4. 其余每一段按 α=m_k/Δ_k、β=m_{k+1}/Δ_k 收缩:符号不对(局部极值
+ *      点)则对应端点切线清零;α²+β²>9(半径 3 的圆测试)则按比例
+ *      τ=3/√(α²+β²) 收缩两端切线。这两条正是 smoothCurvePath 顶部注释里
+ *      "不过冲证明"依赖的条件。
+ */
+function monotoneTangents(xs: number[], ys: number[]): number[] {
+  const n = xs.length;
+  const secants: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    const dx = xs[i + 1] - xs[i];
+    secants.push(dx === 0 ? 0 : (ys[i + 1] - ys[i]) / dx);
+  }
+
+  const m: number[] = new Array(n);
+  m[0] = secants[0];
+  m[n - 1] = secants[n - 2];
+  for (let i = 1; i < n - 1; i++) {
+    m[i] = (secants[i - 1] + secants[i]) / 2;
+  }
+
+  // 平段(割线斜率 0)两端强制清零——见函数顶部注释第 3 步。必须在下面的
+  // 符号/圆测试之前做完:那一步要拿 secants[i] 当分母,平段的 0 会除零。
+  for (let i = 0; i < n - 1; i++) {
+    if (secants[i] === 0) {
+      m[i] = 0;
+      m[i + 1] = 0;
+    }
+  }
+
+  // 逐段符号 + 圆测试收缩——见函数顶部注释第 4 步。
+  for (let i = 0; i < n - 1; i++) {
+    const sec = secants[i];
+    if (sec === 0) continue; // 上一步已清零,且 alpha/beta 在这里会除零
+    if (m[i] / sec < 0) m[i] = 0;
+    if (m[i + 1] / sec < 0) m[i + 1] = 0;
+    const alpha = m[i] / sec;
+    const beta = m[i + 1] / sec;
+    const s = alpha * alpha + beta * beta;
+    if (s > 9) {
+      const tau = 3 / Math.sqrt(s);
+      m[i] = tau * alpha * sec;
+      m[i + 1] = tau * beta * sec;
+    }
+  }
+
+  return m;
 }
 
 /**
@@ -71,9 +171,10 @@ export function sparklinePath(
  * 不承载任何额外信息。
  *
  * 闭合方式:从 linePath 的终点垂直落到底边(x 不变,y=height),沿底边走到
- * x=0,再 Z 回到 linePath 的起点。linePath 的起点 x 未必是 0(sparklinePath
- * 在 tSpan===0 时把唯一/同值点画在 width/2),所以这里不假设它是 0 —— Z 命令
- * 会自动直线连回路径起点,不需要显式写出起点坐标。
+ * x=0,再 Z 回到 linePath 的起点。linePath 的起点 x 未必是 0(调用方
+ * Sparkline 的局部坐标 sx 在 tSpan===0 时把唯一/同值点画在 width/2),所以
+ * 这里不假设它是 0 —— Z 命令会自动直线连回路径起点,不需要显式写出起点
+ * 坐标。
  */
 export function sparklineAreaPath(
   linePath: string,

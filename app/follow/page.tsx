@@ -3,7 +3,9 @@
 // 策略中心看板(产品名改版前叫「纸面跟单」,2026-08)。只读消费 /api/follow ——
 // 现价进场、持有到结算、固定 $/信号、仅结算盈亏(不做浮盈)。设计系统组件/类
 // 全部复用 app/ui.tsx + globals.css,
-// 净值曲线用内联 SVG 阶梯折线(无图表依赖),多策略靠"线型 × 颜色"组合区分
+// 净值曲线用内联 SVG 平滑曲线(单调三次插值,无图表依赖;结算点本身仍是
+// 唯一真实数据,曲线只是连接方式——见 lib/followCardView.ts smoothCurvePath
+// 顶部注释「为什么能从阶梯改成平滑」),多策略靠"线型 × 颜色"组合区分
 // (同屏叠画档数多时仅线型不够用,颜色也要真正承担区分职责,组合表见
 // lib/followCardView.ts 的 STRATEGY_STROKES,容量与超限报警见其字段注释)。
 
@@ -21,8 +23,8 @@ import {
   computeTimeTicks,
   estimateAxisLabelWidth,
   formatAxisUsd,
+  smoothCurvePath,
   sparklineAreaPath,
-  sparklinePath,
   strokeFor,
   strokeOverflowCount,
   STRATEGY_STROKES,
@@ -584,23 +586,6 @@ type CurveSeries = {
   curve: { ts: number; cum: number }[];
 };
 
-// 阶梯折线(step-after):每个结算点之前维持前一水平,到该点垂直跳变到新累计值。
-function stepPath(
-  curve: { ts: number; cum: number }[],
-  sx: (t: number) => number,
-  sy: (v: number) => number,
-): string {
-  if (curve.length === 0) return "";
-  const pts = [...curve].sort((a, b) => a.ts - b.ts);
-  let d = `M ${sx(pts[0].ts).toFixed(1)} ${sy(pts[0].cum).toFixed(1)}`;
-  for (let i = 1; i < pts.length; i++) {
-    const x = sx(pts[i].ts).toFixed(1);
-    d += ` L ${x} ${sy(pts[i - 1].cum).toFixed(1)}`;
-    d += ` L ${x} ${sy(pts[i].cum).toFixed(1)}`;
-  }
-  return d;
-}
-
 // 格式化逻辑下沉到 lib/followCardView.ts 的 formatAxisUsd:与下面
 // estimateAxisLabelWidth(算 padL 用的宽度估算)共享同一份格式化,保证
 // "实际画出来的文字"与"用来估宽的文字"永远是同一个计算结果——这正是
@@ -618,7 +603,7 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
   if (withData.length === 0) {
     return (
       <div className="ds-empty">
-        暂无已结算仓位 — 有策略平仓后这里会画出结算净值阶梯曲线
+        暂无已结算仓位 — 有策略平仓后这里会画出结算净值曲线
       </div>
     );
   }
@@ -710,7 +695,7 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
         width="100%"
         style={{ height: "auto", display: "block" }}
         role="img"
-        aria-label="各策略结算净值(累计已实现盈亏)阶梯曲线"
+        aria-label="各策略结算净值(累计已实现盈亏)平滑曲线,标记点为真实结算点"
       >
         {/* 0 基线 */}
         <line
@@ -782,10 +767,18 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
             </text>
           </g>
         ))}
-        {/* 各策略阶梯线 + 结算点。用 <g> 整组设 opacity——同一组里的线和它
-            的结算点一起淡化,不必在 path 和每个 circle 上分别算一遍(也不
-            会出现"线淡了、点还是实心"这种半淡化的观感,这正是圆点会浮在
-            淡化线上的问题的根)。 */}
+        {/* 各策略平滑曲线 + 结算点标记。用 <g> 整组设 opacity——同一组里的
+            线和它的结算点一起淡化,不必在 path 和每个 circle 上分别算一遍
+            (也不会出现"线淡了、点还是实心"这种半淡化的观感,这正是圆点
+            会浮在淡化线上的问题的根)。
+
+            标记点(bug 补偿,2026-08):曲线从阶梯改成平滑(单调三次插值,
+            见 lib/followCardView.ts smoothCurvePath)后,两次结算之间的
+            连线不再是"维持前值"的直角转折,视觉上容易被误读成净值连续
+            变化——而实际口径仍是"只在结算这一刻发生变化"(computeStrategyMetrics
+            顶部注释)。半透明白色描边环(stroke=n-0)+ 比线宽更粗的半径,
+            让每个结算点在任何线色/线型下都清晰凸出于曲线本身,提醒读者
+            "数据只存在于这些点上,中间只是插值连接",不是真实轨迹。 */}
         {withData.map((s) => {
           const st = strokeFor(s.strokeIdx);
           const isHovered = hoverId === s.id;
@@ -793,7 +786,7 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
           return (
             <g key={s.id} opacity={dimmed ? 0.2 : 1}>
               <path
-                d={stepPath(s.curve, sx, sy)}
+                d={smoothCurvePath(s.curve, sx, sy)}
                 fill="none"
                 stroke={st.color}
                 strokeWidth={isHovered ? 2.6 : 1.8}
@@ -806,8 +799,10 @@ function EquityCurve({ series }: { series: CurveSeries[] }) {
                   key={i}
                   cx={sx(pt.ts)}
                   cy={sy(pt.cum)}
-                  r={2.5}
+                  r={isHovered ? 4.2 : 3.2}
                   fill={st.color}
+                  stroke="var(--n-0)"
+                  strokeWidth={1.2}
                 />
               ))}
             </g>
@@ -942,32 +937,38 @@ function Metric({
 
 /**
  * 净值走势图(原「卡片 sparkline」,U6 从卡片移入详情弹窗并放大;本次追加
- * x 轴日期刻度 + 结算点选中交互)。详情弹窗改 tab 切换后挂在「总览」tab,
- * 与战绩全景一起——见 StrategyDetailDialog 顶部注释。
+ * x 轴日期刻度 + 结算点选中交互,再之后又从阶梯改成平滑曲线)。详情弹窗改
+ * tab 切换后挂在「总览」tab,与战绩全景一起——见 StrategyDetailDialog
+ * 顶部注释。
  *
  * U6 的起点:240×52 的卡片尺寸画不出可读坐标轴,形状又因各自缩放不可横比,
  * 只回答得了"大致涨还是跌"——这件事结算净值的正负号已经答过了,占卡片上
  * 最大一块视觉面积不值当。放大到详情弹窗(接近 1200px 宽)后这两个限制都
  * 不存在了,遂加上坐标轴,让它真正回答"这档的盈亏是怎么走出来的"。
  *
- * width/height 是入参,调用方按场地大小传。sparklinePath/sparklineAreaPath
- * (lib/followCardView.ts)本身的签名与"各自定域缩放"的逻辑都不动——这里把
- * padL/padT/padB 这部分留白从传给它们的 width/height 里预先扣掉,再用
- * <g transform="translate(...)"> 整体平移,腾出坐标轴文字的位置,不需要为
- * 了加坐标轴去改那两个纯函数。
+ * width/height 是入参,调用方按场地大小传。曲线路径用 lib/followCardView.ts
+ * 的 smoothCurvePath(与页面下方大图 EquityCurve 共用同一个函数)——那个
+ * 函数要求调用方传入 sx/sy,这里沿用改版前"局部坐标 + <g transform>
+ * 平移"的画法:把 padL/padT/padB 这部分留白从局部坐标系里预先扣掉,再用
+ * <g transform="translate(...)"> 整体平移腾出坐标轴文字的位置,局部
+ * sx/sy 直接从下面已经算好的绝对坐标 sx/sy 平移得到(细节见下方 localSx/
+ * localSy 定义处的注释)。
  *
  * x 轴日期刻度复用 lib/followCardView.ts 的 computeTimeTicks——与页面下方
  * 大图 EquityCurve 同一份选点/格式化逻辑,不新造第二套日期表达。
  *
- * 点选交互:曲线是阶梯图(step-after),每个数据点对应一次真实结算,不是
- * 连续函数——"选中"的目标必须是这些真实点本身,不能是鼠标/触摸位置插值
- * 出的中间点。每个结算点渲染一个可视圆点 + 一个更大的透明命中圆(方便
- * 鼠标/触屏精确点中);命中圆同时挂 onMouseEnter/onMouseLeave(鼠标悬停)
- * 与 onFocus/onBlur(键盘 Tab 聚焦),两者触发同一个选中态——纯键盘用户
- * Tab 到某个点也能看到与鼠标悬停完全相同的信息读出,不是鼠标专属功能
- * (与本文件 EquityCurve 图例 hover 高亮的既有约定同一原则)。选中结果
- * 显示在图表上方的信息条:日期复用 fmtDateTime,净值复用 fmtSignedUsd——
- * 都是页面已有的格式化函数,不新造第二套。
+ * 点选交互:每个数据点对应一次真实结算,不是连续函数的采样——曲线改成
+ * 平滑之后这一点反而更容易被忽略(阶梯图的直角转折本身就在提醒"这是离散
+ * 事件",平滑曲线看着更像连续过程),所以"选中"的目标必须仍然是这些真实
+ * 点本身,不能是鼠标/触摸位置插值出的中间点,标记点本身也要画得比曲线更
+ * 显眼(见下方 circle 的 stroke 描边环)。每个结算点渲染一个可视圆点 + 一个
+ * 更大的透明命中圆(方便鼠标/触屏精确点中);命中圆同时挂
+ * onMouseEnter/onMouseLeave(鼠标悬停)与 onFocus/onBlur(键盘 Tab 聚焦),
+ * 两者触发同一个选中态——纯键盘用户 Tab 到某个点也能看到与鼠标悬停完全
+ * 相同的信息读出,不是鼠标专属功能(与本文件 EquityCurve 图例 hover 高亮的
+ * 既有约定同一原则)。选中结果显示在图表上方的信息条:日期复用
+ * fmtDateTime,净值复用 fmtSignedUsd——都是页面已有的格式化函数,不新造
+ * 第二套。
  *
  * 颜色按终值正负取 up/down 语义色,与「结算净值」的着色一致。
  */
@@ -1031,8 +1032,8 @@ function Sparkline({
     minHeight: "1.4em",
   };
 
-  // 单点特判(逻辑不变,W/H 换成入参):sparklinePath 对唯一点只产出
-  // "M x y"(无 L 段),SVG 不会画出任何可见线段;sparklineAreaPath 仍会把
+  // 单点特判(逻辑不变,W/H 换成入参):smoothCurvePath 对唯一点只产出
+  // "M x y"(无 C 段),SVG 不会画出任何可见线段;sparklineAreaPath 仍会把
   // 这个孤点和两个底角连成一个与曲线形状无关的楔形色块(见
   // lib/followCardView.ts 顶部注释)。画一条贯穿绘图区的虚线 + 这一个值
   // 本身——只有一个样本点,谈不上走势,虚线明确传达"数据不足以连线"。
@@ -1097,14 +1098,17 @@ function Sparkline({
           {/* 可视圆点 + 透明命中圆:同一个点的双重表示,见函数顶部"点选
               交互"注释。role="button":SVG 图形元素没有隐式 role,补一个
               才能被读屏软件识别成可交互控件(与下面 EquityCurve 图例的
-              纯文本 <span> 不同,那里文字内容本身就能被朗读)。 */}
+              纯文本 <span> 不同,那里文字内容本身就能被朗读)。默认态也带
+              白色描边环(不再是"只有选中才有环"),与下面多点分支、
+              EquityCurve 的标记点统一——曲线改平滑后,标记必须无条件比线
+              本身醒目,不能只在交互态才凸显(见函数顶部"点选交互"注释)。 */}
           <circle
             cx={px}
             cy={y}
-            r={isSelected ? 4 : 2.5}
+            r={isSelected ? 4.5 : 3.2}
             fill={tone}
-            stroke={isSelected ? "var(--n-0)" : "none"}
-            strokeWidth={isSelected ? 1.5 : 0}
+            stroke="var(--n-0)"
+            strokeWidth={isSelected ? 1.5 : 1}
           />
           <circle
             cx={px}
@@ -1148,14 +1152,9 @@ function Sparkline({
   const plotW = width - padL;
   const plotH = height - padT - padB;
 
-  const line = sparklinePath(curve, plotW, plotH);
-  if (!line) return null;
-
-  // y 轴标签复用与 sparklinePath 内部完全相同的定域公式(该函数只返回一条
-  // path 字符串,不导出 lo/hi/sy;签名按要求不能改,这里只能就地重算同一份
-  // min/max——两行 Math.min/max,不是什么值得抽公共函数的重计算)。
-  // AXIS_PAD 常量与 lib/followCardView.ts 的 PAD 保持一致,否则标签位置会
-  // 和实际画出来的折线端点对不上。
+  // y 轴定域:峰值/谷底(下面会画出来的两个标签)。AXIS_PAD 常量与
+  // lib/followCardView.ts 的 PAD 保持一致,否则标签位置会和实际画出来的
+  // 曲线端点对不上。
   const AXIS_PAD = 4;
   const span = hi - lo;
   const sy = (v: number) =>
@@ -1166,8 +1165,8 @@ function Sparkline({
   const showZero = lo <= 0 && 0 <= hi;
 
   // 结算点的真实(ts, cum)列表(按时间排序)——x 轴刻度、逐点选中标记都
-  // 按这份数据算。与 sparklinePath 内部对入参做的排序是同一个比较器,
-  // 这里各自排一次不会得到不同的点序,保证圆点与它下面那条折线严丝合缝。
+  // 按这份数据算;smoothCurvePath 内部对入参做的排序是同一个比较器,这里
+  // 各自排一次不会得到不同的点序,保证圆点与它下面那条曲线严丝合缝。
   const pts = [...curve].sort((a, b) => a.ts - b.ts);
   const tMin = pts[0].ts;
   const tSpan = pts[pts.length - 1].ts - tMin;
@@ -1175,6 +1174,18 @@ function Sparkline({
     padL + (tSpan > 0 ? ((t - tMin) / tSpan) * plotW : plotW / 2);
   const ticks = computeTimeTicks(tMin, tMin + tSpan);
   const selectedPt = selectedIdx != null ? (pts[selectedIdx] ?? null) : null;
+
+  // 曲线路径:smoothCurvePath 要求调用方传入 sx/sy(统一给 EquityCurve 那种
+  // 多策略共享坐标系的场景用,见 lib/followCardView.ts 顶部注释)。这里沿用
+  // 改版前"局部坐标 + <g transform> 平移"的画法(下面 JSX 里的
+  // translate(padL, padT)):局部 sx/sy 就是上面已经算好的绝对坐标 sx/sy
+  // 各减掉一次平移量——不是又推了一遍定域公式,只是把同一个函数在两个
+  // 坐标原点下各求值一次,不会出现"两份公式各自维护、互相漂移"的老问题
+  // (这正是这次改造前 sy 那段注释在抱怨的事)。
+  const localSx = (t: number) => sx(t) - padL;
+  const localSy = (v: number) => sy(v) - padT;
+  const line = smoothCurvePath(curve, localSx, localSy);
+  if (!line) return null;
 
   return (
     <div>
@@ -1275,8 +1286,11 @@ function Sparkline({
           <path d={line} fill="none" stroke={tone} strokeWidth={1.6} />
         </g>
         {/* 逐个结算点的可视圆点 + 透明命中圆,见函数顶部"点选交互"注释:
-            曲线是阶梯图,这里遍历的是真实结算点(pts),不是曲线上的任意
-            位置——键盘 Tab 与鼠标悬停触发同一个选中态。 */}
+            曲线是平滑插值,这里遍历的是真实结算点(pts),不是曲线上的任意
+            位置——键盘 Tab 与鼠标悬停触发同一个选中态。默认态也带白色描边
+            环(不再是"只有选中才有环"):平滑曲线本身看着更像连续过程,
+            标记必须无条件比线更醒目,才能让读者确认"数据只在这些点上,
+            中间是插值连接"。 */}
         {pts.map((pt, i) => {
           const cx = sx(pt.ts);
           const cy = sy(pt.cum);
@@ -1286,10 +1300,10 @@ function Sparkline({
               <circle
                 cx={cx}
                 cy={cy}
-                r={isSelected ? 4 : 2.5}
+                r={isSelected ? 4.5 : 3.2}
                 fill={tone}
-                stroke={isSelected ? "var(--n-0)" : "none"}
-                strokeWidth={isSelected ? 1.5 : 0}
+                stroke="var(--n-0)"
+                strokeWidth={isSelected ? 1.5 : 1}
               />
               <circle
                 cx={cx}
