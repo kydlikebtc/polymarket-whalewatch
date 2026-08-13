@@ -730,7 +730,22 @@ export function Modal({
             ✕
           </button>
         </div>
-        <div style={{ overflow: "auto", minHeight: 0 }}>{children}</div>
+        {/* 滚动容器在卡片 padding 内侧,竖向滚动条会紧贴内容零间距渲染
+            (2026-08-13 真机截图:深度分析各 tab 右列数字几乎顶着滚动条)。
+            给滚动容器自己加右内边距,内容与滚动条之间恒有呼吸空间;
+            scrollbarGutter:stable 让经典滚动条(Windows 等)出现/消失时
+            不引起内容横向跳动,overlay 滚动条(macOS 默认)下宽度为 0、
+            无副作用。所有弹窗所有 tab 共此一处,不逐弹窗修。 */}
+        <div
+          style={{
+            overflow: "auto",
+            minHeight: 0,
+            paddingRight: "var(--s-3, 12px)",
+            scrollbarGutter: "stable",
+          }}
+        >
+          {children}
+        </div>
       </div>
     </div>
   );
