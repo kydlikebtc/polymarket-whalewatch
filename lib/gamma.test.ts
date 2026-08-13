@@ -21,6 +21,8 @@ const gammaRow = (cid: string, over: Record<string, unknown> = {}) => ({
   category: null,
   outcomes: '["Yes", "No"]',
   outcomePrices: '["0.905", "0.095"]',
+  // 实测形状:与 outcomes 对齐的 stringified JSON 数组(token id 是十进制长串)。
+  clobTokenIds: '["111000111", "222000222"]',
   ...over,
 });
 
@@ -33,6 +35,7 @@ const meta = (cid: string, over: Partial<MarketMeta> = {}): MarketMeta => ({
   category: "Sports",
   outcomes: ["Yes", "No"],
   outcomePrices: [0.9, 0.1],
+  clobTokenIds: ["tok-yes", "tok-no"],
   feesEnabled: false,
   feeType: null,
   feeSchedule: null,
@@ -51,6 +54,9 @@ describe("fetchMarketMeta", () => {
     expect(m.liquidity).toBeCloseTo(229073.1289);
     expect(m.outcomes).toEqual(["Yes", "No"]);
     expect(m.outcomePrices).toEqual([0.905, 0.095]);
+    // 反向对照档(2026-08-13)靠它定位对面 outcome 的 token —— 与 outcomes
+    // 同一响应、同一对齐,零新增上游调用。
+    expect(m.clobTokenIds).toEqual(["111000111", "222000222"]);
     expect(m.closed).toBe(false);
     expect(fetchMock.mock.calls[0][0]).toContain("condition_ids=0xc1");
   });
@@ -95,6 +101,20 @@ describe("fetchMarketMeta", () => {
     expect(m.feesEnabled).toBe(false);
     expect(m.feeSchedule).toBeNull();
     expect(m.umaDisputed).toBeNull(); // 字段缺席 = 未知,不是"没争议"
+  });
+
+  it("clobTokenIds 缺失/坏形状 → [](反向翻转侧按元素数校验,fail-closed)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        gammaRow("0xc1", { clobTokenIds: undefined }),
+        gammaRow("0xc2", { clobTokenIds: "不是 JSON" }),
+      ],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await fetchMarketMeta(["0xc1", "0xc2"]);
+    expect(out["0xc1"].clobTokenIds).toEqual([]);
+    expect(out["0xc2"].clobTokenIds).toEqual([]);
   });
 
   it("keeps successful chunks when another chunk fails (independent failure)", async () => {
@@ -221,6 +241,29 @@ describe("getMarketMeta", () => {
     expect(out["0xclosed"].feesEnabled).toBe(false);
     // 重取后带上版本号,下一次命中缓存。
     await getMarketMeta(db, ["0xclosed"], { fetcher, nowSec: 1200 });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("META_V=2 的老缓存行(含 closed 永久缓存)因 clobTokenIds 升版重抓一次", async () => {
+    // 反向对照档依赖 clobTokenIds 才能翻到对面 token;closed 行缓存永不过期,
+    // 不 bump META_V 老行上这个字段永远缺失 —— 这条测试把 2→3 这次具体升版
+    // 钉死,防止将来有人加字段却忘了动版本号(那会静默复现同一类 bug)。
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO market_meta (condition_id, meta_json, fetched_at) VALUES (?, ?, ?)",
+    ).run(
+      "0xold",
+      JSON.stringify({ conditionId: "0xold", closed: true, v: 2 }), // 上一版形状
+      1000,
+    );
+    const fetcher = vi.fn(async (ids: string[]) =>
+      Object.fromEntries(ids.map((c) => [c, meta(c, { closed: true })])),
+    );
+    const out = await getMarketMeta(db, ["0xold"], { fetcher, nowSec: 1100 });
+    expect(fetcher).toHaveBeenCalledTimes(1); // v:2 → stale shape,重抓
+    expect(out["0xold"].clobTokenIds).toEqual(["tok-yes", "tok-no"]);
+    // 重取后落 v:3,下一次命中永久缓存。
+    await getMarketMeta(db, ["0xold"], { fetcher, nowSec: 1200 });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 

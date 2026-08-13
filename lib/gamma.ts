@@ -20,6 +20,14 @@ export interface MarketMeta {
   category: string | null;
   outcomes: string[];
   outcomePrices: number[];
+  /**
+   * 每个 outcome 对应的 CLOB token id,与 `outcomes` 同序对齐(同一响应里的
+   * stringified JSON 数组,零新增上游调用 —— 与 fees 四件套同一论证)。反向
+   * 对照档(lib/reverse.ts)靠它定位「对面 outcome」的 token 来取价/取盘口/
+   * 回填 markout。坏形状/缺失 → [](消费方按元素数 fail-closed,见
+   * reverseCandidate)。
+   */
+  clobTokenIds: string[];
   // Protocol fees. Rides along on the SAME response the enrichment already
   // fetches, so reading them costs zero extra upstream calls. See lib/fees.
   feesEnabled: boolean;
@@ -133,6 +141,7 @@ function normalize(row: Record<string, unknown>): MarketMeta | null {
     outcomePrices: jsonArr(row.outcomePrices)
       .map((p) => num(p))
       .map((p) => p ?? NaN),
+    clobTokenIds: jsonArr(row.clobTokenIds).map(String),
     feesEnabled: row.feesEnabled === true,
     feeType: typeof row.feeType === "string" ? row.feeType : null,
     feeSchedule: parseFeeSchedule(row.feeSchedule),
@@ -211,7 +220,8 @@ const DEFAULT_TTL_SEC = 3600;
 // newly added field would stay NULL on those rows forever. Bumping this makes
 // every stale-shaped row a cache miss exactly once.
 //   1 → 2: feesEnabled / feeType / feeSchedule / umaDisputed
-const META_V = 2;
+//   2 → 3: clobTokenIds(反向对照档翻边定位对面 token 用)
+const META_V = 3;
 
 // A closed-but-DISPUTED market is not final — UMA can overturn it — so it must
 // keep refreshing instead of inheriting the permanent-cache rule.
