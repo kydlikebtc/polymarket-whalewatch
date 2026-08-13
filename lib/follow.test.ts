@@ -1057,4 +1057,54 @@ describe("parseStrategy — source/maxPrice/freshSec 扩展", () => {
     expect(warnSpy).not.toHaveBeenCalled();
     warnSpy.mockRestore();
   });
+
+  // reverse(反向对照档,2026-08-13):side 同一套「显式合法生效、缺失静默
+  // 退默认、存在但非法留痕」纪律。既有 13 条策略的 params_json 都没有这个
+  // 字段 —— 缺失必须静默落 false,一条都不许因此变成反向档。
+  it("reverse 缺失 → false 且不留痕(既有 13 条策略零迁移)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const s = parseStrategyForTest(
+      10,
+      JSON.stringify({
+        source: "heavy",
+        minSingleFillUsd: 50000,
+        sizeUsd: 500,
+      }),
+    );
+    expect(s!.reverse).toBe(false);
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("reverse: true 显式生效(反向档的唯一开关)", () => {
+    const s = parseStrategyForTest(
+      11,
+      JSON.stringify({
+        source: "heavy",
+        reverse: true,
+        minSingleFillUsd: 50000,
+        sizeUsd: 500,
+      }),
+    );
+    expect(s!.reverse).toBe(true);
+    // 检测字段原样保留 —— 反向档与正向档共用同一 detector、同一判据。
+    expect(s!.source).toBe("heavy");
+    expect(s!.minSingleFillUsd).toBe(50000);
+  });
+
+  it("reverse 存在但非布尔(手滑写 'yes')→ warn 留痕并退 false", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const s = parseStrategyForTest(
+      12,
+      JSON.stringify({
+        source: "heavy",
+        reverse: "yes",
+        minSingleFillUsd: 50000,
+        sizeUsd: 500,
+      }),
+    );
+    expect(s!.reverse).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("reverse"));
+    warnSpy.mockRestore();
+  });
 });

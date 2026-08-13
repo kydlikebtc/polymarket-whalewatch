@@ -398,6 +398,16 @@ function parseStrategy(
         `(需 "lead" 或 "minor"),已退默认 "lead"`,
     );
   }
+  // reverse(反向对照档):side 同一套纪律。非布尔一律退 false —— 这个开关
+  // 决定一条策略买信号的同边还是对面,被脏值悄悄置真的后果是整档方向反掉,
+  // 必须显式 true 才生效。
+  const reverseValid = typeof p.reverse === "boolean";
+  if (p.reverse !== undefined && !reverseValid) {
+    console.warn(
+      `[follow] strategy ${id}: reverse=${JSON.stringify(p.reverse)} 非法` +
+        `(需布尔),已退默认 false`,
+    );
+  }
 
   return {
     id,
@@ -420,6 +430,7 @@ function parseStrategy(
     minTiltPct: numOr(p.minTiltPct) ?? undefined,
     minPerSideUsd: numOr(p.minPerSideUsd) ?? undefined,
     side: sideValid ? (p.side as "lead" | "minor") : "lead",
+    reverse: reverseValid ? (p.reverse as boolean) : false,
     minNetUsd: numOr(p.minNetUsd) ?? undefined,
   };
 }
