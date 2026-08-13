@@ -351,31 +351,10 @@ export function WalletLink({
 
 /* ------------------------------------------------------------- Category */
 
-// Chinese display names for the gamma tag taxonomy; unknown labels pass
-// through as-is (the taxonomy grows over time).
-const CATEGORY_ZH: Record<string, string> = {
-  Politics: "政治",
-  Elections: "选举",
-  Sports: "体育",
-  Esports: "电竞",
-  Crypto: "加密",
-  Economy: "经济",
-  Finance: "金融",
-  Business: "商业",
-  Tech: "科技",
-  Science: "科学",
-  "Pop Culture": "文娱",
-  Culture: "文娱",
-  World: "国际",
-  Weather: "天气",
-  Games: "游戏",
-};
-
-// null/"" → 其他 (unknown category bucket).
-export function catLabel(category: string | null | undefined): string {
-  if (!category) return "其他";
-  return CATEGORY_ZH[category] ?? category;
-}
+// 实现移至 lib/categoryLabel.ts(2026-08-13 二级分类:合成规则可测,app/
+// 下没有测试基建);这里 re-export 保持既有调用方的 import 面不变,并把
+// 新的 catLabelFine(「体育·NBA」合成)一并暴露给各页面。
+export { catLabel, catLabelFine } from "../lib/categoryLabel";
 
 /* ----------------------------------------------------------------- Icon */
 

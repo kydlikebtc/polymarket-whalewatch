@@ -27,6 +27,8 @@ export interface AnalysisPosition {
   entry_ts: number;
   exit_ts: number | null;
   category?: string | null;
+  /** 二级分类(体育联盟/加密资产等,lib/gamma.ts 白名单派生;缺失=无)。 */
+  subcategory?: string | null;
 }
 
 export interface QualityStats {
@@ -111,7 +113,23 @@ export interface DurationBucket {
   realized: number;
 }
 
-export interface CategoryStat {
+/** 某一级赛道下按二级(联盟/资产)细分的子行。 */
+export interface CategorySubStat {
+  /** 二级标签 EN 原文(展示层译中)。 */
+  subcategory: string;
+  n: number;
+  wins: number;
+  losses: number;
+  winRate: number | null;
+  avgEntry: number | null;
+  realized: number;
+}
+
+/**
+ * 一级赛道汇总 + 二级子行。一级行吃该赛道**全部**仓(含无二级的)——
+ * 子行是细分视图而非再分配,subs 各 n 之和 ≤ 一级 n(差额 = 无二级的仓)。
+ */
+export interface CategoryGroup {
   category: string;
   n: number;
   wins: number;
@@ -119,6 +137,8 @@ export interface CategoryStat {
   winRate: number | null;
   avgEntry: number | null;
   realized: number;
+  /** 有二级的部分,n 降序、同 n 按落袋降序;全无二级 → []。 */
+  subs: CategorySubStat[];
 }
 
 export interface HalfSplitStat {
@@ -141,8 +161,8 @@ export interface DeepAnalysis {
   streaks: StreakStats;
   concentration: ConcentrationStats;
   durationBuckets: DurationBucket[];
-  /** n 降序,同 n 按落袋降序,再按名称字典序保证稳定。 */
-  categories: CategoryStat[];
+  /** 两级赛道:一级 n 降序,同 n 按落袋降序,再按名称字典序保证稳定。 */
+  categories: CategoryGroup[];
   openCount: number;
 }
 
@@ -416,50 +436,65 @@ export function analyzeBets(positions: AnalysisPosition[]): DeepAnalysis {
     realized: durAcc[i].realized,
   }));
 
-  // ---- 赛道细分 ----
-  const byCat = new Map<
-    string,
-    {
-      n: number;
-      wins: number;
-      losses: number;
-      entrySum: number;
-      realized: number;
-    }
-  >();
-  for (const p of settled) {
-    const key = p.category ?? "未分类";
-    const acc = byCat.get(key) ?? {
-      n: 0,
-      wins: 0,
-      losses: 0,
-      entrySum: 0,
-      realized: 0,
-    };
+  // ---- 赛道细分(两级:一级汇总 + 二级子行,同一遍累计) ----
+  interface CatAcc {
+    n: number;
+    wins: number;
+    losses: number;
+    entrySum: number;
+    realized: number;
+  }
+  const newAcc = (): CatAcc => ({
+    n: 0,
+    wins: 0,
+    losses: 0,
+    entrySum: 0,
+    realized: 0,
+  });
+  const feed = (acc: CatAcc, p: AnalysisPosition) => {
     acc.n++;
     acc.entrySum += p.entry_price;
     const v = p.realized_pnl ?? 0;
     acc.realized += v;
     if (v > 0) acc.wins++;
     else if (v < 0) acc.losses++;
-    byCat.set(key, acc);
+  };
+  const byCat = new Map<string, { top: CatAcc; subs: Map<string, CatAcc> }>();
+  for (const p of settled) {
+    const key = p.category ?? "未分类";
+    const g = byCat.get(key) ?? { top: newAcc(), subs: new Map() };
+    feed(g.top, p); // 一级吃全部仓 —— 子行是细分视图,不是再分配
+    if (p.subcategory) {
+      const sub = g.subs.get(p.subcategory) ?? newAcc();
+      feed(sub, p);
+      g.subs.set(p.subcategory, sub);
+    }
+    byCat.set(key, g);
   }
-  const categories: CategoryStat[] = [...byCat.entries()]
-    .map(([category, acc]) => ({
+  const statOf = (acc: CatAcc) => ({
+    n: acc.n,
+    wins: acc.wins,
+    losses: acc.losses,
+    winRate: rate(acc.wins, acc.losses),
+    avgEntry: acc.n > 0 ? acc.entrySum / acc.n : null,
+    realized: acc.realized,
+  });
+  const bySample = (
+    a: { n: number; realized: number },
+    b: { n: number; realized: number },
+  ) => b.n - a.n || b.realized - a.realized;
+  const categories: CategoryGroup[] = [...byCat.entries()]
+    .map(([category, g]) => ({
       category,
-      n: acc.n,
-      wins: acc.wins,
-      losses: acc.losses,
-      winRate: rate(acc.wins, acc.losses),
-      avgEntry: acc.n > 0 ? acc.entrySum / acc.n : null,
-      realized: acc.realized,
+      ...statOf(g.top),
+      subs: [...g.subs.entries()]
+        .map(([subcategory, acc]) => ({ subcategory, ...statOf(acc) }))
+        .sort(
+          (a, b) =>
+            bySample(a, b) || a.subcategory.localeCompare(b.subcategory),
+        ),
     }))
-    .sort(
-      (a, b) =>
-        b.n - a.n ||
-        b.realized - a.realized ||
-        a.category.localeCompare(b.category),
-    );
+    .sort((a, b) => bySample(a, b) || a.category.localeCompare(b.category));
 
   return {
     quality,
