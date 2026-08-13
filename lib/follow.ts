@@ -1423,6 +1423,13 @@ export interface FollowStrategyView {
     minSingleFillUsd?: number;
     minTiltPct?: number;
     minNetUsd?: number;
+    /**
+     * 反向对照档标记(2026-08-13):true = 该档对每个信号买对面 outcome
+     * (lib/reverse.ts)。展示层靠它画「反向对照」Tag 与参数提示的反向前缀。
+     * 恒有值(缺失/脏值 → false),与开仓侧 parseStrategy 同默认 —— 方向
+     * 开关的展示绝不能与实际开仓行为对不上。
+     */
+    reverse: boolean;
   };
   metrics: StrategyMetrics;
   fund: FundMetrics; // 基金式档案:成立/运行/峰值占用/年化(仅展示,不参与任何决策)
@@ -1477,6 +1484,7 @@ function parseParamsView(
     source: "consensus",
     maxPrice: DEFAULT_MAX_PRICE,
     freshSec: DEFAULT_FRESH_SEC,
+    reverse: false,
   };
   if (!paramsJson) return fallback;
   let p: Record<string, unknown>;
@@ -1519,6 +1527,9 @@ function parseParamsView(
     minSingleFillUsd: numOrUndef(p.minSingleFillUsd),
     minTiltPct: numOrUndef(p.minTiltPct),
     minNetUsd: numOrUndef(p.minNetUsd),
+    // 严格 === true:方向开关被脏值悄悄置真会把整档展示成反向,展示与开仓
+    // (parseStrategy 的 reverse 消毒)必须落到同一个答案。
+    reverse: p.reverse === true,
   };
 }
 

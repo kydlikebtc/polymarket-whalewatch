@@ -383,8 +383,41 @@ describe("buildFollowView", () => {
       source: "consensus",
       maxPrice: 0.95,
       freshSec: 900,
+      // reverse 缺失 → false(既有 13 条策略都不是反向档),与开仓侧同默认。
+      reverse: false,
     });
     expect(strategies[0].enabled).toBe(true);
+  });
+
+  it("反向档(reverse:true)透出 reverse 标记,检测字段照常展示", () => {
+    const { strategies } = buildFollowView(
+      [
+        strat({
+          id: 14,
+          name: "反巨鲸",
+          params_json: JSON.stringify({
+            source: "heavy",
+            reverse: true,
+            minSingleFillUsd: 50000,
+            sizeUsd: 500,
+          }),
+        }),
+      ],
+      [],
+      {},
+    );
+    const p = strategies[0].params;
+    expect(p.reverse).toBe(true);
+    expect(p.source).toBe("heavy");
+    expect(p.minSingleFillUsd).toBe(50000);
+    // 展示侧宽容纪律:reverse 非布尔(脏值)不抛、不置真 —— 方向开关被脏值
+    // 悄悄置真会把整档展示成反向,必须显式 true 才算。
+    const dirty = buildFollowView(
+      [strat({ id: 15, params_json: JSON.stringify({ reverse: "yes" }) })],
+      [],
+      {},
+    );
+    expect(dirty.strategies[0].params.reverse).toBe(false);
   });
 
   it("params_json 损坏/为空/缺字段 → 安全默认,不抛", () => {
@@ -407,6 +440,7 @@ describe("buildFollowView", () => {
       source: "consensus",
       maxPrice: 0.95,
       freshSec: 900,
+      reverse: false,
     };
     expect(strategies[0].params).toEqual(dflt);
     expect(strategies[1].params).toEqual(dflt);
