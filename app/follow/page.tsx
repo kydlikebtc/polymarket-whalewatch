@@ -18,6 +18,7 @@ import {
   type ReactNode,
 } from "react";
 import { Icon, Modal, Segmented, Tag } from "../ui";
+import { DeepAnalysisPanel } from "./DeepAnalysis";
 import { useCurrentPrices } from "../useCurrentPrices";
 import {
   classifyCardState,
@@ -67,6 +68,9 @@ type FollowPositionRow = {
   exec_price?: number | null;
   exec_best_ask?: number | null;
   exec_filled_usd?: number | null;
+  // 赛道(gamma 事件标签,server 侧 buildFollowView 逐行附带,2026-08-13 起)。
+  // 深度分析面板的「赛道细分」维度消费;旧响应缺失 → 面板归「未分类」。
+  category?: string | null;
 };
 
 type StrategyMetrics = {
@@ -2041,7 +2045,7 @@ function CardActions({ s }: { s: FollowStrategyView }) {
         type="button"
         className="ds-btn"
         onClick={() => setDetailOpen(true)}
-        title="总览(净值走势 · 战绩全景) · 成本分解 · 账户推演 · 操作历史"
+        title="总览(净值走势 · 战绩全景) · 深度分析 · 成本分解 · 账户推演 · 操作历史 · 仓位明细"
       >
         查看详情
       </button>
@@ -2347,7 +2351,8 @@ const DETAIL_SPARK_HEIGHT = 180;
 // 造一套滚动机制。
 const DETAIL_TAB_MIN_HEIGHT = 440;
 
-type DetailTab = "overview" | "cost" | "account" | "history" | "positions";
+type DetailTab =
+  "overview" | "analysis" | "cost" | "account" | "history" | "positions";
 
 /**
  * 策略详情弹窗(改版 Task 3,U6 追加区 1;先把"五区平铺向下罗列"改成 tab
@@ -2464,6 +2469,10 @@ function StrategyDetailDialog({
         className="ds-segmented--wrap"
         options={[
           { label: "总览", value: "overview" },
+          // 深度分析紧跟总览:总览是结论,深度分析是对同一批仓位的深挖
+          // (赔率校准/分布/走势),阅读顺序自然;其余 tab 相对顺序不动
+          // (与追加「仓位明细」时同一条"不打乱已有心智模型"的纪律)。
+          { label: "深度分析", value: "analysis" },
           { label: "成本分解", value: "cost" },
           { label: "账户推演", value: "account" },
           { label: "操作历史", value: "history" },
@@ -2513,6 +2522,15 @@ function StrategyDetailDialog({
               <StrategyFullMetrics s={s} delayExec={delayExec} />
             </section>
           </div>
+        ) : tab === "analysis" ? (
+          <section>
+            <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+              深度分析 — 这一档的钱从哪赢来的
+            </div>
+            {/* rows 直接喂 open+settled:open 仓只进面板头部「不计入」说明,
+                所有指标只看 settled(口径见 DeepAnalysisPanel 顶部注释)。 */}
+            <DeepAnalysisPanel rows={allPos} />
+          </section>
         ) : tab === "cost" ? (
           <section>
             <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
@@ -3182,6 +3200,11 @@ export default function FollowPage() {
   // 仓位明细:tab(已结算/持有中)+ 策略筛选(FILTER_ALL=全部,否则策略 id)。
   const [posTab, setPosTab] = useState<PosTab>("settled");
   const [stratFilter, setStratFilter] = useState<number>(FILTER_ALL);
+  // 深度分析弹窗(页面级聚合入口):分析对象跟随上面的策略筛选 —— 复用
+  // 同一个 stratFilter,不为弹窗另造一套选择器(选「全部策略」时是跨档聚合,
+  // 面板内会声明重复下注口径)。每档策略自己的深度分析在详情弹窗的
+  // 「深度分析」tab,两个入口共用同一个 DeepAnalysisPanel 组件。
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   // 结算净值曲线的族开关(改版 Task 4):默认全开。FamilyKey 是固定的小
   // 枚举,不像 stratFilter 那样需要在渲染期核对"选中的还存在吗"——某族
   // 当前没有策略只是不渲染对应按钮,Set 里留着那个 key 不会造成任何问题。
@@ -3606,7 +3629,40 @@ export default function FollowPage() {
               {posTab === "open" ? (
                 <span className="ds-hint">不显示浮盈</span>
               ) : null}
+              {/* 深度分析(页面级入口):分析对象 = 当前策略筛选下的全部
+                  仓位。按钮放筛选行末端 —— 它消费的就是这行筛出来的集合,
+                  语义同组;选中某一档时与详情弹窗「深度分析」tab 内容一致,
+                  选「全部策略」时是跨档聚合(详情弹窗给不了的视角)。 */}
+              <button
+                type="button"
+                className="ds-btn"
+                onClick={() => setAnalysisOpen(true)}
+                title="对当前筛选的全部历史下注做六维度可视化分析:下注质量 · 赔率带校准 · 盈亏分布 · 时间走势 · 持有时长 · 赛道细分"
+              >
+                深度分析
+                {filterName ? `(${filterName})` : "(全部策略)"}
+              </button>
             </div>
+            <Modal
+              open={analysisOpen}
+              onClose={() => setAnalysisOpen(false)}
+              title={`深度分析 · ${filterName ?? "全部策略"}`}
+              width={DETAIL_DIALOG_WIDTH}
+              padding="var(--s-4, 16px) var(--s-6, 24px)"
+            >
+              {/* 全部策略聚合时声明重复下注口径:各档持仓大面积重叠(见
+                  CROSS_TIER_CAVEAT),聚合样本把同一信号在多档下的仓各算
+                  一笔 —— 这在「每档是独立纸面账户」的语义下成立,但读者
+                  必须知道样本不独立。 */}
+              <DeepAnalysisPanel
+                rows={[...byFilter(settledRows), ...byFilter(openRows)]}
+                scopeNote={
+                  effFilter === FILTER_ALL && shown.length >= 2
+                    ? "全部策略聚合:多档会跟进同一信号,样本含跨档重复下注,不是相互独立的下注"
+                    : undefined
+                }
+              />
+            </Modal>
             {posTab === "settled" ? (
               <SettledTable
                 rows={shownSettled}
