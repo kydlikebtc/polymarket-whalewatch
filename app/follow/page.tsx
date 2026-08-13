@@ -1399,13 +1399,9 @@ const CARD_MIN_HEIGHT = 350;
 function StrategyCard({
   s,
   leading,
-  benchmarkRows,
 }: {
   s: FollowStrategyView;
   leading: boolean;
-  // 全部策略聚合行,只透传给详情弹窗的「赛道 edge 对照」块(见
-  // StrategyDetailDialog 同名 prop 注释)。
-  benchmarkRows?: FollowPositionRow[];
 }) {
   const m = s.metrics;
   const fund = s.fund; // 旧响应可能缺失 → 档案各项显示「—」
@@ -1631,7 +1627,7 @@ function StrategyCard({
           <span>运行 {Math.floor(fund.runDays)} 天</span>
         ) : null}
       </div>
-      <CardActions s={s} benchmarkRows={benchmarkRows} />
+      <CardActions s={s} />
     </div>
   );
 }
@@ -2039,13 +2035,7 @@ function CostChain({
 // 解锁了恒有内容的「总览」tab(战绩全景部分)——哪怕 0 仓位,策略的创建
 // 日期/运行天数依然有值(见 lib/follow.ts computeFundMetrics 的 startTs
 // ?? firstEntryTs),所以这里不整行隐藏。
-function CardActions({
-  s,
-  benchmarkRows,
-}: {
-  s: FollowStrategyView;
-  benchmarkRows?: FollowPositionRow[];
-}) {
+function CardActions({ s }: { s: FollowStrategyView }) {
   const [detailOpen, setDetailOpen] = useState(false);
   return (
     <div
@@ -2071,7 +2061,6 @@ function CardActions({
         s={s}
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
-        benchmarkRows={benchmarkRows}
       />
     </div>
   );
@@ -2400,15 +2389,10 @@ function StrategyDetailDialog({
   s,
   open,
   onClose,
-  benchmarkRows,
 }: {
   s: FollowStrategyView;
   open: boolean;
   onClose: () => void;
-  // 全部策略聚合行(2026-08-13):深度分析 tab 的「赛道 edge 对照」块用它
-  // 画基准行 —— 回答「这一档的赛道优势是自己的,还是整个信号体系都有」。
-  // 只有一档启用时页面不传,块不渲染。
-  benchmarkRows?: FollowPositionRow[];
 }) {
   const [tab, setTab] = useState<DetailTab>("overview");
   // 仓位明细 tab 内部的二级切换(已结算/持有中),与首页同名 state
@@ -2553,15 +2537,7 @@ function StrategyDetailDialog({
             </div>
             {/* rows 直接喂 open+settled:open 仓只进面板头部「不计入」说明,
                 所有指标只看 settled(口径见 DeepAnalysisPanel 顶部注释)。 */}
-            <DeepAnalysisPanel
-              rows={allPos}
-              ownName={s.name}
-              benchmark={
-                benchmarkRows
-                  ? { name: "全部", rows: benchmarkRows }
-                  : undefined
-              }
-            />
+            <DeepAnalysisPanel rows={allPos} />
           </section>
         ) : tab === "cost" ? (
           <section>
@@ -2674,12 +2650,9 @@ function StrategyDetailDialog({
 function StrategyListView({
   groups,
   leaderId,
-  benchmarkRows,
 }: {
   groups: FamilyGroup[];
   leaderId: number | null;
-  // 透传给每行详情弹窗的「赛道 edge 对照」基准(见 StrategyDetailDialog)。
-  benchmarkRows?: FollowPositionRow[];
 }) {
   const rows = groups.flatMap((g) =>
     g.items.map((s) => ({ s, familyTitle: g.meta.title })),
@@ -2744,7 +2717,6 @@ function StrategyListView({
               s={s}
               familyTitle={familyTitle}
               leading={s.id === leaderId}
-              benchmarkRows={benchmarkRows}
             />
           ))}
         </tbody>
@@ -2777,12 +2749,10 @@ function StrategyListRow({
   s,
   familyTitle,
   leading,
-  benchmarkRows,
 }: {
   s: FollowStrategyView;
   familyTitle: string;
   leading: boolean;
-  benchmarkRows?: FollowPositionRow[];
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
   const m = s.metrics;
@@ -2895,7 +2865,6 @@ function StrategyListRow({
           s={s}
           open={detailOpen}
           onClose={() => setDetailOpen(false)}
-          benchmarkRows={benchmarkRows}
         />
       </td>
     </tr>
@@ -3415,11 +3384,6 @@ export default function FollowPage() {
   const openRows: LabeledRow[] = shown.flatMap((s) =>
     s.open.map((p) => ({ ...p, strategyName: s.name })),
   );
-  // 详情弹窗「赛道 edge 对照」块的基准行(全部策略聚合)。只有一档启用时
-  // 不提供 —— 对照自己没有信息量,块整体不渲染。
-  const benchmarkRows: FollowPositionRow[] | undefined =
-    shown.length >= 2 ? [...settledRows, ...openRows] : undefined;
-
   // 策略筛选:渲染期派生「有效筛选值」而非 setState —— 选中的策略可能在下一次
   // 刷新后消失(被停用),此时静默回退「全部」,不在 render 里改状态。
   const effFilter = shown.some((s) => s.id === stratFilter)
@@ -3645,7 +3609,6 @@ export default function FollowPage() {
                       key={s.id}
                       s={s}
                       leading={s.id === leaderId}
-                      benchmarkRows={benchmarkRows}
                     />
                   ))}
                 </div>
@@ -3655,11 +3618,7 @@ export default function FollowPage() {
             // 列表:12 档一张整表,不按族分小节——见 StrategyListView 顶部
             // 注释,行序仍按信号族分组(与卡片视图共用同一份 groups)。
             <section style={{ marginBottom: "var(--s-5)" }}>
-              <StrategyListView
-                groups={groups}
-                leaderId={leaderId}
-                benchmarkRows={benchmarkRows}
-              />
+              <StrategyListView groups={groups} leaderId={leaderId} />
             </section>
           )}
 
@@ -3796,14 +3755,6 @@ export default function FollowPage() {
                   必须知道样本不独立。 */}
           <DeepAnalysisPanel
             rows={[...byFilter(settledRows), ...byFilter(openRows)]}
-            ownName={filterName ?? "全部策略"}
-            // 筛到单独一档时给全体基准做「赛道 edge 对照」;「全部策略」
-            // 本身就是聚合,不对照自己。
-            benchmark={
-              effFilter !== FILTER_ALL && benchmarkRows
-                ? { name: "全部", rows: benchmarkRows }
-                : undefined
-            }
             scopeNote={
               effFilter === FILTER_ALL && shown.length >= 2
                 ? "全部策略聚合:多档会跟进同一信号,样本含跨档重复下注,不是相互独立的下注"
