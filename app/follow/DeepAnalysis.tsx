@@ -752,7 +752,18 @@ export function EdgeMatrixTable({
                         {fmtSignedPt(cell.edge)}
                       </span>
                     )}
-                    <div className="kpi-sub mono">{cell.n} 仓</div>
+                    {/* 三指标并列(2026-08-13 用户定向「表里呈现收益、
+                        胜率和跑赢定价」):edge 大字在上,胜率 · 落袋 ·
+                        仓数一行小字 —— 理解与横比不再依赖悬停。 */}
+                    <div className="kpi-sub mono">
+                      {cell.winRate == null ? "—" : fmtPct0(cell.winRate)}
+                      <span> · </span>
+                      <span className={pnlTextClass(cell.realized)}>
+                        {fmtSignedUsd(cell.realized)}
+                      </span>
+                      <span> · </span>
+                      {cell.n} 仓
+                    </div>
                   </td>
                 );
               })}
@@ -1079,22 +1090,22 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
           const selected = selKey === b.t.key;
           const label = matrixHeaderLabel(b.t, matrix.tracks);
           const pos = labelPos.get(b.t.key);
-          // 气泡颜色 = edge 方向,与所在区域**同义**(2026-08-13 用户抓出的
-          // 配色矛盾:初版按落袋着色,足球 edge −7pt 却因勉强 +$6 落袋被
-          // 涂成绿色、躺在红区里 —— 位置和颜色讲两个变量,读者必然按区域
-          // 语义解读颜色)。落袋金额改由标签 tspan 明示,信息不丢:edge 与
-          // 落袋可能不同号(低赔率大赔付的赛道 edge 为负仍可小幅盈利),
-          // 这正是两个读数都要摆出来的原因。
-          const edgeColor = pnlColor(b.cell.edge ?? 0);
+          // 气泡颜色 = 落袋盈亏(2026-08-13 两轮裁决的终点:先因「绿气泡躺
+          // 红区」改成 edge 同色,用户复盘后定为**收益语义** —— 绿圈=这个
+          // 赛道在赚钱,是读者第一想知道的事)。位置(相对对角线)讲 edge、
+          // 颜色讲钱,两变量可能不同号(足球:负 edge 仍小赚 +$6),这个
+          // 组合本身就是要暴露的形态;歧义由标签金额 + hint 说明 + 下表
+          // 三指标(胜率/落袋/edge)并列消解,不再靠单一颜色扛两个语义。
+          const bubbleColor = pnlColor(b.cell.realized);
           return (
             <g key={b.t.key}>
               <circle
                 cx={cx}
                 cy={cy}
                 r={r}
-                fill={edgeColor}
+                fill={bubbleColor}
                 fillOpacity={selected ? 0.7 : 0.45}
-                stroke={edgeColor}
+                stroke={bubbleColor}
                 strokeWidth={selected ? 2.5 : 1.5}
                 strokeDasharray={low ? "3 2" : undefined}
               />
@@ -1544,7 +1555,7 @@ export function DeepAnalysisPanel({
           矩阵数据的两种读法。 */}
       <Block
         label="赛道胜率分布 — 气泡象限"
-        hint="横轴 = 隐含胜率(该赛道均入场价,市场定价),纵轴 = 实际胜率;对角线为盈亏平衡 —— 气泡在上方 = 跑赢定价(edge>0)。气泡颜色与所在区域同义(绿 = edge>0,红 = edge<0),大小 = 仓数,样本 <5 虚线描边;标签旁金额 = 该赛道落袋(与 edge 可能不同号 —— 低赔率大赔付的赛道 edge 为负也可能小幅盈利);下表为同一份数据的精确数字"
+        hint="横轴 = 隐含胜率(该赛道均入场价,市场定价),纵轴 = 实际胜率;对角线为盈亏平衡 —— 气泡在上方 = 跑赢定价(edge>0)。气泡颜色 = 落袋盈亏(绿 = 赚、红 = 亏),大小 = 仓数,样本 <5 虚线描边。颜色可能与所在区域不同号 —— 位置讲 edge、颜色讲钱(如负 edge 的赛道靠低赔率大赔付仍小幅盈利);下表并列胜率/落袋/edge 三指标,方便逐赛道横比"
       >
         <TrackBubbles rows={rows} />
         <div style={{ marginTop: "var(--s-3)" }}>
