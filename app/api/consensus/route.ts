@@ -50,6 +50,8 @@ const ALLOWED_HOURS = new Set([2, 6, 12]);
 type ConsensusView = ConsensusGroup & {
   currentPrice: number | null;
   category: string | null;
+  // 二级分类(体育联盟/加密资产等;null = 无/未知),展示合成「体育·NBA」。
+  subcategory: string | null;
   // Settled market: the "follow gap" is moot — the page shows hit/miss instead.
   closed: boolean;
 };
@@ -61,6 +63,7 @@ type SideView = DisagreementMarket["sides"][number] & {
 type DisagreementView = Omit<DisagreementMarket, "sides"> & {
   sides: SideView[];
   category: string | null;
+  subcategory: string | null;
   closed: boolean;
 };
 
@@ -155,7 +158,8 @@ export async function GET(req: Request) {
       const views: ConsensusView[] = groups.map((g) => ({
         ...g,
         currentPrice: priceOf(g.conditionId, g.outcome),
-        category: categories[g.eventSlug] ?? null,
+        category: categories[g.eventSlug]?.category ?? null,
+        subcategory: categories[g.eventSlug]?.subcategory ?? null,
         closed: meta[g.conditionId]?.closed ?? false,
       }));
 
@@ -165,7 +169,8 @@ export async function GET(req: Request) {
           ...s,
           currentPrice: priceOf(d.conditionId, s.outcome),
         })),
-        category: categories[d.eventSlug] ?? null,
+        category: categories[d.eventSlug]?.category ?? null,
+        subcategory: categories[d.eventSlug]?.subcategory ?? null,
         closed: meta[d.conditionId]?.closed ?? false,
       }));
 

@@ -317,16 +317,69 @@ const PRIMARY_CATEGORIES = [
   "Weather",
 ];
 
+// 二级分类白名单(2026-08-13,设计见 docs/plans/2026-08-13-event-
+// subcategory-design.md §1)。为什么是白名单而不是「取第一个非主类标签」:
+// 真机实测 tags 顺序不可靠(MLB 是 ['Sports','Games','MLB','baseball'] 主类
+// 反而在前)且噪音标签是开放集合('Games'/'Weekly'/'Recurring'/'Earn 4%'…),
+// 黑名单挡不完 —— 只有精选白名单能保证二级永远是「读者认识的联盟/资产/
+// 主题」。联赛级标签(UCL/FA Cup/Leagues Cup)刻意不进:让它落到
+// 'Soccer',三级粒度在当前样本量下没有胜率解释力。派生规则:按 tags 原始
+// 顺序扫描、跳过与一级同名的标签、命中白名单的第一个即二级;无命中 = ''
+// (known-none,诚实置空,绝不落噪音)。税法随数据增长,补条目即可。
+const SUBCATEGORIES = new Set([
+  // 体育联盟/项目(用户点名的重灾区:NBA 与足球的胜率分布差异巨大)
+  "NBA",
+  "WNBA",
+  "NFL",
+  "MLB",
+  "NHL",
+  "Soccer",
+  "Tennis",
+  "Golf",
+  "Boxing",
+  "MMA",
+  "UFC",
+  "F1",
+  "Formula 1",
+  "Cricket",
+  "Rugby",
+  "College Football",
+  "College Basketball",
+  // 电竞(CS2 类事件的 primary 是 Sports —— PRIMARY_CATEGORIES 里 Sports
+  // 先于 Esports;专名标签实测排在 Esports 前,单遍扫描自然取到最细的)
+  "Esports",
+  "CS2",
+  "League of Legends",
+  "Dota 2",
+  "Valorant",
+  // 加密资产
+  "Bitcoin",
+  "Ethereum",
+  "Solana",
+  "XRP",
+  "Dogecoin",
+  // 政治
+  "Geopolitics",
+]);
+
+/** 事件税法:一级 + 二级。'' 与 null 语义见 getEventCategories 注释。 */
+export interface EventTaxonomy {
+  category: string | null;
+  subcategory: string | null;
+}
+
 /**
- * Batched event-tag lookup: slug -> primary category label. A slug covered by
- * a SUCCESSFUL chunk but lacking tags maps to "" (known-none) so callers can
- * cache the miss; slugs in failed chunks are simply absent (retry later).
+ * Batched event-tag lookup: slug -> { 一级, 二级 } 标签。A slug covered by
+ * a SUCCESSFUL chunk but lacking tags maps to { "", "" } (known-none) so
+ * callers can cache the miss; slugs in failed chunks are simply absent
+ * (retry later). 一级派生逻辑与二级上线前逐字相同(admission/筛选/集中度
+ * 全依赖它的取值稳定);二级按 SUBCATEGORIES 白名单派生,见其注释。
  */
 export async function fetchEventCategories(
   slugs: string[],
-): Promise<Record<string, string>> {
+): Promise<Record<string, { category: string; subcategory: string }>> {
   const distinct = [...new Set(slugs.filter(Boolean))];
-  const out: Record<string, string> = {};
+  const out: Record<string, { category: string; subcategory: string }> = {};
   for (let i = 0; i < distinct.length; i += CHUNK) {
     const chunk = distinct.slice(i, i + CHUNK);
     const qs = chunk.map((s) => `slug=${encodeURIComponent(s)}`).join("&");
@@ -344,7 +397,7 @@ export async function fetchEventCategories(
       const raw = await res.json();
       if (!Array.isArray(raw)) continue;
       // Successful chunk: every requested slug is now KNOWN (possibly "").
-      for (const s of chunk) out[s] = "";
+      for (const s of chunk) out[s] = { category: "", subcategory: "" };
       for (const ev of raw) {
         const slug = typeof ev?.slug === "string" ? ev.slug : null;
         if (!slug || !(slug in out)) continue;
@@ -355,7 +408,10 @@ export async function fetchEventCategories(
           : [];
         const primary =
           PRIMARY_CATEGORIES.find((c) => labels.includes(c)) ?? labels[0];
-        if (primary) out[slug] = primary;
+        if (!primary) continue; // tagless:保持 known-none
+        const sub =
+          labels.find((l) => l !== primary && SUBCATEGORIES.has(l)) ?? "";
+        out[slug] = { category: primary, subcategory: sub };
       }
     } catch (e) {
       console.warn(
@@ -368,9 +424,18 @@ export async function fetchEventCategories(
 }
 
 /**
- * SQLite-cached event categories (event_category table). Tags are effectively
+ * SQLite-cached event taxonomy (event_category table). Tags are effectively
  * immutable, so known results — including known-none ("") — cache permanently;
- * failed lookups stay uncached and retry. Returns slug -> category|null.
+ * failed lookups stay uncached and retry. Returns slug -> EventTaxonomy
+ * (每个请求的 slug 都有键;'' 哨兵在这里转成 null 供展示层消费)。
+ *
+ * 懒回填(2026-08-13 二级分类上线):subcategory 列是后加的,老缓存行该列
+ * 为 NULL —— 读到 NULL 视为 miss、连同新 slug 一起重抓,两列同写、
+ * fetched_at 刷新,老缓存随访问自动升级,不需要一次性迁移脚本。
+ * NULL(未按新税法回填)与 ''(抓过但无二级)是两个状态:'' 行不重抓,
+ * 与一级的 known-none 永久缓存同一纪律。重抓失败时降级供旧行的一级
+ * (比 null 更接近事实 —— 一级本来就抓到过),二级保持 null 下次再试,
+ * 不清空、不覆写旧行。
  */
 export async function getEventCategories(
   db: DB,
@@ -379,33 +444,51 @@ export async function getEventCategories(
     fetcher?: typeof fetchEventCategories;
     nowSec?: number;
   } = {},
-): Promise<Record<string, string | null>> {
+): Promise<Record<string, EventTaxonomy>> {
   const {
     fetcher = fetchEventCategories,
     nowSec = Math.floor(Date.now() / 1000),
   } = opts;
   const distinct = [...new Set(slugs.filter(Boolean))];
   const sel = db.prepare(
-    "SELECT category FROM event_category WHERE event_slug = ?",
+    "SELECT category, subcategory FROM event_category WHERE event_slug = ?",
   );
   const ins = db.prepare(
-    "INSERT OR REPLACE INTO event_category (event_slug, category, fetched_at) VALUES (?, ?, ?)",
+    "INSERT OR REPLACE INTO event_category (event_slug, category, subcategory, fetched_at) VALUES (?, ?, ?, ?)",
   );
-  const out: Record<string, string | null> = {};
+  const out: Record<string, EventTaxonomy> = {};
   const misses: string[] = [];
+  // 老行(subcategory 为 NULL)也进 misses 重抓,但记住旧一级 —— 重抓失败
+  // 时降级用(见函数头注释)。
+  const staleCategory = new Map<string, string | null>();
   for (const s of distinct) {
-    const row = sel.get(s) as { category: string | null } | undefined;
-    if (row) out[s] = row.category || null;
-    else misses.push(s);
+    const row = sel.get(s) as
+      { category: string | null; subcategory: string | null } | undefined;
+    if (row && row.subcategory != null) {
+      out[s] = {
+        category: row.category || null,
+        subcategory: row.subcategory || null,
+      };
+    } else {
+      if (row) staleCategory.set(s, row.category || null);
+      misses.push(s);
+    }
   }
   if (misses.length > 0) {
     const fetched = await fetcher(misses);
     for (const s of misses) {
       if (s in fetched) {
-        ins.run(s, fetched[s], nowSec);
-        out[s] = fetched[s] || null;
+        ins.run(s, fetched[s].category, fetched[s].subcategory, nowSec);
+        out[s] = {
+          category: fetched[s].category || null,
+          subcategory: fetched[s].subcategory || null,
+        };
       } else {
-        out[s] = null; // chunk failed — uncached, retried next time
+        // chunk failed — uncached (或老行保持原样), retried next time。
+        out[s] = {
+          category: staleCategory.get(s) ?? null,
+          subcategory: null,
+        };
       }
     }
   }

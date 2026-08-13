@@ -196,6 +196,30 @@ describe("buildSignalFeed · 折叠与分类", () => {
     );
   });
 
+  it("附带二级品类;'' known-none 对外归一成 null(additive 字段)", () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO event_category (event_slug, category, subcategory, fetched_at) VALUES ('evt-a','Sports','NBA',0)",
+    ).run();
+    insert(db, "consensus", consensus(), NOW - H);
+    const s = buildSignalFeed(db, { nowSec: NOW }).active[0];
+    expect(s.category).toBe("Sports");
+    expect(s.subcategory).toBe("NBA");
+
+    // '' 哨兵(抓过但无二级)与 NULL(老行未回填)对外都只是 null ——
+    // 公开 feed 永远只有「有值/无」两态,不泄漏内部缓存状态机。
+    const db2 = openDb(":memory:");
+    db2
+      .prepare(
+        "INSERT INTO event_category (event_slug, category, subcategory, fetched_at) VALUES ('evt-a','Politics','',0)",
+      )
+      .run();
+    insert(db2, "consensus", consensus(), NOW - H);
+    expect(buildSignalFeed(db2, { nowSec: NOW }).active[0].subcategory).toBe(
+      null,
+    );
+  });
+
   it("坏 payload 不会让整个 feed 挂掉", () => {
     const db = openDb(":memory:");
     db.prepare(

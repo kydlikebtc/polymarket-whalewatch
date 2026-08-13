@@ -13,6 +13,7 @@ import {
   WalletLink,
   WalletStatsBadge,
   catLabel,
+  catLabelFine,
   type SmartInfoLite,
   type WalletStatsLite,
 } from "./ui";
@@ -42,6 +43,10 @@ type ScanTrade = {
   txHash: string;
   ts: number;
   category: string | null;
+  // 二级分类(体育联盟/加密资产等;null = 无/未知)。行内标签合成
+  // 「体育·NBA」;类别筛选刻意保持一级 —— 二级会把 chips 从 ≤8 个炸到
+  // 几十个,筛选粒度与展示粒度是两个决定。
+  subcategory?: string | null;
 };
 
 type ScanStats = {
@@ -136,7 +141,7 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
             slug. */}
         <div className="kpi-sub" style={{ whiteSpace: "nowrap" }}>
           {t.outcome}
-          {t.category ? ` · ${catLabel(t.category)}` : ""}
+          {t.category ? ` · ${catLabelFine(t.category, t.subcategory)}` : ""}
           <MarketSlugActions
             slug={t.slug}
             eventSlug={t.eventSlug}

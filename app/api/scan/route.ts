@@ -2,7 +2,7 @@ import { getTradesWindowDeep } from "../../../lib/polymarket";
 import { createPromiseCache } from "../../../lib/promiseCache";
 import { guardExpensive } from "../../../lib/apiGuard";
 import { quantizeFloor } from "../../../lib/scanFloor";
-import { getEventCategories } from "../../../lib/gamma";
+import { getEventCategories, type EventTaxonomy } from "../../../lib/gamma";
 import { openDb } from "../../../lib/db";
 import { notionalUsd } from "../../../lib/trades";
 import type { Trade } from "../../../lib/types";
@@ -25,6 +25,8 @@ type ScanTrade = {
   ts: number;
   // Market category from the event's gamma tags (null = unknown).
   category: string | null;
+  // 二级分类(体育联盟/加密资产等,gamma tags 白名单派生;null = 无/未知)。
+  subcategory: string | null;
 };
 
 type ScanStats = {
@@ -86,7 +88,7 @@ function parseMinUsd(raw: string | null): number {
 
 function toScanTrade(
   t: Trade,
-  categories: Record<string, string | null>,
+  categories: Record<string, EventTaxonomy>,
 ): ScanTrade {
   return {
     title: t.title,
@@ -100,7 +102,8 @@ function toScanTrade(
     slug: t.slug,
     txHash: t.transactionHash,
     ts: t.timestamp,
-    category: categories[t.eventSlug] ?? null,
+    category: categories[t.eventSlug]?.category ?? null,
+    subcategory: categories[t.eventSlug]?.subcategory ?? null,
   };
 }
 
@@ -156,7 +159,7 @@ export async function GET(req: Request) {
 
     // Category enrichment via event tags — permanently cached per slug, so
     // only first-seen events cost a gamma call. Failures degrade to null.
-    let categories: Record<string, string | null> = {};
+    let categories: Record<string, EventTaxonomy> = {};
     const db = openDb(process.env.DASH_DB ?? "data.sqlite");
     try {
       categories = await getEventCategories(

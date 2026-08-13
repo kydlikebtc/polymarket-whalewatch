@@ -1406,10 +1406,24 @@ export interface FollowStrategyView {
  * 没随行下发 —— 深度分析面板(2026-08-13 设计 §4)要在客户端按赛道重切
  * (胜率/均入场价等 byCategory 没有的维度),故逐行附上。缺失 → null,
  * 展示层归「未分类」(与 computeStrategyMetrics 同一兜底口径)。
+ * subcategory(2026-08-13 二级分类):体育按 NBA/MLB/足球等联盟细分,
+ * 派生规则见 lib/gamma.ts SUBCATEGORIES;null = 无二级/未知。
  */
 export type FollowPositionWithCategory = FollowPositionRow & {
   category: string | null;
+  subcategory: string | null;
 };
+
+/**
+ * 每市场的事件税法(一级 + 二级)。与 gamma.EventTaxonomy 同构但独立声明 ——
+ * 本文件对 gamma 的既有依赖只有 MarketMeta 的 type import,税法就两个字段,
+ * 为它引一条新 import 链不如就地声明(结构兼容,route 直接把
+ * getEventCategories 的结果透传进来)。
+ */
+export type TaxonomyByCid = Record<
+  string,
+  { category: string | null; subcategory: string | null } | null
+>;
 
 /**
  * params_json → 展示用参数。与 parseStrategy(开仓侧,失败即跳过整条策略)不同:
@@ -1496,7 +1510,7 @@ export function buildFollowView(
     created_at: number | null;
   }[],
   positions: FollowPositionRow[],
-  categoryByCid: Record<string, string | null>,
+  taxByCid: TaxonomyByCid,
   nowSec: number = Math.floor(Date.now() / 1000),
 ): { strategies: FollowStrategyView[] } {
   const byStrategy = new Map<number, FollowPositionRow[]>();
@@ -1506,6 +1520,14 @@ export function buildFollowView(
     else byStrategy.set(p.strategy_id, [p]);
   }
 
+  // metrics.byCategory 只吃一级(键稳定纪律,见二级分类设计 §2 红线):
+  // 从税法里投影出与旧 categoryByCid 完全同形的映射喂给
+  // computeStrategyMetrics,该函数与它的 byCategory 键零变化。
+  const categoryByCid: Record<string, string | null> = {};
+  for (const [cid, tax] of Object.entries(taxByCid)) {
+    categoryByCid[cid] = tax?.category ?? null;
+  }
+
   const views: FollowStrategyView[] = strategies.map((s) => {
     const own = byStrategy.get(s.id) ?? [];
     const fund = computeFundMetrics(own, s.created_at, nowSec);
@@ -1513,7 +1535,8 @@ export function buildFollowView(
     // 的注释;route 直选的额外列随展开原样保留)。
     const withCat = (p: FollowPositionRow): FollowPositionWithCategory => ({
       ...p,
-      category: categoryByCid[p.condition_id] ?? null,
+      category: taxByCid[p.condition_id]?.category ?? null,
+      subcategory: taxByCid[p.condition_id]?.subcategory ?? null,
     });
     return {
       id: s.id,

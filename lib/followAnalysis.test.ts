@@ -302,8 +302,8 @@ describe("analyzeBets — 持有时长分布", () => {
   });
 });
 
-describe("analyzeBets — 赛道细分", () => {
-  it("按 category 汇总(null→未分类);n 降序、同 n 按落袋降序", () => {
+describe("analyzeBets — 赛道细分(两级)", () => {
+  it("一级汇总(null→未分类)+二级子行;一级 n 降序、同 n 按落袋降序", () => {
     const a = analyzeBets([
       pos({ category: "Sports", realized_pnl: 10, entry_price: 0.4 }),
       pos({ category: "Sports", realized_pnl: -5, entry_price: 0.6 }),
@@ -322,5 +322,55 @@ describe("analyzeBets — 赛道细分", () => {
     expect(sports.winRate).toBeCloseTo(0.5, 10);
     expect(sports.avgEntry).toBeCloseTo(0.5, 10);
     expect(sports.realized).toBeCloseTo(5, 10);
+    // 全部行都没有二级 → subs 空数组(不是 [null 子行])。
+    expect(sports.subs).toEqual([]);
+  });
+
+  it("二级子行:一级行含全部仓(含无二级的),子行只含有二级的;子行 n 降序", () => {
+    const a = analyzeBets([
+      pos({
+        category: "Sports",
+        subcategory: "NBA",
+        realized_pnl: 10,
+        entry_price: 0.4,
+      }),
+      pos({
+        category: "Sports",
+        subcategory: "NBA",
+        realized_pnl: -8,
+        entry_price: 0.6,
+      }),
+      pos({
+        category: "Sports",
+        subcategory: "Soccer",
+        realized_pnl: 6,
+        entry_price: 0.3,
+      }),
+      pos({ category: "Sports", subcategory: null, realized_pnl: 2 }), // 无二级
+    ]);
+    const sports = a.categories[0];
+    // 一级汇总吃全部 4 仓 —— 子行不是一级的再分配,是它的细分视图。
+    expect(sports.n).toBe(4);
+    expect(sports.realized).toBeCloseTo(10, 10);
+    expect(sports.subs.map((s) => s.subcategory)).toEqual(["NBA", "Soccer"]);
+    const nba = sports.subs[0];
+    expect(nba.n).toBe(2);
+    expect(nba.wins).toBe(1);
+    expect(nba.losses).toBe(1);
+    expect(nba.winRate).toBeCloseTo(0.5, 10);
+    expect(nba.avgEntry).toBeCloseTo(0.5, 10);
+    expect(nba.realized).toBeCloseTo(2, 10);
+    const soccer = sports.subs[1];
+    expect(soccer.n).toBe(1);
+    expect(soccer.winRate).toBe(1);
+    expect(soccer.realized).toBeCloseTo(6, 10);
+  });
+
+  it("未分类一级下同样可挂二级子行(信息不因一级缺失而丢)", () => {
+    const a = analyzeBets([
+      pos({ category: null, subcategory: "NBA", realized_pnl: 5 }),
+    ]);
+    expect(a.categories[0].category).toBe("未分类");
+    expect(a.categories[0].subs.map((s) => s.subcategory)).toEqual(["NBA"]);
   });
 });

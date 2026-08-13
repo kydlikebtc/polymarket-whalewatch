@@ -12,7 +12,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS wallet_age (wallet TEXT PRIMARY KEY, first_ts INTEGER, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS wallet_stats (wallet TEXT PRIMARY KEY, win_rate REAL, realized_pnl REAL, roi REAL, settled_count INTEGER, truncated INTEGER, markets_traded INTEGER, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS market_meta (condition_id TEXT PRIMARY KEY, meta_json TEXT, fetched_at INTEGER);
-    CREATE TABLE IF NOT EXISTS event_category (event_slug TEXT PRIMARY KEY, category TEXT, fetched_at INTEGER);
+    CREATE TABLE IF NOT EXISTS event_category (event_slug TEXT PRIMARY KEY, category TEXT, subcategory TEXT, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS consensus_state (condition_id TEXT, outcome TEXT, wallet_count INTEGER, total_usd REAL, last_alert_ts INTEGER, PRIMARY KEY (condition_id, outcome));
     CREATE TABLE IF NOT EXISTS alert_outcomes (alert_id INTEGER PRIMARY KEY, price_1h REAL, price_24h REAL, resolved INTEGER DEFAULT 0, resolution_price REAL, won INTEGER, checked_at INTEGER);
     CREATE TABLE IF NOT EXISTS wallet_candidates (address TEXT NOT NULL, channel TEXT NOT NULL, condition_id TEXT NOT NULL, evidence_ts INTEGER, usd REAL, price REAL, note TEXT, title TEXT, slug TEXT, event_slug TEXT, outcome TEXT, created_at INTEGER, PRIMARY KEY (address, channel, condition_id));
@@ -36,6 +36,17 @@ export function openDb(path = "data.sqlite") {
     db.prepare(
       "ALTER TABLE wallet_stats ADD COLUMN markets_traded INTEGER",
     ).run();
+  } catch {
+    // column already present
+  }
+  // event_category gained subcategory(二级分类,2026-08-13:体育按 NBA/MLB/
+  // 足球等联盟拆分,详见 lib/gamma.ts SUBCATEGORIES 与设计文档
+  // docs/plans/2026-08-13-event-subcategory-design.md)。三态语义:NULL =
+  // 老缓存行尚未按新税法回填(getEventCategories 视为 miss 懒回填),
+  // '' = 已抓取但无二级(known-none,与 category 的 '' 同一纪律),
+  // 其余 = 二级标签英文原文(展示层译中)。老库靠这条 ALTER 拿到列。
+  try {
+    db.prepare("ALTER TABLE event_category ADD COLUMN subcategory TEXT").run();
   } catch {
     // column already present
   }

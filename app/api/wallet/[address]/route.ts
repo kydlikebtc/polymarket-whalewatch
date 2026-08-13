@@ -133,14 +133,18 @@ export async function GET(
       );
       const catUsd = new Map<string, number>();
       const topMarkets = profile.topMarkets.map((m) => {
-        const category = eventCats[m.eventSlug] ?? null;
+        const tax = eventCats[m.eventSlug];
+        const category = tax?.category ?? null;
+        // 类别集中度聚合保持一级口径(评分/画像的既有键不动,见二级分类
+        // 设计文档 §2 红线);市场行额外带上二级,展示层合成「体育·NBA」。
+        const subcategory = tax?.subcategory ?? null;
         if (category) {
           catUsd.set(
             category,
             (catUsd.get(category) ?? 0) + m.buyUsd + m.sellUsd,
           );
         }
-        return { ...m, category };
+        return { ...m, category, subcategory };
       });
       const catTotal = [...catUsd.values()].reduce((s, v) => s + v, 0);
       const categories = [...catUsd.entries()]

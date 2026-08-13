@@ -71,6 +71,8 @@ type FollowPositionRow = {
   // 赛道(gamma 事件标签,server 侧 buildFollowView 逐行附带,2026-08-13 起)。
   // 深度分析面板的「赛道细分」维度消费;旧响应缺失 → 面板归「未分类」。
   category?: string | null;
+  // 二级分类(体育联盟/加密资产等,同日追加):赛道细分的缩进子行数据源。
+  subcategory?: string | null;
 };
 
 type StrategyMetrics = {

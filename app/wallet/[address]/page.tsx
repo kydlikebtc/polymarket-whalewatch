@@ -9,6 +9,7 @@ import {
   StatCard,
   Tag,
   catLabel,
+  catLabelFine,
   fmtSignedUsdCompact,
   type SmartInfoLite,
   type WalletStatsLite,
@@ -27,6 +28,9 @@ type MarketFocus = {
   trades: number;
   lastTs: number;
   category: string | null;
+  // 二级分类(可选以对旧响应宽容)。市场行标签合成「体育·NBA」;上面的
+  // 类别集中度 chips 保持一级聚合(评分/画像键稳定,见二级分类设计 §2)。
+  subcategory?: string | null;
 };
 type Profile = {
   tradeCount: number;
@@ -525,7 +529,9 @@ export default function WalletPage() {
                         )}
                       </td>
                       <td className="muted" data-label="类别">
-                        {m.category ? catLabel(m.category) : "—"}
+                        {m.category
+                          ? catLabelFine(m.category, m.subcategory)
+                          : "—"}
                       </td>
                       <td className="mono is-right up" data-label="买入">
                         ${fmtUsd(m.buyUsd)}
