@@ -18,6 +18,7 @@ import type { AskBook } from "./orderBook";
 import { simulateBookBuy } from "./orderBook";
 import { wilsonInterval } from "./outcomeStats";
 import { createPromiseCache } from "./promiseCache";
+import { reverseCandidate } from "./reverse";
 import type { SmartTag } from "./smartWallets";
 import { latestPriceByAsset } from "./trades";
 import type { Trade } from "./types";
@@ -398,6 +399,16 @@ function parseStrategy(
         `(需 "lead" 或 "minor"),已退默认 "lead"`,
     );
   }
+  // reverse(反向对照档):side 同一套纪律。非布尔一律退 false —— 这个开关
+  // 决定一条策略买信号的同边还是对面,被脏值悄悄置真的后果是整档方向反掉,
+  // 必须显式 true 才生效。
+  const reverseValid = typeof p.reverse === "boolean";
+  if (p.reverse !== undefined && !reverseValid) {
+    console.warn(
+      `[follow] strategy ${id}: reverse=${JSON.stringify(p.reverse)} 非法` +
+        `(需布尔),已退默认 false`,
+    );
+  }
 
   return {
     id,
@@ -420,6 +431,7 @@ function parseStrategy(
     minTiltPct: numOr(p.minTiltPct) ?? undefined,
     minPerSideUsd: numOr(p.minPerSideUsd) ?? undefined,
     side: sideValid ? (p.side as "lead" | "minor") : "lead",
+    reverse: reverseValid ? (p.reverse as boolean) : false,
     minNetUsd: numOr(p.minNetUsd) ?? undefined,
   };
 }
@@ -635,7 +647,25 @@ export async function runFollowCycle(
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
     );
     for (const s of strategies) {
-      for (const c of candidatesByStrategy.get(s.id) ?? []) {
+      for (const c0 of candidatesByStrategy.get(s.id) ?? []) {
+        // 反向对照档:候选先经 reverseCandidate 翻到对面 outcome,再进下面的
+        // 既有守卫链 —— 查重键、closed 判定、现价/形成价/盘口/费用、INSERT 全部
+        // 消费翻转后的候选,下游零特判。必须放在守卫链最前(尤其查重之前):
+        // 反向档的仓开在对面 outcome 上,拿翻转前的 outcome 查重会永远查不到
+        // 自己已开的仓。meta 此时已按候选取好(metaCids 由翻转前候选算出,翻转
+        // 不改 conditionId,覆盖天然成立)。弃权即跳过本轮(fail-closed,原因
+        // 见 lib/reverse.ts),下轮 meta 恢复后若信号仍新鲜可正常跟进。
+        let c = c0;
+        if (s.reverse) {
+          const flipped = reverseCandidate(c0, meta[c0.conditionId]);
+          if ("skip" in flipped) {
+            console.log(
+              `[follow] strategy ${s.id} 反向翻转弃权 组 ${c0.conditionId}/${c0.outcome}: ${flipped.skip}`,
+            );
+            continue;
+          }
+          c = flipped.candidate;
+        }
         // 先查重再取价:已持仓则跳过,避免对已开仓组做无谓的现价请求。
         if (exists.get(s.id, c.conditionId, c.outcome)) continue;
         // 已结算市场不开仓:meta.closed===true 才跳过;meta 缺失(未知)≠已结算,仍照常
@@ -1393,6 +1423,13 @@ export interface FollowStrategyView {
     minSingleFillUsd?: number;
     minTiltPct?: number;
     minNetUsd?: number;
+    /**
+     * 反向对照档标记(2026-08-13):true = 该档对每个信号买对面 outcome
+     * (lib/reverse.ts)。展示层靠它画「反向对照」Tag 与参数提示的反向前缀。
+     * 恒有值(缺失/脏值 → false),与开仓侧 parseStrategy 同默认 —— 方向
+     * 开关的展示绝不能与实际开仓行为对不上。
+     */
+    reverse: boolean;
   };
   metrics: StrategyMetrics;
   fund: FundMetrics; // 基金式档案:成立/运行/峰值占用/年化(仅展示,不参与任何决策)
@@ -1447,6 +1484,7 @@ function parseParamsView(
     source: "consensus",
     maxPrice: DEFAULT_MAX_PRICE,
     freshSec: DEFAULT_FRESH_SEC,
+    reverse: false,
   };
   if (!paramsJson) return fallback;
   let p: Record<string, unknown>;
@@ -1489,6 +1527,9 @@ function parseParamsView(
     minSingleFillUsd: numOrUndef(p.minSingleFillUsd),
     minTiltPct: numOrUndef(p.minTiltPct),
     minNetUsd: numOrUndef(p.minNetUsd),
+    // 严格 === true:方向开关被脏值悄悄置真会把整档展示成反向,展示与开仓
+    // (parseStrategy 的 reverse 消毒)必须落到同一个答案。
+    reverse: p.reverse === true,
   };
 }
 

@@ -470,6 +470,7 @@ describe("runAlertCycle", () => {
       feeSchedule: null,
       umaDisputed: false,
       outcomes: ["Yes", "No"],
+      clobTokenIds: ["tok-a", "tok-b"],
       outcomePrices: [0.5, 0.5],
     });
 
@@ -517,6 +518,7 @@ describe("runAlertCycle", () => {
       feeSchedule: null,
       umaDisputed: false,
       outcomes: ["Yes", "No"],
+      clobTokenIds: ["tok-a", "tok-b"],
       outcomePrices: [0.5, 0.5],
     };
     const base = {

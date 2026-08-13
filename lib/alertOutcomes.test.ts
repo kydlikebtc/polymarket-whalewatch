@@ -42,6 +42,7 @@ const meta = (over: Partial<MarketMeta> = {}): MarketMeta => ({
   feeSchedule: null,
   umaDisputed: false,
   outcomes: ["Yes", "No"],
+  clobTokenIds: ["tok-a", "tok-b"],
   outcomePrices: [1, 0],
   ...over,
 });

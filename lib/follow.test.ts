@@ -383,8 +383,41 @@ describe("buildFollowView", () => {
       source: "consensus",
       maxPrice: 0.95,
       freshSec: 900,
+      // reverse 缺失 → false(既有 13 条策略都不是反向档),与开仓侧同默认。
+      reverse: false,
     });
     expect(strategies[0].enabled).toBe(true);
+  });
+
+  it("反向档(reverse:true)透出 reverse 标记,检测字段照常展示", () => {
+    const { strategies } = buildFollowView(
+      [
+        strat({
+          id: 14,
+          name: "反巨鲸",
+          params_json: JSON.stringify({
+            source: "heavy",
+            reverse: true,
+            minSingleFillUsd: 50000,
+            sizeUsd: 500,
+          }),
+        }),
+      ],
+      [],
+      {},
+    );
+    const p = strategies[0].params;
+    expect(p.reverse).toBe(true);
+    expect(p.source).toBe("heavy");
+    expect(p.minSingleFillUsd).toBe(50000);
+    // 展示侧宽容纪律:reverse 非布尔(脏值)不抛、不置真 —— 方向开关被脏值
+    // 悄悄置真会把整档展示成反向,必须显式 true 才算。
+    const dirty = buildFollowView(
+      [strat({ id: 15, params_json: JSON.stringify({ reverse: "yes" }) })],
+      [],
+      {},
+    );
+    expect(dirty.strategies[0].params.reverse).toBe(false);
   });
 
   it("params_json 损坏/为空/缺字段 → 安全默认,不抛", () => {
@@ -407,6 +440,7 @@ describe("buildFollowView", () => {
       source: "consensus",
       maxPrice: 0.95,
       freshSec: 900,
+      reverse: false,
     };
     expect(strategies[0].params).toEqual(dflt);
     expect(strategies[1].params).toEqual(dflt);
@@ -1055,6 +1089,56 @@ describe("parseStrategy — source/maxPrice/freshSec 扩展", () => {
     // 字段缺失是既有库(两条生产策略)的常态,不该被当成异常留痕 —— 若这里
     // 意外 warn,说明「缺失」和「非法」的判定条件混在了一起。
     expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  // reverse(反向对照档,2026-08-13):side 同一套「显式合法生效、缺失静默
+  // 退默认、存在但非法留痕」纪律。既有 13 条策略的 params_json 都没有这个
+  // 字段 —— 缺失必须静默落 false,一条都不许因此变成反向档。
+  it("reverse 缺失 → false 且不留痕(既有 13 条策略零迁移)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const s = parseStrategyForTest(
+      10,
+      JSON.stringify({
+        source: "heavy",
+        minSingleFillUsd: 50000,
+        sizeUsd: 500,
+      }),
+    );
+    expect(s!.reverse).toBe(false);
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("reverse: true 显式生效(反向档的唯一开关)", () => {
+    const s = parseStrategyForTest(
+      11,
+      JSON.stringify({
+        source: "heavy",
+        reverse: true,
+        minSingleFillUsd: 50000,
+        sizeUsd: 500,
+      }),
+    );
+    expect(s!.reverse).toBe(true);
+    // 检测字段原样保留 —— 反向档与正向档共用同一 detector、同一判据。
+    expect(s!.source).toBe("heavy");
+    expect(s!.minSingleFillUsd).toBe(50000);
+  });
+
+  it("reverse 存在但非布尔(手滑写 'yes')→ warn 留痕并退 false", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const s = parseStrategyForTest(
+      12,
+      JSON.stringify({
+        source: "heavy",
+        reverse: "yes",
+        minSingleFillUsd: 50000,
+        sizeUsd: 500,
+      }),
+    );
+    expect(s!.reverse).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("reverse"));
     warnSpy.mockRestore();
   });
 });

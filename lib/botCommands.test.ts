@@ -18,6 +18,7 @@ const card = (over: Partial<MarketCard> = {}): MarketCard => ({
     feeSchedule: null,
     umaDisputed: false,
     outcomes: ["Yes", "No"],
+    clobTokenIds: ["tok-a", "tok-b"],
     outcomePrices: [0.4, 0.6],
   },
   brief: {

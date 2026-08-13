@@ -161,6 +161,16 @@ export interface StrategyParams {
   // 遗漏——两档必须共用同一个"倾斜形成时刻"才构成干净的对照组(详细论证见
   // lib/sourceLopsided.ts 的 detectLopsidedCandidates 函数头注释)。
   side?: "lead" | "minor";
+  // 反向对照档(2026-08-13,设计见 docs/plans/2026-08-13-reverse-control-
+  // design.md):true 时开仓循环把该策略的每个候选经 reverseCandidate
+  // (lib/reverse.ts)翻到对面 outcome 再走既有守卫链。⚠️ detector 不读这个
+  // 字段 —— 检测判据必须与被对照的正向档逐字节一致,分叉只发生在开仓侧的
+  // "买哪一边",两档战绩才构成同信号同时刻的干净对照(与 side 服务 lopsided
+  // 对照的机制不同:side 在 detector 内选边,因为分歧分析天然算出了两边;
+  // reverse 在开仓侧翻边,因为其余 source 的候选只带自己一边的 token,对面
+  // token 要靠开仓前才取到的 MarketMeta.clobTokenIds 定位)。缺省/非法都退
+  // false —— 既有 13 条策略的 params_json 都没有这个字段,零迁移保持现状。
+  reverse?: boolean;
 }
 
 /**

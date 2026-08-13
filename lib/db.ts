@@ -333,7 +333,17 @@ export function openDb(path = "data.sqlite") {
   // v3 只 INSERT 这新增的 1 条,既有 12 条(含 v1 的保守/激进与 v2 的 10 档)
   // 一个字段都不动。
   //
-  // 门控条件从 !== "2" 改成 !== "3"(单个 if 块继续整体加宽,与 v1→v2 同一
+  // v4(6 个反向对照档,2026-08-13,设计见 docs/plans/2026-08-13-reverse-
+  // control-design.md):线上真实战绩显示 6 档深度负 EV(巨鲸 37%/−33.9%、
+  // 巨鲸精英 10%/−82%、超级巨鲸 40%/−29.8%、分歧解除 33%/−32.7%、高分独狼
+  // 0%/−100%、早期赢家跟投 48%/−18.7%),各配一个「同信号、买对面」的镜像档
+  // 持续对照观察(机制:params reverse:true + 开仓循环 reverseCandidate 翻边,
+  // 见 lib/reverse.ts;逆势少数边 +38.9% 已实证这个模式,故不给一边倒分歧
+  // 重复建档)。红线不变:v4 只 INSERT 这 6 条,既有 13 条一个字段都不动;
+  // 6 条的检测参数必须与被镜像档逐字节相同(仅多 reverse:true)—— 参数分叉
+  // 的"对照"不是对照,follow.db.test.ts 的配对测试直接断言这条。
+  //
+  // 门控条件从 !== "2" 改成 !== "3" 再到 !== "4"(单个 if 块继续整体加宽,与 v1→v2 同一
   // 手法),而不是在这个 if 块后面另开一个并列的 `if (!== "3")`:
   //   1. 并列写法会有两个问题 —— 语法上 `ins` 是块作用域 const,第二个 if 块
   //      看不见第一个块里声明的 `ins`,会需要重复 db.prepare 或直接报错;
@@ -347,20 +357,21 @@ export function openDb(path = "data.sqlite") {
   //      no-op —— INSERT OR IGNORE + name 的 UNIQUE 约束保证:名字已存在时,
   //      SQLite 连新值都不看就跳过整条 INSERT,既有行(含 params_json)不会
   //      被触碰,更不会被覆盖。这也是下面几条路径都成立的原因:
-  //        - 全新库(marker 不存在):表是空的,前 12 条 no-op 检查全部落空,
-  //          13 条(v1 的 2 条 + v2 的 10 条 + v3 的 1 条)全部真实插入。
+  //        - 全新库(marker 不存在):表是空的,19 条(v1 的 2 条 + v2 的
+  //          10 条 + v3 的 1 条 + v4 的 6 条)全部真实插入。
   //        - 既有 v1 库(marker="1",只有保守/激进):这两条 INSERT 命中
-  //          UNIQUE 静默跳过;v2 的 10 档 + v3 的 1 档,共 11 条全部真实插入。
-  //        - 既有 v2 库(marker="2",已有全部 12 条):前 12 条 INSERT 全部
-  //          命中 UNIQUE 静默跳过,不写入也不覆盖;只有 v3 新增的这 1 条
-  //          真实插入 —— 这是当前生产库会走的路径。
+  //          UNIQUE 静默跳过;其余 17 条全部真实插入。
+  //        - 既有 v2 库(marker="2",已有 12 条):前 12 条静默跳过,v3+v4
+  //          共 7 条真实插入。
+  //        - 既有 v3 库(marker="3",已有 13 条):前 13 条静默跳过,只有 v4
+  //          的 6 条真实插入 —— 这是当前生产库会走的路径。
   //   同样的 OR IGNORE 语义也覆盖了另一种情况:如果运维手工改过某条策略的
   //   名字、或手工加过同名策略,这里会静默跳过 —— 这是期望行为(不覆盖用户
   //   的手工修改),不是 bug。
   const followVer = db
     .prepare("SELECT value FROM config WHERE key = 'follow_seed_v'")
     .get() as { value: string | null } | undefined;
-  if (followVer?.value !== "3") {
+  if (followVer?.value !== "4") {
     const ins = db.prepare(
       "INSERT OR IGNORE INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,?)",
     );
@@ -515,12 +526,74 @@ export function openDb(path = "data.sqlite") {
           sizeUsd: 500,
         },
       ],
+      // ---- v4 新增:6 个反向对照档(见本 if 块顶部 v4 注释)。每条的检测
+      // 参数逐字节抄自被镜像的正向档,只多一个 reverse:true —— detector 纯
+      // 函数 + 参数相同 ⇒ 候选集相同,两档只在开仓侧"买哪一边"分叉,战绩
+      // 才可比。字段顺序刻意统一为「source, reverse, ...正向档其余字段」,
+      // follow.db.test.ts 的配对测试剥掉 reverse 后与正向档深比较相等。
+      // 一边倒分歧不在此列:它的对照「逆势少数边」v3 已建(+38.9% 领先中)。
+      [
+        "反巨鲸",
+        {
+          source: "heavy",
+          reverse: true,
+          minSingleFillUsd: 50000,
+          sizeUsd: 500,
+        },
+      ],
+      [
+        "反超级巨鲸",
+        {
+          source: "heavy",
+          reverse: true,
+          minSingleFillUsd: 150000,
+          sizeUsd: 500,
+        },
+      ],
+      [
+        "反巨鲸精英",
+        {
+          source: "heavy",
+          reverse: true,
+          minSingleFillUsd: 50000,
+          minWalletScore: 80,
+          sizeUsd: 500,
+        },
+      ],
+      [
+        "反分歧解除",
+        {
+          source: "resolved",
+          reverse: true,
+          minPerSideUsd: 5000,
+          sizeUsd: 500,
+        },
+      ],
+      [
+        "反高分独狼",
+        {
+          source: "lone_wolf",
+          reverse: true,
+          minWalletScore: 90,
+          minNetUsd: 10000,
+          sizeUsd: 500,
+        },
+      ],
+      [
+        "反早期赢家",
+        {
+          source: "early_winner",
+          reverse: true,
+          minNetUsd: 5000,
+          sizeUsd: 500,
+        },
+      ],
     ];
     for (const [name, params] of seeds) {
       ins.run(name, JSON.stringify(params), now);
     }
     db.prepare(
-      "INSERT OR REPLACE INTO config (key, value) VALUES ('follow_seed_v', '3')",
+      "INSERT OR REPLACE INTO config (key, value) VALUES ('follow_seed_v', '4')",
     ).run();
   }
   return db;

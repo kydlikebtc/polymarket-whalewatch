@@ -155,6 +155,10 @@ type FollowStrategyView = {
     minSingleFillUsd?: number;
     minTiltPct?: number;
     minNetUsd?: number;
+    // 反向对照档标记(2026-08-13):true = 每个信号买对面 outcome。server 侧
+    // parseParamsView 恒有值(缺失/脏值 → false),类型可选仅为兼容旧响应,
+    // 展示按 === true 判断(方向开关绝不能被脏值悄悄置真)。
+    reverse?: boolean;
   };
   metrics: StrategyMetrics;
   // 基金式档案与账户推演:新响应恒有;类型可选以对旧响应宽容,缺失时不渲染/显示「—」。
@@ -348,7 +352,14 @@ const FAMILY_META: Record<FamilyKey, { title: string; blurb: string }> = {
   },
   heavy: {
     title: "异常大额",
-    blurb: "一笔巨额单本身算不算信号(不等第 N 人到位)。",
+    // 第二句(v4 反向对照档上线新增,照抄分歧族为「逆势少数边」补第二句的
+    // 先例):交代族内三对正/反档的关系 —— 同一笔巨额单、同一个时刻,正向
+    // 跟单、反向买对面,读战绩必须成对着读。
+    blurb:
+      "一笔巨额单本身算不算信号(不等第 N 人到位)。「反巨鲸」「反超级巨鲸」" +
+      "「反巨鲸精英」是对应正向档的反向对照:同一笔单、同一时刻买对面 —— " +
+      "正向档持续亏而反向档持续赢,说明巨鲸大单在这个市场结构里更像流动性" +
+      "需求方而非信息方,该反着用;两边都亏,则是执行成本在吃双边。",
   },
   disagreement: {
     title: "分歧",
@@ -361,11 +372,17 @@ const FAMILY_META: Record<FamilyKey, { title: string; blurb: string }> = {
       "聪明钱意见不一致时,跟主导边还是少数边——「一边倒分歧」跟多数、" +
       "「逆势少数边」跟少数,同一批市场、同一个形成时刻的一组对照,不是两个" +
       "独立策略:主导边持续赢说明质量权重判据有效,少数边持续赢则提示评分" +
-      "体系可能有盲区,或少数派掌握了权重算法看不见的信息。",
+      "体系可能有盲区,或少数派掌握了权重算法看不见的信息。「反分歧解除」" +
+      "(v4)同理是「分歧解除」的镜像:少数边认输时,正向跟主导边,反向买" +
+      '被放弃的那一边 —— 验证"认输"到底是趋势确认还是底部信号。',
   },
   wallet: {
     title: "钱包画像",
-    blurb: "一个足够好的钱包,一个人说了算吗。",
+    blurb:
+      "一个足够好的钱包,一个人说了算吗。「反高分独狼」「反早期赢家」是对应" +
+      "正向档的反向对照:同一个钱包信号、同一时刻买对面 —— 画像档持续亏而" +
+      "反向档持续赢,说明该画像筛出的是反向指标人群,信号仍有价值,只是方向" +
+      "用反了。",
   },
   // 兜底组:未来新增 source 但还没来得及接进上面四族时,不能让那张策略卡从
   // 页面上消失——消失比归类不准更危险(会被误读成"这条策略被停用/没生效"),
@@ -452,6 +469,22 @@ const STRATEGY_EMOJI: Record<string, string> = {
   // 🏳️(认输/分歧解除)视觉上可区分,又直白传达"和另一档反着来"这个核心
   // 特征,不会被误读成本文件已用过的其它任何语义。
   逆势少数边: "🔄",
+  // ---- v4 反向对照档(2026-08-13):六个"反"档各配与被镜像档成对的反语义
+  // 符号,继续沿用"同族内视觉关联、跨族能区分"的选定原则,均已 grep 核实
+  // 未被本仓库其它语义占用:
+  //   🪝 鱼钩 = 反巨鲸:钓那头 🐳,"跟它反着来"的具象;与 🎣 同属渔具家族
+  //       (heavy 族的正向是海洋动物、反向是渔具,族内成对关系一眼可读)。
+  //   ⚓ 锚 = 反超级巨鲸:压住 🌊 的浪 —— 比 🪝 更重的器械对更大的鲸。
+  //   🎣 钓竿 = 反巨鲸精英:钓 🦈(精英鲨)用竿不用钩,与 🪝 可区分。
+  //   🏴 黑旗 = 反分歧解除:🏳️(白旗认输)的直接反面,同为旗帜、颜色即语义。
+  //   🐑 羊 = 反高分独狼:🐺 的经典对立面,"狼买什么我买对面"。
+  //   🍂 落叶 = 反早期赢家:🌱(新芽/早期)的反面,凋落对新生。
+  反巨鲸: "🪝",
+  反超级巨鲸: "⚓",
+  反巨鲸精英: "🎣",
+  反分歧解除: "🏴",
+  反高分独狼: "🐑",
+  反早期赢家: "🍂",
 };
 // 兜底:未来加新档、来不及补映射时不能让页面报 undefined 或崩掉——退回
 // 空字符串(不显示图标,而不是显示一个可能撞语义的占位符号)。
@@ -477,6 +510,19 @@ const DEFAULT_LOPSIDED_TILT_PCT_DISPLAY = 0.7;
 // 完全没有 UI 消费它们)。
 function sourceCoreHint(p: FollowStrategyView["params"]): string {
   const source = p.source ?? "consensus";
+  // 反向对照档:门槛半句与正向档完全相同(检测参数逐字节镜像,种子红线),
+  // 只追加"买对面"的方向说明 —— 放在这里而不是各 case 里,卡片提示
+  // (cardParamsHint)与弹窗完整参数(paramsHint)两个调用方一次全覆盖。
+  if (p.reverse === true) {
+    return `${sourceCoreHintBase(p, source)} · 信号触发时买对面(反向对照)`;
+  }
+  return sourceCoreHintBase(p, source);
+}
+
+function sourceCoreHintBase(
+  p: FollowStrategyView["params"],
+  source: string,
+): string {
   switch (source) {
     case "consensus": {
       const parts = [
@@ -1453,6 +1499,9 @@ function StrategyCard({
         <strong style={{ fontSize: "var(--t-lg)", color: "var(--n-900)" }}>
           {s.name}
         </strong>
+        {/* 反向对照标记:紧跟名字,先于状态类标签 —— 它是档位的身份属性
+            (这一档永远买对面),不是会变的运行状态。 */}
+        {s.params.reverse === true ? <Tag>反向对照</Tag> : null}
         {leading ? <Tag variant="brand">本窗口领先</Tag> : null}
         {!s.enabled ? <Tag variant="warn">已停用</Tag> : null}
       </div>
@@ -2782,6 +2831,9 @@ function StrategyListRow({
           <span aria-hidden>{strategyEmoji(s.name)}</span>
           <span style={{ fontWeight: 600 }}>{s.name}</span>
           <Tag>{familyTitle}</Tag>
+          {/* 与卡片视图同一判定(=== true):反向档在列表里同样一眼可辨,
+              正/反成对读战绩是这批档位存在的意义。 */}
+          {s.params.reverse === true ? <Tag>反向对照</Tag> : null}
           {leading ? <Tag variant="brand">领先</Tag> : null}
           {empty ? (
             <Tag>{m.openCount > 0 ? "等待结算" : "等待命中"}</Tag>
@@ -3509,7 +3561,9 @@ export default function FollowPage() {
         <div className="ds-hint">
           现价进场 ·
           跟随共识/异常大额/分歧/钱包画像四类信号,新鲜度窗口因档而异(默认 15
-          分钟,详见各档详情) · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)·
+          分钟,详见各档详情) ·
+          带「反向对照」标的档位对同一信号买对面,与正向档成对读战绩 · 持有到结算
+          · 固定 $/信号 · 仅结算盈亏(不做浮盈)·
           按报价快照纸面成交,不含盘口执行成本(价差/深度),盈亏偏乐观;「执行滑点」列为该成本的实测估计
         </div>
       </header>
