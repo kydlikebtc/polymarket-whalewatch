@@ -69,6 +69,10 @@ GET /api/signals?windowHours=24
   "title": "US announces halt in Iran offensive operations?",
   "eventSlug": "us-announces-halt…",
   "category": "Politics", // 可能为 null
+  // 二级分类(2026-08-13 起,additive —— 老客户端可安全忽略):体育联盟
+  // (NBA/MLB/Soccer…)/加密资产(Bitcoin…)/Geopolitics 等,白名单派生;
+  // 无二级或未知为 null。
+  "subcategory": null,
   "formationTs": 1785291000,
 
   "outcome": "Yes", // split 时恒为 null —— 分歧不给方向

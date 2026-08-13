@@ -14,9 +14,11 @@ import {
   analyzeBets,
   BUCKET_LOW_SAMPLE_N,
   type AnalysisPosition,
+  type CategoryGroup,
   type DeepAnalysis,
   type OddsBucket,
 } from "../../lib/followAnalysis";
+import { catLabel, subLabel } from "../../lib/categoryLabel";
 import { LOW_SAMPLE_THRESHOLD } from "../../lib/followCardView";
 
 /** 面板输入行:分析契约 + 可选市场标题(散点 tooltip 用,页面行天然带)。 */
@@ -486,6 +488,76 @@ function WeeklyBars({ weekly }: { weekly: DeepAnalysis["weekly"] }) {
   );
 }
 
+/* ------------------------------------------------------- category rows */
+
+// 赛道细分的一组行:一级汇总行 + 缩进的二级子行。两级共用同一条数字串
+// 格式与同一个 maxN 比例尺(条长跨行可比,子行必然 ≤ 一级行);样本弱化
+// 阈值也共用 BUCKET_LOW_SAMPLE_N —— 子行样本必然更小,弱化会更常见,
+// 这正是想要的诚实降权,不为子行单开一档更宽松的阈值。
+function CategoryRows({ c, maxN }: { c: CategoryGroup; maxN: number }) {
+  const row = (
+    key: string,
+    label: string,
+    s: {
+      n: number;
+      wins: number;
+      losses: number;
+      winRate: number | null;
+      avgEntry: number | null;
+      realized: number;
+    },
+    indent: boolean,
+  ) => {
+    const lowSample = s.n < BUCKET_LOW_SAMPLE_N;
+    return (
+      <div
+        key={key}
+        style={{
+          display: "grid",
+          // 右列下限 150px(不是撑满一行数字的 210px):375px 视口下弹窗
+          // 内容区仅 ~277px,210px 下限会顶出横向滚动(真机实测 310/294
+          // 两版溢出教训);150px 时数字串在窄屏自然折成两行,不溢出。
+          // 子行缩进吃在第一列内部(paddingLeft)而不是整行 margin ——
+          // 三列网格跨行对齐,条形图起点一致才可上下比长短。
+          gridTemplateColumns: "minmax(76px, 110px) 1fr minmax(150px, 250px)",
+          gap: "var(--s-3)",
+          alignItems: "center",
+          opacity: lowSample ? 0.6 : 1,
+        }}
+      >
+        <span
+          style={{
+            fontSize: "var(--t-sm)",
+            paddingLeft: indent ? 14 : 0,
+            color: indent ? "var(--n-600)" : undefined,
+          }}
+          title={label}
+        >
+          {indent ? "└ " : ""}
+          {label}
+        </span>
+        <StackBar n={s.n} maxN={maxN} wins={s.wins} losses={s.losses} />
+        <span className="mono" style={{ fontSize: "var(--t-xs)" }}>
+          {s.n} 仓{lowSample ? "(样本不足)" : ""} · 胜率{" "}
+          {s.winRate == null ? "—" : fmtPct0(s.winRate)} · 均入场{" "}
+          {s.avgEntry == null ? "—" : cents(s.avgEntry)} ·{" "}
+          <span className={pnlTextClass(s.realized)}>
+            {fmtSignedUsd(s.realized)}
+          </span>
+        </span>
+      </div>
+    );
+  };
+  return (
+    <>
+      {row(c.category, catLabel(c.category), c, false)}
+      {c.subs.map((s) =>
+        row(`${c.category}|${s.subcategory}`, subLabel(s.subcategory), s, true),
+      )}
+    </>
+  );
+}
+
 /* ------------------------------------------------------------- panel */
 
 /**
@@ -806,53 +878,18 @@ export function DeepAnalysisPanel({
         </div>
       </Block>
 
-      {/* ⑥ 赛道细分 */}
+      {/* ⑥ 赛道细分(两级:一级汇总行 + 缩进的二级子行) */}
       <Block
         label="赛道细分"
-        hint="按事件赛道(gamma 事件标签)重切:哪个赛道贡献了盈亏、各赛道的胜率与均入场价 —— 优势往往只存在于个别赛道"
+        hint="按事件赛道(gamma 事件标签)两级重切:一级行是该赛道全部仓,缩进子行按联盟/资产细分(体育里 NBA 与足球的胜率分布差异巨大,混在一个「体育」桶里没有解释力)。子行不是一级的再分配 —— 无二级标签的仓只进一级汇总"
       >
         {a.categories.length === 0 ? (
           <div className="ds-hint">暂无赛道数据</div>
         ) : (
           <div style={{ display: "grid", gap: "var(--s-2)" }}>
-            {a.categories.map((c) => {
-              const lowSample = c.n < BUCKET_LOW_SAMPLE_N;
-              return (
-                <div
-                  key={c.category}
-                  style={{
-                    display: "grid",
-                    // 右列下限 150px(不是撑满一行数字的 210px):375px 视口下
-                    // 弹窗内容区仅 ~277px,210px 下限会顶出横向滚动(真机实测
-                    // scrollWidth 310 vs clientWidth 277);150px 时长数字串在
-                    // 窄屏自然折成两行,不溢出。
-                    gridTemplateColumns:
-                      "minmax(76px, 110px) 1fr minmax(150px, 250px)",
-                    gap: "var(--s-3)",
-                    alignItems: "center",
-                    opacity: lowSample ? 0.6 : 1,
-                  }}
-                >
-                  <span style={{ fontSize: "var(--t-sm)" }} title={c.category}>
-                    {c.category}
-                  </span>
-                  <StackBar
-                    n={c.n}
-                    maxN={maxCatN}
-                    wins={c.wins}
-                    losses={c.losses}
-                  />
-                  <span className="mono" style={{ fontSize: "var(--t-xs)" }}>
-                    {c.n} 仓{lowSample ? "(样本不足)" : ""} · 胜率{" "}
-                    {c.winRate == null ? "—" : fmtPct0(c.winRate)} · 均入场{" "}
-                    {c.avgEntry == null ? "—" : cents(c.avgEntry)} ·{" "}
-                    <span className={pnlTextClass(c.realized)}>
-                      {fmtSignedUsd(c.realized)}
-                    </span>
-                  </span>
-                </div>
-              );
-            })}
+            {a.categories.map((c) => (
+              <CategoryRows key={c.category} c={c} maxN={maxCatN} />
+            ))}
           </div>
         )}
       </Block>

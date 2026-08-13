@@ -7,7 +7,7 @@ import {
   MarketSlugActions,
   Tag,
   WalletLink,
-  catLabel,
+  catLabelFine,
 } from "./ui";
 import { useMarketPositions } from "./useMarketPositions";
 
@@ -45,6 +45,8 @@ export type DisagreementMarket = {
   firstTs: number;
   lastTs: number;
   category: string | null;
+  // 二级分类(可选以对旧响应宽容),标签合成「体育·NBA」。
+  subcategory?: string | null;
   closed: boolean;
 };
 
@@ -322,7 +324,9 @@ export function DisagreementSection({
                         page — same affordance as the 24h scanner. */}
                     <div className="kpi-sub">
                       {m.sides.map((s) => s.outcome).join(" ⚔ ")}
-                      {m.category ? ` · ${catLabel(m.category)}` : ""}
+                      {m.category
+                        ? ` · ${catLabelFine(m.category, m.subcategory)}`
+                        : ""}
                       {m.excludedWallets > 0
                         ? ` · 已剔除 ${m.excludedWallets} 个两边押`
                         : ""}

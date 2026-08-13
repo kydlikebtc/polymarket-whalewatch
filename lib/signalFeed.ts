@@ -59,6 +59,11 @@ export interface Signal {
   title: string;
   eventSlug: string;
   category: string | null;
+  /**
+   * 二级分类(体育联盟/加密资产等,2026-08-13 起;派生见 lib/gamma.ts
+   * SUBCATEGORIES)。additive 字段:老客户端可安全忽略;null = 无/未知。
+   */
+  subcategory: string | null;
   /** When the signal came into being (consensus formation / the fill). */
   formationTs: number;
   /** Directional signals only (consensus | heavy). */
@@ -138,17 +143,34 @@ function selectAlerts(db: DB, types: string[], sinceSec: number): AlertRow[] {
     .all(...types, sinceSec) as AlertRow[];
 }
 
-function categoriesFor(db: DB, slugs: string[]): Record<string, string | null> {
-  const out: Record<string, string | null> = {};
+function categoriesFor(
+  db: DB,
+  slugs: string[],
+): Record<string, { category: string | null; subcategory: string | null }> {
+  const out: Record<
+    string,
+    { category: string | null; subcategory: string | null }
+  > = {};
   const uniq = [...new Set(slugs.filter(Boolean))];
   if (uniq.length === 0) return out;
   const placeholders = uniq.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT event_slug, category FROM event_category WHERE event_slug IN (${placeholders})`,
+      `SELECT event_slug, category, subcategory FROM event_category WHERE event_slug IN (${placeholders})`,
     )
-    .all(...uniq) as { event_slug: string; category: string | null }[];
-  for (const r of rows) out[r.event_slug] = r.category;
+    .all(...uniq) as {
+    event_slug: string;
+    category: string | null;
+    subcategory: string | null;
+  }[];
+  // category 保留历史行为(原样透传,'' 哨兵极少见且已发布);subcategory 是
+  // 新字段,'' known-none 直接归一成 null,对外永远只有「有值/无」两态。
+  for (const r of rows) {
+    out[r.event_slug] = {
+      category: r.category,
+      subcategory: r.subcategory || null,
+    };
+  }
   return out;
 }
 
@@ -170,6 +192,7 @@ function foldConsensus(rows: AlertRow[]): Map<string, Signal> {
       title: p.title ?? "",
       eventSlug: p.eventSlug ?? "",
       category: null,
+      subcategory: null,
       formationTs: prev?.formationTs ?? p.firstTs ?? row.created_at,
       outcome: p.outcome,
       outcomeIndex: p.outcomeIndex ?? null,
@@ -223,6 +246,7 @@ function collapseSplits(byKey: Map<string, Signal>): Signal[] {
       title: lead.title,
       eventSlug: lead.eventSlug,
       category: null,
+      subcategory: null,
       formationTs: Math.min(...group.map((g) => g.formationTs)),
       // A split has no direction on purpose: the client must not print one.
       outcome: null,
@@ -259,6 +283,7 @@ function foldHeavy(rows: AlertRow[], covered: Set<string>): Signal[] {
       title: p.title ?? "",
       eventSlug: p.eventSlug ?? "",
       category: null,
+      subcategory: null,
       formationTs: prev?.formationTs ?? row.created_at,
       outcome: p.outcome,
       outcomeIndex: p.outcomeIndex ?? null,
@@ -373,7 +398,10 @@ export function buildSignalFeed(
     db,
     active.map((s) => s.eventSlug),
   );
-  for (const s of active) s.category = cats[s.eventSlug] ?? null;
+  for (const s of active) {
+    s.category = cats[s.eventSlug]?.category ?? null;
+    s.subcategory = cats[s.eventSlug]?.subcategory ?? null;
+  }
 
   // Newest first: a trader reads top-down and staleness is the first thing
   // that disqualifies a signal. Client re-sorts by its own relevance rules

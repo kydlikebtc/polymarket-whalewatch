@@ -11,7 +11,7 @@ import {
   StatCard,
   Tag,
   WalletLink,
-  catLabel,
+  catLabelFine,
 } from "../ui";
 import { useMarketPositions } from "../useMarketPositions";
 import { useSoundToggle } from "../useSound";
@@ -50,6 +50,8 @@ type ConsensusGroup = {
   lastTs: number;
   currentPrice: number | null;
   category: string | null;
+  // 二级分类(体育联盟等;可选以对旧响应宽容),标签合成「体育·NBA」。
+  subcategory?: string | null;
   closed: boolean;
 };
 
@@ -579,7 +581,9 @@ export default function ConsensusPage() {
                             style={{ whiteSpace: "nowrap" }}
                           >
                             {g.outcome}
-                            {g.category ? ` · ${catLabel(g.category)}` : ""}
+                            {g.category
+                              ? ` · ${catLabelFine(g.category, g.subcategory)}`
+                              : ""}
                             <MarketSlugActions
                               slug={g.slug}
                               eventSlug={g.eventSlug}
