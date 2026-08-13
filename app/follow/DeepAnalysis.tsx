@@ -768,15 +768,41 @@ export function EdgeMatrixTable({
 
 // 气泡象限图尺寸(与其它大图同一 1120 宽度量级)。
 const BUBBLE_W = 1120;
-const BUBBLE_H = 380;
+const BUBBLE_H = 430;
+
+// 数据空间的点(隐含胜率 x, 实际胜率 y)。
+type Pt = { x: number; y: number };
+
+// 半平面裁剪(Sutherland–Hodgman 单边):把多边形裁到 f(p)≥0 的一侧。
+// 用于把「盈亏平衡线上/下方」区域裁进坐标域矩形 —— 区域着色让象限语义
+// 不依赖读者自己脑补对角线的哪边是哪边。
+function clipHalfplane(poly: Pt[], f: (p: Pt) => number): Pt[] {
+  const out: Pt[] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const fa = f(a);
+    const fb = f(b);
+    if (fa >= 0) out.push(a);
+    if (fa >= 0 !== fb >= 0) {
+      const t = fa / (fa - fb);
+      out.push({ x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) });
+    }
+  }
+  return out;
+}
 
 /**
- * 赛道胜率分布气泡象限(2026-08-13,用户定向:替代「vs 全部」对照表)。
- * 每个气泡 = 本策略的一条细赛道:横轴 = 隐含胜率(该赛道均入场价 ——
- * 市场定价的获胜概率),纵轴 = 实际胜率,对角线即盈亏平衡 —— 气泡落在
- * 对角线上方 = 实际跑赢定价(edge>0)。气泡大小 ∝ 仓数、颜色 = 落袋
- * 盈亏、样本 <阈值 虚线描边;悬停/Tab 聚焦任意气泡在图上方读数条给全量
- * 数字(与 WeeklyBars/DotStrip 同一套选中交互)。
+ * 赛道胜率分布气泡象限(2026-08-13;同日按用户反馈重做可视化:初版固定
+ * 0–100% 坐标域把数据挤成一团、顶边 100% 胜率的气泡连带标签被裁出画布、
+ * 标签互相压盖)。现版:
+ *  - 坐标域按数据自适应(留白外扩,夹回 [0,1]),数据铺满画布;
+ *  - 盈亏平衡线(实际=隐含)上下两侧用绿/红浅色**区域着色**,象限语义
+ *    一眼可读,不再只靠一条虚线;
+ *  - 标签防碰撞:上/下/右/左四个候选位贪心放置,放不下只保气泡(悬停/
+ *    聚焦仍能从读数条得到全量信息,标签是引导不是唯一出口);
+ *  - 内边距按最大气泡半径 + 标签高度预留,任何位置的气泡都不会被裁。
+ * 交互与 WeeklyBars/DotStrip 同一套:悬停/Tab 聚焦 → 图上方读数条。
  * 全为平局的赛道没有实际胜率,不上图(诚实缺席,不硬造 0%)。
  */
 function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
@@ -801,15 +827,113 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
       </div>
     );
   }
-  const padL = 46;
-  const padR = 20;
-  const padT = 14;
-  const padB = 34;
-  const x = (v: number) => padL + v * (BUBBLE_W - padL - padR);
-  const y = (v: number) => padT + (1 - v) * (BUBBLE_H - padT - padB);
+
   const maxN = Math.max(...bubbles.map((b) => b.cell.n));
-  const radius = (n: number) => 10 + Math.sqrt(n / maxN) * 18;
-  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const radius = (n: number) => 9 + Math.sqrt(n / maxN) * 15; // 9–24px
+  const rMax = radius(maxN);
+  const LABEL_H = 15;
+
+  // 坐标域:数据 min/max 外扩留白后夹回 [0,1];跨度太小(全部赛道挤同一
+  // 角)时围绕中心撑到最小跨度,避免两个点占满整幅图放大噪音。
+  const fitDomain = (vals: number[], pad: number, minSpan: number) => {
+    let lo = Math.max(0, Math.min(...vals) - pad);
+    let hi = Math.min(1, Math.max(...vals) + pad);
+    if (hi - lo < minSpan) {
+      const mid = (hi + lo) / 2;
+      lo = Math.max(0, mid - minSpan / 2);
+      hi = Math.min(1, lo + minSpan);
+      lo = Math.max(0, hi - minSpan);
+    }
+    return { lo, hi };
+  };
+  const xd = fitDomain(
+    bubbles.map((b) => b.cell.avgEntry!),
+    0.08,
+    0.3,
+  );
+  const yd = fitDomain(
+    bubbles.map((b) => b.cell.winRate!),
+    0.1,
+    0.3,
+  );
+
+  // 内边距:左右/上下都预留最大气泡半径 + 标签高度,边缘气泡不裁。
+  const padL = 54;
+  const padR = rMax + 12;
+  const padT = rMax + LABEL_H + 8;
+  const padB = 38 + rMax;
+  const x = (v: number) =>
+    padL + ((v - xd.lo) / (xd.hi - xd.lo)) * (BUBBLE_W - padL - padR);
+  const y = (v: number) =>
+    padT + ((yd.hi - v) / (yd.hi - yd.lo)) * (BUBBLE_H - padT - padB);
+
+  // 5 个等距刻度(域端点含入),标签取整百分数。
+  const ticksOf = (d: { lo: number; hi: number }) =>
+    [0, 0.25, 0.5, 0.75, 1].map((f) => d.lo + f * (d.hi - d.lo));
+
+  // 盈亏平衡线上下区域(数据空间裁剪后映射到屏幕)。
+  const domainRect: Pt[] = [
+    { x: xd.lo, y: yd.lo },
+    { x: xd.hi, y: yd.lo },
+    { x: xd.hi, y: yd.hi },
+    { x: xd.lo, y: yd.hi },
+  ];
+  const toScreen = (poly: Pt[]) =>
+    poly.map((p) => `${x(p.x).toFixed(1)},${y(p.y).toFixed(1)}`).join(" ");
+  const abovePoly = clipHalfplane(domainRect, (p) => p.y - p.x);
+  const belowPoly = clipHalfplane(domainRect, (p) => p.x - p.y);
+  // 盈亏平衡线在域内的可见段。
+  const segLo = Math.max(xd.lo, yd.lo);
+  const segHi = Math.min(xd.hi, yd.hi);
+
+  // 标签防碰撞:按气泡从大到小贪心放置,候选位 上→下→右→左;与已放标签
+  // 矩形相交或出画布则试下一个,全不行就不放(读数条兜底)。宽度按字数
+  // 估算(11px 字号的中文/全角约 11px/字,ASCII 约 6.5px)。
+  const placed: { x1: number; y1: number; x2: number; y2: number }[] = [];
+  const estWidth = (s: string) => {
+    let w = 0;
+    for (const ch of s) w += ch.charCodeAt(0) > 0x2e80 ? 11 : 6.5;
+    return w;
+  };
+  const labelPos = new Map<string, { lx: number; ly: number } | null>();
+  for (const b of bubbles) {
+    const label = matrixHeaderLabel(b.t, matrix.tracks);
+    const cx = x(b.cell.avgEntry!);
+    const cy = y(b.cell.winRate!);
+    const r = radius(b.cell.n);
+    const w = estWidth(label);
+    const cands = [
+      { lx: cx, ly: cy - r - 6 }, // 上
+      { lx: cx, ly: cy + r + 13 }, // 下
+      { lx: cx + r + 6 + w / 2, ly: cy + 4 }, // 右
+      { lx: cx - r - 6 - w / 2, ly: cy + 4 }, // 左
+    ];
+    let pick: { lx: number; ly: number } | null = null;
+    for (const c of cands) {
+      const box = {
+        x1: c.lx - w / 2,
+        y1: c.ly - LABEL_H + 3,
+        x2: c.lx + w / 2,
+        y2: c.ly + 3,
+      };
+      const inCanvas =
+        box.x1 >= 2 &&
+        box.x2 <= BUBBLE_W - 2 &&
+        box.y1 >= 2 &&
+        box.y2 <= BUBBLE_H - 2;
+      const collides = placed.some(
+        (p) =>
+          !(box.x2 < p.x1 || box.x1 > p.x2 || box.y2 < p.y1 || box.y1 > p.y2),
+      );
+      if (inCanvas && !collides) {
+        pick = c;
+        placed.push(box);
+        break;
+      }
+    }
+    labelPos.set(b.t.key, pick);
+  }
+
   const sel = bubbles.find((b) => b.t.key === selKey) ?? null;
   return (
     <div>
@@ -850,14 +974,35 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
         aria-label="赛道胜率分布气泡象限图"
         style={{ display: "block" }}
       >
-        {/* 轴框 + 刻度 */}
-        <line x1={x(0)} y1={y(0)} x2={x(1)} y2={y(0)} stroke="var(--n-200)" />
-        <line x1={x(0)} y1={y(0)} x2={x(0)} y2={y(1)} stroke="var(--n-200)" />
-        {ticks.map((t) => (
-          <g key={t}>
+        {/* 盈亏平衡线上下区域着色:绿=实际跑赢隐含(edge>0),红=跑输。 */}
+        {abovePoly.length >= 3 ? (
+          <polygon
+            points={toScreen(abovePoly)}
+            fill="var(--up-50)"
+            fillOpacity={0.55}
+          />
+        ) : null}
+        {belowPoly.length >= 3 ? (
+          <polygon
+            points={toScreen(belowPoly)}
+            fill="var(--down-50)"
+            fillOpacity={0.55}
+          />
+        ) : null}
+        {/* 网格 + 轴刻度 */}
+        {ticksOf(xd).map((t) => (
+          <g key={`x${t}`}>
+            <line
+              x1={x(t)}
+              y1={padT - rMax}
+              x2={x(t)}
+              y2={BUBBLE_H - padB + rMax}
+              stroke="var(--n-150)"
+              strokeDasharray="2 4"
+            />
             <text
               x={x(t)}
-              y={BUBBLE_H - 12}
+              y={BUBBLE_H - 10}
               fontSize={11}
               fill="var(--n-500)"
               textAnchor="middle"
@@ -865,8 +1010,20 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
             >
               {Math.round(t * 100)}¢
             </text>
+          </g>
+        ))}
+        {ticksOf(yd).map((t) => (
+          <g key={`y${t}`}>
+            <line
+              x1={padL - 6}
+              y1={y(t)}
+              x2={BUBBLE_W - padR + rMax}
+              y2={y(t)}
+              stroke="var(--n-150)"
+              strokeDasharray="2 4"
+            />
             <text
-              x={padL - 8}
+              x={padL - 10}
               y={y(t) + 4}
               fontSize={11}
               fill="var(--n-500)"
@@ -877,33 +1034,42 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
             </text>
           </g>
         ))}
-        {/* 盈亏平衡对角线(实际 = 隐含):上方 edge>0、下方 edge<0。 */}
-        <line
-          x1={x(0)}
-          y1={y(0)}
-          x2={x(1)}
-          y2={y(1)}
-          stroke="var(--n-300)"
-          strokeDasharray="4 4"
-        />
-        <text
-          x={x(0.22)}
-          y={y(0.88)}
-          fontSize={11}
-          fill="var(--up-700)"
-          fontFamily="var(--font-mono)"
-        >
-          ↑ 实际跑赢隐含(edge&gt;0)
-        </text>
-        <text
-          x={x(0.6)}
-          y={y(0.1)}
-          fontSize={11}
-          fill="var(--down-700)"
-          fontFamily="var(--font-mono)"
-        >
-          ↓ 实际跑输隐含(edge&lt;0)
-        </text>
+        {/* 盈亏平衡线(实际 = 隐含)。域不重叠时(理论上不会)不画。 */}
+        {segLo < segHi ? (
+          <line
+            x1={x(segLo)}
+            y1={y(segLo)}
+            x2={x(segHi)}
+            y2={y(segHi)}
+            stroke="var(--n-400)"
+            strokeDasharray="5 4"
+            strokeWidth={1.5}
+          />
+        ) : null}
+        {/* 区域语义标注:贴左上/右下角,不与数据抢地方。 */}
+        {abovePoly.length >= 3 ? (
+          <text
+            x={padL + 8}
+            y={padT - rMax + 14}
+            fontSize={11}
+            fill="var(--up-700)"
+            fontFamily="var(--font-mono)"
+          >
+            ▲ 跑赢隐含(edge&gt;0)
+          </text>
+        ) : null}
+        {belowPoly.length >= 3 ? (
+          <text
+            x={BUBBLE_W - padR - 4}
+            y={BUBBLE_H - padB + rMax - 6}
+            fontSize={11}
+            fill="var(--down-700)"
+            textAnchor="end"
+            fontFamily="var(--font-mono)"
+          >
+            ▼ 跑输隐含(edge&lt;0)
+          </text>
+        ) : null}
         {bubbles.map((b) => {
           const cx = x(b.cell.avgEntry!);
           const cy = y(b.cell.winRate!);
@@ -911,6 +1077,7 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
           const low = b.cell.n < BUCKET_LOW_SAMPLE_N;
           const selected = selKey === b.t.key;
           const label = matrixHeaderLabel(b.t, matrix.tracks);
+          const pos = labelPos.get(b.t.key);
           return (
             <g key={b.t.key}>
               <circle
@@ -918,25 +1085,28 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
                 cy={cy}
                 r={r}
                 fill={pnlColor(b.cell.realized)}
-                fillOpacity={selected ? 0.65 : 0.4}
+                fillOpacity={selected ? 0.7 : 0.45}
                 stroke={pnlColor(b.cell.realized)}
-                strokeWidth={selected ? 2 : 1.2}
+                strokeWidth={selected ? 2.5 : 1.5}
                 strokeDasharray={low ? "3 2" : undefined}
               />
-              <text
-                x={cx}
-                y={cy - r - 5}
-                fontSize={11}
-                fill="var(--n-600)"
-                textAnchor="middle"
-              >
-                {label}
-              </text>
-              {/* 命中区 = 气泡本体(已 ≥10px,无需再放大);挂全部交互。 */}
+              {pos ? (
+                <text
+                  x={pos.lx}
+                  y={pos.ly}
+                  fontSize={11}
+                  fill="var(--n-700)"
+                  textAnchor="middle"
+                  fontWeight={selected ? 700 : 500}
+                >
+                  {label}
+                </text>
+              ) : null}
+              {/* 命中区 = 气泡本体(已 ≥9px);挂全部交互,可视圆只负责画。 */}
               <circle
                 cx={cx}
                 cy={cy}
-                r={r}
+                r={Math.max(r, 14)}
                 fill="transparent"
                 tabIndex={0}
                 aria-label={`${label}:${b.cell.n} 仓,实际胜率 ${fmtPct0(b.cell.winRate!)},隐含 ${fmtPct0(b.cell.avgEntry!)},落袋 ${fmtSignedUsd(b.cell.realized)}`}
@@ -953,7 +1123,6 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
     </div>
   );
 }
-
 /* --------------------------------------------------------- diagnosis */
 
 const DIMENSION_LABEL: Record<DiagnosedSegment["dimension"], string> = {
