@@ -18,6 +18,7 @@ import type { AskBook } from "./orderBook";
 import { simulateBookBuy } from "./orderBook";
 import { wilsonInterval } from "./outcomeStats";
 import { createPromiseCache } from "./promiseCache";
+import { reverseCandidate } from "./reverse";
 import type { SmartTag } from "./smartWallets";
 import { latestPriceByAsset } from "./trades";
 import type { Trade } from "./types";
@@ -646,7 +647,25 @@ export async function runFollowCycle(
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
     );
     for (const s of strategies) {
-      for (const c of candidatesByStrategy.get(s.id) ?? []) {
+      for (const c0 of candidatesByStrategy.get(s.id) ?? []) {
+        // 反向对照档:候选先经 reverseCandidate 翻到对面 outcome,再进下面的
+        // 既有守卫链 —— 查重键、closed 判定、现价/形成价/盘口/费用、INSERT 全部
+        // 消费翻转后的候选,下游零特判。必须放在守卫链最前(尤其查重之前):
+        // 反向档的仓开在对面 outcome 上,拿翻转前的 outcome 查重会永远查不到
+        // 自己已开的仓。meta 此时已按候选取好(metaCids 由翻转前候选算出,翻转
+        // 不改 conditionId,覆盖天然成立)。弃权即跳过本轮(fail-closed,原因
+        // 见 lib/reverse.ts),下轮 meta 恢复后若信号仍新鲜可正常跟进。
+        let c = c0;
+        if (s.reverse) {
+          const flipped = reverseCandidate(c0, meta[c0.conditionId]);
+          if ("skip" in flipped) {
+            console.log(
+              `[follow] strategy ${s.id} 反向翻转弃权 组 ${c0.conditionId}/${c0.outcome}: ${flipped.skip}`,
+            );
+            continue;
+          }
+          c = flipped.candidate;
+        }
         // 先查重再取价:已持仓则跳过,避免对已开仓组做无谓的现价请求。
         if (exists.get(s.id, c.conditionId, c.outcome)) continue;
         // 已结算市场不开仓:meta.closed===true 才跳过;meta 缺失(未知)≠已结算,仍照常

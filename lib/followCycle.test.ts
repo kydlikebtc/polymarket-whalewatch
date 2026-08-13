@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { openDb } from "./db";
 import { readMarketTiltSnapshots, runFollowCycle } from "./follow";
 import type { SmartTag } from "./smartWallets";
@@ -2103,6 +2103,230 @@ describe("runFollowCycle — D2(early_winner)钱包预取", () => {
       )
       .all(strat.id);
     expect(ewPos).toHaveLength(0);
+    db.close();
+  });
+});
+
+/* ------------------------------------------------- 反向对照档(reverse) */
+// 设计:docs/plans/2026-08-13-reverse-control-design.md §3-§4。测试自建策略行
+// 并停用全部种子档 —— 反向语义的断言(方向/镜像基准/配对结算)必须与种子
+// 内容解耦,种子归 follow.db.test.ts 管。
+describe("runFollowCycle 反向对照档", () => {
+  // 完整 MarketMeta(本 describe 专用桩):Yes/No 二元市场 c1,token 对齐
+  // trades 桩的 asset("tok" = Yes 侧)。
+  const rmeta = (over: Partial<MarketMeta> = {}): MarketMeta => ({
+    conditionId: "c1",
+    closed: false,
+    outcomePrices: [0.6, 0.4],
+    outcomes: ["Yes", "No"],
+    clobTokenIds: ["tok", "tok-no"],
+    volume24hr: null,
+    liquidity: null,
+    endDate: null,
+    category: null,
+    feesEnabled: false,
+    feeType: null,
+    feeSchedule: null,
+    umaDisputed: false,
+    ...over,
+  });
+
+  // 停用全部种子档,插入一对镜像 heavy 档(检测参数逐字节相同,仅 reverse
+  // 分叉),返回两个 id。种子档若保持启用,同一笔巨鲸单会让「巨鲸」等档也
+  // 开仓,污染本组按 strategy_id 的隔离断言。
+  const insertPair = (db: ReturnType<typeof openDb>) => {
+    db.prepare("UPDATE follow_strategies SET enabled = 0").run();
+    const ins = db.prepare(
+      "INSERT INTO follow_strategies (name, enabled, params_json, created_at) VALUES (?,1,?,0)",
+    );
+    const fwd = ins.run(
+      "T-巨鲸",
+      JSON.stringify({
+        source: "heavy",
+        minSingleFillUsd: 50000,
+        sizeUsd: 500,
+      }),
+    ).lastInsertRowid as number;
+    const rev = ins.run(
+      "T-反巨鲸",
+      JSON.stringify({
+        source: "heavy",
+        reverse: true,
+        minSingleFillUsd: 50000,
+        sizeUsd: 500,
+      }),
+    ).lastInsertRowid as number;
+    return { fwd, rev };
+  };
+
+  // 单笔巨鲸 BUY:notional = 100000 × 0.6 = $60k ≥ $50k 门槛。
+  const whaleTrades = () => [
+    trade({
+      proxyWallet: "w1",
+      transactionHash: "h1",
+      size: 100000,
+      price: 0.6,
+    }),
+  ];
+
+  // 现价按 asset 分派:Yes 侧 0.62、No 侧 0.38(镜像基准 0.4 的 2¢ 偏离内)。
+  const priceByAsset = async (asset: string) =>
+    asset === "tok" ? 0.62 : asset === "tok-no" ? 0.38 : null;
+
+  it("反向档开对面仓:outcome/asset/index 翻转,entry 取对面现价,smart_avg_price 是镜像基准", async () => {
+    const db = openDb(":memory:");
+    const { fwd, rev } = insertPair(db);
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: whaleTrades() }),
+      getSmart: smart,
+      fetchPrice: priceByAsset,
+      getMeta: async () => ({ c1: rmeta() }),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBe(2);
+    const fp = db
+      .prepare("SELECT * FROM follow_positions WHERE strategy_id = ?")
+      .get(fwd) as Record<string, unknown>;
+    const rp = db
+      .prepare("SELECT * FROM follow_positions WHERE strategy_id = ?")
+      .get(rev) as Record<string, unknown>;
+    // 正向档:巨鲸的同边。
+    expect(fp.outcome).toBe("Yes");
+    expect(fp.asset).toBe("tok");
+    expect(fp.outcome_index).toBe(0);
+    expect(fp.entry_price).toBe(0.62);
+    expect(fp.smart_avg_price).toBeCloseTo(0.6);
+    // 反向档:同一笔信号的对面。entry 是对面自己的现价(不是 1−0.62 的近似),
+    // smart_avg_price 是镜像成本基准 1−0.6。
+    expect(rp.outcome).toBe("No");
+    expect(rp.asset).toBe("tok-no");
+    expect(rp.outcome_index).toBe(1);
+    expect(rp.entry_price).toBe(0.38);
+    expect(rp.smart_avg_price).toBeCloseTo(0.4);
+    // 对照的时刻纪律:两仓 formation_ts 完全相同(同一信号)。
+    expect(rp.formation_ts).toBe(fp.formation_ts);
+    db.close();
+  });
+
+  it("配对结算:Yes 结算 1 → 正向赢、反向输,退出价各用自己的 outcome_index", async () => {
+    const db = openDb(":memory:");
+    const { fwd, rev } = insertPair(db);
+    const open = { trades: whaleTrades() };
+    await runFollowCycle({
+      db,
+      fetchWindow: async () => open,
+      getSmart: smart,
+      fetchPrice: priceByAsset,
+      getMeta: async () => ({ c1: rmeta() }),
+      nowSec: 1800,
+    });
+    // 第二轮:市场结算为 Yes(outcomePrices [1,0]),两仓同时平。
+    const r2 = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: [] }),
+      getSmart: smart,
+      fetchPrice: priceByAsset,
+      getMeta: async () => ({
+        c1: rmeta({ closed: true, outcomePrices: [1, 0] }),
+      }),
+      nowSec: 3600,
+    });
+    expect(r2.settled).toBe(2);
+    const fp = db
+      .prepare("SELECT * FROM follow_positions WHERE strategy_id = ?")
+      .get(fwd) as Record<string, unknown>;
+    const rp = db
+      .prepare("SELECT * FROM follow_positions WHERE strategy_id = ?")
+      .get(rev) as Record<string, unknown>;
+    // 正向:exit = outcomePrices[0] = 1,盈利 shares×(1−0.62)。
+    expect(fp.exit_price).toBe(1);
+    expect(fp.realized_pnl as number).toBeGreaterThan(0);
+    // 反向:exit = outcomePrices[1] = 0,整仓亏光 −500。
+    expect(rp.exit_price).toBe(0);
+    expect(rp.realized_pnl as number).toBeCloseTo(-500);
+    // 配对语义:同一信号恰好一赢一输。
+    db.close();
+  });
+
+  it("幂等:同一信号第二轮不给反向档重复开仓(查重键用翻转后的 outcome)", async () => {
+    const db = openDb(":memory:");
+    const { rev } = insertPair(db);
+    const deps = {
+      db,
+      fetchWindow: async () => ({ trades: whaleTrades() }),
+      getSmart: smart,
+      fetchPrice: priceByAsset,
+      getMeta: async () => ({ c1: rmeta() }),
+      nowSec: 1800,
+    };
+    await runFollowCycle(deps);
+    const r2 = await runFollowCycle(deps);
+    expect(r2.opened).toBe(0);
+    const rows = db
+      .prepare("SELECT 1 FROM follow_positions WHERE strategy_id = ?")
+      .all(rev);
+    expect(rows).toHaveLength(1);
+    db.close();
+  });
+
+  it("meta 缺失 → 反向档 fail-closed 弃权,同轮正向档照常开(缺失≠已结算)", async () => {
+    const db = openDb(":memory:");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { fwd, rev } = insertPair(db);
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: whaleTrades() }),
+      getSmart: smart,
+      fetchPrice: priceByAsset,
+      getMeta: async () => ({}), // meta 拿不到:正向视为「状态未知」照开,反向翻不了边
+      nowSec: 1800,
+    });
+    expect(r.opened).toBe(1);
+    expect(
+      db
+        .prepare("SELECT 1 FROM follow_positions WHERE strategy_id = ?")
+        .all(fwd),
+    ).toHaveLength(1);
+    expect(
+      db
+        .prepare("SELECT 1 FROM follow_positions WHERE strategy_id = ?")
+        .all(rev),
+    ).toHaveLength(0);
+    // 弃权必须留痕且带原因(调试第一问:反向档这轮为什么没开)。
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("反向"));
+    logSpy.mockRestore();
+    db.close();
+  });
+
+  it("3-way 市场 → 反向档弃权(「买对面」不良定义),正向档不受影响", async () => {
+    const db = openDb(":memory:");
+    const { fwd, rev } = insertPair(db);
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: whaleTrades() }),
+      getSmart: smart,
+      fetchPrice: priceByAsset,
+      getMeta: async () => ({
+        c1: rmeta({
+          outcomes: ["A", "B", "C"],
+          outcomePrices: [0.5, 0.3, 0.2],
+          clobTokenIds: ["tok", "t2", "t3"],
+        }),
+      }),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBe(1);
+    expect(
+      db
+        .prepare("SELECT 1 FROM follow_positions WHERE strategy_id = ?")
+        .all(fwd),
+    ).toHaveLength(1);
+    expect(
+      db
+        .prepare("SELECT 1 FROM follow_positions WHERE strategy_id = ?")
+        .all(rev),
+    ).toHaveLength(0);
     db.close();
   });
 });
