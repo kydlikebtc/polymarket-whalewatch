@@ -752,23 +752,100 @@ export function EdgeMatrixTable({
                         {fmtSignedPt(cell.edge)}
                       </span>
                     )}
-                    {/* 三指标并列(2026-08-13 用户定向「表里呈现收益、
-                        胜率和跑赢定价」):edge 大字在上,胜率 · 落袋 ·
-                        仓数一行小字 —— 理解与横比不再依赖悬停。 */}
+                    {/* 三指标竖排(2026-08-13 两轮:先按用户定向加进胜率/
+                        落袋,单行拼串把列宽撑到横向滚动、用户反馈「挤在
+                        一起」—— 改成 edge / 胜率·仓数 / 落袋 三行竖排,
+                        列宽回落到表头文字量级,8 列赛道不再挤爆。 */}
                     <div className="kpi-sub mono">
-                      {cell.winRate == null ? "—" : fmtPct0(cell.winRate)}
-                      <span> · </span>
+                      {cell.winRate == null ? "—" : fmtPct0(cell.winRate)} ·{" "}
+                      {cell.n} 仓
+                    </div>
+                    <div className="kpi-sub mono">
                       <span className={pnlTextClass(cell.realized)}>
                         {fmtSignedUsd(cell.realized)}
                       </span>
-                      <span> · </span>
-                      {cell.n} 仓
                     </div>
                   </td>
                 );
               })}
             </tr>
           ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* --------------------------------------------------- track stat table */
+
+/**
+ * 赛道竖排统计表(2026-08-13:详情弹窗里「1 行 × N 赛道宽格」的横排矩阵
+ * 在弹窗宽度下必然横向滚动、三指标挤成一团 —— 单策略场景转置成
+ * 「每赛道一行 × 5 窄列」:竖向扫读、横向对比,任何宽度都不挤。页面级
+ * 多策略透视仍用 EdgeMatrixTable 的矩阵形态,两种场景两种形状)。
+ * 行序沿用矩阵列序(全体样本降序);n<阈值整行弱化。
+ */
+function TrackStatTable({ rows }: { rows: DeepAnalysisRow[] }) {
+  const matrix = buildEdgeMatrix([{ id: 1, name: "本策略", positions: rows }]);
+  const items = matrix.tracks
+    .map((t, i) => ({ t, cell: matrix.rows[0].cells[i] }))
+    .filter(
+      (
+        b,
+      ): b is {
+        t: (typeof matrix.tracks)[number];
+        cell: NonNullable<(typeof matrix.rows)[0]["cells"][number]>;
+      } => b.cell != null,
+    );
+  if (items.length === 0) return null;
+  return (
+    <div className="ds-table-wrap">
+      <table className="ds-table">
+        <thead>
+          <tr>
+            <th>赛道</th>
+            <th title="实际胜率 − 隐含胜率(该赛道均入场价)。持续为正才是可复制的优势">
+              edge
+            </th>
+            <th>胜率</th>
+            <th title="该赛道已结算仓的累计已实现盈亏">落袋</th>
+            <th>仓数</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map(({ t, cell }) => {
+            const low = cell.n < BUCKET_LOW_SAMPLE_N;
+            return (
+              <tr
+                key={t.key}
+                style={low ? { opacity: 0.6 } : undefined}
+                title={low ? "样本不足,读数仅供方向参考" : undefined}
+              >
+                <td data-label="赛道">{matrixHeaderLabel(t, matrix.tracks)}</td>
+                <td data-label="edge">
+                  {cell.edge == null ? (
+                    <span className="muted">—</span>
+                  ) : (
+                    <span className={`mono ${pnlTextClass(cell.edge)}`}>
+                      {fmtSignedPt(cell.edge)}
+                    </span>
+                  )}
+                </td>
+                <td data-label="胜率" className="mono">
+                  {cell.winRate == null ? "—" : fmtPct0(cell.winRate)}
+                </td>
+                <td data-label="落袋">
+                  <span className={`mono ${pnlTextClass(cell.realized)}`}>
+                    {fmtSignedUsd(cell.realized)}
+                  </span>
+                </td>
+                <td data-label="仓数" className="mono">
+                  {cell.n}
+                  {low ? <span className="muted"> · 不足</span> : null}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -1558,12 +1635,10 @@ export function DeepAnalysisPanel({
         hint="横轴 = 隐含胜率(该赛道均入场价,市场定价),纵轴 = 实际胜率;对角线为盈亏平衡 —— 气泡在上方 = 跑赢定价(edge>0)。气泡颜色 = 落袋盈亏(绿 = 赚、红 = 亏),大小 = 仓数,样本 <5 虚线描边。颜色可能与所在区域不同号 —— 位置讲 edge、颜色讲钱(如负 edge 的赛道靠低赔率大赔付仍小幅盈利);下表并列胜率/落袋/edge 三指标,方便逐赛道横比"
       >
         <TrackBubbles rows={rows} />
+        {/* 竖排转置表(每赛道一行 × 5 窄列),不是页面级的横排矩阵 ——
+            弹窗宽度装不下「1 行 × N 赛道宽格」,见 TrackStatTable 注释。 */}
         <div style={{ marginTop: "var(--s-3)" }}>
-          <EdgeMatrixTable
-            matrix={buildEdgeMatrix([
-              { id: 1, name: "本策略", positions: rows },
-            ])}
-          />
+          <TrackStatTable rows={rows} />
         </div>
       </Block>
 
