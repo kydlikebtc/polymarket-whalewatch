@@ -383,24 +383,23 @@ describe("computeTimeTicks — 净值曲线 x 轴时间刻度(EquityCurve/放大
 });
 
 // ---------------------------------------------------------------------------
-// 净值曲线多策略叠加的线型 × 颜色组合表(2026-08 第 13 档「逆势少数边」上线
-// 时从 4×3=12 扩到 4×4=16)。四条必测(对应 STRATEGY_STROKES 字段注释里
-// 写明的两条既有性质 + 这次扩容新加的两条):
-//   1. 相邻下标线型必不同(色盲友好,COLORS 外层/DASHES 内层展开的直接后果)
-//   2. 颜色不含 up/down 语义色(绿/红是盈亏语义,不能被线条颜色借用)
-//   3. 非实线的 dash 模式至少有一段足够长的"on"笔画(不会在阶梯图短线段上
-//      视觉消失)
-//   4. strokeOverflowCount 正确反映"超出组合表容量的策略数"——超容量后
-//      app/follow/page.tsx 靠这个值 console.warn,数值算错等于报警失效
+// 净值曲线多策略叠加的线型 × 颜色组合表(2026-08-13 重做:线上 13 档同屏,
+// 旧 4 色 × 4 线型把近半的线涂成近黑/深灰系,用户截图反馈「糊成黑色毛线团」
+// —— 色相才是同屏多线的第一区分通道,线型在密集折线上几乎不可辨)。新契约:
+//   1. 独立色相优先:前 STRATEGY_COLORS.length(≥13,覆盖当前全部策略)条
+//      全部实线且颜色两两不同 —— DASHES 外层/COLORS 内层展开的直接后果
+//   2. 色相耗尽后才启用线型:同色的两条(i 与 i+COLORS.length)线型必不同
+//   3. 颜色不含 up/down 语义 token,字面色也不落语义色相带(绿 140-170/
+//      红 0-40)—— 盈亏语义不能被线条颜色借用
+//   4. 非实线 dash 至少一段 >=7px 的 on 笔画(短线段上不消失)
+//   5. strokeOverflowCount 正确反映超容量档数(page.tsx 靠它 console.warn)
 // ---------------------------------------------------------------------------
 describe("strokeFor / STRATEGY_STROKES — 净值曲线线型 × 颜色组合表", () => {
-  it("组合数 = 颜色数 × 线型数(当前 4 色 × 4 线型 = 16)", () => {
-    expect(STRATEGY_COLORS).toHaveLength(4);
-    expect(STRATEGY_DASHES).toHaveLength(4);
+  it("色相数 ≥13(当前全部策略各占独立色相),组合数 = 线型 × 颜色", () => {
+    expect(STRATEGY_COLORS.length).toBeGreaterThanOrEqual(13);
     expect(STRATEGY_STROKES).toHaveLength(
       STRATEGY_COLORS.length * STRATEGY_DASHES.length,
     );
-    expect(STRATEGY_STROKES).toHaveLength(16);
   });
 
   it("容量内的组合两两不重复(dash+color 组合唯一,不存在两个策略天生撞成同一条线)", () => {
@@ -408,15 +407,29 @@ describe("strokeFor / STRATEGY_STROKES — 净值曲线线型 × 颜色组合表
     expect(new Set(keys).size).toBe(STRATEGY_STROKES.length);
   });
 
-  it("相邻下标(i, i+1)线型必不同 —— 色盲用户不能只靠色相分辨相邻两条线", () => {
-    for (let i = 0; i < STRATEGY_STROKES.length - 1; i++) {
-      expect(STRATEGY_STROKES[i].dash).not.toBe(STRATEGY_STROKES[i + 1].dash);
+  it("前 COLORS.length 条全部实线且颜色两两不同 —— 当前 13 档每档独立色相,不再靠线型硬分", () => {
+    const head = STRATEGY_STROKES.slice(0, STRATEGY_COLORS.length);
+    for (const s of head) expect(s.dash).toBeUndefined();
+    expect(new Set(head.map((s) => s.color)).size).toBe(head.length);
+  });
+
+  it("同色配对(i 与 i+COLORS.length)线型必不同 —— 色相回用时靠线型兜底区分", () => {
+    const n = STRATEGY_COLORS.length;
+    for (let i = 0; i + n < STRATEGY_STROKES.length; i++) {
+      expect(STRATEGY_STROKES[i].color).toBe(STRATEGY_STROKES[i + n].color);
+      expect(STRATEGY_STROKES[i].dash).not.toBe(STRATEGY_STROKES[i + n].dash);
     }
   });
 
-  it("颜色不含 up/down 语义色 token(绿/红是盈亏语义,图例数字已经用了这两色)", () => {
+  it("颜色不含 up/down 语义 token;字面 oklch 色相不落绿(140-170)/红(≤40)语义带", () => {
     for (const color of STRATEGY_COLORS) {
       expect(color).not.toMatch(/--up-|--down-/);
+      const m = color.match(/oklch\([^)]*\s(\d+(?:\.\d+)?)\)/);
+      if (m) {
+        const hue = Number(m[1]);
+        expect(hue > 40).toBe(true);
+        expect(hue < 140 || hue > 170).toBe(true);
+      }
     }
   });
 
@@ -429,12 +442,13 @@ describe("strokeFor / STRATEGY_STROKES — 净值曲线线型 × 颜色组合表
     }
   });
 
-  it("strokeFor 按 i % 容量 回绕:第 17 个(i=16)与第 1 个(i=0)取到完全相同的组合", () => {
-    expect(strokeFor(16)).toEqual(strokeFor(0));
-    expect(strokeFor(17)).toEqual(strokeFor(1));
+  it("strokeFor 按 i % 容量 回绕:第 容量+1 个与第 1 个取到完全相同的组合", () => {
+    const cap = STRATEGY_STROKES.length;
+    expect(strokeFor(cap)).toEqual(strokeFor(0));
+    expect(strokeFor(cap + 1)).toEqual(strokeFor(1));
   });
 
-  it("strokeFor 在容量之内(0..15)逐个不同 —— 与上面「两两不重复」断言互相印证", () => {
+  it("strokeFor 在容量之内逐个不同 —— 与上面「两两不重复」断言互相印证", () => {
     const seen = new Set<string>();
     for (let i = 0; i < STRATEGY_STROKES.length; i++) {
       const s = strokeFor(i);
@@ -444,11 +458,12 @@ describe("strokeFor / STRATEGY_STROKES — 净值曲线线型 × 颜色组合表
   });
 
   it("strokeOverflowCount:未超容量(含恰好用满)返回 0,超出返回超出的档数", () => {
+    const cap = STRATEGY_STROKES.length;
     expect(strokeOverflowCount(0)).toBe(0);
     expect(strokeOverflowCount(13)).toBe(0); // 当前实际启用的策略数,留有余量
-    expect(strokeOverflowCount(16)).toBe(0); // 恰好用满容量,不算超出
-    expect(strokeOverflowCount(17)).toBe(1);
-    expect(strokeOverflowCount(20)).toBe(4);
+    expect(strokeOverflowCount(cap)).toBe(0); // 恰好用满容量,不算超出
+    expect(strokeOverflowCount(cap + 1)).toBe(1);
+    expect(strokeOverflowCount(cap + 4)).toBe(4);
   });
 });
 
