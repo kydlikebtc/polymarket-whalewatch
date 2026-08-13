@@ -18,9 +18,8 @@ import {
   type ReactNode,
 } from "react";
 import { Icon, Modal, Segmented, Tag } from "../ui";
-import { DeepAnalysisPanel } from "./DeepAnalysis";
-import { catLabel, catLabelFine } from "../../lib/categoryLabel";
-import { buildEdgeMatrix, type EdgeMatrix } from "../../lib/followInsights";
+import { DeepAnalysisPanel, EdgeMatrixTable } from "./DeepAnalysis";
+import { buildEdgeMatrix } from "../../lib/followInsights";
 import { BUCKET_LOW_SAMPLE_N } from "../../lib/followAnalysis";
 import { useCurrentPrices } from "../useCurrentPrices";
 import {
@@ -183,6 +182,10 @@ const FILTER_ALL = 0;
 // 约定(该文件是本仓库目前唯一在用 localStorage 的先例)。
 type ViewMode = "card" | "list";
 const VIEW_MODE_KEY = "ww_follow_view";
+
+// 首页三个数据区(净值曲线/优势矩阵/仓位明细)的副 tab(2026-08-13 收敛,
+// 见 FollowPage 渲染处注释)。会话级状态,不持久化。
+type CenterTab = "curve" | "matrix" | "positions";
 
 /* --------------------------------------------------------------- format */
 
@@ -3199,129 +3202,50 @@ const CROSS_TIER_CAVEAT =
 
 /* ---------------------------------------------------- edge matrix */
 
-// edge 的百分点标注(+12pt/−5pt),与 DeepAnalysis 同名函数刻意重复声明
-// (本仓库客户端文件各自持有轻量格式化函数的既有惯例)。
-function fmtSignedPtLocal(r: number): string {
-  const pt = Math.round(Math.abs(r) * 100);
-  return `${r < 0 ? MINUS : "+"}${pt}pt`;
-}
-
 /**
- * 赛道 × 策略优势矩阵(2026-08-13,设计见
- * docs/plans/2026-08-13-edge-matrix-diagnosis-design.md §2)。行 = 「全部
- * (聚合)」+ 有结算仓的策略;列 = 数据里实际出现的细赛道,按全体样本数
- * 降序 —— 新档位设计的选题池:哪类信号在哪个赛道有 edge、样本厚不厚,
- * 一屏看完。格子 = edge(实际胜率 − 段内均入场价)+ n;n<阈值半透明,
- * 零仓「—」。列数超宽走 ds-table-wrap 横向滚动(全站宽表既有 fallback)。
+ * 「优势矩阵」副 tab 的内容体(表格本身在 app/follow/DeepAnalysis.tsx 的
+ * EdgeMatrixTable —— 详情弹窗「赛道 edge 对照」块与此共用同一份呈现)。
+ * 行 = 「全部(聚合)」+ 有结算仓的策略;列 = 细赛道按全体样本数降序 ——
+ * 新档位设计的选题池。设计见
+ * docs/plans/2026-08-13-edge-matrix-diagnosis-design.md §2。
  */
-function EdgeMatrixSection({ shown }: { shown: FollowStrategyView[] }) {
+function EdgeMatrixBody({ shown }: { shown: FollowStrategyView[] }) {
   const withSettled = shown.filter((s) => s.settled.length > 0);
-  if (withSettled.length === 0) return null;
-  const matrix: EdgeMatrix = buildEdgeMatrix([
-    // 聚合伪策略行:id 用 FILTER_ALL(0,策略 id 从 1 起永不相撞)。跨档
-    // 重复下注口径与仓位明细「全部策略」同一声明,见下方 hint。
-    {
-      id: FILTER_ALL,
-      name: "全部",
-      positions: shown.flatMap((s) => [...s.open, ...s.settled]),
-    },
-    ...withSettled.map((s) => ({
-      id: s.id,
-      name: s.name,
-      positions: [...s.open, ...s.settled],
-    })),
-  ]);
-  if (matrix.tracks.length === 0) return null;
-
-  // 「未细分」消歧:同一级下另有带二级的列时,无二级列标注「体育·未细分」;
-  // 该一级只有一列时直接「体育」(不引入没有区分作用的后缀)。
-  const headerLabel = (t: EdgeMatrix["tracks"][number]): string => {
-    if (t.subcategory) return catLabelFine(t.category, t.subcategory);
-    const hasSubbedSibling = matrix.tracks.some(
-      (o) => o.category === t.category && o.subcategory,
-    );
-    return hasSubbedSibling
-      ? `${catLabel(t.category)}·未细分`
-      : catLabel(t.category);
-  };
-
-  return (
-    <section style={{ marginBottom: "var(--s-5)" }}>
-      <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
-        赛道 × 策略优势矩阵
+  const matrix =
+    withSettled.length > 0
+      ? buildEdgeMatrix([
+          // 聚合伪策略行:id 用 FILTER_ALL(0,策略 id 从 1 起永不相撞)。
+          {
+            id: FILTER_ALL,
+            name: "全部",
+            positions: shown.flatMap((s) => [...s.open, ...s.settled]),
+          },
+          ...withSettled.map((s) => ({
+            id: s.id,
+            name: s.name,
+            positions: [...s.open, ...s.settled],
+          })),
+        ])
+      : null;
+  if (!matrix || matrix.tracks.length === 0) {
+    // 副 tab 被选中却空手而归会像坏了 —— 给明确的空态,不是返回 null。
+    return (
+      <div className="ds-empty">
+        暂无已结算仓位 — 有仓位结算后这里会给出「哪类信号在哪个赛道有
+        edge」的透视矩阵
       </div>
+    );
+  }
+  return (
+    <>
       <div className="ds-hint" style={{ marginBottom: "var(--s-2)" }}>
         格子 = edge(实际胜率 − 该格均入场价的隐含胜率,已结算口径)与仓数;
         绿正红负,样本 &lt;{BUCKET_LOW_SAMPLE_N} 仓的格子淡显 ·
         列按全体样本数降序 —— 新档位设计的选题池。「全部」行为跨档聚合,
         多档会跟进同一信号,样本含重复下注
       </div>
-      <div className="ds-table-wrap">
-        <table className="ds-table">
-          <thead>
-            <tr>
-              <th>策略</th>
-              {matrix.tracks.map((t) => (
-                <th key={t.key} title={`全体样本 ${t.totalN} 仓`}>
-                  {headerLabel(t)}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {matrix.rows.map((r) => (
-              <tr key={r.id}>
-                <td data-label="策略">
-                  {r.name}
-                  {r.id === FILTER_ALL ? (
-                    <>
-                      {" "}
-                      <span className="ds-tag">聚合</span>
-                    </>
-                  ) : null}
-                </td>
-                {r.cells.map((cell, i) => {
-                  const t = matrix.tracks[i];
-                  if (!cell) {
-                    return (
-                      <td key={t.key} data-label={headerLabel(t)}>
-                        <span className="muted">—</span>
-                      </td>
-                    );
-                  }
-                  const low = cell.n < BUCKET_LOW_SAMPLE_N;
-                  const tip =
-                    `${r.name} × ${headerLabel(t)}:${cell.n} 仓 ` +
-                    `${cell.wins}胜${cell.losses}负${cell.pushes > 0 ? `${cell.pushes}平` : ""},` +
-                    (cell.winRate != null && cell.avgEntry != null
-                      ? `胜率 ${Math.round(cell.winRate * 100)}% vs 隐含 ${Math.round(cell.avgEntry * 100)}%,`
-                      : "") +
-                    `落袋 ${fmtSignedUsd(cell.realized)}` +
-                    (low ? ";样本不足,读数仅供方向参考" : "");
-                  return (
-                    <td
-                      key={t.key}
-                      data-label={headerLabel(t)}
-                      title={tip}
-                      style={low ? { opacity: 0.55 } : undefined}
-                    >
-                      {cell.edge == null ? (
-                        <span className="muted">—</span>
-                      ) : (
-                        <span className={`mono ${pnlTone(cell.edge)}`}>
-                          {fmtSignedPtLocal(cell.edge)}
-                        </span>
-                      )}
-                      <div className="kpi-sub mono">{cell.n} 仓</div>
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
+      <EdgeMatrixTable matrix={matrix} aggregateId={FILTER_ALL} />
+    </>
   );
 }
 
@@ -3338,6 +3262,8 @@ export default function FollowPage() {
   // 面板内会声明重复下注口径)。每档策略自己的深度分析在详情弹窗的
   // 「深度分析」tab,两个入口共用同一个 DeepAnalysisPanel 组件。
   const [analysisOpen, setAnalysisOpen] = useState(false);
+  // 三个数据区的副 tab,默认净值曲线(保持旧版首屏第一眼不变)。
+  const [centerTab, setCenterTab] = useState<CenterTab>("curve");
   // 结算净值曲线的族开关(改版 Task 4):默认全开。FamilyKey 是固定的小
   // 枚举,不像 stratFilter 那样需要在渲染期核对"选中的还存在吗"——某族
   // 当前没有策略只是不渲染对应按钮,Set 里留着那个 key 不会造成任何问题。
@@ -3458,7 +3384,6 @@ export default function FollowPage() {
   const openRows: LabeledRow[] = shown.flatMap((s) =>
     s.open.map((p) => ({ ...p, strategyName: s.name })),
   );
-
   // 策略筛选:渲染期派生「有效筛选值」而非 setState —— 选中的策略可能在下一次
   // 刷新后消失(被停用),此时静默回退「全部」,不在 render 里改状态。
   const effFilter = shown.some((s) => s.id === stratFilter)
@@ -3697,132 +3622,166 @@ export default function FollowPage() {
             </section>
           )}
 
-          {/* 结算净值阶梯曲线:族开关放卡片外(与"仓位明细"节的 Segmented
-              筛选行同一位置约定),曲线卡片本身只管画图。 */}
-          <section style={{ marginBottom: "var(--s-5)" }}>
-            <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-              结算净值曲线(累计已实现盈亏 · 实线/虚线区分策略)
-            </div>
-            <FamilyToggles
-              groups={groups}
-              active={activeFamilies}
-              onToggle={toggleFamily}
-            />
-            <div className="ds-card" style={{ padding: "var(--s-4)" }}>
-              <EquityCurve series={visibleSeries} />
-            </div>
-          </section>
-
-          {/* 赛道 × 策略优势矩阵:位于净值曲线(每档的整体走势)与仓位
-              明细(每仓原始行)之间的中观层 —— 「哪类信号在哪个赛道有
-              edge」。无结算仓时组件自身返回 null,不占位。 */}
-          <EdgeMatrixSection shown={shown} />
-
-          {/* 仓位明细:已结算/持有中 tab 切换 + 按策略筛选(计数随筛选联动) */}
+          {/* 三个数据区(净值曲线/优势矩阵/仓位明细)收敛为副 tab
+              (2026-08-13,用户定向):此前三块纵向堆叠,首屏要滚很久才到
+              仓位明细;三块回答的是同一批仓位的三个视角(走势/赛道透视/
+              原始行),互斥切换比并排铺开更贴合阅读方式。默认停在净值
+              曲线 —— 保持旧版首屏第一眼看到的东西不变。tab 状态不持久化:
+              这是"本次会话看到哪了",不是长期偏好(与详情弹窗 tab 同一
+              裁决,区别于卡片/列表视图的 localStorage)。 */}
           <section>
-            <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-              仓位明细
+            <Segmented<CenterTab>
+              ariaLabel="数据区切换"
+              className="ds-segmented--wrap"
+              options={[
+                { label: "结算净值曲线", value: "curve" },
+                { label: "赛道 × 策略优势矩阵", value: "matrix" },
+                {
+                  label: `仓位明细(${shownSettled.length + shownOpen.length})`,
+                  value: "positions",
+                },
+              ]}
+              value={centerTab}
+              onChange={setCenterTab}
+            />
+            <div style={{ marginTop: "var(--s-3)" }}>
+              {centerTab === "curve" ? (
+                <>
+                  {/* 结算净值阶梯曲线:族开关放卡片外(既有约定),曲线卡片
+                      本身只管画图。原区块标题降级为 hint —— tab 标签已经
+                      承担了"这是什么"的职责。 */}
+                  <div
+                    className="ds-hint"
+                    style={{ marginBottom: "var(--s-2)" }}
+                  >
+                    累计已实现盈亏 · 实线/虚线区分策略
+                  </div>
+                  <FamilyToggles
+                    groups={groups}
+                    active={activeFamilies}
+                    onToggle={toggleFamily}
+                  />
+                  <div className="ds-card" style={{ padding: "var(--s-4)" }}>
+                    <EquityCurve series={visibleSeries} />
+                  </div>
+                </>
+              ) : centerTab === "matrix" ? (
+                <EdgeMatrixBody shown={shown} />
+              ) : (
+                <PositionsTabBody />
+              )}
             </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "var(--s-3)",
-                flexWrap: "wrap",
-                marginBottom: "var(--s-2)",
-              }}
-            >
-              <Segmented<PosTab>
-                ariaLabel="仓位状态"
-                options={[
-                  {
-                    label: `已结算 · 落袋(${shownSettled.length})`,
-                    value: "settled",
-                  },
-                  {
-                    label: `持有中 · 待结算(${shownOpen.length})`,
-                    value: "open",
-                  },
-                ]}
-                value={posTab}
-                onChange={setPosTab}
-              />
-              {/* 只有一条策略时筛选没有意义,不渲染。12 档上限时这里最多
-                  13 个胶囊(全部策略 + 12 档,含「早期赢家跟投」这种 6 字
-                  策略名),桌面宽度下会超出页面 max-width:1180px 的容器——
-                  用 ds-segmented--wrap 修饰类换行,不改共享基类(见
-                  globals.css 该类注释)。 */}
-              {shown.length >= 2 ? (
-                <Segmented<number>
-                  ariaLabel="按策略筛选仓位"
-                  className="ds-segmented--wrap"
-                  options={[
-                    { label: "全部策略", value: FILTER_ALL },
-                    ...shown.map((s) => ({ label: s.name, value: s.id })),
-                  ]}
-                  value={effFilter}
-                  onChange={setStratFilter}
-                />
-              ) : null}
-              {posTab === "open" ? (
-                <span className="ds-hint">不显示浮盈</span>
-              ) : null}
-              {/* 深度分析(页面级入口):分析对象 = 当前策略筛选下的全部
-                  仓位。按钮放筛选行末端 —— 它消费的就是这行筛出来的集合,
-                  语义同组;选中某一档时与详情弹窗「深度分析」tab 内容一致,
-                  选「全部策略」时是跨档聚合(详情弹窗给不了的视角)。 */}
-              <button
-                type="button"
-                className="ds-btn"
-                onClick={() => setAnalysisOpen(true)}
-                title="对当前筛选的全部历史下注做六维度可视化分析:下注质量 · 赔率带校准 · 盈亏分布 · 时间走势 · 持有时长 · 赛道细分"
-              >
-                深度分析
-                {filterName ? `(${filterName})` : "(全部策略)"}
-              </button>
-            </div>
-            <Modal
-              open={analysisOpen}
-              onClose={() => setAnalysisOpen(false)}
-              title={`深度分析 · ${filterName ?? "全部策略"}`}
-              width={DETAIL_DIALOG_WIDTH}
-              padding="var(--s-4, 16px) var(--s-6, 24px)"
-            >
-              {/* 全部策略聚合时声明重复下注口径:各档持仓大面积重叠(见
-                  CROSS_TIER_CAVEAT),聚合样本把同一信号在多档下的仓各算
-                  一笔 —— 这在「每档是独立纸面账户」的语义下成立,但读者
-                  必须知道样本不独立。 */}
-              <DeepAnalysisPanel
-                rows={[...byFilter(settledRows), ...byFilter(openRows)]}
-                scopeNote={
-                  effFilter === FILTER_ALL && shown.length >= 2
-                    ? "全部策略聚合:多档会跟进同一信号,样本含跨档重复下注,不是相互独立的下注"
-                    : undefined
-                }
-              />
-            </Modal>
-            {posTab === "settled" ? (
-              <SettledTable
-                rows={shownSettled}
-                emptyText={
-                  filterName
-                    ? `「${filterName}」策略尚无已结算的纸面仓位`
-                    : undefined
-                }
-              />
-            ) : (
-              <OpenTable
-                rows={shownOpen}
-                emptyText={
-                  filterName
-                    ? `「${filterName}」策略当前没有持仓中的纸面仓位`
-                    : undefined
-                }
-              />
-            )}
           </section>
         </>
       )}
     </main>
   );
+
+  // 仓位明细 tab 体:已结算/持有中切换 + 按策略筛选 + 深度分析入口。
+  // 提成局部函数(非顶层组件)是因为它闭包引用了 FollowPage 的一大把
+  // state/派生值(posTab/stratFilter/shownSettled/analysisOpen…),提顶层
+  // 要穿十来个 prop;而它不含任何 hook,作为渲染函数每次重算是安全的。
+  function PositionsTabBody() {
+    return (
+      <>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--s-3)",
+            flexWrap: "wrap",
+            marginBottom: "var(--s-2)",
+          }}
+        >
+          <Segmented<PosTab>
+            ariaLabel="仓位状态"
+            options={[
+              {
+                label: `已结算 · 落袋(${shownSettled.length})`,
+                value: "settled",
+              },
+              {
+                label: `持有中 · 待结算(${shownOpen.length})`,
+                value: "open",
+              },
+            ]}
+            value={posTab}
+            onChange={setPosTab}
+          />
+          {/* 只有一条策略时筛选没有意义,不渲染。12 档上限时这里最多
+                  13 个胶囊(全部策略 + 12 档,含「早期赢家跟投」这种 6 字
+                  策略名),桌面宽度下会超出页面 max-width:1180px 的容器——
+                  用 ds-segmented--wrap 修饰类换行,不改共享基类(见
+                  globals.css 该类注释)。 */}
+          {shown.length >= 2 ? (
+            <Segmented<number>
+              ariaLabel="按策略筛选仓位"
+              className="ds-segmented--wrap"
+              options={[
+                { label: "全部策略", value: FILTER_ALL },
+                ...shown.map((s) => ({ label: s.name, value: s.id })),
+              ]}
+              value={effFilter}
+              onChange={setStratFilter}
+            />
+          ) : null}
+          {posTab === "open" ? (
+            <span className="ds-hint">不显示浮盈</span>
+          ) : null}
+          {/* 深度分析(页面级入口):分析对象 = 当前策略筛选下的全部
+                  仓位。按钮放筛选行末端 —— 它消费的就是这行筛出来的集合,
+                  语义同组;选中某一档时与详情弹窗「深度分析」tab 内容一致,
+                  选「全部策略」时是跨档聚合(详情弹窗给不了的视角)。 */}
+          <button
+            type="button"
+            className="ds-btn"
+            onClick={() => setAnalysisOpen(true)}
+            title="对当前筛选的全部历史下注做六维度可视化分析:下注质量 · 赔率带校准 · 盈亏分布 · 时间走势 · 持有时长 · 赛道细分"
+          >
+            深度分析
+            {filterName ? `(${filterName})` : "(全部策略)"}
+          </button>
+        </div>
+        <Modal
+          open={analysisOpen}
+          onClose={() => setAnalysisOpen(false)}
+          title={`深度分析 · ${filterName ?? "全部策略"}`}
+          width={DETAIL_DIALOG_WIDTH}
+          padding="var(--s-4, 16px) var(--s-6, 24px)"
+        >
+          {/* 全部策略聚合时声明重复下注口径:各档持仓大面积重叠(见
+                  CROSS_TIER_CAVEAT),聚合样本把同一信号在多档下的仓各算
+                  一笔 —— 这在「每档是独立纸面账户」的语义下成立,但读者
+                  必须知道样本不独立。 */}
+          <DeepAnalysisPanel
+            rows={[...byFilter(settledRows), ...byFilter(openRows)]}
+            scopeNote={
+              effFilter === FILTER_ALL && shown.length >= 2
+                ? "全部策略聚合:多档会跟进同一信号,样本含跨档重复下注,不是相互独立的下注"
+                : undefined
+            }
+          />
+        </Modal>
+        {posTab === "settled" ? (
+          <SettledTable
+            rows={shownSettled}
+            emptyText={
+              filterName
+                ? `「${filterName}」策略尚无已结算的纸面仓位`
+                : undefined
+            }
+          />
+        ) : (
+          <OpenTable
+            rows={shownOpen}
+            emptyText={
+              filterName
+                ? `「${filterName}」策略当前没有持仓中的纸面仓位`
+                : undefined
+            }
+          />
+        )}
+      </>
+    );
+  }
 }

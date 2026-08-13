@@ -9,7 +9,7 @@
 // 口径红线(与整页一致,面板头部向读者声明):已结算纸面口径、push 不进
 // 胜率分母、小样本读数弱化/置 —,绝不硬算。
 
-import type { CSSProperties, ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import {
   analyzeBets,
   BUCKET_LOW_SAMPLE_N,
@@ -20,8 +20,10 @@ import {
 } from "../../lib/followAnalysis";
 import { catLabel, catLabelFine, subLabel } from "../../lib/categoryLabel";
 import {
+  buildEdgeMatrix,
   diagnoseSegments,
   type DiagnosedSegment,
+  type EdgeMatrix,
 } from "../../lib/followInsights";
 import { LOW_SAMPLE_THRESHOLD } from "../../lib/followCardView";
 
@@ -303,6 +305,10 @@ const STRIP_ROW_PX = 9;
 const STRIP_MAX_H = 150;
 
 function DotStrip({ rows }: { rows: DeepAnalysisRow[] }) {
+  // 选中读数:与 WeeklyBars/Sparkline 同一套交互(悬停/Tab 聚焦 → 图上方
+  // 信息条),读数含市场标题 —— title 悬停触屏读不到,信息条是第一公民。
+  // useState 在空数据提前 return 之前(Hooks 规则)。
+  const [sel, setSel] = useState<DeepAnalysisRow | null>(null);
   const settled = rows.filter((r) => r.status === "settled");
   if (settled.length === 0) return null;
   const vals = settled.map((r) => r.realized_pnl ?? 0);
@@ -343,75 +349,120 @@ function DotStrip({ rows }: { rows: DeepAnalysisRow[] }) {
         baseY - STRIP_DOT_R - k * STRIP_ROW_PX,
       );
       dots.push(
-        <circle
-          key={`${r.entry_ts}-${r.exit_ts}-${k}-${v}`}
-          cx={x(v)}
-          cy={cy}
-          r={STRIP_DOT_R}
-          fill={v === 0 ? "var(--n-400)" : pnlColor(v)}
-          fillOpacity={0.85}
-        >
-          <title>{(r.title ? `${r.title} · ` : "") + fmtSignedUsd(v)}</title>
-        </circle>,
+        <g key={`${r.entry_ts}-${r.exit_ts}-${k}-${v}`}>
+          <circle
+            cx={x(v)}
+            cy={cy}
+            r={STRIP_DOT_R}
+            fill={v === 0 ? "var(--n-400)" : pnlColor(v)}
+            fillOpacity={sel === r ? 1 : 0.85}
+            stroke={sel === r ? "var(--n-700)" : "none"}
+            strokeWidth={sel === r ? 1.5 : 0}
+          >
+            <title>{(r.title ? `${r.title} · ` : "") + fmtSignedUsd(v)}</title>
+          </circle>
+          {/* 放大的透明命中圆(Sparkline 同手法):4px 点太小,鼠标/触屏都
+              难精确点中;命中圆挂全部交互事件,可视点只负责画。 */}
+          <circle
+            cx={x(v)}
+            cy={cy}
+            r={STRIP_DOT_R + 5}
+            fill="transparent"
+            tabIndex={0}
+            aria-label={(r.title ? `${r.title},` : "") + fmtSignedUsd(v)}
+            style={{ cursor: "pointer" }}
+            onMouseEnter={() => setSel(r)}
+            onMouseLeave={() => setSel(null)}
+            onFocus={() => setSel(r)}
+            onBlur={() => setSel(null)}
+          />
+        </g>,
       );
     });
   }
 
+  const selPnl = sel ? (sel.realized_pnl ?? 0) : 0;
   return (
-    <svg
-      viewBox={`0 0 ${STRIP_W} ${h}`}
-      width="100%"
-      role="img"
-      aria-label="单仓盈亏分布散点带"
-      style={{ display: "block" }}
-    >
-      {/* 基线 + 零轴(0 落在域内时才有意义,域必含 0,恒画)。 */}
-      <line
-        x1={padX}
-        y1={baseY}
-        x2={STRIP_W - padX}
-        y2={baseY}
-        stroke="var(--n-200)"
-      />
-      <line
-        x1={x(0)}
-        y1={6}
-        x2={x(0)}
-        y2={baseY}
-        stroke="var(--n-300)"
-        strokeDasharray="3 3"
-      />
-      {dots}
-      <text
-        x={padX}
-        y={h - 4}
-        fontSize={11}
-        fill="var(--n-500)"
-        fontFamily="var(--font-mono)"
+    <div>
+      <div
+        className="ds-hint"
+        style={{ marginBottom: "var(--s-1)", minHeight: "1.4em" }}
       >
-        {fmtSignedUsd(lo)}
-      </text>
-      <text
-        x={x(0)}
-        y={h - 4}
-        fontSize={11}
-        fill="var(--n-500)"
-        textAnchor="middle"
-        fontFamily="var(--font-mono)"
+        {sel ? (
+          <>
+            {sel.title ? (
+              <>
+                {sel.title}
+                <span className="muted"> · </span>
+              </>
+            ) : null}
+            <span className={`mono ${pnlTextClass(selPnl)}`}>
+              {fmtSignedUsd(selPnl)}
+            </span>
+            <span className="muted"> · 入场 </span>
+            <span className="mono">{cents(sel.entry_price)}</span>
+          </>
+        ) : (
+          <span className="muted">
+            点选或用 Tab 聚焦任意点,查看该仓的市场、盈亏与入场价
+          </span>
+        )}
+      </div>
+      <svg
+        viewBox={`0 0 ${STRIP_W} ${h}`}
+        width="100%"
+        role="img"
+        aria-label="单仓盈亏分布散点带"
+        style={{ display: "block" }}
       >
-        0
-      </text>
-      <text
-        x={STRIP_W - padX}
-        y={h - 4}
-        fontSize={11}
-        fill="var(--n-500)"
-        textAnchor="end"
-        fontFamily="var(--font-mono)"
-      >
-        {fmtSignedUsd(hi)}
-      </text>
-    </svg>
+        {/* 基线 + 零轴(0 落在域内时才有意义,域必含 0,恒画)。 */}
+        <line
+          x1={padX}
+          y1={baseY}
+          x2={STRIP_W - padX}
+          y2={baseY}
+          stroke="var(--n-200)"
+        />
+        <line
+          x1={x(0)}
+          y1={6}
+          x2={x(0)}
+          y2={baseY}
+          stroke="var(--n-300)"
+          strokeDasharray="3 3"
+        />
+        {dots}
+        <text
+          x={padX}
+          y={h - 4}
+          fontSize={11}
+          fill="var(--n-500)"
+          fontFamily="var(--font-mono)"
+        >
+          {fmtSignedUsd(lo)}
+        </text>
+        <text
+          x={x(0)}
+          y={h - 4}
+          fontSize={11}
+          fill="var(--n-500)"
+          textAnchor="middle"
+          fontFamily="var(--font-mono)"
+        >
+          0
+        </text>
+        <text
+          x={STRIP_W - padX}
+          y={h - 4}
+          fontSize={11}
+          fill="var(--n-500)"
+          textAnchor="end"
+          fontFamily="var(--font-mono)"
+        >
+          {fmtSignedUsd(hi)}
+        </text>
+      </svg>
+    </div>
   );
 }
 
@@ -421,6 +472,12 @@ const WEEK_W = 1120;
 const WEEK_H = 170;
 
 function WeeklyBars({ weekly }: { weekly: DeepAnalysis["weekly"] }) {
+  // 选中读数(2026-08-13,用户定向「图表选中后显示对应数字」):与净值走势
+  // Sparkline 的结算点选中完全同一套交互 —— 悬停(onMouseEnter/Leave)与
+  // 键盘 Tab(onFocus/Blur)触发同一个选中态,读数显示在图上方的信息条,
+  // 不藏进 title 悬停(触屏点按走 focus 路径,同样能读到)。useState 必须
+  // 在空数据提前 return 之前(Hooks 规则,Sparkline 同款注释)。
+  const [selIdx, setSelIdx] = useState<number | null>(null);
   if (weekly.length === 0) return null;
   const padL = 16;
   const padR = 16;
@@ -438,57 +495,100 @@ function WeeklyBars({ weekly }: { weekly: DeepAnalysis["weekly"] }) {
   const barW = Math.max(3, Math.min(48, slot * 0.62));
   // x 轴标签抽样:最多 ~8 个,首个恒出。
   const labelStep = Math.max(1, Math.ceil(weekly.length / 8));
+  const sel = selIdx != null ? weekly[selIdx] : null;
   return (
-    <svg
-      viewBox={`0 0 ${WEEK_W} ${WEEK_H}`}
-      width="100%"
-      role="img"
-      aria-label="周度已实现盈亏柱状图"
-      style={{ display: "block" }}
-    >
-      <line
-        x1={padL}
-        y1={zeroY}
-        x2={WEEK_W - padR}
-        y2={zeroY}
-        stroke="var(--n-200)"
-      />
-      {weekly.map((w, i) => {
-        const cx = padL + slot * i + slot / 2;
-        const top = Math.min(zeroY, y(w.realized));
-        const hBar = Math.abs(y(w.realized) - zeroY);
-        return (
-          <g key={w.weekStartTs}>
-            <rect
-              x={cx - barW / 2}
-              y={top}
-              width={barW}
-              // 0 盈亏周画 2px 短桩:与"没有柱"区分(那是没数据,这是结了
-              // 但打平/空周),读者能看出时间轴在走。
-              height={Math.max(hBar, w.settled > 0 ? 2 : 1)}
-              fill={w.settled === 0 ? "var(--n-200)" : pnlColor(w.realized)}
-              fillOpacity={w.settled === 0 ? 0.8 : 0.9}
-            >
-              <title>
-                {`${fmtWeekLabel(w.weekStartTs)} 那周 · ${fmtSignedUsd(w.realized)} · ${w.settled} 仓结算`}
-              </title>
-            </rect>
-            {i % labelStep === 0 ? (
-              <text
-                x={cx}
-                y={WEEK_H - 5}
-                fontSize={11}
-                fill="var(--n-500)"
-                textAnchor="middle"
-                fontFamily="var(--font-mono)"
+    <div>
+      <div
+        className="ds-hint"
+        style={{ marginBottom: "var(--s-1)", minHeight: "1.4em" }}
+      >
+        {sel ? (
+          <>
+            <span className="mono">{fmtWeekLabel(sel.weekStartTs)} 那周</span>
+            <span className="muted"> · </span>
+            <span className={`mono ${pnlTextClass(sel.realized)}`}>
+              {fmtSignedUsd(sel.realized)}
+            </span>
+            <span className="muted"> · </span>
+            <span className="mono">{sel.settled} 仓结算</span>
+          </>
+        ) : (
+          <span className="muted">
+            点选或用 Tab 聚焦任意柱,查看该周的盈亏与结算仓数
+          </span>
+        )}
+      </div>
+      <svg
+        viewBox={`0 0 ${WEEK_W} ${WEEK_H}`}
+        width="100%"
+        role="img"
+        aria-label="周度已实现盈亏柱状图"
+        style={{ display: "block" }}
+      >
+        <line
+          x1={padL}
+          y1={zeroY}
+          x2={WEEK_W - padR}
+          y2={zeroY}
+          stroke="var(--n-200)"
+        />
+        {weekly.map((w, i) => {
+          const cx = padL + slot * i + slot / 2;
+          const top = Math.min(zeroY, y(w.realized));
+          const hBar = Math.abs(y(w.realized) - zeroY);
+          const selected = selIdx === i;
+          return (
+            <g key={w.weekStartTs}>
+              <rect
+                x={cx - barW / 2}
+                y={top}
+                width={barW}
+                // 0 盈亏周画 2px 短桩:与"没有柱"区分(那是没数据,这是结了
+                // 但打平/空周),读者能看出时间轴在走。
+                height={Math.max(hBar, w.settled > 0 ? 2 : 1)}
+                fill={w.settled === 0 ? "var(--n-200)" : pnlColor(w.realized)}
+                fillOpacity={w.settled === 0 ? 0.8 : selected ? 1 : 0.9}
+                stroke={selected ? "var(--n-700)" : "none"}
+                strokeWidth={selected ? 1.5 : 0}
               >
-                {fmtWeekLabel(w.weekStartTs)}
-              </text>
-            ) : null}
-          </g>
-        );
-      })}
-    </svg>
+                <title>
+                  {`${fmtWeekLabel(w.weekStartTs)} 那周 · ${fmtSignedUsd(w.realized)} · ${w.settled} 仓结算`}
+                </title>
+              </rect>
+              {/* 透明命中带:短桩/细柱难点中,整个竖槽都是这根柱的命中区
+                  (与 Sparkline 的放大命中圆同一手法);挂全部交互事件,
+                  可视 rect 只负责画。 */}
+              <rect
+                x={padL + slot * i}
+                y={padT}
+                width={slot}
+                height={innerH}
+                fill="transparent"
+                tabIndex={0}
+                aria-label={`${fmtWeekLabel(w.weekStartTs)} 那周 ${fmtSignedUsd(w.realized)},${w.settled} 仓结算`}
+                style={{ cursor: "pointer" }}
+                onMouseEnter={() => setSelIdx(i)}
+                onMouseLeave={() => setSelIdx(null)}
+                onFocus={() => setSelIdx(i)}
+                onBlur={() => setSelIdx(null)}
+              />
+              {i % labelStep === 0 ? (
+                <text
+                  x={cx}
+                  y={WEEK_H - 5}
+                  fontSize={11}
+                  fill="var(--n-500)"
+                  textAnchor="middle"
+                  fontFamily="var(--font-mono)"
+                >
+                  {fmtWeekLabel(w.weekStartTs)}
+                </text>
+              ) : null}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
   );
 }
 
@@ -559,6 +659,298 @@ function CategoryRows({ c, maxN }: { c: CategoryGroup; maxN: number }) {
         row(`${c.category}|${s.subcategory}`, subLabel(s.subcategory), s, true),
       )}
     </>
+  );
+}
+
+/* -------------------------------------------------------- edge matrix */
+
+// 矩阵列头:「体育·NBA」;同一级下另有带二级列时,无二级列消歧为
+// 「体育·未细分」,否则直接「体育」(不引入没有区分作用的后缀)。
+function matrixHeaderLabel(
+  t: EdgeMatrix["tracks"][number],
+  tracks: EdgeMatrix["tracks"],
+): string {
+  if (t.subcategory) return catLabelFine(t.category, t.subcategory);
+  const hasSubbedSibling = tracks.some(
+    (o) => o.category === t.category && o.subcategory,
+  );
+  return hasSubbedSibling
+    ? `${catLabel(t.category)}·未细分`
+    : catLabel(t.category);
+}
+
+/**
+ * 赛道 edge 矩阵表格(纯呈现,矩阵由调用方 buildEdgeMatrix 好传入)。两个
+ * 消费方:策略中心页「优势矩阵」副 tab(全部+各策略 × 细赛道)与详情弹窗
+ * 深度分析的「赛道 edge 对照」块(本策略 vs 全部两行)。格子 = edge±pt +
+ * n 仓;n<阈值半透明、零仓「—」、全 push 段 edge 为 null 也「—」;
+ * aggregateId 指定哪一行贴「聚合」标(跨档重复下注的那一行)。
+ */
+export function EdgeMatrixTable({
+  matrix,
+  aggregateId,
+}: {
+  matrix: EdgeMatrix;
+  aggregateId?: number;
+}) {
+  if (matrix.tracks.length === 0) return null;
+  return (
+    <div className="ds-table-wrap">
+      <table className="ds-table">
+        <thead>
+          <tr>
+            <th>策略</th>
+            {matrix.tracks.map((t) => (
+              <th key={t.key} title={`全体样本 ${t.totalN} 仓`}>
+                {matrixHeaderLabel(t, matrix.tracks)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {matrix.rows.map((r) => (
+            <tr key={r.id}>
+              <td data-label="策略">
+                {r.name}
+                {aggregateId != null && r.id === aggregateId ? (
+                  <>
+                    {" "}
+                    <span className="ds-tag">聚合</span>
+                  </>
+                ) : null}
+              </td>
+              {r.cells.map((cell, i) => {
+                const t = matrix.tracks[i];
+                const label = matrixHeaderLabel(t, matrix.tracks);
+                if (!cell) {
+                  return (
+                    <td key={t.key} data-label={label}>
+                      <span className="muted">—</span>
+                    </td>
+                  );
+                }
+                const low = cell.n < BUCKET_LOW_SAMPLE_N;
+                const tip =
+                  `${r.name} × ${label}:${cell.n} 仓 ` +
+                  `${cell.wins}胜${cell.losses}负${cell.pushes > 0 ? `${cell.pushes}平` : ""},` +
+                  (cell.winRate != null && cell.avgEntry != null
+                    ? `胜率 ${Math.round(cell.winRate * 100)}% vs 隐含 ${Math.round(cell.avgEntry * 100)}%,`
+                    : "") +
+                  `落袋 ${fmtSignedUsd(cell.realized)}` +
+                  (low ? ";样本不足,读数仅供方向参考" : "");
+                return (
+                  <td
+                    key={t.key}
+                    data-label={label}
+                    title={tip}
+                    style={low ? { opacity: 0.55 } : undefined}
+                  >
+                    {cell.edge == null ? (
+                      <span className="muted">—</span>
+                    ) : (
+                      <span className={`mono ${pnlTextClass(cell.edge)}`}>
+                        {fmtSignedPt(cell.edge)}
+                      </span>
+                    )}
+                    <div className="kpi-sub mono">{cell.n} 仓</div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------ track bubbles */
+
+// 气泡象限图尺寸(与其它大图同一 1120 宽度量级)。
+const BUBBLE_W = 1120;
+const BUBBLE_H = 380;
+
+/**
+ * 赛道胜率分布气泡象限(2026-08-13,用户定向:替代「vs 全部」对照表)。
+ * 每个气泡 = 本策略的一条细赛道:横轴 = 隐含胜率(该赛道均入场价 ——
+ * 市场定价的获胜概率),纵轴 = 实际胜率,对角线即盈亏平衡 —— 气泡落在
+ * 对角线上方 = 实际跑赢定价(edge>0)。气泡大小 ∝ 仓数、颜色 = 落袋
+ * 盈亏、样本 <阈值 虚线描边;悬停/Tab 聚焦任意气泡在图上方读数条给全量
+ * 数字(与 WeeklyBars/DotStrip 同一套选中交互)。
+ * 全为平局的赛道没有实际胜率,不上图(诚实缺席,不硬造 0%)。
+ */
+function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
+  const [selKey, setSelKey] = useState<string | null>(null);
+  const matrix = buildEdgeMatrix([{ id: 1, name: "本策略", positions: rows }]);
+  const bubbles = matrix.tracks
+    .map((t, i) => ({ t, cell: matrix.rows[0].cells[i] }))
+    .filter(
+      (
+        b,
+      ): b is {
+        t: (typeof matrix.tracks)[number];
+        cell: NonNullable<(typeof matrix.rows)[0]["cells"][number]>;
+      } => b.cell != null && b.cell.winRate != null && b.cell.avgEntry != null,
+    )
+    // 大气泡先画、小气泡后画(压在上层),小赛道不会被大赛道盖住点不到。
+    .sort((a, b) => b.cell.n - a.cell.n);
+  if (bubbles.length === 0) {
+    return (
+      <div className="ds-hint">
+        暂无可上图的赛道(全为平局的赛道没有实际胜率,不硬造 0%)
+      </div>
+    );
+  }
+  const padL = 46;
+  const padR = 20;
+  const padT = 14;
+  const padB = 34;
+  const x = (v: number) => padL + v * (BUBBLE_W - padL - padR);
+  const y = (v: number) => padT + (1 - v) * (BUBBLE_H - padT - padB);
+  const maxN = Math.max(...bubbles.map((b) => b.cell.n));
+  const radius = (n: number) => 10 + Math.sqrt(n / maxN) * 18;
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const sel = bubbles.find((b) => b.t.key === selKey) ?? null;
+  return (
+    <div>
+      <div
+        className="ds-hint"
+        style={{ marginBottom: "var(--s-1)", minHeight: "1.4em" }}
+      >
+        {sel ? (
+          <>
+            {matrixHeaderLabel(sel.t, matrix.tracks)}
+            <span className="muted">:</span>
+            <span className="mono">
+              {sel.cell.n} 仓 · 实际 {fmtPct0(sel.cell.winRate!)} vs 隐含{" "}
+              {fmtPct0(sel.cell.avgEntry!)}
+            </span>
+            <span className="muted"> · edge </span>
+            <span className={`mono ${pnlTextClass(sel.cell.edge ?? 0)}`}>
+              {sel.cell.edge == null ? "—" : fmtSignedPt(sel.cell.edge)}
+            </span>
+            <span className="muted"> · </span>
+            <span className={`mono ${pnlTextClass(sel.cell.realized)}`}>
+              {fmtSignedUsd(sel.cell.realized)}
+            </span>
+            {sel.cell.n < BUCKET_LOW_SAMPLE_N ? (
+              <span className="muted">(样本不足)</span>
+            ) : null}
+          </>
+        ) : (
+          <span className="muted">
+            点选或用 Tab 聚焦任意气泡,查看该赛道的胜率、edge 与落袋
+          </span>
+        )}
+      </div>
+      <svg
+        viewBox={`0 0 ${BUBBLE_W} ${BUBBLE_H}`}
+        width="100%"
+        role="img"
+        aria-label="赛道胜率分布气泡象限图"
+        style={{ display: "block" }}
+      >
+        {/* 轴框 + 刻度 */}
+        <line x1={x(0)} y1={y(0)} x2={x(1)} y2={y(0)} stroke="var(--n-200)" />
+        <line x1={x(0)} y1={y(0)} x2={x(0)} y2={y(1)} stroke="var(--n-200)" />
+        {ticks.map((t) => (
+          <g key={t}>
+            <text
+              x={x(t)}
+              y={BUBBLE_H - 12}
+              fontSize={11}
+              fill="var(--n-500)"
+              textAnchor="middle"
+              fontFamily="var(--font-mono)"
+            >
+              {Math.round(t * 100)}¢
+            </text>
+            <text
+              x={padL - 8}
+              y={y(t) + 4}
+              fontSize={11}
+              fill="var(--n-500)"
+              textAnchor="end"
+              fontFamily="var(--font-mono)"
+            >
+              {Math.round(t * 100)}%
+            </text>
+          </g>
+        ))}
+        {/* 盈亏平衡对角线(实际 = 隐含):上方 edge>0、下方 edge<0。 */}
+        <line
+          x1={x(0)}
+          y1={y(0)}
+          x2={x(1)}
+          y2={y(1)}
+          stroke="var(--n-300)"
+          strokeDasharray="4 4"
+        />
+        <text
+          x={x(0.22)}
+          y={y(0.88)}
+          fontSize={11}
+          fill="var(--up-700)"
+          fontFamily="var(--font-mono)"
+        >
+          ↑ 实际跑赢隐含(edge&gt;0)
+        </text>
+        <text
+          x={x(0.6)}
+          y={y(0.1)}
+          fontSize={11}
+          fill="var(--down-700)"
+          fontFamily="var(--font-mono)"
+        >
+          ↓ 实际跑输隐含(edge&lt;0)
+        </text>
+        {bubbles.map((b) => {
+          const cx = x(b.cell.avgEntry!);
+          const cy = y(b.cell.winRate!);
+          const r = radius(b.cell.n);
+          const low = b.cell.n < BUCKET_LOW_SAMPLE_N;
+          const selected = selKey === b.t.key;
+          const label = matrixHeaderLabel(b.t, matrix.tracks);
+          return (
+            <g key={b.t.key}>
+              <circle
+                cx={cx}
+                cy={cy}
+                r={r}
+                fill={pnlColor(b.cell.realized)}
+                fillOpacity={selected ? 0.65 : 0.4}
+                stroke={pnlColor(b.cell.realized)}
+                strokeWidth={selected ? 2 : 1.2}
+                strokeDasharray={low ? "3 2" : undefined}
+              />
+              <text
+                x={cx}
+                y={cy - r - 5}
+                fontSize={11}
+                fill="var(--n-600)"
+                textAnchor="middle"
+              >
+                {label}
+              </text>
+              {/* 命中区 = 气泡本体(已 ≥10px,无需再放大);挂全部交互。 */}
+              <circle
+                cx={cx}
+                cy={cy}
+                r={r}
+                fill="transparent"
+                tabIndex={0}
+                aria-label={`${label}:${b.cell.n} 仓,实际胜率 ${fmtPct0(b.cell.winRate!)},隐含 ${fmtPct0(b.cell.avgEntry!)},落袋 ${fmtSignedUsd(b.cell.realized)}`}
+                style={{ cursor: "pointer" }}
+                onMouseEnter={() => setSelKey(b.t.key)}
+                onMouseLeave={() => setSelKey(null)}
+                onFocus={() => setSelKey(b.t.key)}
+                onBlur={() => setSelKey(null)}
+              />
+            </g>
+          );
+        })}
+      </svg>
+    </div>
   );
 }
 
@@ -960,6 +1352,24 @@ export function DeepAnalysisPanel({
             ))}
           </div>
         )}
+      </Block>
+
+      {/* ⑥.5 赛道胜率分布(2026-08-13 用户定向,两次修订:①去掉「vs 全部」
+          基准行,只看本批仓位自己的赛道分布;②气泡象限与表格并存 ——
+          象限给形状直觉(谁在盈亏平衡线上方),表格给精确数字,同一份
+          矩阵数据的两种读法。 */}
+      <Block
+        label="赛道胜率分布 — 气泡象限"
+        hint="横轴 = 隐含胜率(该赛道均入场价,市场定价),纵轴 = 实际胜率;对角线为盈亏平衡 —— 气泡在上方 = 跑赢定价(edge>0)。气泡大小 = 仓数,颜色 = 落袋盈亏,样本 <5 虚线描边;下表为同一份数据的精确数字"
+      >
+        <TrackBubbles rows={rows} />
+        <div style={{ marginTop: "var(--s-3)" }}>
+          <EdgeMatrixTable
+            matrix={buildEdgeMatrix([
+              { id: 1, name: "本策略", positions: rows },
+            ])}
+          />
+        </div>
       </Block>
 
       {/* ⑦ 缺陷诊断 */}
