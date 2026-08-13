@@ -1397,9 +1397,19 @@ export interface FollowStrategyView {
   metrics: StrategyMetrics;
   fund: FundMetrics; // 基金式档案:成立/运行/峰值占用/年化(仅展示,不参与任何决策)
   account: AccountPlan; // 账户推演:备多少钱→接住多少信号(仅展示,不参与任何决策)
-  open: FollowPositionRow[]; // status==='open'
-  settled: FollowPositionRow[]; // status==='settled',按 exit_ts 降序(最新在前)
+  open: FollowPositionWithCategory[]; // status==='open'
+  settled: FollowPositionWithCategory[]; // status==='settled',按 exit_ts 降序(最新在前)
 }
+
+/**
+ * 视图行 = 仓位行 + 赛道。categoryByCid 此前只喂给 metrics.byCategory 聚合,
+ * 没随行下发 —— 深度分析面板(2026-08-13 设计 §4)要在客户端按赛道重切
+ * (胜率/均入场价等 byCategory 没有的维度),故逐行附上。缺失 → null,
+ * 展示层归「未分类」(与 computeStrategyMetrics 同一兜底口径)。
+ */
+export type FollowPositionWithCategory = FollowPositionRow & {
+  category: string | null;
+};
 
 /**
  * params_json → 展示用参数。与 parseStrategy(开仓侧,失败即跳过整条策略)不同:
@@ -1499,6 +1509,12 @@ export function buildFollowView(
   const views: FollowStrategyView[] = strategies.map((s) => {
     const own = byStrategy.get(s.id) ?? [];
     const fund = computeFundMetrics(own, s.created_at, nowSec);
+    // 逐行附赛道(展开成新对象,不改入参行 —— 见 FollowPositionWithCategory
+    // 的注释;route 直选的额外列随展开原样保留)。
+    const withCat = (p: FollowPositionRow): FollowPositionWithCategory => ({
+      ...p,
+      category: categoryByCid[p.condition_id] ?? null,
+    });
     return {
       id: s.id,
       name: s.name,
@@ -1507,9 +1523,10 @@ export function buildFollowView(
       metrics: computeStrategyMetrics(own, categoryByCid),
       fund,
       account: computeAccountPlan(own, fund, nowSec),
-      open: own.filter((p) => p.status === "open"),
+      open: own.filter((p) => p.status === "open").map(withCat),
       settled: own
         .filter((p) => p.status === "settled")
+        .map(withCat)
         .sort((a, b) => (b.exit_ts ?? 0) - (a.exit_ts ?? 0)),
     };
   });

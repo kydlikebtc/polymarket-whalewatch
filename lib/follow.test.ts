@@ -441,6 +441,35 @@ describe("buildFollowView", () => {
       settledCount: 1,
     });
   });
+
+  it("open/settled 每行附 category(深度分析面板的赛道维度);缺失→null,不改入参", () => {
+    const rows = [
+      pos({ strategy_id: 1, condition_id: "a", realized_pnl: 100 }),
+      pos({
+        strategy_id: 1,
+        condition_id: "o1",
+        status: "open",
+        exit_ts: null,
+        exit_price: null,
+        realized_pnl: null,
+      }),
+      pos({ strategy_id: 1, condition_id: "b", realized_pnl: -50 }),
+    ];
+    const { strategies } = buildFollowView([strat({ id: 1 })], rows, {
+      a: "Crypto",
+      o1: "Sports",
+    });
+    const v = strategies[0];
+    expect(v.settled.map((p) => [p.condition_id, p.category])).toEqual([
+      ["a", "Crypto"],
+      ["b", null], // categoryByCid 里没有 b → null(展示层归「未分类」)
+    ]);
+    expect(v.open.map((p) => [p.condition_id, p.category])).toEqual([
+      ["o1", "Sports"],
+    ]);
+    // 不可变纪律:附加字段发生在新对象上,入参行保持原样。
+    expect("category" in rows[0]).toBe(false);
+  });
 });
 
 // --- 基金式档案指标(开始时间/运行天数/峰值占用/年化) ---
