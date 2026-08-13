@@ -20,8 +20,10 @@ import {
 } from "../../lib/followAnalysis";
 import { catLabel, catLabelFine, subLabel } from "../../lib/categoryLabel";
 import {
+  buildEdgeMatrix,
   diagnoseSegments,
   type DiagnosedSegment,
+  type EdgeMatrix,
 } from "../../lib/followInsights";
 import { LOW_SAMPLE_THRESHOLD } from "../../lib/followCardView";
 
@@ -562,6 +564,108 @@ function CategoryRows({ c, maxN }: { c: CategoryGroup; maxN: number }) {
   );
 }
 
+/* -------------------------------------------------------- edge matrix */
+
+// 矩阵列头:「体育·NBA」;同一级下另有带二级列时,无二级列消歧为
+// 「体育·未细分」,否则直接「体育」(不引入没有区分作用的后缀)。
+function matrixHeaderLabel(
+  t: EdgeMatrix["tracks"][number],
+  tracks: EdgeMatrix["tracks"],
+): string {
+  if (t.subcategory) return catLabelFine(t.category, t.subcategory);
+  const hasSubbedSibling = tracks.some(
+    (o) => o.category === t.category && o.subcategory,
+  );
+  return hasSubbedSibling
+    ? `${catLabel(t.category)}·未细分`
+    : catLabel(t.category);
+}
+
+/**
+ * 赛道 edge 矩阵表格(纯呈现,矩阵由调用方 buildEdgeMatrix 好传入)。两个
+ * 消费方:策略中心页「优势矩阵」副 tab(全部+各策略 × 细赛道)与详情弹窗
+ * 深度分析的「赛道 edge 对照」块(本策略 vs 全部两行)。格子 = edge±pt +
+ * n 仓;n<阈值半透明、零仓「—」、全 push 段 edge 为 null 也「—」;
+ * aggregateId 指定哪一行贴「聚合」标(跨档重复下注的那一行)。
+ */
+export function EdgeMatrixTable({
+  matrix,
+  aggregateId,
+}: {
+  matrix: EdgeMatrix;
+  aggregateId?: number;
+}) {
+  if (matrix.tracks.length === 0) return null;
+  return (
+    <div className="ds-table-wrap">
+      <table className="ds-table">
+        <thead>
+          <tr>
+            <th>策略</th>
+            {matrix.tracks.map((t) => (
+              <th key={t.key} title={`全体样本 ${t.totalN} 仓`}>
+                {matrixHeaderLabel(t, matrix.tracks)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {matrix.rows.map((r) => (
+            <tr key={r.id}>
+              <td data-label="策略">
+                {r.name}
+                {aggregateId != null && r.id === aggregateId ? (
+                  <>
+                    {" "}
+                    <span className="ds-tag">聚合</span>
+                  </>
+                ) : null}
+              </td>
+              {r.cells.map((cell, i) => {
+                const t = matrix.tracks[i];
+                const label = matrixHeaderLabel(t, matrix.tracks);
+                if (!cell) {
+                  return (
+                    <td key={t.key} data-label={label}>
+                      <span className="muted">—</span>
+                    </td>
+                  );
+                }
+                const low = cell.n < BUCKET_LOW_SAMPLE_N;
+                const tip =
+                  `${r.name} × ${label}:${cell.n} 仓 ` +
+                  `${cell.wins}胜${cell.losses}负${cell.pushes > 0 ? `${cell.pushes}平` : ""},` +
+                  (cell.winRate != null && cell.avgEntry != null
+                    ? `胜率 ${Math.round(cell.winRate * 100)}% vs 隐含 ${Math.round(cell.avgEntry * 100)}%,`
+                    : "") +
+                  `落袋 ${fmtSignedUsd(cell.realized)}` +
+                  (low ? ";样本不足,读数仅供方向参考" : "");
+                return (
+                  <td
+                    key={t.key}
+                    data-label={label}
+                    title={tip}
+                    style={low ? { opacity: 0.55 } : undefined}
+                  >
+                    {cell.edge == null ? (
+                      <span className="muted">—</span>
+                    ) : (
+                      <span className={`mono ${pnlTextClass(cell.edge)}`}>
+                        {fmtSignedPt(cell.edge)}
+                      </span>
+                    )}
+                    <div className="kpi-sub mono">{cell.n} 仓</div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /* --------------------------------------------------------- diagnosis */
 
 const DIMENSION_LABEL: Record<DiagnosedSegment["dimension"], string> = {
@@ -635,12 +739,29 @@ function SegmentRow({
 export function DeepAnalysisPanel({
   rows,
   scopeNote,
+  ownName,
+  benchmark,
 }: {
   rows: DeepAnalysisRow[];
   scopeNote?: string;
+  /** 「赛道 edge 对照」块里本批仓位那一行的名字(默认「本策略」)。 */
+  ownName?: string;
+  /**
+   * 对照基准(通常是全部策略聚合)。给了才渲染「赛道 edge 对照」块 ——
+   * 聚合视图自己不传(自己对照自己没有信息量),单策略视图传全体。
+   */
+  benchmark?: { name: string; rows: DeepAnalysisRow[] };
 }) {
   const a = analyzeBets(rows);
   const diag = diagnoseSegments(rows);
+  // 对照矩阵:本策略在前、基准聚合行在后(id 0 贴「聚合」标)。空矩阵
+  // (双方都无结算)→ 块整体不渲染。
+  const benchMatrix = benchmark
+    ? buildEdgeMatrix([
+        { id: 1, name: ownName ?? "本策略", positions: rows },
+        { id: 0, name: benchmark.name, positions: benchmark.rows },
+      ])
+    : null;
   const q = a.quality;
 
   if (q.settledCount === 0) {
@@ -961,6 +1082,16 @@ export function DeepAnalysisPanel({
           </div>
         )}
       </Block>
+
+      {/* ⑥.5 赛道 edge 对照(仅单策略视图,benchmark 提供时) */}
+      {benchMatrix && benchMatrix.tracks.length > 0 ? (
+        <Block
+          label={`赛道 edge 对照 — ${ownName ?? "本策略"} vs ${benchmark!.name}`}
+          hint="与上面赛道细分同一批数据的另一种切法:每格 = edge(实际胜率 − 隐含胜率)。对照全部策略聚合行,回答「这一档的赛道优势是自己的,还是整个信号体系都有」;聚合行含跨档重复下注"
+        >
+          <EdgeMatrixTable matrix={benchMatrix} aggregateId={0} />
+        </Block>
+      ) : null}
 
       {/* ⑦ 缺陷诊断 */}
       <Block
