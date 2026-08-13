@@ -897,7 +897,8 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
   };
   const labelPos = new Map<string, { lx: number; ly: number } | null>();
   for (const b of bubbles) {
-    const label = matrixHeaderLabel(b.t, matrix.tracks);
+    // 标签 = 赛道名 + 落袋金额(渲染处的 tspan),宽度按两段合计估算。
+    const label = `${matrixHeaderLabel(b.t, matrix.tracks)} ${fmtSignedUsd(b.cell.realized)}`;
     const cx = x(b.cell.avgEntry!);
     const cy = y(b.cell.winRate!);
     const r = radius(b.cell.n);
@@ -1078,15 +1079,22 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
           const selected = selKey === b.t.key;
           const label = matrixHeaderLabel(b.t, matrix.tracks);
           const pos = labelPos.get(b.t.key);
+          // 气泡颜色 = edge 方向,与所在区域**同义**(2026-08-13 用户抓出的
+          // 配色矛盾:初版按落袋着色,足球 edge −7pt 却因勉强 +$6 落袋被
+          // 涂成绿色、躺在红区里 —— 位置和颜色讲两个变量,读者必然按区域
+          // 语义解读颜色)。落袋金额改由标签 tspan 明示,信息不丢:edge 与
+          // 落袋可能不同号(低赔率大赔付的赛道 edge 为负仍可小幅盈利),
+          // 这正是两个读数都要摆出来的原因。
+          const edgeColor = pnlColor(b.cell.edge ?? 0);
           return (
             <g key={b.t.key}>
               <circle
                 cx={cx}
                 cy={cy}
                 r={r}
-                fill={pnlColor(b.cell.realized)}
+                fill={edgeColor}
                 fillOpacity={selected ? 0.7 : 0.45}
-                stroke={pnlColor(b.cell.realized)}
+                stroke={edgeColor}
                 strokeWidth={selected ? 2.5 : 1.5}
                 strokeDasharray={low ? "3 2" : undefined}
               />
@@ -1100,6 +1108,13 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
                   fontWeight={selected ? 700 : 500}
                 >
                   {label}
+                  <tspan
+                    fill={pnlColor(b.cell.realized)}
+                    fontFamily="var(--font-mono)"
+                  >
+                    {" "}
+                    {fmtSignedUsd(b.cell.realized)}
+                  </tspan>
                 </text>
               ) : null}
               {/* 命中区 = 气泡本体(已 ≥9px);挂全部交互,可视圆只负责画。 */}
@@ -1529,7 +1544,7 @@ export function DeepAnalysisPanel({
           矩阵数据的两种读法。 */}
       <Block
         label="赛道胜率分布 — 气泡象限"
-        hint="横轴 = 隐含胜率(该赛道均入场价,市场定价),纵轴 = 实际胜率;对角线为盈亏平衡 —— 气泡在上方 = 跑赢定价(edge>0)。气泡大小 = 仓数,颜色 = 落袋盈亏,样本 <5 虚线描边;下表为同一份数据的精确数字"
+        hint="横轴 = 隐含胜率(该赛道均入场价,市场定价),纵轴 = 实际胜率;对角线为盈亏平衡 —— 气泡在上方 = 跑赢定价(edge>0)。气泡颜色与所在区域同义(绿 = edge>0,红 = edge<0),大小 = 仓数,样本 <5 虚线描边;标签旁金额 = 该赛道落袋(与 edge 可能不同号 —— 低赔率大赔付的赛道 edge 为负也可能小幅盈利);下表为同一份数据的精确数字"
       >
         <TrackBubbles rows={rows} />
         <div style={{ marginTop: "var(--s-3)" }}>
