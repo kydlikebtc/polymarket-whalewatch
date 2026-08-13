@@ -183,7 +183,9 @@ export const WEEKLY_FILL_CAP = 60;
 
 // 入场价 5 档:20¢ 等宽。冷门/热门的语义标注(「冷门票」「热门票」)留给 UI,
 // lib 层只给中性区间标签。
-const ODDS_BOUNDS: { label: string; lo: number; hi: number }[] = [
+// 导出供 lib/followInsights.ts(缺陷诊断)复用 —— 桶定义的唯一事实源,
+// 诊断里的「赔率带/时长」段必须与面板校准/时长分布的桶逐字一致。
+export const ODDS_BOUNDS: { label: string; lo: number; hi: number }[] = [
   { label: "<20¢", lo: 0, hi: 0.2 },
   { label: "20–40¢", lo: 0.2, hi: 0.4 },
   { label: "40–60¢", lo: 0.4, hi: 0.6 },
@@ -193,7 +195,7 @@ const ODDS_BOUNDS: { label: string; lo: number; hi: number }[] = [
 
 // 持有时长 5 档(下闭上开)。边界与告警/共识页无耦合,纯按市场节奏取整:
 // in-play 体育盘(小时级)/隔夜盘/周内盘/长线盘。
-const DURATION_BOUNDS: { label: string; maxSec: number }[] = [
+export const DURATION_BOUNDS: { label: string; maxSec: number }[] = [
   { label: "<6 小时", maxSec: 6 * 3600 },
   { label: "6–24 小时", maxSec: 24 * 3600 },
   { label: "1–3 天", maxSec: 3 * 86400 },

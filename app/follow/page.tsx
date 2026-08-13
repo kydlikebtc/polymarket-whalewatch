@@ -19,6 +19,9 @@ import {
 } from "react";
 import { Icon, Modal, Segmented, Tag } from "../ui";
 import { DeepAnalysisPanel } from "./DeepAnalysis";
+import { catLabel, catLabelFine } from "../../lib/categoryLabel";
+import { buildEdgeMatrix, type EdgeMatrix } from "../../lib/followInsights";
+import { BUCKET_LOW_SAMPLE_N } from "../../lib/followAnalysis";
 import { useCurrentPrices } from "../useCurrentPrices";
 import {
   classifyCardState,
@@ -3194,6 +3197,134 @@ function OpenTable({
 const CROSS_TIER_CAVEAT =
   "各档持仓存在重叠(同一市场可能同时命中多个信号源——例如「激进」的持仓是「保守」的超集、「巨鲸精英」是「巨鲸」的子集)。每一档的战绩都是「只跟这一档」的独立假设下算出的,不可跨档相加;同理,每张卡的「建议跟单额度」也是单档口径——12 档一起跟所需的总资金,不是 12 个峰值之和。";
 
+/* ---------------------------------------------------- edge matrix */
+
+// edge 的百分点标注(+12pt/−5pt),与 DeepAnalysis 同名函数刻意重复声明
+// (本仓库客户端文件各自持有轻量格式化函数的既有惯例)。
+function fmtSignedPtLocal(r: number): string {
+  const pt = Math.round(Math.abs(r) * 100);
+  return `${r < 0 ? MINUS : "+"}${pt}pt`;
+}
+
+/**
+ * 赛道 × 策略优势矩阵(2026-08-13,设计见
+ * docs/plans/2026-08-13-edge-matrix-diagnosis-design.md §2)。行 = 「全部
+ * (聚合)」+ 有结算仓的策略;列 = 数据里实际出现的细赛道,按全体样本数
+ * 降序 —— 新档位设计的选题池:哪类信号在哪个赛道有 edge、样本厚不厚,
+ * 一屏看完。格子 = edge(实际胜率 − 段内均入场价)+ n;n<阈值半透明,
+ * 零仓「—」。列数超宽走 ds-table-wrap 横向滚动(全站宽表既有 fallback)。
+ */
+function EdgeMatrixSection({ shown }: { shown: FollowStrategyView[] }) {
+  const withSettled = shown.filter((s) => s.settled.length > 0);
+  if (withSettled.length === 0) return null;
+  const matrix: EdgeMatrix = buildEdgeMatrix([
+    // 聚合伪策略行:id 用 FILTER_ALL(0,策略 id 从 1 起永不相撞)。跨档
+    // 重复下注口径与仓位明细「全部策略」同一声明,见下方 hint。
+    {
+      id: FILTER_ALL,
+      name: "全部",
+      positions: shown.flatMap((s) => [...s.open, ...s.settled]),
+    },
+    ...withSettled.map((s) => ({
+      id: s.id,
+      name: s.name,
+      positions: [...s.open, ...s.settled],
+    })),
+  ]);
+  if (matrix.tracks.length === 0) return null;
+
+  // 「未细分」消歧:同一级下另有带二级的列时,无二级列标注「体育·未细分」;
+  // 该一级只有一列时直接「体育」(不引入没有区分作用的后缀)。
+  const headerLabel = (t: EdgeMatrix["tracks"][number]): string => {
+    if (t.subcategory) return catLabelFine(t.category, t.subcategory);
+    const hasSubbedSibling = matrix.tracks.some(
+      (o) => o.category === t.category && o.subcategory,
+    );
+    return hasSubbedSibling
+      ? `${catLabel(t.category)}·未细分`
+      : catLabel(t.category);
+  };
+
+  return (
+    <section style={{ marginBottom: "var(--s-5)" }}>
+      <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+        赛道 × 策略优势矩阵
+      </div>
+      <div className="ds-hint" style={{ marginBottom: "var(--s-2)" }}>
+        格子 = edge(实际胜率 − 该格均入场价的隐含胜率,已结算口径)与仓数;
+        绿正红负,样本 &lt;{BUCKET_LOW_SAMPLE_N} 仓的格子淡显 ·
+        列按全体样本数降序 —— 新档位设计的选题池。「全部」行为跨档聚合,
+        多档会跟进同一信号,样本含重复下注
+      </div>
+      <div className="ds-table-wrap">
+        <table className="ds-table">
+          <thead>
+            <tr>
+              <th>策略</th>
+              {matrix.tracks.map((t) => (
+                <th key={t.key} title={`全体样本 ${t.totalN} 仓`}>
+                  {headerLabel(t)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {matrix.rows.map((r) => (
+              <tr key={r.id}>
+                <td data-label="策略">
+                  {r.name}
+                  {r.id === FILTER_ALL ? (
+                    <>
+                      {" "}
+                      <span className="ds-tag">聚合</span>
+                    </>
+                  ) : null}
+                </td>
+                {r.cells.map((cell, i) => {
+                  const t = matrix.tracks[i];
+                  if (!cell) {
+                    return (
+                      <td key={t.key} data-label={headerLabel(t)}>
+                        <span className="muted">—</span>
+                      </td>
+                    );
+                  }
+                  const low = cell.n < BUCKET_LOW_SAMPLE_N;
+                  const tip =
+                    `${r.name} × ${headerLabel(t)}:${cell.n} 仓 ` +
+                    `${cell.wins}胜${cell.losses}负${cell.pushes > 0 ? `${cell.pushes}平` : ""},` +
+                    (cell.winRate != null && cell.avgEntry != null
+                      ? `胜率 ${Math.round(cell.winRate * 100)}% vs 隐含 ${Math.round(cell.avgEntry * 100)}%,`
+                      : "") +
+                    `落袋 ${fmtSignedUsd(cell.realized)}` +
+                    (low ? ";样本不足,读数仅供方向参考" : "");
+                  return (
+                    <td
+                      key={t.key}
+                      data-label={headerLabel(t)}
+                      title={tip}
+                      style={low ? { opacity: 0.55 } : undefined}
+                    >
+                      {cell.edge == null ? (
+                        <span className="muted">—</span>
+                      ) : (
+                        <span className={`mono ${pnlTone(cell.edge)}`}>
+                          {fmtSignedPtLocal(cell.edge)}
+                        </span>
+                      )}
+                      <div className="kpi-sub mono">{cell.n} 仓</div>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export default function FollowPage() {
   const [data, setData] = useState<FollowResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -3581,6 +3712,11 @@ export default function FollowPage() {
               <EquityCurve series={visibleSeries} />
             </div>
           </section>
+
+          {/* 赛道 × 策略优势矩阵:位于净值曲线(每档的整体走势)与仓位
+              明细(每仓原始行)之间的中观层 —— 「哪类信号在哪个赛道有
+              edge」。无结算仓时组件自身返回 null,不占位。 */}
+          <EdgeMatrixSection shown={shown} />
 
           {/* 仓位明细:已结算/持有中 tab 切换 + 按策略筛选(计数随筛选联动) */}
           <section>

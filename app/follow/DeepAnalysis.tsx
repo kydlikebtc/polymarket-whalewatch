@@ -18,7 +18,11 @@ import {
   type DeepAnalysis,
   type OddsBucket,
 } from "../../lib/followAnalysis";
-import { catLabel, subLabel } from "../../lib/categoryLabel";
+import { catLabel, catLabelFine, subLabel } from "../../lib/categoryLabel";
+import {
+  diagnoseSegments,
+  type DiagnosedSegment,
+} from "../../lib/followInsights";
 import { LOW_SAMPLE_THRESHOLD } from "../../lib/followCardView";
 
 /** 面板输入行:分析契约 + 可选市场标题(散点 tooltip 用,页面行天然带)。 */
@@ -558,6 +562,69 @@ function CategoryRows({ c, maxN }: { c: CategoryGroup; maxN: number }) {
   );
 }
 
+/* --------------------------------------------------------- diagnosis */
+
+const DIMENSION_LABEL: Record<DiagnosedSegment["dimension"], string> = {
+  track: "赛道",
+  duration: "持有时长",
+  odds: "赔率带",
+};
+
+// 诊断段的显示名:track 段用「体育·NBA」合成,其余用桶 label 原文。
+function segmentLabel(s: DiagnosedSegment): string {
+  return s.dimension === "track"
+    ? catLabelFine(s.category, s.subcategory)
+    : s.label;
+}
+
+// 缺陷/最强特征的一行:维度胶囊 + 段名 + 数字串 + 反事实。two-line 布局
+// (窄屏自动换行),不做表格 —— 段数 ≤6,列表比表格轻。
+function SegmentRow({
+  s,
+  kind,
+}: {
+  s: DiagnosedSegment;
+  kind: "weak" | "strong";
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        gap: "var(--s-2)",
+        flexWrap: "wrap",
+      }}
+    >
+      <span className="ds-tag">{DIMENSION_LABEL[s.dimension]}</span>
+      <span style={{ fontSize: "var(--t-sm)", fontWeight: 600 }}>
+        {segmentLabel(s)}
+      </span>
+      <span className="mono muted" style={{ fontSize: "var(--t-xs)" }}>
+        {s.n} 仓 {s.wins}胜{s.losses}负{s.pushes > 0 ? `${s.pushes}平` : ""} ·
+        胜率 {s.winRate == null ? "—" : fmtPct0(s.winRate)}
+        {s.edge != null ? ` · edge ${fmtSignedPt(s.edge)}` : ""}
+      </span>
+      <span className={`mono ${pnlTextClass(s.realized)}`}>
+        {fmtSignedUsd(s.realized)}
+      </span>
+      <span className="mono" style={{ fontSize: "var(--t-xs)" }}>
+        <span className="muted">剔除后 → </span>
+        <span className={pnlTextClass(s.totalWithout)}>
+          {fmtSignedUsd(s.totalWithout)}
+        </span>
+      </span>
+      {kind === "weak" && s.edge != null && s.edge >= 0 ? (
+        <span
+          className="ds-tag ds-tag--warn"
+          title="该段实际胜率并不低于隐含胜率(edge≥0),亏损可能只是短期波动/赔率结构使然 —— 优化前先看样本是否继续恶化,不要对运气过度反应"
+        >
+          edge≥0 · 或为波动
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------- panel */
 
 /**
@@ -573,13 +640,14 @@ export function DeepAnalysisPanel({
   scopeNote?: string;
 }) {
   const a = analyzeBets(rows);
+  const diag = diagnoseSegments(rows);
   const q = a.quality;
 
   if (q.settledCount === 0) {
     return (
       <div className="ds-empty">
         暂无已结算仓位 — 深度分析基于落袋结果,有仓位结算后这里会给出
-        赔率校准/盈亏分布/时间走势等六个维度
+        赔率校准/盈亏分布/时间走势/缺陷诊断等七个维度
         {a.openCount > 0 ? `(当前持有中 ${a.openCount} 仓)` : ""}
       </div>
     );
@@ -892,6 +960,44 @@ export function DeepAnalysisPanel({
             ))}
           </div>
         )}
+      </Block>
+
+      {/* ⑦ 缺陷诊断 */}
+      <Block
+        label="缺陷诊断 — 亏在哪类下注"
+        hint={`把已结算仓按赛道/持有时长(快慢市场)/赔率带三个维度切段,列出「段内 ≥${BUCKET_LOW_SAMPLE_N} 仓且累计亏损」的特征段(最亏在前,至多 5 段)—— 定向优化的靶点。⚠️ 各段互有重叠(一仓可同时属「足球」与「>7 天」),「剔除后」数字不可相加`}
+      >
+        {diag.weaknesses.length === 0 ? (
+          <div className="ds-hint">
+            未发现 ≥{BUCKET_LOW_SAMPLE_N} 仓且累计亏损的特征段 —
+            样本继续积累中,或这一档暂无集中的亏损特征
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: "var(--s-2)" }}>
+            {diag.weaknesses.map((s) => (
+              <SegmentRow
+                key={`${s.dimension}|${s.label}|${s.category}|${s.subcategory}`}
+                s={s}
+                kind="weak"
+              />
+            ))}
+          </div>
+        )}
+        {diag.strongest ? (
+          <div
+            style={{
+              marginTop: "var(--s-3)",
+              paddingTop: "var(--s-3)",
+              borderTop: "1px dashed var(--n-150)",
+            }}
+          >
+            <div className="ds-hint" style={{ marginBottom: "var(--s-1)" }}>
+              对照 · 最强特征(edge&gt;0 且落袋为正 —— 优化是「砍最亏的、
+              保最强的」两面)
+            </div>
+            <SegmentRow s={diag.strongest} kind="strong" />
+          </div>
+        ) : null}
       </Block>
     </div>
   );
