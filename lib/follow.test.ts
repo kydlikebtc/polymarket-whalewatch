@@ -423,14 +423,14 @@ describe("buildFollowView", () => {
     expect(strategies[0].enabled).toBe(false);
   });
 
-  it("categoryByCid 透传给 metrics.byCategory", () => {
+  it("taxByCid 的一级透传给 metrics.byCategory(键保持一级,不受二级影响)", () => {
     const { strategies } = buildFollowView(
       [strat({ id: 1 })],
       [
         pos({ strategy_id: 1, condition_id: "a", realized_pnl: 100 }),
         pos({ strategy_id: 1, condition_id: "b", realized_pnl: -50 }),
       ],
-      { a: "Crypto" },
+      { a: { category: "Crypto", subcategory: "Bitcoin" } },
     );
     expect(strategies[0].metrics.byCategory["Crypto"]).toEqual({
       realized: 100,
@@ -442,7 +442,7 @@ describe("buildFollowView", () => {
     });
   });
 
-  it("open/settled 每行附 category(深度分析面板的赛道维度);缺失→null,不改入参", () => {
+  it("open/settled 每行附 category+subcategory(深度分析赛道维度);缺失→null,不改入参", () => {
     const rows = [
       pos({ strategy_id: 1, condition_id: "a", realized_pnl: 100 }),
       pos({
@@ -456,17 +456,19 @@ describe("buildFollowView", () => {
       pos({ strategy_id: 1, condition_id: "b", realized_pnl: -50 }),
     ];
     const { strategies } = buildFollowView([strat({ id: 1 })], rows, {
-      a: "Crypto",
-      o1: "Sports",
+      a: { category: "Crypto", subcategory: "Bitcoin" },
+      o1: { category: "Sports", subcategory: "NBA" },
     });
     const v = strategies[0];
-    expect(v.settled.map((p) => [p.condition_id, p.category])).toEqual([
-      ["a", "Crypto"],
-      ["b", null], // categoryByCid 里没有 b → null(展示层归「未分类」)
+    expect(
+      v.settled.map((p) => [p.condition_id, p.category, p.subcategory]),
+    ).toEqual([
+      ["a", "Crypto", "Bitcoin"],
+      ["b", null, null], // taxByCid 里没有 b → null(展示层归「未分类」)
     ]);
-    expect(v.open.map((p) => [p.condition_id, p.category])).toEqual([
-      ["o1", "Sports"],
-    ]);
+    expect(
+      v.open.map((p) => [p.condition_id, p.category, p.subcategory]),
+    ).toEqual([["o1", "Sports", "NBA"]]);
     // 不可变纪律:附加字段发生在新对象上,入参行保持原样。
     expect("category" in rows[0]).toBe(false);
   });

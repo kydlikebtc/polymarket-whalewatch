@@ -272,7 +272,7 @@ describe("event categories", () => {
     tags: labels.map((label) => ({ id: "1", label, slug: label })),
   });
 
-  it("picks the primary category over niche tags (Sports beats Soccer/Games)", async () => {
+  it("一级取主类、二级按标签序扫白名单(Sports 打败 Soccer/Games,二级捡回 Soccer)", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [
@@ -283,45 +283,126 @@ describe("event categories", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const out = await fetchEventCategories(["ev-a", "ev-b", "ev-c"]);
-    expect(out["ev-a"]).toBe("Sports");
-    expect(out["ev-b"]).toBe("Crypto");
-    expect(out["ev-c"]).toBe(""); // resolved but unknown
+    expect(out["ev-a"]).toEqual({ category: "Sports", subcategory: "Soccer" });
+    expect(out["ev-b"]).toEqual({ category: "Crypto", subcategory: "Bitcoin" });
+    expect(out["ev-c"]).toEqual({ category: "", subcategory: "" });
     expect(fetchMock.mock.calls[0][0]).toContain("slug=ev-a");
   });
 
-  it("falls back to the first tag label when no primary category matches", async () => {
+  it("二级白名单挡噪音:MLB 实测标签序 ['Sports','Games','MLB','baseball'] 不取 Games", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => [event("ev-x", ["Chess", "Board Games"])],
+      json: async () => [
+        // 三个真机实测形态(2026-08-13 gamma 24h 量前 40):
+        event("ev-mlb", ["Sports", "Games", "MLB", "baseball"]),
+        // 联赛标签(UCL)刻意不进白名单 → 落到 Soccer
+        event("ev-ucl", ["UCL", "Soccer", "Sports", "Champions League"]),
+        // 电竞:专名在 Esports 前,单遍扫描取到最细的 CS2
+        event("ev-cs2", ["CS2", "Sports", "Esports", "counter strike 2"]),
+      ],
     });
     vi.stubGlobal("fetch", fetchMock);
-    const out = await fetchEventCategories(["ev-x"]);
-    expect(out["ev-x"]).toBe("Chess");
+    const out = await fetchEventCategories(["ev-mlb", "ev-ucl", "ev-cs2"]);
+    expect(out["ev-mlb"]).toEqual({ category: "Sports", subcategory: "MLB" });
+    expect(out["ev-ucl"]).toEqual({
+      category: "Sports",
+      subcategory: "Soccer",
+    });
+    expect(out["ev-cs2"]).toEqual({ category: "Sports", subcategory: "CS2" });
   });
 
-  it("getEventCategories caches known results (including known-none) permanently", async () => {
+  it("二级跳过与一级同名的标签;无白名单命中时二级为 ''", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        // 一级已是 Esports,二级不再重复取 Esports → ''
+        event("ev-es", ["Esports", "Weekly"]),
+        // 回退一级 = labels[0](既有行为不变),无二级命中
+        event("ev-x", ["Chess", "Board Games"]),
+      ],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await fetchEventCategories(["ev-es", "ev-x"]);
+    expect(out["ev-es"]).toEqual({ category: "Esports", subcategory: "" });
+    expect(out["ev-x"]).toEqual({ category: "Chess", subcategory: "" });
+  });
+
+  it("getEventCategories 缓存已知结果(含 known-none)且不重复抓取", async () => {
     const db = openDb(":memory:");
-    const fetcher = vi
-      .fn()
-      .mockResolvedValueOnce({ "ev-a": "Sports", "ev-b": "" });
+    const fetcher = vi.fn().mockResolvedValueOnce({
+      "ev-a": { category: "Sports", subcategory: "NBA" },
+      "ev-b": { category: "", subcategory: "" },
+    });
     const first = await getEventCategories(db, ["ev-a", "ev-b"], { fetcher });
-    expect(first).toEqual({ "ev-a": "Sports", "ev-b": null });
+    expect(first).toEqual({
+      "ev-a": { category: "Sports", subcategory: "NBA" },
+      "ev-b": { category: null, subcategory: null },
+    });
     const second = await getEventCategories(db, ["ev-a", "ev-b"], { fetcher });
-    expect(second).toEqual({ "ev-a": "Sports", "ev-b": null });
+    expect(second).toEqual(first);
     expect(fetcher).toHaveBeenCalledTimes(1); // both served from cache
   });
 
-  it("getEventCategories leaves failed-chunk slugs uncached for retry", async () => {
+  it("失败 chunk 的 slug 不落缓存,下次重试", async () => {
     const db = openDb(":memory:");
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce({}) // chunk failed — slug absent
-      .mockResolvedValueOnce({ "ev-a": "Politics" });
+      .mockResolvedValueOnce({
+        "ev-a": { category: "Politics", subcategory: "Geopolitics" },
+      });
     const first = await getEventCategories(db, ["ev-a"], { fetcher });
-    expect(first["ev-a"]).toBeNull();
+    expect(first["ev-a"]).toEqual({ category: null, subcategory: null });
     const second = await getEventCategories(db, ["ev-a"], { fetcher });
-    expect(second["ev-a"]).toBe("Politics");
+    expect(second["ev-a"]).toEqual({
+      category: "Politics",
+      subcategory: "Geopolitics",
+    });
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("懒回填:subcategory 为 NULL 的老缓存行视为 miss 重抓,两列一起升级", async () => {
+    const db = openDb(":memory:");
+    // 模拟二级上线前的老缓存行:只有一级,subcategory 列(迁移新增)为 NULL。
+    db.prepare(
+      "INSERT INTO event_category (event_slug, category, fetched_at) VALUES ('ev-old', 'Sports', 100)",
+    ).run();
+    const fetcher = vi.fn().mockResolvedValueOnce({
+      "ev-old": { category: "Sports", subcategory: "NFL" },
+    });
+    const first = await getEventCategories(db, ["ev-old"], { fetcher });
+    expect(first["ev-old"]).toEqual({ category: "Sports", subcategory: "NFL" });
+    expect(fetcher).toHaveBeenCalledTimes(1); // NULL 行触发了重抓
+    const second = await getEventCategories(db, ["ev-old"], { fetcher });
+    expect(second["ev-old"]).toEqual(first["ev-old"]);
+    expect(fetcher).toHaveBeenCalledTimes(1); // 回填后不再抓
+  });
+
+  it("懒回填重抓失败时降级供老的一级,不清空缓存(下次仍重试)", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO event_category (event_slug, category, fetched_at) VALUES ('ev-old', 'Crypto', 100)",
+    ).run();
+    const failing = vi.fn().mockResolvedValue({}); // 每次都失败
+    const out = await getEventCategories(db, ["ev-old"], { fetcher: failing });
+    // 一级用旧值诚实供数(比 null 更接近事实),二级仍未知。
+    expect(out["ev-old"]).toEqual({ category: "Crypto", subcategory: null });
+    const again = await getEventCategories(db, ["ev-old"], {
+      fetcher: failing,
+    });
+    expect(again["ev-old"]).toEqual({ category: "Crypto", subcategory: null });
+    expect(failing).toHaveBeenCalledTimes(2); // NULL 行每次都重试,不被失败钉死
+  });
+
+  it("二级 known-none('')的行不触发懒回填重抓", async () => {
+    const db = openDb(":memory:");
+    const fetcher = vi.fn().mockResolvedValueOnce({
+      "ev-a": { category: "Politics", subcategory: "" },
+    });
+    await getEventCategories(db, ["ev-a"], { fetcher });
+    const second = await getEventCategories(db, ["ev-a"], { fetcher });
+    expect(second["ev-a"]).toEqual({ category: "Politics", subcategory: null });
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1,6 +1,10 @@
 import { openDb } from "../../../lib/db";
-import { getEventCategories } from "../../../lib/gamma";
-import { buildFollowView, type FollowPositionRow } from "../../../lib/follow";
+import { getEventCategories, type EventTaxonomy } from "../../../lib/gamma";
+import {
+  buildFollowView,
+  type FollowPositionRow,
+  type TaxonomyByCid,
+} from "../../../lib/follow";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,14 +70,14 @@ export async function GET() {
         )
         .all() as PositionRow[];
 
-      // Categories live in EVENT TAGS (getEventCategories → slug -> category).
-      // A fetch/DB failure degrades to {} so every position reads "未分类" — the
-      // strategy/position/metrics payload is the product; category is enrichment
-      // and must not be able to fail the whole endpoint.
+      // Categories live in EVENT TAGS (getEventCategories → slug -> 税法
+      // {一级, 二级})。A fetch/DB failure degrades to {} so every position
+      // reads "未分类" — the strategy/position/metrics payload is the product;
+      // category is enrichment and must not be able to fail the whole endpoint.
       const slugs = [
         ...new Set(positions.map((p) => p.event_slug).filter(Boolean)),
       ];
-      let catBySlug: Record<string, string | null> = {};
+      let catBySlug: Record<string, EventTaxonomy> = {};
       try {
         catBySlug = await getEventCategories(db, slugs);
       } catch (e) {
@@ -82,14 +86,12 @@ export async function GET() {
           e,
         );
       }
-      const categoryByCid: Record<string, string | null> = {};
+      const taxByCid: TaxonomyByCid = {};
       for (const p of positions) {
-        categoryByCid[p.condition_id] = catBySlug[p.event_slug] ?? null;
+        taxByCid[p.condition_id] = catBySlug[p.event_slug] ?? null;
       }
 
-      return Response.json(
-        buildFollowView(strategies, positions, categoryByCid),
-      );
+      return Response.json(buildFollowView(strategies, positions, taxByCid));
     } finally {
       db.close();
     }
