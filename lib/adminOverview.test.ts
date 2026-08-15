@@ -172,4 +172,59 @@ describe("buildAdminSignalOverview", () => {
     expect(o.ops.tg?.failing ?? false).toBe(false);
     db.close();
   });
+
+  it("ops 摘要:engineStartedAt/signalsLast24h/activeKeys(顶部状态条数据源)", () => {
+    const db = openDb(":memory:");
+    db.prepare("INSERT INTO config (key, value) VALUES (?, ?)").run(
+      "engine_started_at",
+      String(NOW - 3600),
+    );
+    seed(db, { strategy: "巨鲸", cid: "c1", emittedAt: NOW - 100 });
+    seed(db, { strategy: "巨鲸", cid: "c2", emittedAt: NOW - 2 * 86_400 });
+    db.prepare(
+      "INSERT INTO api_keys (key_hash, label, tier, created_at) VALUES ('h1','a','delayed',1)",
+    ).run();
+    db.prepare(
+      "INSERT INTO api_keys (key_hash, label, tier, created_at, revoked_at) VALUES ('h2','b','delayed',1,2)",
+    ).run();
+    const o = buildAdminSignalOverview(db, { nowSec: NOW });
+    expect(o.ops.engineStartedAt).toBe(NOW - 3600);
+    expect(o.ops.signalsLast24h).toBe(1);
+    expect(o.ops.activeKeys).toBe(1);
+    db.close();
+  });
+
+  it("通道积压:与投递循环同口径 —— 到点未投计入,未到点/已过期/已投递不计", () => {
+    const db = openDb(":memory:");
+    const sid = idOf(db, "巨鲸");
+    setStrategyPush(db, sid, true);
+    // ① 到点未投:积压。
+    seed(db, { strategy: "巨鲸", cid: "due", emittedAt: NOW - 100 });
+    // ② 已投:不计。
+    seed(db, {
+      strategy: "巨鲸",
+      cid: "sent",
+      emittedAt: NOW - 200,
+      channels: [{ channel: "tg_paid", status: "sent" }],
+    });
+    // ③ 超过新鲜度上限(6h):不计(投递循环会标 skipped_stale,不是积压)。
+    seed(db, { strategy: "巨鲸", cid: "stale", emittedAt: NOW - 7 * 3600 });
+    const o = buildAdminSignalOverview(db, {
+      nowSec: NOW,
+      channels: [
+        { key: "tg_paid", minEmitAgeSec: 0 },
+        // 延迟通道:三条 emitted 都晚于 now-1800 之外只有 stale 一条,而它
+        // 对延迟通道同样超过 minEmitAge+6h → 积压 0。
+        { key: "tg_public", minEmitAgeSec: 1800 },
+      ],
+    });
+    const paid = o.ops.channels.find((c) => c.key === "tg_paid")!;
+    expect(paid.pendingEntries).toBe(1);
+    const pub = o.ops.channels.find((c) => c.key === "tg_public")!;
+    expect(pub.pendingEntries).toBe(0);
+    // 未传通道 = 未配置部署:不臆造条目。
+    const none = buildAdminSignalOverview(db, { nowSec: NOW });
+    expect(none.ops.channels).toEqual([]);
+    db.close();
+  });
 });

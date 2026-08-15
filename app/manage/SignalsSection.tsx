@@ -43,6 +43,20 @@ export default function SignalsSection({
   const [error, setError] = useState<string | null>(null);
 
   const toggle = async (strategyId: number, pushEnabled: boolean) => {
+    // 放开推送是对外动作(订户会立刻开始收到该档信号)—— 二次确认;
+    // 关闭是止损方向,单击即生效。
+    if (pushEnabled) {
+      const name =
+        overview?.strategies.find((s) => s.id === strategyId)?.name ??
+        `#${strategyId}`;
+      if (
+        !window.confirm(
+          `放开「${name}」的对外推送?\n该档后续触发的买入信号将实时进入付费频道、延迟进入公开频道/API。`,
+        )
+      ) {
+        return;
+      }
+    }
     setBusyId(strategyId);
     setError(null);
     try {
@@ -65,7 +79,11 @@ export default function SignalsSection({
   };
 
   return (
-    <section className="ds-card" style={{ marginBottom: "var(--s-5)" }}>
+    <section
+      id="signals"
+      className="ds-card"
+      style={{ marginBottom: "var(--s-5)", scrollMarginTop: "var(--s-6)" }}
+    >
       <h2 style={{ fontSize: "var(--t-lg)", marginBottom: "var(--s-1)" }}>
         📡 可推送信号管理
       </h2>
@@ -97,7 +115,17 @@ export default function SignalsSection({
                 {overview.strategies.map((s) => {
                   const line = formatRecordLine(s.name, s.record);
                   return (
-                    <tr key={s.id}>
+                    <tr
+                      key={s.id}
+                      style={{
+                        // 推送中的行淡绿高亮(19 行里一眼找到「现在在对外说话
+                        // 的档」);策略停用的行整体弱化。
+                        background: s.pushEnabled
+                          ? "oklch(0.97 0.03 155)"
+                          : undefined,
+                        opacity: s.enabled ? 1 : 0.55,
+                      }}
+                    >
                       <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
                         {s.name}
                         {!s.enabled && (
@@ -109,13 +137,32 @@ export default function SignalsSection({
                           {SOURCE_LABEL[s.source] ?? s.source}
                         </span>
                       </td>
-                      <td style={{ maxWidth: 420 }}>
-                        {line ? (
-                          <span style={{ fontSize: "var(--t-sm)" }}>
-                            {line.replace(/^📐 /, "")}
+                      {/* 紧凑三元组(悬停看 formatRecordLine 完整口径句):
+                          命中/分母 · 预期(implied 必印铁律) · 超额+噪音判定。 */}
+                      <td
+                        style={{ whiteSpace: "nowrap" }}
+                        title={line ?? undefined}
+                      >
+                        {s.record.settled === 0 ? (
+                          <span className="ds-hint">无已结算样本</span>
+                        ) : s.record.settled < 5 ? (
+                          <span>
+                            {s.record.wins}/{s.record.settled} 中
+                            <span className="ds-hint">(样本不足)</span>
                           </span>
                         ) : (
-                          <span className="ds-hint">无已结算样本</span>
+                          <span>
+                            {s.record.wins}/{s.record.settled} 中 · 预期{" "}
+                            {s.record.implied.toFixed(1)} ·{" "}
+                            {s.record.excess >= 0 ? "+" : "−"}
+                            {Math.abs(s.record.excess).toFixed(1)}
+                            <span className="ds-hint">
+                              {Math.abs(s.record.excess) >= 2 * s.record.sd &&
+                              s.record.sd > 0
+                                ? " 超运气"
+                                : " 运气内"}
+                            </span>
+                          </span>
                         )}
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>

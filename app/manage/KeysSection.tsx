@@ -35,6 +35,7 @@ export default function KeysSection({ token }: { token: string }) {
   const [issued, setIssued] = useState<{ id: number; key: string } | null>(
     null,
   );
+  const [copied, setCopied] = useState(false);
   const [label, setLabel] = useState("");
   const [tier, setTier] = useState<"realtime" | "delayed">("delayed");
   const [whKeyId, setWhKeyId] = useState("");
@@ -103,7 +104,15 @@ export default function KeysSection({ token }: { token: string }) {
     }
   };
 
-  const revoke = async (id: number) => {
+  const revoke = async (id: number, keyLabel: string) => {
+    // 吊销不可逆(订户立即断连)—— 必须二次确认。
+    if (
+      !window.confirm(
+        `吊销 key #${id}(${keyLabel})?\n该订户的 API 拉取与挂在其上的 webhook 会立即失效,不可恢复。`,
+      )
+    ) {
+      return;
+    }
     setBusy(true);
     try {
       await fetch(`/api/admin/keys?id=${id}`, {
@@ -144,7 +153,12 @@ export default function KeysSection({ token }: { token: string }) {
     }
   };
 
-  const disableWh = async (id: number) => {
+  const disableWh = async (id: number, url: string) => {
+    if (
+      !window.confirm(`停用 webhook #${id}?\n${url}\n重新启用需再登记一条。`)
+    ) {
+      return;
+    }
     setBusy(true);
     try {
       await fetch(`/api/admin/webhooks?id=${id}`, {
@@ -162,7 +176,11 @@ export default function KeysSection({ token }: { token: string }) {
   );
 
   return (
-    <section className="ds-card" style={{ marginBottom: "var(--s-5)" }}>
+    <section
+      id="keys"
+      className="ds-card"
+      style={{ marginBottom: "var(--s-5)", scrollMarginTop: "var(--s-6)" }}
+    >
       <h2 style={{ fontSize: "var(--t-lg)", marginBottom: "var(--s-1)" }}>
         🔑 API key 与 webhook
       </h2>
@@ -183,13 +201,36 @@ export default function KeysSection({ token }: { token: string }) {
               {issued.key}
             </code>
           </div>
-          <button
-            className="ds-btn"
-            style={{ marginTop: "var(--s-2)" }}
-            onClick={() => setIssued(null)}
+          <div
+            style={{
+              display: "flex",
+              gap: "var(--s-2)",
+              marginTop: "var(--s-2)",
+            }}
           >
-            我已保存,关闭
-          </button>
+            <button
+              className="ds-btn"
+              onClick={() => {
+                void navigator.clipboard
+                  .writeText(issued.key)
+                  .then(() => setCopied(true))
+                  .catch(() => {
+                    // 剪贴板被浏览器策略拒绝时,code 块本身仍可全选复制。
+                  });
+              }}
+            >
+              {copied ? "✅ 已复制" : "📋 复制"}
+            </button>
+            <button
+              className="ds-btn"
+              onClick={() => {
+                setIssued(null);
+                setCopied(false);
+              }}
+            >
+              我已保存,关闭
+            </button>
+          </div>
         </div>
       )}
 
@@ -261,7 +302,7 @@ export default function KeysSection({ token }: { token: string }) {
                       <button
                         className="ds-btn"
                         disabled={busy}
-                        onClick={() => revoke(k.id)}
+                        onClick={() => revoke(k.id, k.label)}
                       >
                         吊销
                       </button>
@@ -314,6 +355,7 @@ export default function KeysSection({ token }: { token: string }) {
           <label className="ds-label">HMAC secret(≥16 字符)</label>
           <input
             className="ds-input"
+            type="password"
             value={whSecret}
             onChange={(e) => setWhSecret(e.target.value)}
           />
@@ -375,7 +417,7 @@ export default function KeysSection({ token }: { token: string }) {
                       <button
                         className="ds-btn"
                         disabled={busy}
-                        onClick={() => disableWh(w.id)}
+                        onClick={() => disableWh(w.id, w.url)}
                       >
                         停用
                       </button>

@@ -4,7 +4,9 @@ import {
   setStrategyPush,
 } from "../../../../lib/adminOverview";
 import { checkWriteAccess, guardExpensive } from "../../../../lib/apiGuard";
-import { openDb } from "../../../../lib/db";
+import { parseConfig } from "../../../../lib/config";
+import { openDb, type DB } from "../../../../lib/db";
+import { listActiveWebhooks } from "../../../../lib/webhookDelivery";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +26,26 @@ function openDash() {
   return openDb(process.env.DASH_DB ?? "data.sqlite");
 }
 
+// 与 worker/embeddedEngine.ts 的通道装配同一判据(env 凭证 + 活跃 webhook)
+// —— 积压读数必须对准投递循环真正在跑的通道,不多不少。
+function deliveryChannels(db: DB): { key: string; minEmitAgeSec: number }[] {
+  const cfg = parseConfig(process.env);
+  const out: { key: string; minEmitAgeSec: number }[] = [];
+  if (cfg.telegramBotToken && cfg.telegramSignalChannelId) {
+    out.push({ key: "tg_paid", minEmitAgeSec: 0 });
+  }
+  if (cfg.telegramEnabled) {
+    out.push({
+      key: "tg_public",
+      minEmitAgeSec: cfg.signalPublicDelayMin * 60,
+    });
+  }
+  for (const ep of listActiveWebhooks(db)) {
+    out.push({ key: `webhook:${ep.id}`, minEmitAgeSec: 0 });
+  }
+  return out;
+}
+
 export async function GET(req: Request) {
   const access = checkWriteAccess(req);
   if (!access.ok) {
@@ -33,7 +55,9 @@ export async function GET(req: Request) {
   if (limited) return limited;
   const db = openDash();
   try {
-    return Response.json(buildAdminSignalOverview(db));
+    return Response.json(
+      buildAdminSignalOverview(db, { channels: deliveryChannels(db) }),
+    );
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("[/api/admin/signals] GET failed:", message);

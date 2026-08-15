@@ -1,4 +1,5 @@
 import type { DB } from "./db";
+import { ENTRY_MAX_AGE_SEC } from "./signalDelivery";
 import { DIGEST_DAY_KEY, DIGEST_PREV_KEY } from "./signalDigest";
 import type { SignalRecord } from "./signalRecord";
 import { sourceOf } from "./strategyFeed";
@@ -41,6 +42,14 @@ export interface RecentSignalRow {
   channels: { channel: string; status: string }[];
 }
 
+/** 一个已配置投递通道的积压视图(运营问题:「该发的发出去没有」)。 */
+export interface ChannelBacklog {
+  key: string;
+  minEmitAgeSec: number;
+  /** 已到点、未过新鲜度上限、却还没有投递记录的 entry 数 —— 应为 0 或很快归零。 */
+  pendingEntries: number;
+}
+
 export interface AdminSignalOverview {
   updatedAt: number;
   strategies: StrategyPushRow[];
@@ -49,6 +58,14 @@ export interface AdminSignalOverview {
     tg: TelegramHealth | null;
     digest: { day: string | null; tail: string | null };
     backupDay: string | null;
+    /** config engine_started_at —— 顶部摘要条算运行时长用。 */
+    engineStartedAt: number | null;
+    /** 全部档位近 24h 的台账信号总数。 */
+    signalsLast24h: number;
+    /** 未吊销 api key 数。 */
+    activeKeys: number;
+    /** 由 route 按部署配置传入的通道清单 + 各自积压(未配置通道不出现)。 */
+    channels: ChannelBacklog[];
   };
 }
 
@@ -68,7 +85,11 @@ export function setStrategyPush(
 
 export function buildAdminSignalOverview(
   db: DB,
-  opts: { nowSec?: number } = {},
+  opts: {
+    nowSec?: number;
+    /** 部署实际配置的投递通道(route 从 env + webhook 表拼出),用于积压计算。 */
+    channels?: { key: string; minEmitAgeSec: number }[];
+  } = {},
 ): AdminSignalOverview {
   const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
   const strategies = (
@@ -167,6 +188,48 @@ export function buildAdminSignalOverview(
         { value: string | null } | undefined
     )?.value ?? null;
 
+  // 通道积压:与 runDeliveryCycle 的 due/stale 判据同口径(到点 = emitted_at
+  // ≤ now − minEmitAge;过期 = 再往前 ENTRY_MAX_AGE)。积压 >0 且持续,
+  // 说明投递循环停了或被健康冻结 —— 这是「该发没发」的直接读数。
+  const pendingStmt = db.prepare(
+    `SELECT COUNT(*) AS n FROM strategy_signals s
+     JOIN follow_strategies st ON st.id = s.strategy_id
+     WHERE st.push_enabled = 1
+       AND s.emitted_at <= ? AND s.emitted_at > ?
+       AND NOT EXISTS (SELECT 1 FROM signal_deliveries d
+                       WHERE d.signal_id = s.id AND d.event = 'entry' AND d.channel = ?)`,
+  );
+  const channels: ChannelBacklog[] = (opts.channels ?? []).map((c) => {
+    const dueBefore = nowSec - c.minEmitAgeSec;
+    return {
+      key: c.key,
+      minEmitAgeSec: c.minEmitAgeSec,
+      pendingEntries: (
+        pendingStmt.get(dueBefore, dueBefore - ENTRY_MAX_AGE_SEC, c.key) as {
+          n: number;
+        }
+      ).n,
+    };
+  });
+
+  const signalsLast24h = (
+    db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM strategy_signals WHERE emitted_at >= ?",
+      )
+      .get(nowSec - 86_400) as { n: number }
+  ).n;
+  const activeKeys = (
+    db
+      .prepare("SELECT COUNT(*) AS n FROM api_keys WHERE revoked_at IS NULL")
+      .get() as { n: number }
+  ).n;
+  const engineStartedAtRaw = cfg("engine_started_at");
+  const engineStartedAt =
+    engineStartedAtRaw != null && Number.isFinite(Number(engineStartedAtRaw))
+      ? Number(engineStartedAtRaw)
+      : null;
+
   return {
     updatedAt: nowSec,
     strategies,
@@ -175,6 +238,10 @@ export function buildAdminSignalOverview(
       tg: getTelegramHealth(db),
       digest: { day: cfg(DIGEST_DAY_KEY), tail: cfg(DIGEST_PREV_KEY) },
       backupDay: cfg("db_backup_last_day"),
+      engineStartedAt,
+      signalsLast24h,
+      activeKeys,
+      channels,
     },
   };
 }
