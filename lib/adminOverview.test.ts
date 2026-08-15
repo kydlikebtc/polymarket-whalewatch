@@ -79,7 +79,7 @@ describe("setStrategyPush", () => {
 });
 
 describe("buildAdminSignalOverview", () => {
-  it("列出全部 13 档(含未放开),带 pushEnabled/source/信号计数/投递计数", () => {
+  it("列出全部档位(含未放开),带 pushEnabled/source/信号计数/投递计数", () => {
     const db = openDb(":memory:");
     const whaleId = idOf(db, "巨鲸");
     setStrategyPush(db, whaleId, true);
@@ -99,7 +99,14 @@ describe("buildAdminSignalOverview", () => {
     });
     seed(db, { strategy: "保守", cid: "c3" });
     const o = buildAdminSignalOverview(db, { nowSec: NOW });
-    expect(o.strategies).toHaveLength(13);
+    // 档位总数随种子版本演进(v3=13 档、v4=19 档含反向对照)—— 断言「与库内
+    // 实际条数一致」而非钉死数字,否则每次扩档都要来改这行。
+    const seeded = (
+      db.prepare("SELECT COUNT(*) AS n FROM follow_strategies").get() as {
+        n: number;
+      }
+    ).n;
+    expect(o.strategies).toHaveLength(seeded);
     const whale = o.strategies.find((s) => s.name === "巨鲸")!;
     expect(whale.pushEnabled).toBe(true);
     expect(whale.source).toBe("heavy");

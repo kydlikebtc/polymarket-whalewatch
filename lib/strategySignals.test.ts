@@ -468,6 +468,7 @@ describe("runFollowCycle × strategy_signals 接线", () => {
           closed: true,
           outcomePrices: [1, 0],
           outcomes: ["Yes", "No"],
+          clobTokenIds: ["t0", "t1"],
           volume24hr: null,
           liquidity: null,
           endDate: null,
