@@ -38,6 +38,7 @@ import {
 } from "../lib/heartbeat";
 import { createBackupState, maybeDailyBackup } from "../lib/dbBackup";
 import { evaluateHealth } from "../lib/health";
+import { runDeliveryCycle, type DeliveryChannel } from "../lib/signalDelivery";
 import { runBotCycle, type BotUpdate } from "../lib/botCommands";
 import { buildMarketCard, resolveMarketInput } from "../lib/marketCard";
 
@@ -495,6 +496,80 @@ export function startAlertEngine(): void {
       setTimeout(botLoop, BOT_POLL_GAP_MS);
     }
     setTimeout(botLoop, 10_000);
+  }
+
+  // --- 对外信号投递循环(第七个循环,批次 1) -----------------------------
+  // 消费 strategy_signals 台账、扇出到已配置的通道。信号产生(followCycle)
+  // 与投递在此彻底解耦:通道一个都没配时循环整个不启动(fail-closed),
+  // 引擎其余六个循环零感知。幂等/失败语义见 lib/signalDelivery.ts 文件头。
+  {
+    const DELIVERY_INTERVAL_MS = 30_000;
+    const deliveryChannels: DeliveryChannel[] = [];
+    if (cfg.telegramBotToken && cfg.telegramSignalChannelId) {
+      // 付费频道:实时(minEmitAgeSec=0)。与告警频道分开的独立 chatId。
+      const paidCreds = {
+        botToken: cfg.telegramBotToken,
+        chatId: cfg.telegramSignalChannelId,
+      };
+      deliveryChannels.push({
+        key: "tg_paid",
+        minEmitAgeSec: 0,
+        send: (html) => sendMessage(paidCreds, html),
+      });
+    }
+    if (cfg.telegramEnabled) {
+      // 公开延迟通道:复用告警频道,晚 signalPublicDelayMin 分钟 —— 免费/
+      // 付费分层的唯一杠杆是延迟,字段不阉割(公开可验证记录必须完整)。
+      deliveryChannels.push({
+        key: "tg_public",
+        minEmitAgeSec: cfg.signalPublicDelayMin * 60,
+        send: (html) => sendMessage(creds, html),
+      });
+    }
+    if (deliveryChannels.length > 0) {
+      async function deliveryLoop() {
+        try {
+          const r = await runDeliveryCycle({
+            db,
+            channels: deliveryChannels,
+            publicUrl: cfg.publicUrl,
+            // 引擎停跳时冻结投递(宁静默不误导)。delivery 自己的 beat 在
+            // 循环末尾无条件打点,冻结轮也算活着 —— 停跳判定只由其余循环触发。
+            checkHealth: () => ({
+              ok: evaluateHealth(
+                getHeartbeats(db),
+                Math.floor(Date.now() / 1000),
+                getEngineStart(db),
+              ).ok,
+            }),
+          });
+          if (r.sent > 0) {
+            console.log(`[delivery] pushed ${r.sent} message(s)`);
+          }
+          if (r.skippedStale > 0) {
+            console.warn(
+              `[delivery] ${r.skippedStale} stale signal(s) skipped (never pushed — too old to act on)`,
+            );
+          }
+          beat(db, "delivery");
+        } catch (e) {
+          console.error("[delivery] cycle error", e);
+        }
+        setTimeout(deliveryLoop, DELIVERY_INTERVAL_MS);
+      }
+      // 45s 首跑:错开 consensus(30s)/evidence(60s),且首轮 followCycle
+      // (最早 30s+)落台账前投递本来就无事可做。
+      setTimeout(deliveryLoop, 45_000);
+      console.log(
+        `[delivery] signal delivery loop enabled (${deliveryChannels
+          .map((c) => c.key)
+          .join(", ")}, public delay ${cfg.signalPublicDelayMin}min)`,
+      );
+    } else {
+      console.log(
+        "[delivery] no signal channels configured — delivery loop disabled (set TELEGRAM_SIGNAL_CHANNEL_ID and/or TELEGRAM_CHANNEL_ID)",
+      );
+    }
   }
 
   // --- Dead-man's switch: outbound health ping ---------------------------

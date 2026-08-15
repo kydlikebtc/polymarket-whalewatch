@@ -15,8 +15,15 @@ export const LOOP_STALE_AFTER_SEC: Record<string, number> = {
   alert: 5 * 60, // 4s cadence
   consensus: 20 * 60, // 5min cadence, one deep-window sweep can run long
   outcome_backfill: 35 * 60, // 10min cadence
+  delivery: 10 * 60, // 30s cadence(对外信号投递,批次 1)
 };
 export const DEFAULT_STALE_AFTER_SEC = 60 * 60;
+
+// 条件循环:只在其通道配置齐全时才启动(delivery 需要 Telegram 凭证)。
+// records-only 部署里它们从不 beat —— 这是配置形态不是故障,expected-but-
+// absent 判定必须跳过它们,否则无 TG 凭证的安装会永远 /api/health 503。
+// 一旦 beat 过,停跳staleness照常按上表阈值判定。
+export const CONDITIONAL_LOOPS: ReadonlySet<string> = new Set(["delivery"]);
 
 export interface LoopStatus {
   loop: string;
@@ -75,6 +82,8 @@ export function evaluateHealth(
     const seen = new Set(beats.map((b) => b.loop));
     for (const [loop, staleAfterSec] of Object.entries(LOOP_STALE_AFTER_SEC)) {
       if (seen.has(loop)) continue;
+      // 条件循环缺席 ≠ 故障(通道未配置的部署根本不会启动它)。
+      if (CONDITIONAL_LOOPS.has(loop)) continue;
       loops.push({
         loop,
         lastTs: null,
