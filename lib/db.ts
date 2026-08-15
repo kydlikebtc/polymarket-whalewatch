@@ -22,8 +22,13 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS heartbeats (loop TEXT PRIMARY KEY, last_ts INTEGER NOT NULL, day TEXT NOT NULL, cycles INTEGER NOT NULL, max_gap_sec INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS cycle_metrics (id INTEGER PRIMARY KEY AUTOINCREMENT, loop TEXT NOT NULL, ts INTEGER NOT NULL, window_trades INTEGER, window_usd REAL, raw_groups INTEGER, contested_dropped INTEGER, fired INTEGER);
     CREATE INDEX IF NOT EXISTS idx_cycle_metrics_ts ON cycle_metrics(loop, ts);
-    CREATE TABLE IF NOT EXISTS follow_strategies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, enabled INTEGER DEFAULT 1, params_json TEXT, created_at INTEGER);
+    CREATE TABLE IF NOT EXISTS follow_strategies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, enabled INTEGER DEFAULT 1, params_json TEXT, created_at INTEGER, push_enabled INTEGER DEFAULT 0);
     CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, formation_ts INTEGER, formation_price REAL, markout_30m REAL, markout_2h REAL, exec_price REAL, exec_best_ask REAL, exec_filled_usd REAL, fee_usd REAL, UNIQUE(strategy_id, condition_id, outcome));
+    CREATE TABLE IF NOT EXISTS strategy_signals (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER NOT NULL, position_id INTEGER, condition_id TEXT NOT NULL, outcome TEXT NOT NULL, outcome_index INTEGER, asset TEXT, title TEXT, slug TEXT, event_slug TEXT, formation_ts INTEGER NOT NULL, reference_price REAL, wallet_count INTEGER, total_net_usd REAL, entry_price REAL, size_usd REAL, emitted_at INTEGER NOT NULL, settled INTEGER DEFAULT 0, settled_ts INTEGER, exit_price REAL, won INTEGER, realized_pnl REAL, UNIQUE(strategy_id, condition_id, outcome));
+    CREATE INDEX IF NOT EXISTS idx_strategy_signals_emitted ON strategy_signals(emitted_at);
+    CREATE TABLE IF NOT EXISTS signal_deliveries (signal_id INTEGER NOT NULL, event TEXT NOT NULL, channel TEXT NOT NULL, delivered_at INTEGER, status TEXT NOT NULL, PRIMARY KEY (signal_id, event, channel));
+    CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, key_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL, tier TEXT NOT NULL DEFAULT 'delayed', created_at INTEGER NOT NULL, revoked_at INTEGER, last_used_at INTEGER);
+    CREATE TABLE IF NOT EXISTS webhook_endpoints (id INTEGER PRIMARY KEY AUTOINCREMENT, api_key_id INTEGER NOT NULL, url TEXT NOT NULL, secret TEXT NOT NULL, active INTEGER DEFAULT 1, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS market_tilt_history (condition_id TEXT NOT NULL, ts INTEGER NOT NULL, lead_outcome TEXT, minor_outcome TEXT, minor_net_usd REAL, tilt_pct REAL, PRIMARY KEY (condition_id, ts));
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
     CREATE INDEX IF NOT EXISTS idx_candidates_evidence_ts ON wallet_candidates(evidence_ts);
@@ -103,6 +108,17 @@ export function openDb(path = "data.sqlite") {
     } catch {
       // column already present
     }
+  }
+  // follow_strategies gained push_enabled(对外信号批次 0):该档触发买入是否
+  // 进对外投递总线。默认 0 —— 放开哪几档是「先静默测量一周、按战绩放开」的
+  // 运营决策(见 docs/plans/2026-08-13-external-signal-system-design.md §4.6),
+  // 绝不是部署副作用。老库靠这条 ALTER 拿到列;新库 CREATE TABLE 已含。
+  try {
+    db.prepare(
+      "ALTER TABLE follow_strategies ADD COLUMN push_enabled INTEGER DEFAULT 0",
+    ).run();
+  } catch {
+    // column already present
   }
   // discovery_gate v1 (version-gated like wallet_age_v — several routes open
   // a connection per request, so unconditional writes here would contend for
