@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AdminSignalOverview } from "../../lib/adminOverview";
+import { Tag } from "../ui";
 import AlertRulesSection from "./AlertRulesSection";
 import HealthSection, { type HealthReport } from "./HealthSection";
 import KeysSection from "./KeysSection";
@@ -96,31 +97,31 @@ export default function ManagePage() {
 
   return (
     <main className="ds-main">
-      <header style={{ marginBottom: "var(--s-3)" }}>
+      <header style={{ marginBottom: "var(--s-5)" }}>
         <div
           style={{
             display: "flex",
-            alignItems: "baseline",
+            alignItems: "center",
             gap: "var(--s-3)",
             flexWrap: "wrap",
           }}
         >
           <h1 style={{ fontSize: "var(--t-2xl)", margin: 0 }}>🛠 运营管理</h1>
           <button
-            className="ds-btn"
+            className="ds-btn ds-btn--subtle ds-btn--sm"
             disabled={refreshing}
             onClick={() => void loadAll()}
           >
             {refreshing ? "刷新中…" : "↻ 刷新"}
           </button>
           {refreshedAt != null && (
-            <span className="ds-hint">
-              更新于 {new Date(refreshedAt * 1000).toLocaleTimeString("zh-CN")}{" "}
-              · 每分钟自动刷新
+            <span className="ds-hint mono">
+              更新于 {new Date(refreshedAt * 1000).toLocaleTimeString("zh-CN")}
+              <span className="muted"> · 每分钟自动</span>
             </span>
           )}
         </div>
-        <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
+        <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
           无入口页面(不在导航栏)。读写运营数据需管理令牌 —— 令牌只存本浏览器, 与
           /alerts 配置面板共用。
         </div>
@@ -133,32 +134,38 @@ export default function ManagePage() {
         style={{
           marginBottom: "var(--s-5)",
           display: "flex",
-          gap: "var(--s-3)",
+          gap: "var(--s-4)",
           flexWrap: "wrap",
           alignItems: "flex-end",
+          justifyContent: "space-between",
         }}
       >
-        <div style={{ flex: "1 1 300px" }}>
-          <label className="ds-label" htmlFor="manage-token">
+        <div style={{ flex: "1 1 320px", maxWidth: 480 }}>
+          <div
+            className="ds-label"
+            style={{
+              marginBottom: "var(--s-2)",
+              display: "flex",
+              gap: "var(--s-2)",
+              alignItems: "center",
+            }}
+          >
             管理令牌(x-admin-token)
-            {overview != null && (
-              <span className="ds-hint" style={{ marginLeft: "var(--s-2)" }}>
-                🟢 已验证
-              </span>
-            )}
-          </label>
+            {overview != null && <Tag variant="up">已验证</Tag>}
+            {overviewError != null && <Tag variant="warn">受限</Tag>}
+          </div>
           <input
             id="manage-token"
-            className="ds-input"
+            className="ds-input ds-input--mono"
             type="password"
             placeholder="x-admin-token"
             value={token}
             onChange={(e) => saveToken(e.target.value)}
-            style={{ maxWidth: 420 }}
+            style={{ width: "100%" }}
           />
           {overviewError && (
             <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-              🔴 {overviewError}
+              {overviewError}
             </div>
           )}
         </div>
@@ -167,7 +174,11 @@ export default function ManagePage() {
           aria-label="分区导航"
         >
           {SECTIONS.map((s) => (
-            <button key={s.id} className="ds-btn" onClick={() => jump(s.id)}>
+            <button
+              key={s.id}
+              className="ds-btn ds-btn--ghost ds-btn--sm"
+              onClick={() => jump(s.id)}
+            >
               {s.label}
             </button>
           ))}

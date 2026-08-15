@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Segmented } from "../ui";
+import { SectionHead } from "./bits";
 import { authHeaders } from "./shared";
 
-// 区块 1:TG 提醒规则(大额/聪明钱告警引擎的触发条件)。
+// 区块:TG 提醒规则(大额/聪明钱告警引擎的触发条件)。
 // 数据面完全复用既有 /api/alert-config(GET 公开读、POST 需令牌)——
 // 与 /alerts 页配置面板是同一份 config,两处保存互相可见(引擎每轮热读)。
+// 枚举选择(方向/开关)用站内 Segmented 控件,与告警页同一交互语言。
 
 interface ConditionsForm {
   enabled: boolean;
@@ -25,6 +28,17 @@ const numOrNull = (s: string): number | null => {
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
 };
+
+const ON_OFF = [
+  { value: 1, label: "开" },
+  { value: 0, label: "关" },
+] as const;
+
+const SIDES = [
+  { value: "ALL", label: "全部" },
+  { value: "BUY", label: "只看买入" },
+  { value: "SELL", label: "只看卖出" },
+] as const;
 
 export default function AlertRulesSection({ token }: { token: string }) {
   const [form, setForm] = useState<ConditionsForm | null>(null);
@@ -94,15 +108,17 @@ export default function AlertRulesSection({ token }: { token: string }) {
   const upd = (patch: Partial<ConditionsForm>) =>
     setForm((f) => (f ? { ...f, ...patch } : f));
 
-  const field = (
+  const numField = (
     label: string,
     key: keyof ConditionsForm,
     placeholder: string,
   ) => (
     <div>
-      <label className="ds-label">{label}</label>
+      <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+        {label}
+      </div>
       <input
-        className="ds-input"
+        className="ds-input ds-input--mono"
         value={String(form?.[key] ?? "")}
         placeholder={placeholder}
         onChange={(e) => upd({ [key]: e.target.value } as never)}
@@ -111,76 +127,85 @@ export default function AlertRulesSection({ token }: { token: string }) {
   );
 
   return (
-    <section className="ds-card" style={{ marginBottom: "var(--s-5)" }}>
-      <h2 style={{ fontSize: "var(--t-lg)", marginBottom: "var(--s-1)" }}>
-        🔔 TG 提醒规则(大额/聪明钱告警)
-      </h2>
-      <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
-        与 /alerts 页配置面板同一份规则;保存
-        {readonly ? "需要上方管理令牌" : "(本地部署免令牌)"}
-        。策略信号推送的开关在上方「可推送信号管理」区。
-      </div>
+    <section
+      id="rules"
+      className="ds-card"
+      style={{ marginBottom: "var(--s-5)", scrollMarginTop: "var(--s-6)" }}
+    >
+      <SectionHead
+        title="🔔 TG 提醒规则(大额/聪明钱告警)"
+        hint={
+          <>
+            与 /alerts 页配置面板同一份规则;保存
+            {readonly ? "需要上方管理令牌" : "(本地部署免令牌)"}
+            。策略信号推送的开关在上方「可推送信号管理」区。
+          </>
+        }
+      />
       {!form ? (
-        <div className="ds-hint">加载中…</div>
+        <div className="ds-empty">加载中…</div>
       ) : (
         <>
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))",
-              gap: "var(--s-3)",
-              marginBottom: "var(--s-3)",
+              gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
+              gap: "var(--s-4)",
+              marginBottom: "var(--s-4)",
             }}
           >
             <div>
-              <label className="ds-label">推送总开关</label>
-              <button
-                className="ds-btn"
-                aria-pressed={form.enabled}
-                onClick={() => upd({ enabled: !form.enabled })}
-              >
-                {form.enabled ? "🟢 开" : "⚪ 关"}
-              </button>
+              <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+                推送总开关
+              </div>
+              <Segmented
+                ariaLabel="推送总开关"
+                options={ON_OFF}
+                value={form.enabled ? 1 : 0}
+                onChange={(v) => upd({ enabled: v === 1 })}
+              />
             </div>
-            {field("金额下限 $", "minUsd", "10000")}
+            {numField("金额下限 $", "minUsd", "10000")}
             <div>
-              <label className="ds-label">方向</label>
-              <select
-                className="ds-input"
+              <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+                方向
+              </div>
+              <Segmented
+                ariaLabel="方向"
+                options={SIDES}
                 value={form.side}
-                onChange={(e) =>
-                  upd({ side: e.target.value as ConditionsForm["side"] })
-                }
-              >
-                <option value="ALL">全部</option>
-                <option value="BUY">只看买入</option>
-                <option value="SELL">只看卖出</option>
-              </select>
+                onChange={(v) => upd({ side: v })}
+              />
             </div>
-            {field("价格下限 0-1(空=不限)", "minPrice", "0.5")}
-            {field("价格上限 0-1(空=不限)", "maxPrice", "0.95")}
-            {field("地址年龄 ≤ 天(空=不限)", "maxAgeDays", "7")}
+            {numField("价格下限 0-1(空=不限)", "minPrice", "0.5")}
+            {numField("价格上限 0-1(空=不限)", "maxPrice", "0.95")}
+            {numField("地址年龄 ≤ 天(空=不限)", "maxAgeDays", "7")}
             <div>
-              <label className="ds-label">只推聪明钱(🏆)</label>
-              <button
-                className="ds-btn"
-                aria-pressed={form.smartOnly}
-                onClick={() => upd({ smartOnly: !form.smartOnly })}
-              >
-                {form.smartOnly ? "🟢 开" : "⚪ 关"}
-              </button>
+              <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+                只推聪明钱(🏆)
+              </div>
+              <Segmented
+                ariaLabel="只推聪明钱"
+                options={ON_OFF}
+                value={form.smartOnly ? 1 : 0}
+                onChange={(v) => upd({ smartOnly: v === 1 })}
+              />
             </div>
-            {field("距结算 ≤ 小时(空=不限)", "maxHoursToEnd", "24")}
-            {field("同钱包同市场冷却 分钟", "cooldownMinutes", "30")}
+            {numField("距结算 ≤ 小时(空=不限)", "maxHoursToEnd", "24")}
+            {numField("同钱包同市场冷却 分钟", "cooldownMinutes", "30")}
           </div>
-          <button className="ds-btn" disabled={saving} onClick={save}>
-            {saving ? "保存中…" : "保存规则"}
-          </button>
-          {msg && (
-            <span className="ds-hint" style={{ marginLeft: "var(--s-3)" }}>
-              {msg}
-            </span>
-          )}
+          <div
+            style={{ display: "flex", gap: "var(--s-3)", alignItems: "center" }}
+          >
+            <button
+              className="ds-btn ds-btn--primary"
+              disabled={saving}
+              onClick={save}
+            >
+              {saving ? "保存中…" : "保存规则"}
+            </button>
+            {msg && <span className="ds-hint">{msg}</span>}
+          </div>
         </>
       )}
     </section>

@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { CopyButton, Segmented, Tag } from "../ui";
+import { SectionHead } from "./bits";
 import { agoText, authHeaders, timeText } from "./shared";
 
-// 区块 3:API key 与 webhook 端点管理。
+// 区块:API key 与 webhook 端点管理。
 // 数据面完全复用批次 2/3 的 admin 路由(/api/admin/keys、/api/admin/webhooks)。
-// 明文 key 只在签发响应里出现一次 —— 这里用醒目 callout 展示并提醒立即保存。
+// 明文 key 只在签发响应里出现一次 —— callout 醒目展示 + 站内 CopyButton
+// (自带剪贴板降级与 ✓ 反馈)。tier 选择用 Segmented,与全站同一交互语言。
 
 interface KeyRow {
   id: number;
@@ -28,6 +31,11 @@ interface WebhookRow {
   key_revoked_at: number | null;
 }
 
+const TIERS = [
+  { value: "delayed", label: "delayed(延迟)" },
+  { value: "realtime", label: "realtime(实时)" },
+] as const;
+
 export default function KeysSection({ token }: { token: string }) {
   const [keys, setKeys] = useState<KeyRow[] | null>(null);
   const [webhooks, setWebhooks] = useState<WebhookRow[] | null>(null);
@@ -35,7 +43,6 @@ export default function KeysSection({ token }: { token: string }) {
   const [issued, setIssued] = useState<{ id: number; key: string } | null>(
     null,
   );
-  const [copied, setCopied] = useState(false);
   const [label, setLabel] = useState("");
   const [tier, setTier] = useState<"realtime" | "delayed">("delayed");
   const [whKeyId, setWhKeyId] = useState("");
@@ -181,70 +188,69 @@ export default function KeysSection({ token }: { token: string }) {
       className="ds-card"
       style={{ marginBottom: "var(--s-5)", scrollMarginTop: "var(--s-6)" }}
     >
-      <h2 style={{ fontSize: "var(--t-lg)", marginBottom: "var(--s-1)" }}>
-        🔑 API key 与 webhook
-      </h2>
-      <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
-        key 用于 /api/signals 拉取(realtime=实时全量,delayed=延迟视图); webhook
-        只可挂在 realtime key 上。库中只存哈希,明文仅签发时显示一次。
-      </div>
+      <SectionHead
+        title="🔑 API key 与 webhook"
+        aside={
+          keys && (
+            <span className="ds-hint num">
+              有效 {keys.filter((k) => k.revokedAt == null).length} / 共{" "}
+              {keys.length}
+            </span>
+          )
+        }
+        hint="key 用于 /api/signals 拉取(realtime=实时全量,delayed=延迟视图);webhook 只可挂在 realtime key 上。库中只存哈希,明文仅签发时显示一次。"
+      />
       {error && (
-        <div className="ds-callout" style={{ marginBottom: "var(--s-3)" }}>
+        <div
+          className="ds-callout ds-callout--error"
+          style={{ marginBottom: "var(--s-3)" }}
+        >
           {error}
         </div>
       )}
       {issued && (
-        <div className="ds-callout" style={{ marginBottom: "var(--s-3)" }}>
-          ✅ 已签发 #{issued.id} —— 明文只显示这一次,请立即复制保存:
-          <div>
-            <code style={{ userSelect: "all", wordBreak: "break-all" }}>
-              {issued.key}
-            </code>
-          </div>
+        <div className="ds-callout" style={{ marginBottom: "var(--s-4)" }}>
+          <b>✅ 已签发 #{issued.id}</b> —— 明文只显示这一次,请立即复制保存:
           <div
+            className="mono"
             style={{
+              margin: "var(--s-2) 0",
+              padding: "var(--s-2) var(--s-3)",
+              background: "var(--n-50)",
+              border: "1px solid var(--n-150)",
+              borderRadius: "var(--r-sm, 6px)",
+              wordBreak: "break-all",
+              userSelect: "all",
               display: "flex",
+              alignItems: "center",
               gap: "var(--s-2)",
-              marginTop: "var(--s-2)",
             }}
           >
-            <button
-              className="ds-btn"
-              onClick={() => {
-                void navigator.clipboard
-                  .writeText(issued.key)
-                  .then(() => setCopied(true))
-                  .catch(() => {
-                    // 剪贴板被浏览器策略拒绝时,code 块本身仍可全选复制。
-                  });
-              }}
-            >
-              {copied ? "✅ 已复制" : "📋 复制"}
-            </button>
-            <button
-              className="ds-btn"
-              onClick={() => {
-                setIssued(null);
-                setCopied(false);
-              }}
-            >
-              我已保存,关闭
-            </button>
+            {issued.key}
+            <CopyButton text={issued.key} label="复制 key" />
           </div>
+          <button
+            className="ds-btn ds-btn--sm ds-btn--subtle"
+            onClick={() => setIssued(null)}
+          >
+            我已保存,关闭
+          </button>
         </div>
       )}
 
       <div
         style={{
           display: "flex",
-          gap: "var(--s-2)",
+          gap: "var(--s-3)",
           flexWrap: "wrap",
           alignItems: "flex-end",
-          marginBottom: "var(--s-3)",
+          marginBottom: "var(--s-4)",
         }}
       >
         <div>
-          <label className="ds-label">订户备注</label>
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            订户备注
+          </div>
           <input
             className="ds-input"
             value={label}
@@ -253,31 +259,35 @@ export default function KeysSection({ token }: { token: string }) {
           />
         </div>
         <div>
-          <label className="ds-label">tier</label>
-          <select
-            className="ds-input"
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            tier
+          </div>
+          <Segmented
+            ariaLabel="key tier"
+            options={TIERS}
             value={tier}
-            onChange={(e) => setTier(e.target.value as "realtime" | "delayed")}
-          >
-            <option value="delayed">delayed(延迟)</option>
-            <option value="realtime">realtime(实时)</option>
-          </select>
+            onChange={(v) => setTier(v)}
+          />
         </div>
-        <button className="ds-btn" disabled={busy} onClick={issue}>
+        <button
+          className="ds-btn ds-btn--primary"
+          disabled={busy}
+          onClick={issue}
+        >
           签发新 key
         </button>
       </div>
 
       {keys == null ? (
-        <div className="ds-hint">需要有效管理令牌后加载。</div>
+        <div className="ds-empty">需要有效管理令牌后加载。</div>
       ) : keys.length === 0 ? (
-        <div className="ds-hint">尚无 key。</div>
+        <div className="ds-empty">尚无 key。</div>
       ) : (
-        <div className="ds-table-wrap" style={{ marginBottom: "var(--s-4)" }}>
-          <table className="ds-table">
+        <div className="ds-table-wrap" style={{ marginBottom: "var(--s-5)" }}>
+          <table className="ds-table ds-table--compact">
             <thead>
               <tr>
-                <th>#</th>
+                <th className="is-right">#</th>
                 <th>备注</th>
                 <th>tier</th>
                 <th>签发</th>
@@ -288,19 +298,30 @@ export default function KeysSection({ token }: { token: string }) {
             </thead>
             <tbody>
               {keys.map((k) => (
-                <tr key={k.id}>
-                  <td>{k.id}</td>
-                  <td>{k.label}</td>
+                <tr
+                  key={k.id}
+                  style={k.revokedAt != null ? { opacity: 0.55 } : undefined}
+                >
+                  <td className="is-right num muted">{k.id}</td>
+                  <td style={{ fontWeight: 600 }}>{k.label}</td>
                   <td>
-                    <span className="ds-tag">{k.tier}</span>
+                    <Tag variant={k.tier === "realtime" ? "brand" : "default"}>
+                      {k.tier}
+                    </Tag>
                   </td>
-                  <td className="ds-hint">{timeText(k.createdAt)}</td>
+                  <td className="ds-hint mono">{timeText(k.createdAt)}</td>
                   <td className="ds-hint">{agoText(k.lastUsedAt)}</td>
-                  <td>{k.revokedAt != null ? "🚫 已吊销" : "🟢 有效"}</td>
+                  <td>
+                    {k.revokedAt != null ? (
+                      <Tag variant="down">已吊销</Tag>
+                    ) : (
+                      <Tag variant="up">有效</Tag>
+                    )}
+                  </td>
                   <td>
                     {k.revokedAt == null && (
                       <button
-                        className="ds-btn"
+                        className="ds-btn ds-btn--sm ds-btn--danger"
                         disabled={busy}
                         onClick={() => revoke(k.id, k.label)}
                       >
@@ -321,14 +342,16 @@ export default function KeysSection({ token }: { token: string }) {
       <div
         style={{
           display: "flex",
-          gap: "var(--s-2)",
+          gap: "var(--s-3)",
           flexWrap: "wrap",
           alignItems: "flex-end",
-          marginBottom: "var(--s-3)",
+          marginBottom: "var(--s-4)",
         }}
       >
         <div>
-          <label className="ds-label">挂在 key</label>
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            挂在 key
+          </div>
           <select
             className="ds-input"
             value={whKeyId}
@@ -343,25 +366,30 @@ export default function KeysSection({ token }: { token: string }) {
           </select>
         </div>
         <div style={{ flex: "1 1 240px" }}>
-          <label className="ds-label">URL</label>
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            URL
+          </div>
           <input
-            className="ds-input"
+            className="ds-input ds-input--mono"
             value={whUrl}
             placeholder="https://…/hook"
             onChange={(e) => setWhUrl(e.target.value)}
+            style={{ width: "100%" }}
           />
         </div>
         <div>
-          <label className="ds-label">HMAC secret(≥16 字符)</label>
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            HMAC secret(≥16 字符)
+          </div>
           <input
-            className="ds-input"
+            className="ds-input ds-input--mono"
             type="password"
             value={whSecret}
             onChange={(e) => setWhSecret(e.target.value)}
           />
         </div>
         <button
-          className="ds-btn"
+          className="ds-btn ds-btn--primary"
           disabled={busy || !whKeyId || !whUrl || whSecret.length < 16}
           onClick={registerWh}
         >
@@ -370,25 +398,33 @@ export default function KeysSection({ token }: { token: string }) {
       </div>
       {webhooks != null && webhooks.length > 0 && (
         <div className="ds-table-wrap">
-          <table className="ds-table">
+          <table className="ds-table ds-table--compact">
             <thead>
               <tr>
-                <th>#</th>
+                <th className="is-right">#</th>
                 <th>key</th>
                 <th>URL</th>
-                <th>连败</th>
+                <th className="is-right">连败</th>
                 <th>状态</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {webhooks.map((w) => (
-                <tr key={w.id}>
-                  <td>{w.id}</td>
-                  <td>
+                <tr
+                  key={w.id}
+                  style={
+                    w.active !== 1 || w.key_revoked_at != null
+                      ? { opacity: 0.55 }
+                      : undefined
+                  }
+                >
+                  <td className="is-right num muted">{w.id}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
                     #{w.api_key_id} {w.key_label}
                   </td>
                   <td
+                    className="mono"
                     style={{
                       maxWidth: 260,
                       overflow: "hidden",
@@ -399,23 +435,25 @@ export default function KeysSection({ token }: { token: string }) {
                   >
                     {w.url}
                   </td>
-                  <td>
+                  <td className="is-right num">
                     {w.consecutive_failures}
                     {w.last_error && (
                       <span className="ds-hint">({w.last_error})</span>
                     )}
                   </td>
                   <td>
-                    {w.key_revoked_at != null
-                      ? "🚫 key 已吊销"
-                      : w.active === 1
-                        ? "🟢 活跃"
-                        : "⛔ 已停用"}
+                    {w.key_revoked_at != null ? (
+                      <Tag variant="down">key 已吊销</Tag>
+                    ) : w.active === 1 ? (
+                      <Tag variant="up">活跃</Tag>
+                    ) : (
+                      <Tag>已停用</Tag>
+                    )}
                   </td>
                   <td>
                     {w.active === 1 && (
                       <button
-                        className="ds-btn"
+                        className="ds-btn ds-btn--sm ds-btn--danger"
                         disabled={busy}
                         onClick={() => disableWh(w.id, w.url)}
                       >
