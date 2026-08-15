@@ -5,6 +5,7 @@ import {
   type PushSignalRow,
 } from "./signalPush";
 import type { SignalRecord } from "./signalRecord";
+import { sourceOf } from "./strategyFeed";
 import { strategyRecord30d } from "./strategySignals";
 import { isPermanentSendError } from "./telegram";
 
@@ -37,11 +38,33 @@ const SEND_GAP_MS = 3200;
 const DEFAULT_MAX_SENDS_PER_CYCLE = 6;
 
 export interface DeliveryChannel {
-  /** 'tg_paid' | 'tg_public'(批次 3 起还有 'webhook:<id>')。 */
+  /** 'tg_paid' | 'tg_public' | 'webhook:<id>'。 */
   key: string;
   /** entry 必须至少这么旧才可从本通道发出(延迟分层)。 */
   minEmitAgeSec: number;
-  send: (html: string) => Promise<void>;
+  /** 文本通道(TG):收合并后的 HTML 消息。 */
+  send?: (html: string) => Promise<void>;
+  /**
+   * 结构化通道(webhook):直接收整组行,自行编码/逐行投递。与 send 二选一,
+   * 都缺 = 配置错误,该通道被跳过并告警。失败语义同 send:permanent 标记
+   * 错误(isPermanentSendError)= 保留 claim,其余 = 回滚重试。
+   */
+  sendEvent?: (
+    rows: PushSignalRow[],
+    event: "entry" | "settle",
+    ctx: DeliveryEventCtx,
+  ) => Promise<void>;
+}
+
+/** 结构化通道的取值上下文(函数式,按需取,不复制全量 Map)。 */
+export interface DeliveryEventCtx {
+  strategyName: (strategyId: number) => string;
+  source: (strategyId: number) => string;
+  record: (strategyId: number) => SignalRecord | null;
+  category: (eventSlug: string | null) => {
+    category: string | null;
+    subcategory: string | null;
+  };
 }
 
 export interface DeliveryCycleDeps {
@@ -103,13 +126,14 @@ export async function runDeliveryCycle(
     return result;
   }
 
+  const strategyRows = db
+    .prepare("SELECT id, name, params_json FROM follow_strategies")
+    .all() as { id: number; name: string; params_json: string | null }[];
   const strategyNames = new Map<number, string>(
-    (
-      db.prepare("SELECT id, name FROM follow_strategies").all() as {
-        id: number;
-        name: string;
-      }[]
-    ).map((r) => [r.id, r.name]),
+    strategyRows.map((r) => [r.id, r.name]),
+  );
+  const strategySources = new Map<number, string>(
+    strategyRows.map((r) => [r.id, sourceOf(r.params_json)]),
   );
   // 30d 战绩按档缓存一轮 —— 同一档多组命中时不重复算。
   const recordCache = new Map<number, SignalRecord>();
@@ -135,6 +159,25 @@ export async function runDeliveryCycle(
       category: row?.category || null,
       subcategory: row?.subcategory || null,
     };
+  };
+
+  const eventCtx: DeliveryEventCtx = {
+    strategyName: (id) => strategyNames.get(id) ?? `#${id}`,
+    source: (id) => strategySources.get(id) ?? "consensus",
+    record: (id) => recordOf(id),
+    category: (eventSlug) => categoryOf(eventSlug),
+  };
+  // 通道分派:结构化通道优先 sendEvent,文本通道用 send(html)。两个都缺是
+  // 配置错误 —— 跳过该通道并告警,绝不静默吞投递。
+  const dispatch = async (
+    ch: DeliveryChannel,
+    rows: PushSignalRow[],
+    event: "entry" | "settle",
+    buildHtml: () => string,
+  ): Promise<void> => {
+    if (ch.sendEvent) return ch.sendEvent(rows, event, eventCtx);
+    if (ch.send) return ch.send(buildHtml());
+    throw new Error(`channel ${ch.key} 缺 send/sendEvent 实现(配置错误)`);
   };
 
   const claim = db.prepare(
@@ -185,20 +228,25 @@ export async function runDeliveryCycle(
         (r) => claim.run(r.id, "entry", ch.key, nowSec).changes === 1,
       );
       if (claimed.length === 0) continue; // 全组被并行引擎抢走
-      const lead = [...claimed].sort((a, b) => a.emitted_at - b.emitted_at)[0];
-      const cat = categoryOf(lead.event_slug);
-      const recs = new Map<number, SignalRecord>();
-      for (const r of claimed) recs.set(r.strategy_id, recordOf(r.strategy_id));
-      const html = formatStrategyEntryTg(claimed, {
-        strategyNames,
-        recordByStrategy: recs,
-        category: cat.category,
-        subcategory: cat.subcategory,
-        publicUrl,
-        nowSec,
-      });
       try {
-        await ch.send(html);
+        await dispatch(ch, claimed, "entry", () => {
+          const lead = [...claimed].sort(
+            (a, b) => a.emitted_at - b.emitted_at,
+          )[0];
+          const cat = categoryOf(lead.event_slug);
+          const recs = new Map<number, SignalRecord>();
+          for (const r of claimed) {
+            recs.set(r.strategy_id, recordOf(r.strategy_id));
+          }
+          return formatStrategyEntryTg(claimed, {
+            strategyNames,
+            recordByStrategy: recs,
+            category: cat.category,
+            subcategory: cat.subcategory,
+            publicUrl,
+            nowSec,
+          });
+        });
         result.sent++;
         budget--;
       } catch (e) {
@@ -257,13 +305,14 @@ export async function runDeliveryCycle(
         (r) => claim.run(r.id, "settle", ch.key, nowSec).changes === 1,
       );
       if (claimed.length === 0) continue;
-      const html = formatStrategySettleTg(claimed, {
-        strategyNames,
-        publicUrl,
-        nowSec,
-      });
       try {
-        await ch.send(html);
+        await dispatch(ch, claimed, "settle", () =>
+          formatStrategySettleTg(claimed, {
+            strategyNames,
+            publicUrl,
+            nowSec,
+          }),
+        );
         result.sent++;
         budget--;
       } catch (e) {

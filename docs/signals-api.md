@@ -250,3 +250,22 @@ GET /api/signals?windowHours=24
 同一张 `strategy_signals` 台账还扇出到两个 Telegram 频道（`TELEGRAM_SIGNAL_CHANNEL_ID`
 付费实时 / 既有公开频道延迟 `SIGNAL_PUBLIC_DELAY_MIN` 分钟），投递记录在
 `signal_deliveries`。API 与 TG 看到的是同一份事实，不存在两套口径。
+
+### webhook 推送（批次 3，realtime tier 专属）
+
+- 登记：`POST /api/admin/webhooks {"apiKeyId":N,"url":"https://…","secret":"≥16字符"}`（`x-admin-token`）；
+  列表 `GET`（secret 不回显）；停用 `DELETE ?id=N`。仅 realtime tier 且未吊销的 key 可挂端点。
+- 投递：每条信号一个 `SignalEventV1` JSON（`{v:1, id, event:"entry"|"settle", strategy, market,
+signal, paper, record, settle, notice}`，zod schema 见 `lib/webhookDelivery.ts`），头部
+  `X-Signature: sha256=<hex hmac-sha256(secret, body)>` + `X-Signal-Id` + `X-Signal-Event`。
+- 语义：at-least-once —— 消费方必须按 `(id, event)` 幂等去重。5s 超时；4xx 视为拒收不再重试；
+  网络/5xx 按投递循环节奏（30s）重试；连续失败 10 次自动熔断停用并通知运营者。
+
+### 存证与公开战绩（批次 3）
+
+- 每 UTC 日一条 🔏 存证消息发布到公开频道：昨日全部**已发布**信号按 id 升序的链式
+  sha256 摘要（`sha256(前值|id|档位|市场|方向|发布时刻|入场价)`），链尾滚动存储 ——
+  第三方可复算验证「先发布后结算、未删改」。
+- `GET /api/record`（公开、限流自保）+ `/record` 页：各档**已发布**信号的 30d 价格调整
+  战绩（分母只含发过的信号，与 /follow 的全量纸面履历刻意分开）、近期结算明细、存证链
+  状态。

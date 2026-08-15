@@ -39,6 +39,8 @@ import {
 import { createBackupState, maybeDailyBackup } from "../lib/dbBackup";
 import { evaluateHealth } from "../lib/health";
 import { runDeliveryCycle, type DeliveryChannel } from "../lib/signalDelivery";
+import { maybeDailySignalDigest } from "../lib/signalDigest";
+import { listActiveWebhooks, makeWebhookChannel } from "../lib/webhookDelivery";
 import { runBotCycle, type BotUpdate } from "../lib/botCommands";
 import { buildMarketCard, resolveMarketInput } from "../lib/marketCard";
 
@@ -504,34 +506,53 @@ export function startAlertEngine(): void {
   // 引擎其余六个循环零感知。幂等/失败语义见 lib/signalDelivery.ts 文件头。
   {
     const DELIVERY_INTERVAL_MS = 30_000;
-    const deliveryChannels: DeliveryChannel[] = [];
+    const tgChannels: DeliveryChannel[] = [];
     if (cfg.telegramBotToken && cfg.telegramSignalChannelId) {
       // 付费频道:实时(minEmitAgeSec=0)。与告警频道分开的独立 chatId。
       const paidCreds = {
         botToken: cfg.telegramBotToken,
         chatId: cfg.telegramSignalChannelId,
       };
-      deliveryChannels.push({
+      tgChannels.push({
         key: "tg_paid",
         minEmitAgeSec: 0,
         send: (html) => sendMessage(paidCreds, html),
       });
     }
-    if (cfg.telegramEnabled) {
-      // 公开延迟通道:复用告警频道,晚 signalPublicDelayMin 分钟 —— 免费/
-      // 付费分层的唯一杠杆是延迟,字段不阉割(公开可验证记录必须完整)。
-      deliveryChannels.push({
+    // 公开延迟通道的 send 单独留一份引用:每日存证 digest 也发这里。
+    const publicSend = cfg.telegramEnabled
+      ? (html: string) => sendMessage(creds, html)
+      : undefined;
+    if (publicSend) {
+      // 复用告警频道,晚 signalPublicDelayMin 分钟 —— 免费/付费分层的唯一
+      // 杠杆是延迟,字段不阉割(公开可验证记录必须完整)。
+      tgChannels.push({
         key: "tg_public",
         minEmitAgeSec: cfg.signalPublicDelayMin * 60,
-        send: (html) => sendMessage(creds, html),
+        send: publicSend,
       });
     }
-    if (deliveryChannels.length > 0) {
-      async function deliveryLoop() {
-        try {
+    // 循环无条件启动:webhook 端点是运行时经 admin API 登记的 DB 行,每轮
+    // 重新拉取 —— 新登记的端点 30s 内生效,零重启。TG 通道一个没配且当轮
+    // 也无 webhook 时,runDeliveryCycle 对空通道数组是纯 no-op。
+    async function deliveryLoop() {
+      try {
+        const webhookChannels = listActiveWebhooks(db).map((ep) =>
+          makeWebhookChannel(db, ep, {
+            onDisabled: (endpoint, error) => {
+              // 熔断通报走运营者告警频道(best-effort):订户端点死了,
+              // 沉默是最贵的故障形态。
+              send?.(
+                `⚠️ webhook 端点 #${endpoint.id} 连续失败已熔断停用(${error})\n${endpoint.url}`,
+              ).catch(() => {});
+            },
+          }),
+        );
+        const channels = [...tgChannels, ...webhookChannels];
+        if (channels.length > 0) {
           const r = await runDeliveryCycle({
             db,
-            channels: deliveryChannels,
+            channels,
             publicUrl: cfg.publicUrl,
             // 引擎停跳时冻结投递(宁静默不误导)。delivery 自己的 beat 在
             // 循环末尾无条件打点,冻结轮也算活着 —— 停跳判定只由其余循环触发。
@@ -551,25 +572,36 @@ export function startAlertEngine(): void {
               `[delivery] ${r.skippedStale} stale signal(s) skipped (never pushed — too old to act on)`,
             );
           }
-          beat(db, "delivery");
-        } catch (e) {
-          console.error("[delivery] cycle error", e);
+          // 每日存证 digest 搭投递载波(day-gated,claim-first),发公开频道。
+          // fire-and-forget:存证失败绝不扰动投递节奏。
+          maybeDailySignalDigest(db, publicSend)
+            .then((d) => {
+              if (d?.sent) {
+                console.log(
+                  `[digest] 存证 ${d.day} · ${d.count} 条 · ${d.digest.slice(0, 16)}…`,
+                );
+              }
+            })
+            .catch((e) => console.error("[digest] 存证推送失败", e));
         }
-        setTimeout(deliveryLoop, DELIVERY_INTERVAL_MS);
+        beat(db, "delivery");
+      } catch (e) {
+        console.error("[delivery] cycle error", e);
       }
-      // 45s 首跑:错开 consensus(30s)/evidence(60s),且首轮 followCycle
-      // (最早 30s+)落台账前投递本来就无事可做。
-      setTimeout(deliveryLoop, 45_000);
-      console.log(
-        `[delivery] signal delivery loop enabled (${deliveryChannels
-          .map((c) => c.key)
-          .join(", ")}, public delay ${cfg.signalPublicDelayMin}min)`,
-      );
-    } else {
-      console.log(
-        "[delivery] no signal channels configured — delivery loop disabled (set TELEGRAM_SIGNAL_CHANNEL_ID and/or TELEGRAM_CHANNEL_ID)",
-      );
+      setTimeout(deliveryLoop, DELIVERY_INTERVAL_MS);
     }
+    // 45s 首跑:错开 consensus(30s)/evidence(60s),且首轮 followCycle
+    // (最早 30s+)落台账前投递本来就无事可做。
+    setTimeout(deliveryLoop, 45_000);
+    console.log(
+      tgChannels.length > 0
+        ? `[delivery] signal delivery loop enabled (${tgChannels
+            .map((c) => c.key)
+            .join(
+              ", ",
+            )} + runtime webhooks, public delay ${cfg.signalPublicDelayMin}min)`
+        : "[delivery] delivery loop running (TG channels unset — webhook-only; set TELEGRAM_SIGNAL_CHANNEL_ID / TELEGRAM_CHANNEL_ID to enable TG)",
+    );
   }
 
   // --- Dead-man's switch: outbound health ping ---------------------------

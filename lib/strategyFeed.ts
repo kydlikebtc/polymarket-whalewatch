@@ -87,7 +87,7 @@ interface SignalRow {
 }
 
 /** params_json 里的 source(缺失 = 既有两档的 "consensus" 兼容语义)。 */
-function sourceOf(paramsJson: string | null): string {
+export function sourceOf(paramsJson: string | null): string {
   if (!paramsJson) return "consensus";
   try {
     const p = JSON.parse(paramsJson) as { source?: unknown };
