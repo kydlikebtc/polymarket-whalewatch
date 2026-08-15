@@ -188,3 +188,65 @@ GET /api/signals?windowHours=24
 
 - **拆单累计**（同钱包分散建仓）：引擎侧尚未产出告警，需要先做聚合
 - **异动**（非白名单大额）：数据有（`large` 类型），但按产品决策默认不进 tab，需要时再开
+
+---
+
+## v2 增量（2026-08-13，对外信号批次 2 — 全部 additive，v1 消费方零感知）
+
+### 鉴权升级：env token ∪ api_keys 多租户
+
+- `SIGNAL_FEED_TOKEN`（env）继续有效，等价 **realtime** tier —— mm-mobile 不用改任何配置。
+- 新增 `api_keys` 表签发的多租户 key（`wlk_` 前缀），单 key 可独立吊销：
+  - 签发：`POST /api/admin/keys {"label":"订户A","tier":"realtime"|"delayed"}`（`x-admin-token`），明文只回显一次；或容器内 `npx tsx scripts/issue-key.ts <label> [tier]`。
+  - 列表 / 吊销：`GET /api/admin/keys` / `DELETE /api/admin/keys?id=N`。
+- fail-closed 语义保持：公开部署下 env token 与活跃 key 都不存在 → 403。
+
+### tier 分层：延迟是唯一杠杆，字段不阉割
+
+`tier='delayed'` 的 key 拿到的是「`SIGNAL_PUBLIC_DELAY_MIN`（默认 30）分钟前的世界」——
+整个 feed（含下方 strategies 段）以 `now - delay` 为基准时刻构建：更晚出现的信号不可见、
+更晚落地的结算仍显示为进行中。响应带 `delayedMin`（realtime 恒 0），`updatedAt` 是
+**数据基准时刻**（时移后的），消费方展示"截至 HH:MM"应以它为准。
+`healthy`/`staleLoops` 按**真实当下**评估 —— 引擎死没死不属于可延迟的信息。
+
+### 新增 `strategies` 段（策略中心 13 档的买入触发）
+
+```jsonc
+"strategies": {
+  "active": [
+    // 近 48h 内触发、尚未结算的策略买入信号(只含运营已放开推送的档位)
+    {
+      "id": 123,                      // strategy_signals.id,稳定引用
+      "strategy": { "id": 6, "name": "巨鲸", "source": "heavy" },
+      "conditionId": "0x…", "title": "…", "slug": "…", "eventSlug": "…",
+      "category": "Sports", "subcategory": "NBA",   // 可 null
+      "outcome": "Yes", "outcomeIndex": 0, "asset": "7201…",
+      "formationTs": 1789299400,      // 信号成立时刻(detector 语义)
+      "referencePrice": 0.61,         // 聪明钱成本基准
+      "walletCount": 1, "totalNetUsd": 52000,
+      "entryPrice": 0.63,             // 纸面入场价(现价口径)
+      "sizeUsd": 500,
+      "emittedAt": 1789299447         // 发布时刻(先发布后结算的存证锚点)
+    }
+  ],
+  "settled": [ /* 近 3 天认账,最多 20 条,新在前:
+    { id, strategyId, strategyName, conditionId, title, outcome,
+      entryPrice, exitPrice, won, realizedPnl, settledAt } */ ],
+  "recordByStrategy": {
+    "6": { "name": "巨鲸", "source": "heavy",
+           "record": { "settled": 41, "wins": 26, "implied": 22.9,
+                        "excess": 3.1, "sd": 3.4 } }
+  }
+}
+```
+
+**读法铁律（与 `record30d` 同源，`gradeRows` 唯一实现）**：`record` 的展示必须同时印
+`implied`；`|excess| < 2×sd` 时必须写「仍在运气范围内」；`settled < 5` 标「样本不足」。
+纸面口径提醒：`entryPrice`/`realizedPnl` 是模拟跟单数字（真实数据 · 模拟策略），
+展示时必须携带「研究用途模拟信号 · 非投资建议」。
+
+### 同一批信号的 TG 通道
+
+同一张 `strategy_signals` 台账还扇出到两个 Telegram 频道（`TELEGRAM_SIGNAL_CHANNEL_ID`
+付费实时 / 既有公开频道延迟 `SIGNAL_PUBLIC_DELAY_MIN` 分钟），投递记录在
+`signal_deliveries`。API 与 TG 看到的是同一份事实，不存在两套口径。

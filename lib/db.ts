@@ -27,6 +27,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS strategy_signals (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER NOT NULL, position_id INTEGER, condition_id TEXT NOT NULL, outcome TEXT NOT NULL, outcome_index INTEGER, asset TEXT, title TEXT, slug TEXT, event_slug TEXT, formation_ts INTEGER NOT NULL, reference_price REAL, wallet_count INTEGER, total_net_usd REAL, entry_price REAL, size_usd REAL, emitted_at INTEGER NOT NULL, settled INTEGER DEFAULT 0, settled_ts INTEGER, exit_price REAL, won INTEGER, realized_pnl REAL, UNIQUE(strategy_id, condition_id, outcome));
     CREATE INDEX IF NOT EXISTS idx_strategy_signals_emitted ON strategy_signals(emitted_at);
     CREATE TABLE IF NOT EXISTS signal_deliveries (signal_id INTEGER NOT NULL, event TEXT NOT NULL, channel TEXT NOT NULL, delivered_at INTEGER, status TEXT NOT NULL, PRIMARY KEY (signal_id, event, channel));
+    CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, key_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL, tier TEXT NOT NULL DEFAULT 'delayed', created_at INTEGER NOT NULL, revoked_at INTEGER, last_used_at INTEGER);
     CREATE TABLE IF NOT EXISTS market_tilt_history (condition_id TEXT NOT NULL, ts INTEGER NOT NULL, lead_outcome TEXT, minor_outcome TEXT, minor_net_usd REAL, tilt_pct REAL, PRIMARY KEY (condition_id, ts));
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
     CREATE INDEX IF NOT EXISTS idx_candidates_evidence_ts ON wallet_candidates(evidence_ts);
