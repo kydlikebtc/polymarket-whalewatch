@@ -105,4 +105,49 @@ describe("parseConfig", () => {
       "http://my.host:61001",
     );
   });
+
+  it("xEnabled 仅当四个 X 凭据全非空(缺任一即关,与 telegramEnabled 同款开关语义)", () => {
+    expect(parseConfig({}).xEnabled).toBe(false);
+    const full = {
+      X_API_KEY: "k",
+      X_API_SECRET: "s",
+      X_ACCESS_TOKEN: "t",
+      X_ACCESS_SECRET: "ts",
+    };
+    expect(parseConfig(full).xEnabled).toBe(true);
+    for (const missing of Object.keys(full)) {
+      const partial: Record<string, string> = { ...full };
+      delete partial[missing];
+      expect(parseConfig(partial).xEnabled).toBe(false);
+    }
+  });
+
+  it("X 预算/大单阈值默认 15/50000,非法值 warn 后回退默认(7×24 不因坏 env 崩)", () => {
+    expect(parseConfig({}).xMonthlyBudgetUsd).toBe(15);
+    expect(parseConfig({}).xMinTradeUsd).toBe(50000);
+    expect(parseConfig({ X_MONTHLY_BUDGET_USD: "30" }).xMonthlyBudgetUsd).toBe(
+      30,
+    );
+    expect(parseConfig({ X_MIN_TRADE_USD: "25000" }).xMinTradeUsd).toBe(25000);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // NaN 会毒化预算比较 → 熔断失效;负数预算等价关停但更可能是笔误。
+    expect(parseConfig({ X_MONTHLY_BUDGET_USD: "abc" }).xMonthlyBudgetUsd).toBe(
+      15,
+    );
+    expect(parseConfig({ X_MIN_TRADE_USD: "-5" }).xMinTradeUsd).toBe(50000);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("X_MONTHLY_BUDGET_USD"),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("X_MIN_TRADE_USD"),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("X_OG_ORIGIN 默认本机 3000,自定义值去尾斜杠(worker 自取周报图卡的内网地址)", () => {
+    expect(parseConfig({}).xOgOrigin).toBe("http://127.0.0.1:3000");
+    expect(parseConfig({ X_OG_ORIGIN: "http://web:3000/" }).xOgOrigin).toBe(
+      "http://web:3000",
+    );
+  });
 });

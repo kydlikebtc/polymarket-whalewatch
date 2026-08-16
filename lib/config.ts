@@ -21,6 +21,22 @@ const Env = z.object({
   // ping service's "no ping received" alarm covers process death AND silent
   // loop hangs, through a channel independent of this process and of Telegram.
   HEALTHCHECK_PING_URL: z.string().default(""),
+  // X (Twitter) auto-broadcast creds — OAuth 1.0a user context, all four
+  // required before the X loop starts (same all-or-nothing switch semantics
+  // as Telegram). Pay-per-use API: $0.015/text post, $0.20/link post.
+  X_API_KEY: z.string().default(""),
+  X_API_SECRET: z.string().default(""),
+  X_ACCESS_TOKEN: z.string().default(""),
+  X_ACCESS_SECRET: z.string().default(""),
+  // Monthly spend ceiling for the LOCAL fail-closed ledger (the X dashboard
+  // spending cap is the platform-side backstop; both should agree).
+  X_MONTHLY_BUDGET_USD: z.string().default(""),
+  // Single-fill floor for whale posts on X — deliberately far above the
+  // Telegram tiers: X quota is ~28 posts/day, TG has no such scarcity.
+  X_MIN_TRADE_USD: z.string().default(""),
+  // Origin the worker fetches its own /api/og/weekly card from (weekly report
+  // post). Defaults to the embedded-engine case (same process serves Next).
+  X_OG_ORIGIN: z.string().default("http://127.0.0.1:3000"),
 });
 const DEFAULT_POLL_INTERVAL_MS = 4000;
 // Floor, not crash: the engine must survive a bad env edit 7×24. The dangerous
@@ -78,6 +94,22 @@ function parseBoolEnv(raw: string): boolean {
   return TRUTHY.has(raw.trim().toLowerCase());
 }
 
+// Positive-finite USD env with warn-and-default (same 7×24 posture as the
+// interval parser): a NaN budget would poison every `spent >= budget`
+// comparison and silently DISABLE the spend fuse — the one failure mode a
+// metered API must never have. Unset ("") stays silent on the default.
+function parseUsdEnv(raw: string, def: number, label: string): number {
+  if (raw.trim() === "") return def;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    console.warn(
+      `[config] ${label}=${JSON.stringify(raw)} is not a positive number — using default ${def} (a NaN/negative value would break the spend fuse)`,
+    );
+    return def;
+  }
+  return n;
+}
+
 // Accept any string-keyed env-like record (not the full NodeJS.ProcessEnv
 // contract). Once Next's types are in the program they augment ProcessEnv to
 // require NODE_ENV, which would otherwise reject partial test fixtures; the
@@ -96,6 +128,24 @@ export function parseConfig(raw: Record<string, string | undefined>) {
     pollIntervalMs: parsePollIntervalMs(e.POLL_INTERVAL_MS),
     publicUrl: e.PUBLIC_URL.replace(/\/+$/, ""),
     healthcheckPingUrl: e.HEALTHCHECK_PING_URL.trim(),
+    xApiKey: e.X_API_KEY,
+    xApiSecret: e.X_API_SECRET,
+    xAccessToken: e.X_ACCESS_TOKEN,
+    xAccessSecret: e.X_ACCESS_SECRET,
+    // X broadcast is on only when ALL FOUR creds are non-empty.
+    xEnabled: !!(
+      e.X_API_KEY &&
+      e.X_API_SECRET &&
+      e.X_ACCESS_TOKEN &&
+      e.X_ACCESS_SECRET
+    ),
+    xMonthlyBudgetUsd: parseUsdEnv(
+      e.X_MONTHLY_BUDGET_USD,
+      15,
+      "X_MONTHLY_BUDGET_USD",
+    ),
+    xMinTradeUsd: parseUsdEnv(e.X_MIN_TRADE_USD, 50_000, "X_MIN_TRADE_USD"),
+    xOgOrigin: e.X_OG_ORIGIN.replace(/\/+$/, ""),
   };
 }
 export type AppConfig = ReturnType<typeof parseConfig>;
