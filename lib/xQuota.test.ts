@@ -131,7 +131,7 @@ describe("quotaDecision", () => {
       kind: "weekly",
       dedup: "w",
       status: "posted",
-      cost: 14.99,
+      cost: 14.98,
       ts: NOW,
     });
     const link = quotaDecision(db, {
