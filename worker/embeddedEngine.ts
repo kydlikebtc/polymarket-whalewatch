@@ -40,6 +40,10 @@ import { createBackupState, maybeDailyBackup } from "../lib/dbBackup";
 import { evaluateHealth } from "../lib/health";
 import { runBotCycle, type BotUpdate } from "../lib/botCommands";
 import { buildMarketCard, resolveMarketInput } from "../lib/marketCard";
+import { createXClient } from "../lib/xPublisher";
+import { runXBroadcastCycle } from "../lib/xBroadcast";
+import { runPregameCycle } from "../lib/xPregame";
+import { maybeWeeklyPost } from "../lib/xWeekly";
 
 // Guarded singleton PER PROCESS: instrumentation may call this more than once
 // within a runtime, and the flag makes repeat calls no-ops. It does NOT guard
@@ -495,6 +499,61 @@ export function startAlertEngine(): void {
       setTimeout(botLoop, BOT_POLL_GAP_MS);
     }
     setTimeout(botLoop, 10_000);
+  }
+
+  // --- X (Twitter) auto-broadcast loop ------------------------------------
+  // alerts 表即队列的纯消费侧(lib/xBroadcast 文件头有完整架构论证):
+  // 60s 一轮消费大单/共识告警,10 分钟一次赛前聚合扫描,周一 13:00 UTC 后
+  // 发一条周报图卡。X 侧任何失败只记日志 —— 与 Telegram 主链路物理隔离。
+  // 预算:本地 $X_MONTHLY_BUDGET_USD 台账 fail-closed(xQuota),X 后台的
+  // spending cap 是第二道保险。
+  if (cfg.xEnabled) {
+    const xClient = createXClient({
+      apiKey: cfg.xApiKey,
+      apiSecret: cfg.xApiSecret,
+      accessToken: cfg.xAccessToken,
+      accessSecret: cfg.xAccessSecret,
+    });
+    const X_LOOP_MS = 60_000;
+    const PREGAME_GAP_MS = 10 * 60_000;
+    let lastPregameAt = 0;
+    async function xLoop() {
+      try {
+        await runXBroadcastCycle({
+          db,
+          client: xClient,
+          budgetUsd: cfg.xMonthlyBudgetUsd,
+          minTradeUsd: cfg.xMinTradeUsd,
+        });
+        if (Date.now() - lastPregameAt >= PREGAME_GAP_MS) {
+          lastPregameAt = Date.now();
+          await runPregameCycle({
+            db,
+            client: xClient,
+            getMeta: (cids) => getMarketMeta(db, cids),
+            budgetUsd: cfg.xMonthlyBudgetUsd,
+          });
+        }
+        await maybeWeeklyPost({
+          db,
+          client: xClient,
+          ogOrigin: cfg.xOgOrigin,
+          publicUrl: cfg.publicUrl,
+          budgetUsd: cfg.xMonthlyBudgetUsd,
+        });
+        // 心跳:beat 表示"这轮跑完了"。x_broadcast 不在 health 的期望清单里
+        // (可选功能,未配置的部署不该因它报 stale),有 beat 时按默认阈值判活。
+        beat(db, "x_broadcast");
+      } catch (e) {
+        console.error("[engine] x broadcast cycle error", e);
+      }
+      setTimeout(xLoop, X_LOOP_MS);
+    }
+    // 错峰启动:consensus 30s / evidence 60s / backfill 90s 之间。
+    setTimeout(xLoop, 45_000);
+    console.log(
+      `[engine] X broadcast enabled · 60s cadence · budget $${cfg.xMonthlyBudgetUsd}/mo · whale floor $${cfg.xMinTradeUsd}`,
+    );
   }
 
   // --- Dead-man's switch: outbound health ping ---------------------------
