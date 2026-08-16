@@ -196,6 +196,23 @@ npx tsx scripts/dry-run.ts
 npx tsx scripts/test-telegram.ts   # send a test message
 ```
 
+### Enable 𝕏 auto-broadcast (optional)
+
+The worker can mirror its best signals to an X (Twitter) account in English — whale fills, smart-money consensus, pre-settlement roundups, and a Monday report card image. The `alerts` table doubles as the post queue, so an X outage can never touch the Telegram pipeline.
+
+```bash
+# in .env (all four required; the loop stays off otherwise):
+#   X_API_KEY=...             # developer.x.com app (pay-per-use plan), OAuth 1.0a
+#   X_API_SECRET=...
+#   X_ACCESS_TOKEN=...        # of the bot account, Read & Write
+#   X_ACCESS_SECRET=...
+#   X_MONTHLY_BUDGET_USD=15   # local fail-closed spend fuse (default 15)
+#   X_MIN_TRADE_USD=50000     # whale-post floor (default 50k — X quota is scarce, TG isn't)
+#   X_OG_ORIGIN=http://127.0.0.1:3000   # where the worker fetches /api/og/weekly
+```
+
+Pricing facts (2026 pay-per-use): $0.015 per text post, $0.20 per link post — only the weekly report card carries a link. Budget math: $15/mo ≈ 28 posts/day. Set the same cap in the X developer dashboard as a platform-side backstop. Daily caps: whale 20, pregame 3; consensus is naturally rare and uncapped.
+
 ---
 
 ## 🧠 How it works
