@@ -15,6 +15,23 @@ describe("openDb", () => {
     expect(row).toBeTruthy();
   });
 
+  it("creates x_posts with a UNIQUE (kind, dedup_key) claim index", () => {
+    const db = openDb(":memory:");
+    const table = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='x_posts'",
+      )
+      .get();
+    expect(table).toBeTruthy();
+    const ins = db.prepare(
+      "INSERT OR IGNORE INTO x_posts (kind, dedup_key, text, est_cost_usd, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    // 与 alerts 的 (type, dedup_key) 同构:INSERT OR IGNORE 即跨进程 claim 锁。
+    expect(ins.run("whale", "k1", "t", 0.015, "claimed", 1).changes).toBe(1);
+    expect(ins.run("whale", "k1", "t", 0.015, "claimed", 2).changes).toBe(0);
+    expect(ins.run("pregame", "k1", "t", 0.015, "claimed", 3).changes).toBe(1);
+  });
+
   it("purges wallet_age exactly once via the version marker (poisoned-cache repair)", () => {
     const dir = mkdtempSync(join(tmpdir(), "whaledb-"));
     const path = join(dir, "t.sqlite");
