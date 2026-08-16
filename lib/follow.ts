@@ -1005,6 +1005,11 @@ export interface FollowPositionRow {
   exit_price: number | null;
   realized_pnl: number | null;
   /**
+   * follow_positions 行 id。/api/follow 的 SELECT 恒带(反事实退出分析按它
+   * join 模拟结果);标记可选仅为兼容大量既有测试夹具 —— 消费方须自行判空。
+   */
+  id?: number;
+  /**
    * 开仓时的协议 taker 费(USD)。null = 未知(上线前的老仓,或费率表拿不到),
    * 0 = 该市场确实免费。红线同 markout/exec_*:归因列,不参与 realized_pnl。
    */
@@ -1485,6 +1490,12 @@ export interface FollowStrategyView {
   account: AccountPlan; // 账户推演:备多少钱→接住多少信号(仅展示,不参与任何决策)
   open: FollowPositionWithCategory[]; // status==='open'
   settled: FollowPositionWithCategory[]; // status==='settled',按 exit_ts 降序(最新在前)
+  /**
+   * 反事实退出分析(2026-08-16,lib/exitCounterfactual.ts):该档已结算仓在
+   * 九个退出规则下的假想结果聚合。null/缺失 = 尚无已回填路径(回填中或全部
+   * 不可回填),面板整块省略。
+   */
+  exitCounterfactual?: import("./exitCounterfactual").ExitCounterfactualSummary | null;
 }
 
 /**

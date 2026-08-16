@@ -23,7 +23,8 @@ import {
 import { maybeDailyDiscovery } from "../lib/admission";
 import { runFollowCycle } from "../lib/follow";
 import { fetchAskBook } from "../lib/orderBook";
-import { fetchPriceAt } from "../lib/priceHistory";
+import { fetchPriceAt, fetchPriceSeries } from "../lib/priceHistory";
+import { runExitSimBackfill } from "../lib/exitCounterfactual";
 import { wrapSendWithHealth } from "../lib/telegramHealth";
 import {
   createBackfillState,
@@ -417,6 +418,20 @@ export function startAlertEngine(): void {
       // pattern as the self-check on the alert loop). Fire and forget: the
       // online-backup API never blocks the engine's writes, and a backup
       // failure must never disturb the backfill cadence.
+      // 反事实退出路径回填(2026-08-16):骑同一 10min 载波,每轮 ≤5 次上游
+      // 请求;存量排空后稳态 ≈ 每天新结算的几仓。失败只 warn,不扰载波节奏。
+      try {
+        const es = await runExitSimBackfill(db, {
+          fetchSeries: fetchPriceSeries,
+        });
+        if (es.processed > 0 || es.failed > 0) {
+          console.log(
+            `[exit-sim] backfilled ${es.processed}, failed ${es.failed}, pending ${es.pending}`,
+          );
+        }
+      } catch (e) {
+        console.error("[exit-sim] backfill cycle error", e);
+      }
       maybeDailyBackup(db, backupState)
         .then((r) => {
           if (r) {

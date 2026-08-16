@@ -1,4 +1,5 @@
 import { openDb } from "../../../lib/db";
+import { withExitCounterfactual } from "../../../lib/exitCounterfactual";
 import { getEventCategories, type EventTaxonomy } from "../../../lib/gamma";
 import {
   buildFollowView,
@@ -61,7 +62,7 @@ export async function GET() {
 
       const positions = db
         .prepare(
-          `SELECT strategy_id, condition_id, outcome, asset, title, event_slug, size_usd,
+          `SELECT id, strategy_id, condition_id, outcome, asset, title, event_slug, size_usd,
                   entry_price, smart_avg_price, shares, status, entry_ts,
                   exit_ts, exit_price, realized_pnl,
                   formation_ts, formation_price, markout_30m, markout_2h,
@@ -91,7 +92,17 @@ export async function GET() {
         taxByCid[p.condition_id] = catBySlug[p.event_slug] ?? null;
       }
 
-      return Response.json(buildFollowView(strategies, positions, taxByCid));
+      const view = buildFollowView(strategies, positions, taxByCid);
+      // 反事实退出摘要:bulk 读已回填的模拟结果附到每档视图上。任何失败只
+      // 降级为"无摘要"(面板省略该块),绝不拖垮整个接口。
+      try {
+        return Response.json({
+          strategies: withExitCounterfactual(db, view.strategies),
+        });
+      } catch (e) {
+        console.warn("[/api/follow] exitCounterfactual 附加失败,降级省略:", e);
+        return Response.json(view);
+      }
     } finally {
       db.close();
     }

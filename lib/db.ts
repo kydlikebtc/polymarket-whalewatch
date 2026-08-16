@@ -30,6 +30,8 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, key_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL, tier TEXT NOT NULL DEFAULT 'delayed', created_at INTEGER NOT NULL, revoked_at INTEGER, last_used_at INTEGER);
     CREATE TABLE IF NOT EXISTS webhook_endpoints (id INTEGER PRIMARY KEY AUTOINCREMENT, api_key_id INTEGER NOT NULL, url TEXT NOT NULL, secret TEXT NOT NULL, active INTEGER DEFAULT 1, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS market_tilt_history (condition_id TEXT NOT NULL, ts INTEGER NOT NULL, lead_outcome TEXT, minor_outcome TEXT, minor_net_usd REAL, tilt_pct REAL, PRIMARY KEY (condition_id, ts));
+    CREATE TABLE IF NOT EXISTS position_exit_sims (position_id INTEGER NOT NULL, rule TEXT NOT NULL, exited INTEGER NOT NULL, exit_offset_sec INTEGER, exit_price REAL, pnl REAL NOT NULL, PRIMARY KEY (position_id, rule));
+    CREATE TABLE IF NOT EXISTS position_path_stats (position_id INTEGER PRIMARY KEY, points INTEGER NOT NULL, mae_cents REAL, mfe_cents REAL, fetched_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
     CREATE INDEX IF NOT EXISTS idx_candidates_evidence_ts ON wallet_candidates(evidence_ts);
     CREATE INDEX IF NOT EXISTS idx_market_tilt_history_ts ON market_tilt_history(ts);

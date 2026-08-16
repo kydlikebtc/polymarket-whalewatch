@@ -10,6 +10,7 @@
 // 胜率分母、小样本读数弱化/置 —,绝不硬算。
 
 import { useState, type CSSProperties, type ReactNode } from "react";
+import type { ExitCounterfactualSummary } from "../../lib/exitCounterfactual";
 import {
   analyzeBets,
   BUCKET_LOW_SAMPLE_N,
@@ -1299,9 +1300,15 @@ function SegmentRow({
 export function DeepAnalysisPanel({
   rows,
   scopeNote,
+  exitCounterfactual,
 }: {
   rows: DeepAnalysisRow[];
   scopeNote?: string;
+  /**
+   * 反事实退出摘要(服务端 withExitCounterfactual 算好随视图下发)。
+   * 缺失/null = 路径回填中或不可回填,第⑧块整块省略 —— 不硬画空表。
+   */
+  exitCounterfactual?: ExitCounterfactualSummary | null;
 }) {
   const a = analyzeBets(rows);
   const diag = diagnoseSegments(rows);
@@ -1311,7 +1318,7 @@ export function DeepAnalysisPanel({
     return (
       <div className="ds-empty">
         暂无已结算仓位 — 深度分析基于落袋结果,有仓位结算后这里会给出
-        赔率校准/盈亏分布/时间走势/缺陷诊断等七个维度
+        赔率校准/盈亏分布/时间走势/缺陷诊断/反事实退出等八个维度
         {a.openCount > 0 ? `(当前持有中 ${a.openCount} 仓)` : ""}
       </div>
     );
@@ -1679,6 +1686,71 @@ export function DeepAnalysisPanel({
           </div>
         ) : null}
       </Block>
+
+      {/* ⑧ 反事实退出(2026-08-16,lib/exitCounterfactual.ts)。数据是已结算
+          仓的真实价格路径 × 九个固定退出规则的离线模拟 —— 回答「带止盈/止损/
+          限时会怎样」而不必先造活体机制(该方案已否决,见设计文档 §0)。 */}
+      {exitCounterfactual && exitCounterfactual.covered > 0 ? (
+        <Block
+          label="反事实退出 — 如果带止盈/止损/限时会怎样"
+          hint={`已回填 ${exitCounterfactual.covered}/${exitCounterfactual.settledTotal} 仓的价格路径(点数中位 ${exitCounterfactual.medianPoints ?? "—"},约 10 分钟一点)· 保守成交口径:按首个越线观测价成交,快盘中触发被系统性低估,Δ 是下界 · 纸面对纸面可比,推及实盘须另计退出侧成本`}
+        >
+          {exitCounterfactual.covered < exitCounterfactual.settledTotal ? (
+            <div className="ds-hint" style={{ marginBottom: "var(--s-2)" }}>
+              其余 {exitCounterfactual.settledTotal - exitCounterfactual.covered}{" "}
+              仓路径回填中/不可回填,暂不计入本块。
+            </div>
+          ) : null}
+          <div className="ds-table-wrap">
+            <table className="ds-table ds-table--compact">
+              <thead>
+                <tr>
+                  <th>规则</th>
+                  <th className="is-right">触发</th>
+                  <th className="is-right">假想合计</th>
+                  <th className="is-right">Δ vs 实际</th>
+                  <th className="is-right">触发仓均Δ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exitCounterfactual.rules.map((r) => (
+                  <tr key={r.rule}>
+                    <td style={{ whiteSpace: "nowrap" }}>{r.label}</td>
+                    <td className="is-right num">
+                      {r.triggered}
+                      <span className="muted">
+                        /{exitCounterfactual.covered}
+                      </span>
+                    </td>
+                    <td className="is-right num">
+                      {fmtSignedUsd(r.simTotal)}
+                    </td>
+                    <td
+                      className={`is-right num ${r.delta > 0 ? "up" : r.delta < 0 ? "down" : "muted"}`}
+                      style={{ fontWeight: 600 }}
+                    >
+                      {fmtSignedUsd(r.delta)}
+                    </td>
+                    <td className="is-right num">
+                      {r.avgDeltaTriggered == null ? (
+                        <span className="muted">—</span>
+                      ) : (
+                        fmtSignedUsd(r.avgDeltaTriggered)
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            实际合计(基准)
+            {fmtSignedUsd(exitCounterfactual.rules[0]?.actualTotal ?? 0)} ·
+            Δ&gt;0 = 该规则本会多赚/少亏;「触发仓均Δ」回答触发的那些仓里
+            规则是救还是害。九规则互相独立,未触发的仓按实际结算入账。
+          </div>
+        </Block>
+      ) : null}
     </div>
   );
 }
