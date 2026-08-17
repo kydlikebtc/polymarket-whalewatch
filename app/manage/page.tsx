@@ -6,6 +6,7 @@ import { Tag } from "../ui";
 import AlertRulesSection from "./AlertRulesSection";
 import HealthSection, { type HealthReport } from "./HealthSection";
 import KeysSection from "./KeysSection";
+import XAccountsSection from "./XAccountsSection";
 import SignalsSection from "./SignalsSection";
 import StatusStrip from "./StatusStrip";
 import { authHeaders } from "./shared";
@@ -189,6 +190,7 @@ export default function ManagePage() {
       <AlertRulesSection token={token} />
       <HealthSection health={health} ops={overview?.ops ?? null} />
       <KeysSection token={token} />
+      <XAccountsSection token={token} />
     </main>
   );
 }
