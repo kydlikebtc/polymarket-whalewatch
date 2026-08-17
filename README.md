@@ -202,15 +202,19 @@ npx tsx scripts/test-telegram.ts   # send a test message
 The worker can mirror its best signals to an X (Twitter) account in English — whale fills, smart-money consensus, pre-settlement roundups, and a Monday report card image. The `alerts` table doubles as the post queue, so an X outage can never touch the Telegram pipeline.
 
 ```bash
-# in .env (all four required; the loop stays off otherwise):
+# in .env — only the APP-level pair is required (it identifies your developer app):
 #   X_API_KEY=...             # developer.x.com app (pay-per-use plan), OAuth 1.0a
 #   X_API_SECRET=...
-#   X_ACCESS_TOKEN=...        # of the bot account, Read & Write
-#   X_ACCESS_SECRET=...
 #   X_MONTHLY_BUDGET_USD=15   # local fail-closed spend fuse (default 15)
 #   X_MIN_TRADE_USD=50000     # whale-post floor (default 50k — X quota is scarce, TG isn't)
 #   X_OG_ORIGIN=http://127.0.0.1:3000   # where the worker fetches /api/og/weekly
+#
+# Optional single-account fallback (skip it if you authorize via /manage):
+#   X_ACCESS_TOKEN=...        # of the posting account, Read & Write
+#   X_ACCESS_SECRET=...
 ```
+
+**Which account posts** is managed in `/manage` → **𝕏 播报账号**: click _授权新账号_, sign in as the bot account, approve, and its token lands in the DB (3-legged OAuth — the app belongs to you, the token belongs to whichever account approved). Multiple accounts can be authorized; exactly one is _使用中_ at a time and switching takes effect on the next cycle (≤60s) without a restart. Register `<PUBLIC_URL>/api/x-callback` as the app's Callback URI first. With no authorized account the loop falls back to the `X_ACCESS_TOKEN` pair above, and with neither it simply idles.
 
 Pricing facts (2026 pay-per-use): $0.015 per text post, $0.20 per link post — only the weekly report card carries a link. Budget math: $15/mo ≈ 28 posts/day. Set the same cap in the X developer dashboard as a platform-side backstop. Daily caps: whale 20, pregame 3; consensus is naturally rare and uncapped.
 
