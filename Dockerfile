@@ -33,6 +33,8 @@ COPY --from=builder /app/app ./app
 COPY --from=builder /app/lib ./lib
 COPY --from=builder /app/worker ./worker
 COPY --from=builder /app/scripts ./scripts
+# /api-docs 页面在运行时读 docs/api-access.md,镜像必须带上这一份。
+COPY --from=builder /app/docs ./docs
 COPY --from=builder /app/next.config.mjs ./next.config.mjs
 COPY --from=builder /app/instrumentation.ts ./instrumentation.ts
 COPY --from=builder /app/package.json ./package.json

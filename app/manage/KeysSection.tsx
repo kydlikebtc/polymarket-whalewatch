@@ -198,7 +198,17 @@ export default function KeysSection({ token }: { token: string }) {
             </span>
           )
         }
-        hint="key 用于 /api/signals 拉取(realtime=实时全量,delayed=延迟视图);webhook 只可挂在 realtime key 上。库中只存哈希,明文仅签发时显示一次。"
+        hint={
+          <>
+            key 用于 /api/signals 拉取(realtime=实时全量,delayed=延迟视图);webhook
+            只可挂在 realtime key 上。库中只存哈希,明文仅签发时显示一次。
+            {" 订阅方接入文档:"}
+            <a href="/api-docs" target="_blank" rel="noreferrer">
+              /api-docs
+            </a>
+            {"(把这个链接连同 key 一起发给对方)"}
+          </>
+        }
       />
       {error && (
         <div
