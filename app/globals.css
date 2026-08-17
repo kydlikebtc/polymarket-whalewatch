@@ -260,6 +260,20 @@ h3 {
   background: rgba(255, 255, 255, 0.06);
   text-decoration: none;
 }
+/* 英文态收紧顶栏:同样 8 个导航项,英文标签("Accumulation" / "Strategy
+   Center")比中文宽得多,原间距下最后两项会被挤出可视区(nav 有
+   overflow-x:auto 兜底,但宽屏上要横向滚动才看得到导航是退化)。
+   语言由 <html lang> 携带(layout 服务端设定),CSS 直接按语言微调间距,
+   不必为此改译文或给导航另建短键。 */
+html[lang="en"] .topbar__inner {
+  gap: var(--s-3);
+}
+html[lang="en"] .topbar__nav {
+  gap: 0;
+}
+html[lang="en"] .nav-link {
+  padding: 0 var(--s-2);
+}
 .nav-link[data-active="true"] {
   color: rgba(255, 255, 255, 0.98);
   background: rgba(255, 255, 255, 0.1);

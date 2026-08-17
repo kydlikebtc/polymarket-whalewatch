@@ -2,11 +2,11 @@
 export const DICT_COMMON: Record<string, string> = {
   // TopNav
   "24h 扫描": "24h Scan",
-  实时告警: "Live Alerts",
+  实时告警: "Alerts",
   拆单累计: "Accumulation",
-  "共识 / 分歧": "Consensus / Disagreement",
+  "共识 / 分歧": "Consensus",
   聪明钱发现: "Discovery",
-  市场卡: "Market Card",
+  市场卡: "Market",
   策略中心: "Strategy Center",
   说明: "Glossary",
   "Polymarket 监控": "Polymarket WhaleWatch",
