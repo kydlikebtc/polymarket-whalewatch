@@ -20,12 +20,52 @@ interface XAccountRow {
   lastPostAt: number | null;
 }
 
+interface XPostRow {
+  id: number;
+  kind: string;
+  text: string;
+  status: string;
+  xPostId: string | null;
+  costUsd: number;
+  createdAt: number;
+}
+
 interface Payload {
   accounts: XAccountRow[];
+  kinds: Record<string, boolean>;
+  history: {
+    posts: XPostRow[];
+    spentThisMonthUsd: number;
+    counts: Record<string, number>;
+  };
+  budgetUsd: number;
   appConfigured: boolean;
   envFallback: boolean;
   callbackUrl: string;
 }
+
+// 四类内容的展示元数据(与 lib/xSettings.X_KINDS 同源语义;这里是客户端
+// 组件,不能 import 那个碰 DB 的模块,故就近镜像一份最小集)。
+const KINDS: { kind: string; label: string; hint: string }[] = [
+  { kind: "whale", label: "🐳 巨鲸大单", hint: "量最大,最容易吃满日配额(上限 20 条/天)" },
+  { kind: "consensus", label: "🔥 聪明钱共识", hint: "稀有且独家,优先级最高,不设日上限" },
+  { kind: "pregame", label: "⏰ 赛前聚合", hint: "结算前 1-6h 热门市场汇总,至多 3 条/天" },
+  { kind: "weekly", label: "📊 周报成绩单", hint: "每周一图卡 + 链接,唯一的 $0.20 帖" },
+];
+
+const STATUS_TONE: Record<string, "up" | "down" | "warn" | "default"> = {
+  posted: "up",
+  failed: "down",
+  claimed: "warn",
+  skipped: "default",
+};
+
+const STATUS_TEXT: Record<string, string> = {
+  posted: "已发布",
+  failed: "失败",
+  claimed: "发送中",
+  skipped: "已跳过",
+};
 
 // 回调结果经 URL query 带回(见 app/api/x-callback),读完即从地址栏抹掉,
 // 免得刷新页面时反复弹同一条提示。
@@ -265,6 +305,146 @@ export default function XAccountsSection({ token }: { token: string }) {
           </tbody>
         </table>
       )}
+
+      {data ? (
+        <>
+          {/* ---- 播报内容设置 ---- */}
+          <div style={{ marginTop: "var(--s-6)" }}>
+            <SectionHead
+              title="播报内容类型"
+              hint="关掉的类型不再发帖也不占预算；改完引擎下一轮（≤60s）生效，无需重启。重新开启不会补发关闭期间的旧内容。"
+            />
+            <div
+              style={{
+                display: "grid",
+                gap: "var(--s-2)",
+                gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              }}
+            >
+              {KINDS.map((k) => {
+                const on = data.kinds[k.kind] !== false;
+                return (
+                  <label
+                    key={k.kind}
+                    className="ds-card"
+                    style={{
+                      padding: "var(--s-3)",
+                      display: "flex",
+                      gap: "var(--s-2)",
+                      alignItems: "flex-start",
+                      cursor: busy ? "default" : "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      disabled={busy || !token}
+                      onChange={(e) =>
+                        void post({
+                          action: "kinds",
+                          kinds: { [k.kind]: e.target.checked },
+                        })
+                      }
+                      style={{ marginTop: 3 }}
+                    />
+                    <span style={{ display: "grid", gap: 2 }}>
+                      <span style={{ fontWeight: 500 }}>
+                        {k.label}{" "}
+                        {!on ? <Tag variant="warn">已关闭</Tag> : null}
+                      </span>
+                      <span className="ds-hint">{k.hint}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ---- 发帖历史 ---- */}
+          <div style={{ marginTop: "var(--s-6)" }}>
+            <SectionHead
+              title="播报历史"
+              hint="最近 50 条。「已跳过」= 被类型开关/金额阈值/预算熔断拦下，未发出也不计费。"
+              aside={
+                <span className="ds-hint mono">
+                  本月已花费 ${data.history.spentThisMonthUsd.toFixed(3)} /{" "}
+                  ${data.budgetUsd}
+                  {Object.entries(data.history.counts).length > 0 ? (
+                    <span className="muted">
+                      {" · "}
+                      {Object.entries(data.history.counts)
+                        .map(([k, v]) => `${STATUS_TEXT[k] ?? k} ${v}`)
+                        .join(" · ")}
+                    </span>
+                  ) : null}
+                </span>
+              }
+            />
+            {data.history.posts.length === 0 ? (
+              <div className="ds-empty">
+                还没有播报记录 —— 授权账号并等待信号触发后，这里会出现每条帖子
+              </div>
+            ) : (
+              <table className="ds-table ds-table--compact">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>类型</th>
+                    <th>状态</th>
+                    <th>内容</th>
+                    <th className="is-right">成本</th>
+                    <th>链接</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.history.posts.map((pst) => (
+                    <tr key={pst.id}>
+                      <td className="mono muted" data-label="时间">
+                        {timeText(pst.createdAt)}
+                      </td>
+                      <td data-label="类型">
+                        {KINDS.find((k) => k.kind === pst.kind)?.label ??
+                          pst.kind}
+                      </td>
+                      <td data-label="状态">
+                        <Tag variant={STATUS_TONE[pst.status] ?? "default"}>
+                          {STATUS_TEXT[pst.status] ?? pst.status}
+                        </Tag>
+                      </td>
+                      <td
+                        data-label="内容"
+                        style={{
+                          whiteSpace: "normal",
+                          maxWidth: 420,
+                          fontSize: "var(--t-sm)",
+                        }}
+                      >
+                        {pst.text || <span className="muted">—</span>}
+                      </td>
+                      <td className="mono is-right" data-label="成本">
+                        {pst.costUsd > 0 ? `$${pst.costUsd.toFixed(3)}` : "—"}
+                      </td>
+                      <td data-label="链接">
+                        {pst.xPostId ? (
+                          <a
+                            href={`https://x.com/i/status/${pst.xPostId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            查看 ↗
+                          </a>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
+      ) : null}
     </section>
   );
 }

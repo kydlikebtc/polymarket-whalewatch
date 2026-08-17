@@ -230,4 +230,43 @@ describe("runXBroadcastCycle", () => {
       '🐳 $67K YES on "Chiefs win Super Bowl LX?" @ 67¢',
     );
   });
+
+  it("类型开关关掉的那类不发,并落 skipped 台账(不重扫、不在重开时补发旧内容)", async () => {
+    const db = openDb(":memory:");
+    recordAlert(db, "large", "w1", whalePayload(), NOW - 120);
+    recordAlert(
+      db,
+      "consensus",
+      "consensus:0xc2:Yes:3",
+      JSON.stringify({
+        conditionId: "0xc2",
+        title: "Fed cut in Sept?",
+        outcome: "Yes",
+        walletCount: 3,
+        totalNetUsd: 92_000,
+        params: {},
+      }),
+      NOW - 30,
+    );
+    const client = fakeClient();
+    // 只关大单:共识照发。
+    expect(
+      await runXBroadcastCycle(
+        deps(db, client, { kinds: { whale: false, consensus: true } }),
+      ),
+    ).toBe(1);
+    expect(client.posts[0]).toMatch(/^🔥 CONSENSUS/);
+    const rows = db
+      .prepare("SELECT kind, status FROM x_posts ORDER BY kind")
+      .all() as { kind: string; status: string }[];
+    expect(rows).toEqual([
+      { kind: "consensus", status: "posted" },
+      { kind: "whale", status: "skipped" },
+    ]);
+    // 重新开启后不补发那条旧大单(台账行已在)。
+    expect(
+      await runXBroadcastCycle(db && deps(db, client, { kinds: undefined })),
+    ).toBe(0);
+    expect(client.posts).toHaveLength(1);
+  });
 });

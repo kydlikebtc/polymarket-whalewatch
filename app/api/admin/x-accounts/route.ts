@@ -9,6 +9,14 @@ import {
   savePending,
 } from "../../../../lib/xAccounts";
 import { startAuth } from "../../../../lib/xOauth";
+import {
+  DEFAULT_X_KINDS,
+  getXKindSwitches,
+  getXPostHistory,
+  setXKindSwitches,
+  type XKindSwitches,
+  type XPostKind,
+} from "../../../../lib/xSettings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +31,16 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("start") }),
   z.object({ action: z.literal("activate"), id: z.number().int().positive() }),
   z.object({ action: z.literal("delete"), id: z.number().int().positive() }),
+  z.object({
+    action: z.literal("kinds"),
+    // 逐键可选:UI 只提交被改动的那个开关,不必回传整份配置。
+    kinds: z.object({
+      whale: z.boolean().optional(),
+      consensus: z.boolean().optional(),
+      pregame: z.boolean().optional(),
+      weekly: z.boolean().optional(),
+    }),
+  }),
 ]);
 
 const LIMITS = { perIp: 30, global: 60 };
@@ -39,8 +57,12 @@ export async function GET(req: Request) {
   const db = openDash();
   try {
     const cfg = parseConfig(process.env);
+    const history = getXPostHistory(db, Math.floor(Date.now() / 1000));
     return Response.json({
       accounts: listAccounts(db),
+      kinds: getXKindSwitches(db),
+      history,
+      budgetUsd: cfg.xMonthlyBudgetUsd,
       // App 未配置时前端直接提示去 .env 补,而不是让人点了授权才报错。
       appConfigured: cfg.xAppConfigured,
       // env 单账号回退是否在用(库里没有账号时才生效)。
@@ -104,6 +126,15 @@ export async function POST(req: Request) {
           { status: 502 },
         );
       }
+    }
+    if (body.action === "kinds") {
+      const next: XKindSwitches = { ...getXKindSwitches(db) };
+      for (const k of Object.keys(DEFAULT_X_KINDS) as XPostKind[]) {
+        const v = body.kinds[k];
+        if (typeof v === "boolean") next[k] = v;
+      }
+      setXKindSwitches(db, next);
+      return Response.json({ ok: true, kinds: next });
     }
     if (body.action === "activate") {
       return activateAccount(db, body.id)

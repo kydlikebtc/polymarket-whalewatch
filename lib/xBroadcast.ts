@@ -29,6 +29,11 @@ export interface XBroadcastDeps {
   client: XClient;
   budgetUsd: number;
   minTradeUsd: number;
+  /**
+   * 内容类型开关(/manage 可改)。省略 = 两类都发,保持首版行为 ——
+   * 关掉的类型在解析阶段就落 'skipped' 台账行,既不重复扫描也不烧预算。
+   */
+  kinds?: { whale?: boolean; consensus?: boolean };
   nowSec?: number;
 }
 
@@ -174,6 +179,13 @@ export async function runXBroadcastCycle(d: XBroadcastDeps): Promise<number> {
     }
     if (c === "below_floor") {
       skip.run("whale", dedup, row.id, "", nowSec);
+      skipped++;
+      continue;
+    }
+    // 该类型被运营者关掉:同样落台账(status='skipped'),否则每轮都会
+    // 重新解析这批告警,且重新开启后会突然补发一堆旧内容。
+    if (d.kinds && d.kinds[c.kind] === false) {
+      skip.run(c.kind, dedup, row.id, "", nowSec);
       skipped++;
       continue;
     }

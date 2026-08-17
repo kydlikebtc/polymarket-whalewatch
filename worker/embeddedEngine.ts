@@ -46,6 +46,7 @@ import { runBotCycle, type BotUpdate } from "../lib/botCommands";
 import { buildMarketCard, resolveMarketInput } from "../lib/marketCard";
 import { createXClient } from "../lib/xPublisher";
 import { markPosted, resolveXCreds } from "../lib/xAccounts";
+import { getXKindSwitches } from "../lib/xSettings";
 import { runXBroadcastCycle } from "../lib/xBroadcast";
 import { runPregameCycle } from "../lib/xPregame";
 import { maybeWeeklyPost } from "../lib/xWeekly";
@@ -569,13 +570,17 @@ export function startAlertEngine(): void {
           );
         }
         const xClient = cached.client;
+        // 内容类型开关每轮读一次(与凭据同款即时性):/manage 上关掉某类,
+        // 下一轮就不再发,无需重启。
+        const kinds = getXKindSwitches(db);
         const posted = await runXBroadcastCycle({
           db,
           client: xClient,
           budgetUsd: cfg.xMonthlyBudgetUsd,
           minTradeUsd: cfg.xMinTradeUsd,
+          kinds,
         });
-        if (Date.now() - lastPregameAt >= PREGAME_GAP_MS) {
+        if (kinds.pregame && Date.now() - lastPregameAt >= PREGAME_GAP_MS) {
           lastPregameAt = Date.now();
           await runPregameCycle({
             db,
@@ -584,13 +589,15 @@ export function startAlertEngine(): void {
             budgetUsd: cfg.xMonthlyBudgetUsd,
           });
         }
-        const weekly = await maybeWeeklyPost({
-          db,
-          client: xClient,
-          ogOrigin: cfg.xOgOrigin,
-          publicUrl: cfg.publicUrl,
-          budgetUsd: cfg.xMonthlyBudgetUsd,
-        });
+        const weekly = kinds.weekly
+          ? await maybeWeeklyPost({
+              db,
+              client: xClient,
+              ogOrigin: cfg.xOgOrigin,
+              publicUrl: cfg.publicUrl,
+              budgetUsd: cfg.xMonthlyBudgetUsd,
+            })
+          : false;
         // 账号活跃度打点(/manage 据此显示「最近发帖」)。只对库里的授权
         // 账号打点 —— env 回退模式没有对应的行。
         if (creds.source === "db" && creds.userId && (posted > 0 || weekly)) {
