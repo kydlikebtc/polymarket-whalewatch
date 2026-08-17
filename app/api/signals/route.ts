@@ -6,6 +6,7 @@ import { getEngineStart, getHeartbeats } from "../../../lib/heartbeat";
 import { evaluateHealth } from "../../../lib/health";
 import { createPromiseCache } from "../../../lib/promiseCache";
 import { parseConfig } from "../../../lib/config";
+import { getBusSignals } from "../../../lib/signalBus";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,6 +83,9 @@ export async function GET(req: Request) {
           return {
             ...buildSignalFeed(db, { nowSec, windowHours }),
             strategies: buildStrategyFeed(db, { nowSec }),
+            // 统一信号总线(大单/共识/发现…):既有字段只增不改,订阅方按
+            // sourceType 自行过滤。延迟层同样按时移后的 nowSec 取。
+            bus: getBusSignals(db, { nowSec, windowSec: windowHours * 3600 }),
             delayedMin: delaySec / 60,
             healthy: health.ok,
             staleLoops: health.staleLoops,
@@ -105,6 +109,7 @@ export async function GET(req: Request) {
         settled: [],
         record30d: { settled: 0, wins: 0, implied: 0, excess: 0, sd: 0 },
         strategies: { active: [], settled: [], recordByStrategy: {} },
+        bus: [],
         delayedMin: delaySec / 60,
         healthy: false,
         error: message,

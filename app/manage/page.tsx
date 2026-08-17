@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AdminSignalOverview } from "../../lib/adminOverview";
 import { Segmented, Tag } from "../ui";
 import AlertRulesSection from "./AlertRulesSection";
+import BusTypesSection from "./BusTypesSection";
 import HealthSection, { type HealthReport } from "./HealthSection";
 import KeysSection from "./KeysSection";
 import XAccountsSection from "./XAccountsSection";
@@ -213,6 +214,7 @@ export default function ManagePage() {
           顺带成了「切 tab 即刷新」。 */}
       {tab === "push" && (
         <>
+          <BusTypesSection token={token} />
           <SignalsSection token={token} overview={overview} reload={loadAll} />
           <AlertRulesSection token={token} />
         </>

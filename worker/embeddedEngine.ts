@@ -47,6 +47,7 @@ import { buildMarketCard, resolveMarketInput } from "../lib/marketCard";
 import { createXClient } from "../lib/xPublisher";
 import { markPosted, resolveXCreds } from "../lib/xAccounts";
 import { getXKindSwitches } from "../lib/xSettings";
+import { projectBusSignals } from "../lib/signalBus";
 import { runXBroadcastCycle } from "../lib/xBroadcast";
 import { runPregameCycle } from "../lib/xPregame";
 import { maybeWeeklyPost } from "../lib/xWeekly";
@@ -361,6 +362,13 @@ export function startAlertEngine(): void {
         }
       } catch (e) {
         console.error("[engine] follow cycle error", e);
+      }
+      // 统一信号总线:把本轮刚落库的告警/新入池成员投影进 bus_signals。
+      // 纯本地读写(有测试钉死无网络),失败不得扰动共识节奏。
+      try {
+        projectBusSignals(db, Math.floor(Date.now() / 1000));
+      } catch (e) {
+        console.error("[signalBus] projection failed", e);
       }
       beat(db, "consensus");
     } catch (e) {

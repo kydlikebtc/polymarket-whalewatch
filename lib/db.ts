@@ -37,6 +37,9 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS position_exit_sims (position_id INTEGER NOT NULL, rule TEXT NOT NULL, exited INTEGER NOT NULL, exit_offset_sec INTEGER, exit_price REAL, pnl REAL NOT NULL, PRIMARY KEY (position_id, rule));
     CREATE TABLE IF NOT EXISTS position_path_stats (position_id INTEGER PRIMARY KEY, points INTEGER NOT NULL, mae_cents REAL, mfe_cents REAL, fetched_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS x_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL UNIQUE, screen_name TEXT NOT NULL, access_token TEXT NOT NULL, access_secret TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, last_post_at INTEGER);
+    CREATE TABLE IF NOT EXISTS bus_signals (id INTEGER PRIMARY KEY AUTOINCREMENT, source_type TEXT NOT NULL, dedup_key TEXT NOT NULL, condition_id TEXT, title TEXT, payload TEXT NOT NULL, emitted_at INTEGER NOT NULL);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bus_signals_type_dedup ON bus_signals(source_type, dedup_key);
+    CREATE INDEX IF NOT EXISTS idx_bus_signals_emitted ON bus_signals(emitted_at);
     CREATE TABLE IF NOT EXISTS x_oauth_pending (oauth_token TEXT PRIMARY KEY, oauth_token_secret TEXT NOT NULL, created_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
     CREATE INDEX IF NOT EXISTS idx_candidates_evidence_ts ON wallet_candidates(evidence_ts);
