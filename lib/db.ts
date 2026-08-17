@@ -27,7 +27,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS strategy_signals (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER NOT NULL, position_id INTEGER, condition_id TEXT NOT NULL, outcome TEXT NOT NULL, outcome_index INTEGER, asset TEXT, title TEXT, slug TEXT, event_slug TEXT, formation_ts INTEGER NOT NULL, reference_price REAL, wallet_count INTEGER, total_net_usd REAL, entry_price REAL, size_usd REAL, emitted_at INTEGER NOT NULL, settled INTEGER DEFAULT 0, settled_ts INTEGER, exit_price REAL, won INTEGER, realized_pnl REAL, UNIQUE(strategy_id, condition_id, outcome));
     CREATE INDEX IF NOT EXISTS idx_strategy_signals_emitted ON strategy_signals(emitted_at);
     CREATE TABLE IF NOT EXISTS signal_deliveries (signal_id INTEGER NOT NULL, event TEXT NOT NULL, channel TEXT NOT NULL, delivered_at INTEGER, status TEXT NOT NULL, PRIMARY KEY (signal_id, event, channel));
-    CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, key_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL, tier TEXT NOT NULL DEFAULT 'delayed', created_at INTEGER NOT NULL, revoked_at INTEGER, last_used_at INTEGER);
+    CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, key_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL, tier TEXT NOT NULL DEFAULT 'delayed', created_at INTEGER NOT NULL, revoked_at INTEGER, last_used_at INTEGER, bus_types TEXT);
     CREATE TABLE IF NOT EXISTS webhook_endpoints (id INTEGER PRIMARY KEY AUTOINCREMENT, api_key_id INTEGER NOT NULL, url TEXT NOT NULL, secret TEXT NOT NULL, active INTEGER DEFAULT 1, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS market_tilt_history (condition_id TEXT NOT NULL, ts INTEGER NOT NULL, lead_outcome TEXT, minor_outcome TEXT, minor_net_usd REAL, tilt_pct REAL, PRIMARY KEY (condition_id, ts));
     CREATE TABLE IF NOT EXISTS x_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, dedup_key TEXT NOT NULL, alert_id INTEGER, text TEXT NOT NULL, has_link INTEGER NOT NULL DEFAULT 0, est_cost_usd REAL NOT NULL DEFAULT 0, x_post_id TEXT, status TEXT NOT NULL, created_at INTEGER NOT NULL);
@@ -52,6 +52,14 @@ export function openDb(path = "data.sqlite") {
     db.prepare(
       "ALTER TABLE wallet_stats ADD COLUMN markets_traded INTEGER",
     ).run();
+  } catch {
+    // column already present
+  }
+
+  // api_keys 增订阅范围(bus_types):JSON 数组,记录该 key 订阅哪些信号类型。
+  // NULL = 全部(既有 key 的语义不变,升级不会让任何订阅方突然收不到数据)。
+  try {
+    db.prepare("ALTER TABLE api_keys ADD COLUMN bus_types TEXT").run();
   } catch {
     // column already present
   }

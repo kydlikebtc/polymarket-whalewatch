@@ -22,7 +22,15 @@ export interface IssuedKey {
 
 export function issueApiKey(
   db: DB,
-  opts: { label: string; tier: ApiKeyTier },
+  opts: {
+    label: string;
+    tier: ApiKeyTier;
+    /**
+     * 订阅范围:该 key 能拿到哪些信号类型(bus 类型 + "strategy")。
+     * 省略/空数组 = 全部 —— 既有 key 与不关心分类的订阅方语义不变。
+     */
+    busTypes?: string[] | null;
+  },
   nowSec: number = Math.floor(Date.now() / 1000),
 ): IssuedKey {
   // 24 字节随机 → base64url ≈ 32 字符;"wlk_" 前缀让日志/工单里一眼可辨
@@ -30,9 +38,19 @@ export function issueApiKey(
   const key = `wlk_${randomBytes(24).toString("base64url")}`;
   const res = db
     .prepare(
-      "INSERT INTO api_keys (key_hash, label, tier, created_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO api_keys (key_hash, label, tier, created_at, bus_types) VALUES (?, ?, ?, ?, ?)",
     )
-    .run(hashKey(key), opts.label, opts.tier, nowSec);
+    .run(
+      hashKey(key),
+      opts.label,
+      opts.tier,
+      nowSec,
+      // 空数组与 undefined 都存 NULL:「没勾任何类型」在业务上只能理解为
+      // 「不限」,存成空数组会变成「什么都收不到」这种没人想要的配置。
+      opts.busTypes && opts.busTypes.length > 0
+        ? JSON.stringify(opts.busTypes)
+        : null,
+    );
   return { id: Number(res.lastInsertRowid), key };
 }
 
@@ -40,6 +58,8 @@ export interface ApiKeyInfo {
   id: number;
   label: string;
   tier: ApiKeyTier;
+  /** null = 不限(全部类型);数组 = 只订阅这些。 */
+  busTypes: string[] | null;
 }
 
 /**
@@ -55,10 +75,11 @@ export function verifyApiKey(
   if (!token) return null;
   const row = db
     .prepare(
-      "SELECT id, label, tier FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL",
+      "SELECT id, label, tier, bus_types FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL",
     )
     .get(hashKey(token)) as
-    { id: number; label: string; tier: string } | undefined;
+    | { id: number; label: string; tier: string; bus_types: string | null }
+    | undefined;
   if (!row) return null;
   db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(
     nowSec,
@@ -68,7 +89,33 @@ export function verifyApiKey(
     id: row.id,
     label: row.label,
     tier: row.tier === "realtime" ? "realtime" : "delayed",
+    busTypes: parseBusTypes(row.bus_types),
   };
+}
+
+/**
+ * 订阅范围解析。坏 JSON / 非数组 / 空数组一律回落 null(=不限)——
+ * 宁可多给也不能让一个存坏了的字段静默切断订阅方的数据流:后者的表现是
+ * 「接口通、返回 200、就是没数据」,最难排查。
+ */
+export function parseBusTypes(raw: string | null): string[] | null {
+  if (!raw) return null;
+  try {
+    const v: unknown = JSON.parse(raw);
+    if (!Array.isArray(v)) return null;
+    const list = v.filter((x): x is string => typeof x === "string");
+    return list.length > 0 ? list : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 该订阅范围是否放行某个类型。null(不限)一律放行。 */
+export function busTypeAllowed(
+  busTypes: string[] | null | undefined,
+  type: string,
+): boolean {
+  return !busTypes || busTypes.length === 0 || busTypes.includes(type);
 }
 
 /** 吊销(软删,revoked_at 时间戳即审计)。已吊销/未知 id 返回 false。 */
@@ -99,7 +146,7 @@ export function listApiKeys(db: DB): ApiKeyRow[] {
   return (
     db
       .prepare(
-        "SELECT id, label, tier, created_at, revoked_at, last_used_at FROM api_keys ORDER BY id",
+        "SELECT id, label, tier, created_at, revoked_at, last_used_at, bus_types FROM api_keys ORDER BY id",
       )
       .all() as {
       id: number;
@@ -108,6 +155,7 @@ export function listApiKeys(db: DB): ApiKeyRow[] {
       created_at: number;
       revoked_at: number | null;
       last_used_at: number | null;
+      bus_types: string | null;
     }[]
   ).map((r) => ({
     id: r.id,
@@ -116,5 +164,6 @@ export function listApiKeys(db: DB): ApiKeyRow[] {
     createdAt: r.created_at,
     revokedAt: r.revoked_at,
     lastUsedAt: r.last_used_at,
+    busTypes: parseBusTypes(r.bus_types),
   }));
 }

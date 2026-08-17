@@ -5,6 +5,7 @@ import type { DB } from "./db";
 import type { PushSignalRow } from "./signalPush";
 import { SIGNAL_DISCLAIMER } from "./signalPush";
 import type { SignalRecord } from "./signalRecord";
+import { parseBusTypes } from "./apiKeys";
 
 // 对外信号批次 3:webhook 通道(结构化 SignalEvent 直投订户后端)。
 // 安全模型:
@@ -156,6 +157,8 @@ export interface WebhookEndpoint {
   secret: string;
   active: number;
   consecutiveFailures: number;
+  /** 该端点所属 key 的订阅范围;null = 不限。 */
+  busTypes: string[] | null;
 }
 
 export function registerWebhook(
@@ -176,7 +179,7 @@ export function listActiveWebhooks(db: DB): WebhookEndpoint[] {
   return (
     db
       .prepare(
-        `SELECT w.id, w.api_key_id, w.url, w.secret, w.active, w.consecutive_failures
+        `SELECT w.id, w.api_key_id, w.url, w.secret, w.active, w.consecutive_failures, k.bus_types
          FROM webhook_endpoints w
          JOIN api_keys k ON k.id = w.api_key_id
          WHERE w.active = 1 AND k.revoked_at IS NULL AND k.tier = 'realtime'
@@ -189,6 +192,7 @@ export function listActiveWebhooks(db: DB): WebhookEndpoint[] {
       secret: string;
       active: number;
       consecutive_failures: number;
+      bus_types: string | null;
     }[]
   ).map((r) => ({
     id: r.id,
@@ -197,6 +201,7 @@ export function listActiveWebhooks(db: DB): WebhookEndpoint[] {
     secret: r.secret,
     active: r.active,
     consecutiveFailures: r.consecutive_failures,
+    busTypes: parseBusTypes(r.bus_types),
   }));
 }
 

@@ -5,6 +5,8 @@ import {
   listApiKeys,
   revokeApiKey,
   verifyApiKey,
+  parseBusTypes,
+  busTypeAllowed,
 } from "./apiKeys";
 
 // 对外信号批次 2:多租户只读密钥。明文只在签发瞬间存在(库里只有 sha256),
@@ -16,7 +18,13 @@ describe("apiKeys — 签发/校验/吊销", () => {
     const issued = issueApiKey(db, { label: "订户A", tier: "realtime" }, 1000);
     expect(issued.key).toMatch(/^wlk_/);
     const info = verifyApiKey(db, issued.key, 2000);
-    expect(info).toEqual({ id: issued.id, label: "订户A", tier: "realtime" });
+    // 未指定订阅范围 = 不限(busTypes: null)。
+    expect(info).toEqual({
+      id: issued.id,
+      label: "订户A",
+      tier: "realtime",
+      busTypes: null,
+    });
     const row = db
       .prepare("SELECT last_used_at, key_hash FROM api_keys WHERE id = ?")
       .get(issued.id) as { last_used_at: number; key_hash: string };
@@ -74,5 +82,44 @@ describe("apiKeys — 签发/校验/吊销", () => {
     const ra = rows.find((r) => r.label === "a");
     expect(ra?.revokedAt).toBe(1200);
     db.close();
+  });
+});
+
+describe("订阅范围(bus_types)", () => {
+  it("签发时可指定订阅类型,校验时原样取回", () => {
+    const db = openDb(":memory:");
+    const k = issueApiKey(db, {
+      label: "只要大单和共识",
+      tier: "realtime",
+      busTypes: ["large", "consensus"],
+    });
+    expect(verifyApiKey(db, k.key)?.busTypes).toEqual(["large", "consensus"]);
+  });
+
+  it("不指定 / 空数组 = 不限(既有 key 升级后语义不变)", () => {
+    const db = openDb(":memory:");
+    const a = issueApiKey(db, { label: "全量", tier: "realtime" });
+    const b = issueApiKey(db, { label: "空数组", tier: "delayed", busTypes: [] });
+    expect(verifyApiKey(db, a.key)?.busTypes).toBeNull();
+    // 「没勾任何类型」只能理解为「不限」——存成空数组会变成什么都收不到。
+    expect(verifyApiKey(db, b.key)?.busTypes).toBeNull();
+  });
+
+  it("坏值回落不限 —— 宁可多给,也不让存坏的字段静默切断数据流", () => {
+    expect(parseBusTypes("not-json{")).toBeNull();
+    expect(parseBusTypes('{"a":1}')).toBeNull();
+    expect(parseBusTypes("[]")).toBeNull();
+    expect(parseBusTypes('["large",7,"consensus"]')).toEqual([
+      "large",
+      "consensus",
+    ]);
+  });
+
+  it("busTypeAllowed:不限放行一切,指定则只放行列内", () => {
+    expect(busTypeAllowed(null, "large")).toBe(true);
+    expect(busTypeAllowed([], "large")).toBe(true);
+    expect(busTypeAllowed(["large"], "large")).toBe(true);
+    expect(busTypeAllowed(["large"], "consensus")).toBe(false);
+    expect(busTypeAllowed(["strategy"], "strategy")).toBe(true);
   });
 });

@@ -55,6 +55,27 @@ curl -s -H "x-feed-token: $KEY" \
 
 ---
 
+## 2.5 订阅范围（你的 key 能拿到哪些类型）
+
+签发 key 时可以限定**订阅范围**。范围之外的类型，你在 `/api/signals` 与
+webhook 上都拿不到——**过滤在服务端执行**，不需要你自己筛。
+
+可订阅的类型：
+
+| 类型 | 出现在响应的哪里 |
+| --- | --- |
+| `strategy` | `strategies` 段（19 档策略信号） |
+| `large` | `bus[]` 中 `sourceType: "large"`（大额成交） |
+| `consensus` | `bus[]` 中 `sourceType: "consensus"`（聪明钱共识） |
+| `discovery` | `bus[]` 中 `sourceType: "discovery"`（聪明钱发现） |
+
+- 未限定范围的 key = **不限**，拿全部类型。
+- 若你的 key 不含 `strategy`，`strategies` 段会是空结构（不是缺字段）——
+  形状始终一致，你的解析代码不必判空。
+- 想调整范围，联系运营者重新签发。
+
+---
+
 ## 3. 请求参数
 
 | 参数          | 取值                     | 默认 | 说明                                                 |

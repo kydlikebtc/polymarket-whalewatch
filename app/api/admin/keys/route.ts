@@ -18,6 +18,8 @@ export const dynamic = "force-dynamic";
 const IssueBody = z.object({
   label: z.string().min(1).max(64),
   tier: z.enum(["realtime", "delayed"]).default("delayed"),
+  // 订阅范围:该 key 能拿到哪些信号类型。省略/空 = 不限(既有行为)。
+  busTypes: z.array(z.string().min(1)).optional(),
 });
 
 const LIMITS = { perIp: 30, global: 60 };
@@ -50,6 +52,7 @@ export async function POST(req: Request) {
       key: issued.key,
       label: body.label,
       tier: body.tier,
+      busTypes: body.busTypes?.length ? body.busTypes : null,
       notice: "明文 key 只显示这一次,库中仅存哈希 — 请立即保存",
     });
   } finally {

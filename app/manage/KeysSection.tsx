@@ -14,6 +14,7 @@ interface KeyRow {
   id: number;
   label: string;
   tier: string;
+  busTypes?: string[] | null;
   createdAt: number;
   revokedAt: number | null;
   lastUsedAt: number | null;
@@ -31,6 +32,16 @@ interface WebhookRow {
   key_revoked_at: number | null;
 }
 
+// 可订阅的信号类型。与 lib/signalBus.BUS_TYPES 同源语义(这是客户端组件,
+// 不能 import 碰 DB 的模块),外加 "strategy" —— 19 档策略信号在订阅层面
+// 也是一个类型。不勾任何项 = 不限(全部),与既有 key 的语义一致。
+const SUBSCRIBABLE = [
+  { type: "strategy", label: "策略信号(19 档)" },
+  { type: "large", label: "🐳 大额成交" },
+  { type: "consensus", label: "🔥 聪明钱共识" },
+  { type: "discovery", label: "🔭 聪明钱发现" },
+] as const;
+
 const TIERS = [
   { value: "delayed", label: "delayed(延迟)" },
   { value: "realtime", label: "realtime(实时)" },
@@ -45,6 +56,7 @@ export default function KeysSection({ token }: { token: string }) {
   );
   const [label, setLabel] = useState("");
   const [tier, setTier] = useState<"realtime" | "delayed">("delayed");
+  const [subs, setSubs] = useState<string[]>([]);
   const [whKeyId, setWhKeyId] = useState("");
   const [whUrl, setWhUrl] = useState("");
   const [whSecret, setWhSecret] = useState("");
@@ -90,7 +102,7 @@ export default function KeysSection({ token }: { token: string }) {
       const res = await fetch("/api/admin/keys", {
         method: "POST",
         headers: { "content-type": "application/json", ...authHeaders(token) },
-        body: JSON.stringify({ label: label.trim(), tier }),
+        body: JSON.stringify({ label: label.trim(), tier, busTypes: subs }),
       });
       const j = (await res.json()) as {
         id?: number;
@@ -102,6 +114,7 @@ export default function KeysSection({ token }: { token: string }) {
       } else {
         setIssued({ id: j.id!, key: j.key });
         setLabel("");
+        setSubs([]);
         await load();
       }
     } catch (e) {
@@ -279,6 +292,41 @@ export default function KeysSection({ token }: { token: string }) {
             onChange={(v) => setTier(v)}
           />
         </div>
+        <div style={{ flexBasis: "100%" }}>
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            订阅信号类型（不勾 = 不限，拿全部）
+          </div>
+          <div style={{ display: "flex", gap: "var(--s-3)", flexWrap: "wrap" }}>
+            {SUBSCRIBABLE.map((o) => (
+              <label
+                key={o.type}
+                style={{
+                  display: "inline-flex",
+                  gap: 6,
+                  alignItems: "center",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={subs.includes(o.type)}
+                  onChange={(e) =>
+                    setSubs((prev) =>
+                      e.target.checked
+                        ? [...prev, o.type]
+                        : prev.filter((x) => x !== o.type),
+                    )
+                  }
+                />
+                <span>{o.label}</span>
+              </label>
+            ))}
+          </div>
+          <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
+            过滤在服务端执行：没订阅的类型，该 key 在 /api/signals 与 webhook
+            上都拿不到，不需要订阅方自己筛。
+          </div>
+        </div>
         <button
           className="ds-btn ds-btn--primary"
           disabled={busy}
@@ -300,6 +348,7 @@ export default function KeysSection({ token }: { token: string }) {
                 <th className="is-right">#</th>
                 <th>备注</th>
                 <th>tier</th>
+                <th>订阅范围</th>
                 <th>签发</th>
                 <th>最近使用</th>
                 <th>状态</th>
@@ -318,6 +367,21 @@ export default function KeysSection({ token }: { token: string }) {
                     <Tag variant={k.tier === "realtime" ? "brand" : "default"}>
                       {k.tier}
                     </Tag>
+                  </td>
+                  <td data-label="订阅范围">
+                    {k.busTypes && k.busTypes.length > 0 ? (
+                      <span
+                        style={{ display: "flex", gap: 4, flexWrap: "wrap" }}
+                      >
+                        {k.busTypes.map((t) => (
+                          <Tag key={t}>
+                            {SUBSCRIBABLE.find((o) => o.type === t)?.label ?? t}
+                          </Tag>
+                        ))}
+                      </span>
+                    ) : (
+                      <span className="muted">不限</span>
+                    )}
                   </td>
                   <td className="ds-hint mono">{timeText(k.createdAt)}</td>
                   <td className="ds-hint">{agoText(k.lastUsedAt)}</td>

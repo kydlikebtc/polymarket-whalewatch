@@ -10,7 +10,13 @@ import type { DB } from "./db";
 // 配置了但 token 不对 = 401。本地开发照旧全开(realtime)。
 
 export type FeedAccess =
-  | { ok: true; tier: ApiKeyTier; keyId?: number }
+  | {
+      ok: true;
+      tier: ApiKeyTier;
+      keyId?: number;
+      /** 订阅范围;null/缺省 = 不限(env token 与本地开发都是不限)。 */
+      busTypes?: string[] | null;
+    }
   | { ok: false; status: 401 | 403; error: string };
 
 export function checkFeedAccess(
@@ -27,7 +33,13 @@ export function checkFeedAccess(
     return { ok: true, tier: "realtime" };
   }
   const viaKey = provided ? verifyApiKey(db, provided) : null;
-  if (viaKey) return { ok: true, tier: viaKey.tier, keyId: viaKey.id };
+  if (viaKey)
+    return {
+      ok: true,
+      tier: viaKey.tier,
+      keyId: viaKey.id,
+      busTypes: viaKey.busTypes,
+    };
   const activeKeys = (
     db
       .prepare("SELECT COUNT(*) AS n FROM api_keys WHERE revoked_at IS NULL")

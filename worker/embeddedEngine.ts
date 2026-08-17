@@ -48,6 +48,7 @@ import { createXClient } from "../lib/xPublisher";
 import { markPosted, resolveXCreds } from "../lib/xAccounts";
 import { getXKindSwitches } from "../lib/xSettings";
 import { projectBusSignals } from "../lib/signalBus";
+import { busTypeAllowed } from "../lib/apiKeys";
 import { runXBroadcastCycle } from "../lib/xBroadcast";
 import { runPregameCycle } from "../lib/xPregame";
 import { maybeWeeklyPost } from "../lib/xWeekly";
@@ -663,7 +664,12 @@ export function startAlertEngine(): void {
     // 也无 webhook 时,runDeliveryCycle 对空通道数组是纯 no-op。
     async function deliveryLoop() {
       try {
-        const webhookChannels = listActiveWebhooks(db).map((ep) =>
+        const webhookChannels = listActiveWebhooks(db)
+          // 投递总线目前搬运的是**策略信号**;订阅范围里没勾 strategy 的
+          // 端点不该收到它们(过滤放在服务端才是边界)。bus 类型的 webhook
+          // 投递属于后续批次,那时这里按 sourceType 再分流。
+          .filter((ep) => busTypeAllowed(ep.busTypes, "strategy"))
+          .map((ep) =>
           makeWebhookChannel(db, ep, {
             onDisabled: (endpoint, error) => {
               // 熔断通报走运营者告警频道(best-effort):订户端点死了,

@@ -98,6 +98,7 @@ describe("postSignalEvent — 状态分类", () => {
     secret: "s".repeat(16),
     active: 1,
     consecutiveFailures: 0,
+    busTypes: null,
   };
   const ev = buildSignalEvent(row(), "entry", {
     strategyName: "巨鲸",

@@ -7,6 +7,7 @@ import { evaluateHealth } from "../../../lib/health";
 import { createPromiseCache } from "../../../lib/promiseCache";
 import { parseConfig } from "../../../lib/config";
 import { getBusSignals } from "../../../lib/signalBus";
+import { busTypeAllowed } from "../../../lib/apiKeys";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,8 +67,15 @@ export async function GET(req: Request) {
     new URL(req.url).searchParams.get("windowHours"),
   );
   try {
+    // 缓存键必须含**订阅范围** —— 否则两个 tier 相同、范围不同的 key 会
+    // 共用同一份缓存:受限 key 的结果会污染全量 key(少给),而全量 key 的
+    // 缓存会让受限 key 拿到它无权看到的类型(**越权泄露**,更严重)。
+    // 排序后再拼,保证 ["a","b"] 与 ["b","a"] 命中同一份。
+    const scopeKey = access.busTypes?.length
+      ? [...access.busTypes].sort().join(",")
+      : "all";
     const body = await feedCache(
-      `feed:${windowHours}:${access.tier}`,
+      `feed:${windowHours}:${access.tier}:${scopeKey}`,
       async () => {
         const db = openDb(dbPath);
         try {
@@ -82,10 +90,16 @@ export async function GET(req: Request) {
           );
           return {
             ...buildSignalFeed(db, { nowSec, windowHours }),
-            strategies: buildStrategyFeed(db, { nowSec }),
-            // 统一信号总线(大单/共识/发现…):既有字段只增不改,订阅方按
-            // sourceType 自行过滤。延迟层同样按时移后的 nowSec 取。
-            bus: getBusSignals(db, { nowSec, windowSec: windowHours * 3600 }),
+            strategies: busTypeAllowed(access.busTypes, "strategy")
+              ? buildStrategyFeed(db, { nowSec })
+              : { active: [], settled: [], recordByStrategy: {} },
+            // 统一信号总线(大单/共识/发现…):既有字段只增不改。
+            // **服务端按 key 的订阅范围过滤**——订阅方不必自己筛,也拿不到
+            // 没订阅的类型(过滤在服务端才是边界,客户端过滤只是显示)。
+            bus: getBusSignals(db, {
+              nowSec,
+              windowSec: windowHours * 3600,
+            }).filter((r) => busTypeAllowed(access.busTypes, r.sourceType)),
             delayedMin: delaySec / 60,
             healthy: health.ok,
             staleLoops: health.staleLoops,
