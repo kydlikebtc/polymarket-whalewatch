@@ -24,6 +24,7 @@ import {
   type SmartInfoLite,
   type WalletStatsLite,
 } from "../ui";
+import { useLang } from "../i18n";
 import { useMarketPositions } from "../useMarketPositions";
 import { useSoundToggle } from "../useSound";
 import { useNewRecordChime } from "../useNewRecordChime";
@@ -120,13 +121,17 @@ function fmtTime(tsSec: number): string {
   return new Date(tsSec * 1000).toLocaleTimeString("zh-CN", { hour12: false });
 }
 
+// Translator signature (useLang().t) — passed into the helpers below so
+// module-level formatters stay outside the component without losing i18n.
+type TFn = (zh: string, params?: Record<string, string | number>) => string;
+
 // Human window length (minutes/hours) covered between two unix-seconds stamps.
-function fmtWindowSpan(oldestSec: number, nowSec: number): string {
+function fmtWindowSpan(oldestSec: number, nowSec: number, t: TFn): string {
   const mins = Math.max(0, Math.round((nowSec - oldestSec) / 60));
-  if (mins < 60) return `~${mins} 分钟`;
+  if (mins < 60) return t("~{m} 分钟", { m: mins });
   const h = Math.floor(mins / 60);
   const m = mins % 60;
-  return m === 0 ? `~${h} 小时` : `~${h} 小时 ${m} 分`;
+  return m === 0 ? t("~{h} 小时", { h }) : t("~{h} 小时 {m} 分", { h, m });
 }
 
 function fmtUsd(usd: number): string {
@@ -150,6 +155,7 @@ function rowKey(g: AccumGroup): string {
 // held from one that was already flipped. Other-outcome holdings in the same
 // market are listed too: they let the 对冲? suspicion be eyeballed directly.
 function AccumDetail({ g }: { g: AccumGroup }) {
+  const { t } = useLang();
   const { positions, loading } = useMarketPositions(
     g.conditionId,
     [g.wallet],
@@ -165,14 +171,14 @@ function AccumDetail({ g }: { g: AccumGroup }) {
   return (
     <>
       <div className="ds-hint" style={{ margin: "var(--s-2) 0 var(--s-1)" }}>
-        当前持仓（{g.outcome}）：
+        {t("当前持仓（{outcome}）：", { outcome: g.outcome })}
         <HoldingCell pos={pos} loading={loading} />
         {others.length > 0 ? (
           <span className="muted">
-            {" · 同市场其他结果："}
+            {t(" · 同市场其他结果：")}
             {others.map((p, i) => (
               <span key={p.outcome} className="mono">
-                {i > 0 ? "、" : ""}
+                {i > 0 ? t("、") : ""}
                 {p.outcome} $
                 {Math.round(p.currentValue).toLocaleString("en-US")}
               </span>
@@ -181,28 +187,28 @@ function AccumDetail({ g }: { g: AccumGroup }) {
         ) : null}
       </div>
       <div className="ds-hint" style={{ margin: "var(--s-2) 0 var(--s-1)" }}>
-        底层买单（共 {g.buys.length} 笔，最新在前）
+        {t("底层买单（共 {n} 笔，最新在前）", { n: g.buys.length })}
       </div>
       <table className="ds-table--compact" style={{ maxWidth: 440 }}>
         <thead>
           <tr>
-            <th>时间</th>
-            <th className="is-right">金额</th>
-            <th className="is-right">价格(赔率)</th>
+            <th>{t("时间")}</th>
+            <th className="is-right">{t("金额")}</th>
+            <th className="is-right">{t("价格(赔率)")}</th>
           </tr>
         </thead>
         <tbody>
           {g.buys.map((b, bi) => (
             <tr key={`buy-${bi}`}>
-              <td className="mono" data-label="时间">
+              <td className="mono" data-label={t("时间")}>
                 {fmtTime(b.ts)}
               </td>
-              <td className="mono is-right" data-label="金额">
+              <td className="mono is-right" data-label={t("金额")}>
                 ${fmtUsd(b.usd)}
               </td>
               <td
                 className="mono is-right"
-                data-label="价格(赔率)"
+                data-label={t("价格(赔率)")}
                 style={{ color: "var(--warn-700)" }}
               >
                 {b.price.toFixed(3)}
@@ -239,13 +245,14 @@ const AccumRow = memo(function AccumRow({
   stats,
   smart,
 }: AccumRowProps) {
+  const { t } = useLang();
   const whale = g.exposureUsd >= WHALE_NET;
   return (
     <Fragment>
       <tr
         onClick={() => onToggle(rk)}
         style={{ cursor: "pointer" }}
-        title={isOpen ? "点击收起明细" : "点击展开底层买单"}
+        title={isOpen ? t("点击收起明细") : t("点击展开底层买单")}
       >
         <td
           className="muted col-expand"
@@ -260,19 +267,19 @@ const AccumRow = memo(function AccumRow({
         <td>
           <WalletLink
             address={g.wallet ?? ""}
-            title={`${g.wallet} · 新标签打开钱包档案`}
+            title={t("{address} · 新标签打开钱包档案", { address: g.wallet })}
           >
             {shortWallet(g.wallet)}
           </WalletLink>
         </td>
-        <td data-label="地址年龄">
+        <td data-label={t("地址年龄")}>
           <AgeBadge ageDays={age} />
         </td>
-        <td data-label="战绩" onClick={(e) => e.stopPropagation()}>
+        <td data-label={t("战绩")} onClick={(e) => e.stopPropagation()}>
           <WalletStatsBadge stats={stats} smart={smart} />
         </td>
         <td
-          data-label="市场 · 结果"
+          data-label={t("市场 · 结果")}
           style={{ whiteSpace: "normal", maxWidth: 360 }}
         >
           {g.eventSlug ? (
@@ -298,7 +305,7 @@ const AccumRow = memo(function AccumRow({
             />
           </div>
         </td>
-        <td data-label="标记">
+        <td data-label={t("标记")}>
           {g.hedgeSuspect || g.mmSuspect ? (
             <span
               style={{
@@ -310,27 +317,31 @@ const AccumRow = memo(function AccumRow({
               {g.hedgeSuspect ? (
                 <span
                   title={
-                    "同钱包在同市场的对侧结果也有净买入——对冲/套利嫌疑，方向意图存疑。" +
+                    t(
+                      "同钱包在同市场的对侧结果也有净买入——对冲/套利嫌疑，方向意图存疑。",
+                    ) +
                     (g.hedgeAdjustedNetUsd != null
-                      ? `按 1−价格 折算对侧买入后，本方向净买入约 $${fmtUsd(
-                          g.hedgeAdjustedNetUsd,
-                        )}（仅二元市场折算）。`
-                      : "多结果市场仅标记不折算。") +
-                    "默认沉底"
+                      ? t(
+                          "按 1−价格 折算对侧买入后，本方向净买入约 ${n}（仅二元市场折算）。",
+                          { n: fmtUsd(g.hedgeAdjustedNetUsd) },
+                        )
+                      : t("多结果市场仅标记不折算。")) +
+                    t("默认沉底")
                   }
                   style={{ cursor: "help" }}
                 >
-                  <Tag variant="warn">对冲?</Tag>
+                  <Tag variant="warn">{t("对冲?")}</Tag>
                 </span>
               ) : null}
               {g.mmSuspect ? (
                 <span
-                  title={`买卖高频交替（换向率 ${Math.round(
-                    g.flipRate * 100,
-                  )}%，仅统计 ≥floor 的可见单，实际只高不低）——更像做市库存管理而非定向建仓。默认沉底`}
+                  title={t(
+                    "买卖高频交替（换向率 {pct}%，仅统计 ≥floor 的可见单，实际只高不低）——更像做市库存管理而非定向建仓。默认沉底",
+                    { pct: Math.round(g.flipRate * 100) },
+                  )}
                   style={{ cursor: "help" }}
                 >
-                  <Tag variant="warn">做市?</Tag>
+                  <Tag variant="warn">{t("做市?")}</Tag>
                 </span>
               ) : null}
             </span>
@@ -340,42 +351,52 @@ const AccumRow = memo(function AccumRow({
         </td>
         <td
           className="mono is-right"
-          data-label="平均赔率"
+          data-label={t("平均赔率")}
           style={{ color: "var(--warn-700)", fontWeight: 600 }}
-          title="按 size 加权的平均买入价（赔率）"
+          title={t("按 size 加权的平均买入价（赔率）")}
         >
           {g.avgBuyPrice.toFixed(3)}
         </td>
         <td
           className="mono muted is-right"
-          data-label="时间"
-          title={`首笔 ${fmtTime(g.firstTs)} → 末笔 ${fmtTime(g.lastTs)}`}
+          data-label={t("时间")}
+          title={t("首笔 {first} → 末笔 {last}", {
+            first: fmtTime(g.firstTs),
+            last: fmtTime(g.lastTs),
+          })}
         >
           {fmtTime(g.lastTs)}
         </td>
         <td
           className="mono is-right"
-          data-label="净买入"
-          title={`成本敞口 = 留存净股数 × 买入均价（${fmtUsd(g.netShares)} 股 × ${(g.avgBuyPrice * 100).toFixed(1)}¢）· 窗口现金流 $${fmtUsd(g.netUsd)}`}
+          data-label={t("净买入")}
+          title={t(
+            "成本敞口 = 留存净股数 × 买入均价（{shares} 股 × {price}¢）· 窗口现金流 ${cashflow}",
+            {
+              shares: fmtUsd(g.netShares),
+              price: (g.avgBuyPrice * 100).toFixed(1),
+              cashflow: fmtUsd(g.netUsd),
+            },
+          )}
         >
           <span className="up" style={{ fontWeight: 700 }}>
             <Icon s={whale ? "🐳" : "🧩"} /> ${fmtUsd(g.exposureUsd)}
           </span>
         </td>
-        <td className="mono is-right" data-label="笔数">
-          {g.buyCount} 买
+        <td className="mono is-right" data-label={t("笔数")}>
+          {t("{n} 买", { n: g.buyCount })}
         </td>
-        <td className="mono is-right" data-label="单笔最大">
+        <td className="mono is-right" data-label={t("单笔最大")}>
           ${fmtUsd(g.maxSingleBuyUsd)}
         </td>
-        <td className="mono is-right" data-label="毛买入">
+        <td className="mono is-right" data-label={t("毛买入")}>
           ${fmtUsd(g.buyUsd)}
         </td>
         <td
           className={
             g.sellUsd > 0 ? "mono is-right down" : "mono is-right muted"
           }
-          data-label="毛卖出(≥floor)"
+          data-label={t("毛卖出(≥floor)")}
         >
           ${fmtUsd(g.sellUsd)}
         </td>
@@ -399,6 +420,7 @@ const AccumRow = memo(function AccumRow({
 });
 
 export default function AccumulationPage() {
+  const { t } = useLang();
   const [hours, setHours] = useState<Hours>(DEFAULTS.hours);
   const [floor, setFloor] = useState<Floor>(DEFAULTS.floor);
   const [minNetUsd, setMinNetUsd] = useState<number>(DEFAULTS.minNetUsd);
@@ -618,13 +640,19 @@ export default function AccumulationPage() {
       >
         <div>
           <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-            🧩 拆单 / 累计买入榜
+            🧩 {t("拆单 / 累计买入榜")}
           </h1>
           <div className="ds-hint">
-            按 (钱包·市场·结果) 聚合多笔小额买入，揪出绕过单笔监控的累积建仓
-            {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
+            {t(
+              "按 (钱包·市场·结果) 聚合多笔小额买入，揪出绕过单笔监控的累积建仓",
+            )}
+            {lastRefreshed
+              ? t(" · 最后刷新 {time}", { time: lastRefreshed })
+              : ""}
             {loading ? (
-              <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>
+              <span style={{ color: "var(--warn-700)" }}>
+                {t(" · 加载中…")}
+              </span>
             ) : null}
           </div>
         </div>
@@ -642,9 +670,9 @@ export default function AccumulationPage() {
           marginBottom: "var(--s-5)",
         }}
       >
-        <Field label="时间窗">
+        <Field label={t("时间窗")}>
           <Segmented<Hours>
-            ariaLabel="时间窗"
+            ariaLabel={t("时间窗")}
             value={hours}
             onChange={setHours}
             options={([1, 2, 4] as Hours[]).map((h) => ({
@@ -654,9 +682,9 @@ export default function AccumulationPage() {
           />
         </Field>
 
-        <Field label="精度">
+        <Field label={t("精度")}>
           <Segmented<Floor>
-            ariaLabel="精度"
+            ariaLabel={t("精度")}
             value={floor}
             onChange={setFloor}
             options={FLOOR_PRESETS.map((f) => ({
@@ -665,13 +693,13 @@ export default function AccumulationPage() {
             }))}
           />
           <span className="ds-hint">
-            floor 越低越能抓到小额拆单，但时间窗越短
+            {t("floor 越低越能抓到小额拆单，但时间窗越短")}
           </span>
         </Field>
 
-        <Field label="净买入">
+        <Field label={t("净买入")}>
           <Segmented<number>
-            ariaLabel="净买入"
+            ariaLabel={t("净买入")}
             value={minNetUsd}
             onChange={setMinNetUsd}
             options={NET_PRESETS.map((p) => ({
@@ -682,7 +710,7 @@ export default function AccumulationPage() {
           <input
             type="number"
             min={0}
-            placeholder="自定义 USD"
+            placeholder={t("自定义 USD")}
             value={customText}
             onChange={(e) => setCustomText(e.target.value)}
             onBlur={applyCustom}
@@ -693,7 +721,8 @@ export default function AccumulationPage() {
             style={{ width: 130 }}
           />
           <span className="ds-hint">
-            当前净买入 ≥ <span className="mono">${fmtUsd(minNetUsd)}</span>
+            {t("当前净买入 ≥")}{" "}
+            <span className="mono">${fmtUsd(minNetUsd)}</span>
           </span>
           <span style={{ flex: 1 }} />
           <button
@@ -705,7 +734,7 @@ export default function AccumulationPage() {
               load();
             }}
           >
-            刷新
+            {t("刷新")}
           </button>
           <label
             className="ds-hint"
@@ -721,13 +750,15 @@ export default function AccumulationPage() {
               checked={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.checked)}
             />
-            自动刷新 30s
+            {t("自动刷新 30s")}
           </label>
         </Field>
 
         <div className="ds-hint">
-          精度 floor <span className="mono">${fmtUsd(floor)}</span> · 每笔 &lt;
-          $10k 才算拆单 · ≥3 笔买入 · 低于 floor 的卖出不可见，净买入为上界
+          {t("精度 floor")} <span className="mono">${fmtUsd(floor)}</span>
+          {t(
+            " · 每笔 < $10k 才算拆单 · ≥3 笔买入 · 低于 floor 的卖出不可见，净买入为上界",
+          )}
         </div>
       </section>
 
@@ -739,20 +770,20 @@ export default function AccumulationPage() {
           className="ds-callout ds-callout--error"
           style={{ marginBottom: "var(--s-4)" }}
         >
-          扫描失败: {data.error}
+          {t("扫描失败: {err}", { err: data.error })}
         </div>
       ) : null}
 
       {/* Stats header */}
       {stats ? (
         <section className="kpi" style={{ marginBottom: "var(--s-5)" }}>
-          <StatCard label="累积者数">
+          <StatCard label={t("累积者数")}>
             <div className="kpi-value">{stats.groupCount}</div>
           </StatCard>
-          <StatCard label="合计净买入">
+          <StatCard label={t("合计净买入")}>
             <div className="kpi-value">${fmtUsd(stats.totalExposureUsd)}</div>
           </StatCard>
-          <StatCard label="最大净买入">
+          <StatCard label={t("最大净买入")}>
             <div className="kpi-value">${fmtUsd(stats.topExposureUsd)}</div>
           </StatCard>
         </section>
@@ -772,13 +803,20 @@ export default function AccumulationPage() {
           }}
         >
           {data.truncated ? (
-            <span>⏱️ 成交太密集，API 回看深度已用满 — 以下为完整覆盖时段</span>
+            <span>
+              ⏱️ {t("成交太密集，API 回看深度已用满 — 以下为完整覆盖时段")}
+            </span>
           ) : null}
           {data.oldestTs ? (
             <span>
-              实际覆盖{" "}
-              {fmtWindowSpan(data.oldestTs, Math.floor(Date.now() / 1000))}
-              （自 {fmtTime(data.oldestTs)} 起）
+              {t("实际覆盖 {span}（自 {time} 起）", {
+                span: fmtWindowSpan(
+                  data.oldestTs,
+                  Math.floor(Date.now() / 1000),
+                  t,
+                ),
+                time: fmtTime(data.oldestTs),
+              })}
             </span>
           ) : null}
         </div>
@@ -788,15 +826,21 @@ export default function AccumulationPage() {
       {autoRetrying ? (
         // The pull failed on a cold upstream cache and a one-shot retry is
         // scheduled — show progress instead of an error + empty table.
-        <div className="ds-empty">⏳ 上游缓存预热中，自动重试…</div>
+        <div className="ds-empty">⏳ {t("上游缓存预热中，自动重试…")}</div>
       ) : view === "loading" ? (
         // First fetch, nothing to show yet — the deep double-sided window pull
         // can take 5-15s and a blank area reads as "the tool is broken".
         <div className="ds-empty">
-          ⏳ 正在聚合 {hours}h 内的拆单买入 — 深度拉取首次约 5-15 秒，请稍候…
+          ⏳{" "}
+          {t(
+            "正在聚合 {hours}h 内的拆单买入 — 深度拉取首次约 5-15 秒，请稍候…",
+            {
+              hours,
+            },
+          )}
         </div>
       ) : view === "empty" ? (
-        <div className="ds-empty">该条件下暂无拆单累计</div>
+        <div className="ds-empty">{t("该条件下暂无拆单累计")}</div>
       ) : view === "rows" ? (
         <>
           <div className="ds-table-wrap">
@@ -804,50 +848,64 @@ export default function AccumulationPage() {
               <thead>
                 <tr>
                   <th style={{ width: 28, padding: "var(--s-2) var(--s-1)" }} />
-                  <th>钱包</th>
-                  <th>地址年龄</th>
-                  <th title="已结算市场胜率 · 已实现盈亏（🏆 = 聪明钱白名单）">
-                    战绩
+                  <th>{t("钱包")}</th>
+                  <th>{t("地址年龄")}</th>
+                  <th
+                    title={t(
+                      "已结算市场胜率 · 已实现盈亏（🏆 = 聪明钱白名单）",
+                    )}
+                  >
+                    {t("战绩")}
                   </th>
-                  <th>市场 · 结果</th>
-                  <th title="对冲嫌疑 = 同钱包也净买入了同市场的对侧结果；做市嫌疑 = 买卖高频交替。两类默认沉底">
-                    标记
+                  <th>{t("市场 · 结果")}</th>
+                  <th
+                    title={t(
+                      "对冲嫌疑 = 同钱包也净买入了同市场的对侧结果；做市嫌疑 = 买卖高频交替。两类默认沉底",
+                    )}
+                  >
+                    {t("标记")}
                   </th>
-                  <th className="is-right">平均赔率</th>
-                  <th className="is-right">时间</th>
+                  <th className="is-right">{t("平均赔率")}</th>
+                  <th className="is-right">{t("时间")}</th>
                   <th
                     className="is-sortable is-right"
                     onClick={() => toggleSort("net")}
-                    title="点击按净买入排序"
+                    title={t("点击按净买入排序")}
                   >
-                    净买入{sortArrow("net")}
+                    {t("净买入")}
+                    {sortArrow("net")}
                   </th>
                   <th
                     className="is-sortable is-right"
                     onClick={() => toggleSort("buyCount")}
-                    title="点击按笔数排序"
+                    title={t("点击按笔数排序")}
                   >
-                    笔数{sortArrow("buyCount")}
+                    {t("笔数")}
+                    {sortArrow("buyCount")}
                   </th>
                   <th
                     className="is-sortable is-right"
                     onClick={() => toggleSort("maxSingle")}
-                    title="点击按单笔最大排序"
+                    title={t("点击按单笔最大排序")}
                   >
-                    单笔最大{sortArrow("maxSingle")}
+                    {t("单笔最大")}
+                    {sortArrow("maxSingle")}
                   </th>
                   <th
                     className="is-sortable is-right"
                     onClick={() => toggleSort("buyUsd")}
-                    title="点击按毛买入排序"
+                    title={t("点击按毛买入排序")}
                   >
-                    毛买入{sortArrow("buyUsd")}
+                    {t("毛买入")}
+                    {sortArrow("buyUsd")}
                   </th>
                   <th
                     className="is-right"
-                    title="仅统计 ≥ 精度 floor 的卖出——更小的卖单在此精度下不可见，净买入应视为上界"
+                    title={t(
+                      "仅统计 ≥ 精度 floor 的卖出——更小的卖单在此精度下不可见，净买入应视为上界",
+                    )}
                   >
-                    毛卖出(≥floor)
+                    {t("毛卖出(≥floor)")}
                   </th>
                 </tr>
               </thead>
@@ -876,10 +934,10 @@ export default function AccumulationPage() {
                 className="ds-btn ds-btn--ghost"
                 onClick={() => setShowAllRows(true)}
               >
-                显示其余 {hiddenCount} 行
+                {t("显示其余 {n} 行", { n: hiddenCount })}
               </button>
               <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
-                统计卡已包含全部 {sortedGroups.length} 组
+                {t("统计卡已包含全部 {n} 组", { n: sortedGroups.length })}
               </div>
             </div>
           ) : null}

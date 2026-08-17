@@ -4,7 +4,7 @@ export const DICT_COMMON: Record<string, string> = {
   "24h 扫描": "24h Scan",
   实时告警: "Live Alerts",
   拆单累计: "Accumulation",
-  "共识 / 分歧": "Consensus / Split",
+  "共识 / 分歧": "Consensus / Disagreement",
   聪明钱发现: "Discovery",
   市场卡: "Market Card",
   策略中心: "Strategy Center",

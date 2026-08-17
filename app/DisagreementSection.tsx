@@ -7,8 +7,9 @@ import {
   MarketSlugActions,
   Tag,
   WalletLink,
-  catLabelFine,
+  catLabelFineT,
 } from "./ui";
+import { useLang } from "./i18n";
 import { useMarketPositions } from "./useMarketPositions";
 
 export type DisagreementWallet = {
@@ -84,6 +85,7 @@ function BalanceBar({
   sides: DisagreementSide[];
   total: number;
 }) {
+  const { t } = useLang();
   return (
     <div
       style={{
@@ -100,7 +102,10 @@ function BalanceBar({
         return (
           <div
             key={s.outcome}
-            title={`${s.outcome} · 质量加权 $${fmtUsd(s.weightedUsd)}`}
+            title={t("{outcome} · 质量加权 ${usd}", {
+              outcome: s.outcome,
+              usd: fmtUsd(s.weightedUsd),
+            })}
             style={{ width: `${pct}%`, background: sideColor(i) }}
           />
         );
@@ -132,6 +137,7 @@ function SideChip({ side, i }: { side: DisagreementSide; i: number }) {
 // mounting it triggers the lazy current-position fetch (window net-buy = "flow";
 // the added 当前持仓 column = "stock", i.e. what each wallet holds right now).
 function MarketDetail({ market }: { market: DisagreementMarket }) {
+  const { t } = useLang();
   const wallets = market.sides.flatMap((s) => s.wallets.map((w) => w.wallet));
   const { positions, loading } = useMarketPositions(
     market.conditionId,
@@ -153,26 +159,33 @@ function MarketDetail({ market }: { market: DisagreementMarket }) {
                 background: sideColor(i),
               }}
             />
-            <strong>{s.outcome}</strong> · {s.walletCount} 个钱包 · 净买 $
-            {fmtUsd(s.netUsd)} · 质量加权 ${fmtUsd(s.weightedUsd)} · 建仓均价{" "}
-            {s.avgBuyPrice.toFixed(3)}
+            <strong>{s.outcome}</strong>
+            {t(
+              " · {n} 个钱包 · 净买 ${net} · 质量加权 ${weighted} · 建仓均价 {avg}",
+              {
+                n: s.walletCount,
+                net: fmtUsd(s.netUsd),
+                weighted: fmtUsd(s.weightedUsd),
+                avg: s.avgBuyPrice.toFixed(3),
+              },
+            )}
             {s.currentPrice != null
-              ? ` · 现价 ${s.currentPrice.toFixed(3)}`
+              ? t(" · 现价 {cur}", { cur: s.currentPrice.toFixed(3) })
               : ""}
           </div>
           <table className="ds-table--compact" style={{ maxWidth: 720 }}>
             <thead>
               <tr>
-                <th>钱包</th>
-                <th className="is-right">评分</th>
-                <th className="is-right">胜率</th>
-                <th className="is-right">净买入</th>
-                <th className="is-right">建仓均价</th>
+                <th>{t("钱包")}</th>
+                <th className="is-right">{t("评分")}</th>
+                <th className="is-right">{t("胜率")}</th>
+                <th className="is-right">{t("净买入")}</th>
+                <th className="is-right">{t("建仓均价")}</th>
                 <th
                   className="is-right"
-                  title="该钱包当前在此结果的持仓市值与浮动盈亏"
+                  title={t("该钱包当前在此结果的持仓市值与浮动盈亏")}
                 >
-                  当前持仓
+                  {t("当前持仓")}
                 </th>
               </tr>
             </thead>
@@ -184,25 +197,25 @@ function MarketDetail({ market }: { market: DisagreementMarket }) {
                       <Icon s="🏆" /> {shortWallet(w.wallet)}
                     </WalletLink>
                   </td>
-                  <td className="mono is-right" data-label="评分">
+                  <td className="mono is-right" data-label={t("评分")}>
                     {w.score != null ? Math.round(w.score) : "—"}
                   </td>
-                  <td className="mono is-right" data-label="胜率">
+                  <td className="mono is-right" data-label={t("胜率")}>
                     {w.winRate != null
                       ? `${Math.round(w.winRate * 100)}%`
                       : "—"}
                   </td>
-                  <td className="mono is-right" data-label="净买入">
+                  <td className="mono is-right" data-label={t("净买入")}>
                     ${fmtUsd(w.netUsd)}
                   </td>
                   <td
                     className="mono is-right"
-                    data-label="建仓均价"
+                    data-label={t("建仓均价")}
                     style={{ color: "var(--warn-700)" }}
                   >
                     {w.avgBuyPrice.toFixed(3)}
                   </td>
-                  <td className="mono is-right" data-label="当前持仓">
+                  <td className="mono is-right" data-label={t("当前持仓")}>
                     <HoldingCell
                       pos={
                         positions?.[w.wallet.toLowerCase()]?.[
@@ -229,6 +242,7 @@ export function DisagreementSection({
 }: {
   markets: DisagreementMarket[];
 }) {
+  const { t } = useLang();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   function toggle(key: string) {
     setExpanded((prev) => {
@@ -242,7 +256,7 @@ export function DisagreementSection({
   if (markets.length === 0) {
     return (
       <div className="ds-empty">
-        窗口内暂无聪明钱分歧 — 白名单钱包没有在同一市场对立建仓
+        {t("窗口内暂无聪明钱分歧 — 白名单钱包没有在同一市场对立建仓")}
       </div>
     );
   }
@@ -253,11 +267,11 @@ export function DisagreementSection({
         <thead>
           <tr>
             <th style={{ width: 28, padding: "var(--s-2) var(--s-1)" }} />
-            <th>市场</th>
-            <th>质量加权天平</th>
-            <th className="is-right">倾斜</th>
-            <th className="is-right">合计加权</th>
-            <th className="is-right">最新时间</th>
+            <th>{t("市场")}</th>
+            <th>{t("质量加权天平")}</th>
+            <th className="is-right">{t("倾斜")}</th>
+            <th className="is-right">{t("合计加权")}</th>
+            <th className="is-right">{t("最新时间")}</th>
           </tr>
         </thead>
         <tbody>
@@ -295,7 +309,7 @@ export function DisagreementSection({
                 <tr
                   onClick={() => toggle(key)}
                   style={{ cursor: "pointer" }}
-                  title={isOpen ? "点击收起各侧明细" : "点击展开各侧明细"}
+                  title={isOpen ? t("点击收起各侧明细") : t("点击展开各侧明细")}
                 >
                   <td
                     className="muted col-expand"
@@ -325,10 +339,12 @@ export function DisagreementSection({
                     <div className="kpi-sub">
                       {m.sides.map((s) => s.outcome).join(" ⚔ ")}
                       {m.category
-                        ? ` · ${catLabelFine(m.category, m.subcategory)}`
+                        ? ` · ${catLabelFineT(t, m.category, m.subcategory)}`
                         : ""}
                       {m.excludedWallets > 0
-                        ? ` · 已剔除 ${m.excludedWallets} 个两边押`
+                        ? t(" · 已剔除 {n} 个两边押", {
+                            n: m.excludedWallets,
+                          })
                         : ""}
                       <MarketSlugActions
                         slug={m.slug}
@@ -339,7 +355,7 @@ export function DisagreementSection({
                   </td>
                   <td
                     className="col-block"
-                    data-label="质量加权天平"
+                    data-label={t("质量加权天平")}
                     style={{ minWidth: 180, maxWidth: 260 }}
                   >
                     <BalanceBar sides={m.sides} total={m.totalWeightedUsd} />
@@ -352,27 +368,38 @@ export function DisagreementSection({
                       ))}
                     </div>
                   </td>
-                  <td className="is-right" data-label="倾斜">
+                  <td className="is-right" data-label={t("倾斜")}>
                     {settled ? (
                       <Tag variant="default">
-                        已结算{winnerOutcome ? ` · ${winnerOutcome} 胜` : ""}
+                        {t("已结算")}
+                        {winnerOutcome
+                          ? t(" · {outcome} 胜", { outcome: winnerOutcome })
+                          : ""}
                       </Tag>
                     ) : m.tilt === "lopsided" ? (
                       <Tag variant="brand">
-                        {lead?.outcome} 倒向 {tiltPctLabel}%
+                        {t("{outcome} 倒向 {pct}%", {
+                          outcome: lead?.outcome ?? "",
+                          pct: tiltPctLabel,
+                        })}
                       </Tag>
                     ) : (
-                      <Tag variant="warn">势均力敌 {tiltPctLabel}%</Tag>
+                      <Tag variant="warn">
+                        {t("势均力敌 {pct}%", { pct: tiltPctLabel })}
+                      </Tag>
                     )}
                   </td>
                   <td
                     className="mono is-right"
-                    data-label="合计加权"
+                    data-label={t("合计加权")}
                     style={{ fontWeight: 700 }}
                   >
                     ${fmtUsd(m.totalWeightedUsd)}
                   </td>
-                  <td className="mono muted is-right" data-label="最新时间">
+                  <td
+                    className="mono muted is-right"
+                    data-label={t("最新时间")}
+                  >
                     {fmtTime(m.lastTs)}
                   </td>
                 </tr>

@@ -11,8 +11,9 @@ import {
   StatCard,
   Tag,
   WalletLink,
-  catLabelFine,
+  catLabelFineT,
 } from "../ui";
+import { useLang } from "../i18n";
 import { useMarketPositions } from "../useMarketPositions";
 import { useSoundToggle } from "../useSound";
 import { useNewRecordChime } from "../useNewRecordChime";
@@ -93,19 +94,24 @@ function fmtTime(tsSec: number): string {
   return new Date(tsSec * 1000).toLocaleTimeString("zh-CN", { hour12: false });
 }
 
-// Human window length between a start timestamp and now.
-function fmtWindowSpan(sinceSec: number): string {
+// Human window length between a start timestamp and now. Takes the caller's
+// t so the composed span translates (helper lives outside the component tree).
+function fmtWindowSpan(
+  sinceSec: number,
+  t: (zh: string, params?: Record<string, string | number>) => string,
+): string {
   const mins = Math.max(0, Math.round((Date.now() / 1000 - sinceSec) / 60));
-  if (mins < 60) return `~${mins} 分钟`;
+  if (mins < 60) return t("~{m} 分钟", { m: mins });
   const h = Math.floor(mins / 60);
   const m = mins % 60;
-  return m === 0 ? `~${h} 小时` : `~${h} 小时 ${m} 分`;
+  return m === 0 ? t("~{h} 小时", { h }) : t("~{h} 小时 {m} 分", { h, m });
 }
 
 // Expanded consensus wallet detail. Mounts only when a group row is open, so it
 // lazily fetches each wallet's CURRENT position in the market ("stock") to sit
 // beside its window net-buy ("flow") — telling fresh entries from long holders.
 function ConsensusDetail({ group }: { group: ConsensusGroup }) {
+  const { t } = useLang();
   const wallets = group.wallets.map((w) => w.wallet);
   const { positions, loading } = useMarketPositions(
     group.conditionId,
@@ -115,21 +121,21 @@ function ConsensusDetail({ group }: { group: ConsensusGroup }) {
   return (
     <>
       <div className="ds-hint" style={{ margin: "var(--s-2) 0 var(--s-1)" }}>
-        共识钱包（按净买入排序）
+        {t("共识钱包（按净买入排序）")}
       </div>
       <table className="ds-table--compact" style={{ maxWidth: 720 }}>
         <thead>
           <tr>
-            <th>钱包</th>
-            <th className="is-right">评分</th>
-            <th className="is-right">净买入</th>
-            <th className="is-right">笔数</th>
-            <th className="is-right">建仓均价</th>
+            <th>{t("钱包")}</th>
+            <th className="is-right">{t("评分")}</th>
+            <th className="is-right">{t("净买入")}</th>
+            <th className="is-right">{t("笔数")}</th>
+            <th className="is-right">{t("建仓均价")}</th>
             <th
               className="is-right"
-              title="该钱包当前在此结果的持仓市值与浮动盈亏"
+              title={t("该钱包当前在此结果的持仓市值与浮动盈亏")}
             >
-              当前持仓
+              {t("当前持仓")}
             </th>
           </tr>
         </thead>
@@ -141,23 +147,23 @@ function ConsensusDetail({ group }: { group: ConsensusGroup }) {
                   <Icon s="🏆" /> {shortWallet(w.wallet)}
                 </WalletLink>
               </td>
-              <td className="mono is-right" data-label="评分">
+              <td className="mono is-right" data-label={t("评分")}>
                 {w.score != null ? Math.round(w.score) : "—"}
               </td>
-              <td className="mono is-right" data-label="净买入">
+              <td className="mono is-right" data-label={t("净买入")}>
                 ${fmtUsd(w.netUsd)}
               </td>
-              <td className="mono is-right" data-label="笔数">
+              <td className="mono is-right" data-label={t("笔数")}>
                 {w.buyCount}
               </td>
               <td
                 className="mono is-right"
-                data-label="建仓均价"
+                data-label={t("建仓均价")}
                 style={{ color: "var(--warn-700)" }}
               >
                 {w.avgBuyPrice.toFixed(3)}
               </td>
-              <td className="mono is-right" data-label="当前持仓">
+              <td className="mono is-right" data-label={t("当前持仓")}>
                 <HoldingCell
                   pos={
                     positions?.[w.wallet.toLowerCase()]?.[
@@ -176,6 +182,7 @@ function ConsensusDetail({ group }: { group: ConsensusGroup }) {
 }
 
 export default function ConsensusPage() {
+  const { t } = useLang();
   const [hours, setHours] = useState<Hours>(DEFAULTS.hours);
   const [minWallets, setMinWallets] = useState<number>(DEFAULTS.minWallets);
   const [minPerWalletUsd, setMinPerWalletUsd] = useState<number>(
@@ -331,14 +338,19 @@ export default function ConsensusPage() {
       >
         <div>
           <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-            🔥 共识 · ⚖️ 分歧
+            {t("🔥 共识 · ⚖️ 分歧")}
           </h1>
           <div className="ds-hint">
-            白名单钱包在同一市场：同向买同一结果 = 共识，对立结果各自建仓 =
-            分歧（两者互斥）— 都比单笔大单更有说服力
-            {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
+            {t(
+              "白名单钱包在同一市场：同向买同一结果 = 共识，对立结果各自建仓 = 分歧（两者互斥）— 都比单笔大单更有说服力",
+            )}
+            {lastRefreshed
+              ? t(" · 最后刷新 {time}", { time: lastRefreshed })
+              : ""}
             {loading ? (
-              <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>
+              <span style={{ color: "var(--warn-700)" }}>
+                {t(" · 加载中…")}
+              </span>
             ) : null}
           </div>
         </div>
@@ -356,9 +368,9 @@ export default function ConsensusPage() {
           marginBottom: "var(--s-5)",
         }}
       >
-        <Field label="时间窗">
+        <Field label={t("时间窗")}>
           <Segmented<Hours>
-            ariaLabel="时间窗"
+            ariaLabel={t("时间窗")}
             value={hours}
             onChange={setHours}
             options={([2, 6, 12] as Hours[]).map((h) => ({
@@ -367,17 +379,20 @@ export default function ConsensusPage() {
             }))}
           />
         </Field>
-        <Field label="最少钱包">
+        <Field label={t("最少钱包")}>
           <Segmented<number>
-            ariaLabel="最少钱包数"
+            ariaLabel={t("最少钱包数")}
             value={minWallets}
             onChange={setMinWallets}
-            options={[2, 3, 4].map((n) => ({ label: `≥${n} 个`, value: n }))}
+            options={[2, 3, 4].map((n) => ({
+              label: t("≥{n} 个", { n }),
+              value: n,
+            }))}
           />
         </Field>
-        <Field label="每钱包净买">
+        <Field label={t("每钱包净买")}>
           <Segmented<number>
-            ariaLabel="每钱包净买入下限"
+            ariaLabel={t("每钱包净买入下限")}
             value={minPerWalletUsd}
             onChange={setMinPerWalletUsd}
             options={PER_WALLET_PRESETS.map((p) => ({
@@ -387,7 +402,7 @@ export default function ConsensusPage() {
           />
           <span style={{ flex: 1 }} />
           <button className="ds-btn ds-btn--ghost" onClick={() => load()}>
-            刷新
+            {t("刷新")}
           </button>
           <label
             className="ds-hint"
@@ -403,7 +418,7 @@ export default function ConsensusPage() {
               checked={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.checked)}
             />
-            自动刷新 30s
+            {t("自动刷新 30s")}
           </label>
         </Field>
       </section>
@@ -413,7 +428,7 @@ export default function ConsensusPage() {
           className="ds-callout ds-callout--error"
           style={{ marginBottom: "var(--s-4)" }}
         >
-          加载失败: {data.error}
+          {t("加载失败: {err}", { err: data.error })}
         </div>
       ) : null}
 
@@ -422,20 +437,21 @@ export default function ConsensusPage() {
           className="ds-callout ds-callout--warn"
           style={{ marginBottom: "var(--s-4)" }}
         >
-          聪明钱白名单为空 — 引擎启动后每日自动从官方盈利榜播种（首次约 1
-          分钟内完成）
+          {t(
+            "聪明钱白名单为空 — 引擎启动后每日自动从官方盈利榜播种（首次约 1 分钟内完成）",
+          )}
         </div>
       ) : null}
 
       {data ? (
         <section className="kpi" style={{ marginBottom: "var(--s-5)" }}>
-          <StatCard label="共识组数">
+          <StatCard label={t("共识组数")}>
             <div className="kpi-value">{groups.length}</div>
           </StatCard>
-          <StatCard label="合计净买入">
+          <StatCard label={t("合计净买入")}>
             <div className="kpi-value">${fmtUsd(totalNet)}</div>
           </StatCard>
-          <StatCard label="白名单钱包">
+          <StatCard label={t("白名单钱包")}>
             <div
               className="kpi-value"
               onClick={() => setWhitelistOpen(true)}
@@ -444,7 +460,7 @@ export default function ConsensusPage() {
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") setWhitelistOpen(true);
               }}
-              title="点击查看全部白名单地址（支持搜索）"
+              title={t("点击查看全部白名单地址（支持搜索）")}
               style={{
                 cursor: "pointer",
                 display: "inline-flex",
@@ -463,9 +479,15 @@ export default function ConsensusPage() {
 
       {data?.truncated && data.effectiveSinceSec ? (
         <div className="ds-callout" style={{ marginBottom: "var(--s-4)" }}>
-          ⏱️ 成交太密集，API 回看深度已用满 — 本页基于{" "}
-          <strong>完整覆盖的 {fmtWindowSpan(data.effectiveSinceSec)}</strong>
-          （自 {fmtTime(data.effectiveSinceSec)} 起，买卖双侧均完整）检测
+          {t("⏱️ 成交太密集，API 回看深度已用满 — 本页基于")}{" "}
+          <strong>
+            {t("完整覆盖的 {span}", {
+              span: fmtWindowSpan(data.effectiveSinceSec, t),
+            })}
+          </strong>
+          {t("（自 {time} 起，买卖双侧均完整）检测", {
+            time: fmtTime(data.effectiveSinceSec),
+          })}
         </div>
       ) : null}
 
@@ -474,14 +496,14 @@ export default function ConsensusPage() {
       {data ? (
         <div style={{ marginBottom: "var(--s-4)" }}>
           <Segmented<View>
-            ariaLabel="共识或分歧"
+            ariaLabel={t("共识或分歧")}
             value={view}
             onChange={setView}
             options={[
               {
                 label: (
                   <span>
-                    <Icon s="🔥" /> 共识 {groups.length}
+                    <Icon s="🔥" /> {t("共识")} {groups.length}
                   </span>
                 ),
                 value: "consensus",
@@ -489,7 +511,7 @@ export default function ConsensusPage() {
               {
                 label: (
                   <span>
-                    <Icon s="⚖️" /> 分歧 {disCount}
+                    <Icon s="⚖️" /> {t("分歧")} {disCount}
                   </span>
                 ),
                 value: "disagreement",
@@ -498,8 +520,12 @@ export default function ConsensusPage() {
           />
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
             {view === "consensus"
-              ? `一边倒 · ≥${minWallets} 个白名单钱包同向买入同一结果`
-              : "同一市场对立结果都有聪明钱 · 按质量加权称天平（与共识互斥）"}
+              ? t("一边倒 · ≥{n} 个白名单钱包同向买入同一结果", {
+                  n: minWallets,
+                })
+              : t(
+                  "同一市场对立结果都有聪明钱 · 按质量加权称天平（与共识互斥）",
+                )}
           </div>
         </div>
       ) : null}
@@ -507,7 +533,7 @@ export default function ConsensusPage() {
       <div style={{ display: view === "consensus" ? "block" : "none" }}>
         {data && groups.length === 0 && !loading ? (
           <div className="ds-empty">
-            窗口内暂无聪明钱共识 — 出现时也会推送到实时告警
+            {t("窗口内暂无聪明钱共识 — 出现时也会推送到实时告警")}
           </div>
         ) : groups.length > 0 ? (
           <div className="ds-table-wrap">
@@ -515,17 +541,20 @@ export default function ConsensusPage() {
               <thead>
                 <tr>
                   <th style={{ width: 28, padding: "var(--s-2) var(--s-1)" }} />
-                  <th>市场 · 结果</th>
-                  <th className="is-right">钱包数</th>
-                  <th className="is-right">合计净买入</th>
-                  <th className="is-right" title="按金额加权的聪明钱建仓均价">
-                    建仓均价
+                  <th>{t("市场 · 结果")}</th>
+                  <th className="is-right">{t("钱包数")}</th>
+                  <th className="is-right">{t("合计净买入")}</th>
+                  <th
+                    className="is-right"
+                    title={t("按金额加权的聪明钱建仓均价")}
+                  >
+                    {t("建仓均价")}
                   </th>
-                  <th className="is-right" title="Gamma 最新赔率">
-                    现价
+                  <th className="is-right" title={t("Gamma 最新赔率")}>
+                    {t("现价")}
                   </th>
-                  <th>跟单空间</th>
-                  <th className="is-right">最新时间</th>
+                  <th>{t("跟单空间")}</th>
+                  <th className="is-right">{t("最新时间")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -547,7 +576,9 @@ export default function ConsensusPage() {
                       <tr
                         onClick={() => toggleExpand(key)}
                         style={{ cursor: "pointer" }}
-                        title={isOpen ? "点击收起钱包明细" : "点击展开钱包明细"}
+                        title={
+                          isOpen ? t("点击收起钱包明细") : t("点击展开钱包明细")
+                        }
                       >
                         <td
                           className="muted col-expand"
@@ -582,7 +613,7 @@ export default function ConsensusPage() {
                           >
                             {g.outcome}
                             {g.category
-                              ? ` · ${catLabelFine(g.category, g.subcategory)}`
+                              ? ` · ${catLabelFineT(t, g.category, g.subcategory)}`
                               : ""}
                             <MarketSlugActions
                               slug={g.slug}
@@ -591,53 +622,59 @@ export default function ConsensusPage() {
                             />
                           </div>
                         </td>
-                        <td className="mono is-right" data-label="钱包数">
+                        <td className="mono is-right" data-label={t("钱包数")}>
                           <span style={{ fontWeight: 700 }}>
                             <Icon s="🔥" /> {g.walletCount}
                           </span>
                         </td>
-                        <td className="mono is-right" data-label="合计净买入">
+                        <td
+                          className="mono is-right"
+                          data-label={t("合计净买入")}
+                        >
                           <span className="up" style={{ fontWeight: 700 }}>
                             ${fmtUsd(g.totalNetUsd)}
                           </span>
                         </td>
                         <td
                           className="mono is-right"
-                          data-label="建仓均价"
+                          data-label={t("建仓均价")}
                           style={{ color: "var(--warn-700)", fontWeight: 600 }}
                         >
                           {g.avgBuyPrice.toFixed(3)}
                         </td>
-                        <td className="mono is-right" data-label="现价">
+                        <td className="mono is-right" data-label={t("现价")}>
                           {g.currentPrice != null
                             ? g.currentPrice.toFixed(3)
                             : "…"}
                         </td>
-                        <td data-label="跟单空间">
+                        <td data-label={t("跟单空间")}>
                           {gap == null ? (
                             <span className="muted">—</span>
                           ) : settled ? (
                             // Settled market: following is moot — show whether
                             // the smart-money consensus was RIGHT instead.
                             g.currentPrice != null && g.currentPrice > 0.5 ? (
-                              <Tag variant="up">已结算 ✓ 命中</Tag>
+                              <Tag variant="up">{t("已结算 ✓ 命中")}</Tag>
                             ) : (
-                              <Tag variant="down">已结算 ✗ 落空</Tag>
+                              <Tag variant="down">{t("已结算 ✗ 落空")}</Tag>
                             )
                           ) : gap <= FOLLOWABLE_GAP ? (
                             <Tag variant="up">
-                              仍可跟 {gap >= 0 ? "+" : ""}
-                              {(gap * 100).toFixed(1)}¢
+                              {t("仍可跟 {gap}¢", {
+                                gap: `${gap >= 0 ? "+" : ""}${(gap * 100).toFixed(1)}`,
+                              })}
                             </Tag>
                           ) : (
                             <Tag variant="warn">
-                              已跑 +{(gap * 100).toFixed(1)}¢
+                              {t("已跑 +{gap}¢", {
+                                gap: (gap * 100).toFixed(1),
+                              })}
                             </Tag>
                           )}
                         </td>
                         <td
                           className="mono muted is-right"
-                          data-label="最新时间"
+                          data-label={t("最新时间")}
                         >
                           {fmtTime(g.lastTs)}
                         </td>

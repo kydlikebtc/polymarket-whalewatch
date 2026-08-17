@@ -10,6 +10,7 @@ import {
   WalletLink,
 } from "../ui";
 import { iconTip } from "../glossary";
+import { useLang } from "../i18n";
 import { playBubble } from "../sound";
 import { useSoundToggle } from "../useSound";
 import {
@@ -165,12 +166,13 @@ function FollowBadge({
 // ~21%–94%), and the per-type breakdown so 💰 large and 🏆 smart never hide
 // behind a mixed-pool average.
 function StatLine({ label, stat }: { label: string; stat: OutcomeStat }) {
+  const { t } = useLang();
   if (stat.total === 0) return null;
   const pct = Math.round((stat.hits / stat.total) * 100);
   const small = stat.total < 10;
   const { lo, hi } = wilsonInterval(stat.hits, stat.total);
   const parts = Object.entries(stat.byType).map(
-    ([type, t]) => `${TYPE_LABEL[type] ?? type} ${t.hits}/${t.total}`,
+    ([type, v]) => `${t(TYPE_LABEL[type] ?? type)} ${v.hits}/${v.total}`,
   );
   return (
     <span className={small ? "muted" : undefined}>
@@ -182,12 +184,15 @@ function StatLine({ label, stat }: { label: string; stat: OutcomeStat }) {
       {small ? (
         <span className="muted" style={{ fontSize: "var(--t-sm)" }}>
           {" "}
-          样本不足
+          {t("样本不足")}
         </span>
       ) : (
         <span className="muted mono" style={{ fontSize: "var(--t-sm)" }}>
           {" "}
-          95%区间 {Math.round(lo * 100)}–{Math.round(hi * 100)}%
+          {t("95%区间 {lo}–{hi}%", {
+            lo: Math.round(lo * 100),
+            hi: Math.round(hi * 100),
+          })}
         </span>
       )}
       {parts.length > 1 ? (
@@ -218,6 +223,7 @@ function ConditionsPanel({
   pollSeconds: number;
   smartMeta: SmartPoolMeta;
 }) {
+  const { t } = useLang();
   const [c, setC] = useState<AlertConditions>(DEFAULT_CONDITIONS);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -334,7 +340,7 @@ function ConditionsPanel({
         }}
       >
         <strong style={{ fontSize: "var(--t-md)", color: "var(--n-900)" }}>
-          告警条件
+          {t("告警条件")}
         </strong>
         <label
           className="ds-hint"
@@ -350,11 +356,11 @@ function ConditionsPanel({
             checked={c.enabled}
             onChange={(e) => setC({ ...c, enabled: e.target.checked })}
           />
-          启用
+          {t("启用")}
         </label>
       </div>
 
-      <Field label="最低金额">
+      <Field label={t("最低金额")}>
         <input
           type="number"
           min={0}
@@ -371,20 +377,20 @@ function ConditionsPanel({
         <span className="ds-hint">USD</span>
       </Field>
 
-      <Field label="方向">
+      <Field label={t("方向")}>
         <Segmented<Side>
-          ariaLabel="方向"
+          ariaLabel={t("方向")}
           value={c.side}
           onChange={(s) => setC({ ...c, side: s })}
           options={[
-            { label: "全部", value: "ALL" },
-            { label: "买入 BUY", value: "BUY" },
-            { label: "卖出 SELL", value: "SELL" },
+            { label: t("全部"), value: "ALL" },
+            { label: t("买入 BUY"), value: "BUY" },
+            { label: t("卖出 SELL"), value: "SELL" },
           ]}
         />
       </Field>
 
-      <Field label="价格区间">
+      <Field label={t("价格区间")}>
         <input
           type="number"
           step={0.01}
@@ -409,39 +415,43 @@ function ConditionsPanel({
           style={{ width: 80 }}
         />
         <span className="ds-hint">
-          赔率 0–1（默认上限 0.95：排除 ≥0.95 的结算扫尾单，清空 = 不设上限）
+          {t(
+            "赔率 0–1（默认上限 0.95：排除 ≥0.95 的结算扫尾单，清空 = 不设上限）",
+          )}
         </span>
       </Field>
 
-      <Field label="地址年龄">
+      <Field label={t("地址年龄")}>
         <span className="ds-hint">≤</span>
         <input
           type="number"
           min={0}
-          placeholder="不限"
+          placeholder={t("不限")}
           value={ageText}
           onChange={(e) => setAgeText(e.target.value)}
           className="ds-input ds-input--mono"
           style={{ width: 70 }}
         />
-        <span className="ds-hint">天（留空 = 不限）</span>
+        <span className="ds-hint">{t("天（留空 = 不限）")}</span>
       </Field>
 
-      <Field label="距结算">
+      <Field label={t("距结算")}>
         <span className="ds-hint">≤</span>
         <input
           type="number"
           min={0}
-          placeholder="不限"
+          placeholder={t("不限")}
           value={hoursToEndText}
           onChange={(e) => setHoursToEndText(e.target.value)}
           className="ds-input ds-input--mono"
           style={{ width: 70 }}
         />
-        <span className="ds-hint">小时（留空 = 不限；抓结算前突击买入）</span>
+        <span className="ds-hint">
+          {t("小时（留空 = 不限；抓结算前突击买入）")}
+        </span>
       </Field>
 
-      <Field label="冷却窗口">
+      <Field label={t("冷却窗口")}>
         <input
           type="number"
           min={0}
@@ -459,11 +469,11 @@ function ConditionsPanel({
           style={{ width: 70 }}
         />
         <span className="ds-hint">
-          分钟（同一钱包·同一市场冷却期内只推首笔，其余仅入库；0 = 关闭）
+          {t("分钟（同一钱包·同一市场冷却期内只推首笔，其余仅入库；0 = 关闭）")}
         </span>
       </Field>
 
-      <Field label="聪明钱">
+      <Field label={t("聪明钱")}>
         <label
           className="ds-hint"
           style={{
@@ -478,16 +488,16 @@ function ConditionsPanel({
             checked={c.smartOnly}
             onChange={(e) => setC({ ...c, smartOnly: e.target.checked })}
           />
-          只推送聪明钱白名单钱包（🏆，每日自动从官方盈利榜播种）
+          {t("只推送聪明钱白名单钱包（🏆，每日自动从官方盈利榜播种）")}
         </label>
         {/* Hit-count feedback: with smartOnly a forever-silent feed is
             indistinguishable from a broken one — surface the pool size and
             how many 🏆 alerts the engine actually produced in the last 24h. */}
         {smartMeta.smartWalletCount != null ? (
           <span className="ds-hint mono">
-            白名单 {smartMeta.smartWalletCount} 个
+            {t("白名单 {n} 个", { n: smartMeta.smartWalletCount })}
             {smartMeta.smartAlerts24h != null
-              ? ` · 近24h 🏆 ${smartMeta.smartAlerts24h} 条`
+              ? t(" · 近24h 🏆 {n} 条", { n: smartMeta.smartAlerts24h })
               : ""}
           </span>
         ) : null}
@@ -496,19 +506,21 @@ function ConditionsPanel({
         // Same empty-pool copy as the consensus page — the two features share
         // the same whitelist and the same "seed hasn't run yet" failure mode.
         <div className="ds-callout ds-callout--warn">
-          聪明钱白名单为空 — 开启后将不会推送任何告警。引擎启动后每日自动从
-          官方盈利榜播种（首次约 1 分钟内完成），播种失败会自动重试
+          {t(
+            "聪明钱白名单为空 — 开启后将不会推送任何告警。引擎启动后每日自动从 官方盈利榜播种（首次约 1 分钟内完成），播种失败会自动重试",
+          )}
         </div>
       ) : null}
       {c.smartOnly ? (
         <span className="ds-hint">
-          💡 开启后建议把最低金额降至 $2k–5k：聪明钱大单通常拆小，$10k
-          单笔线与白名单的交集近零
+          {t(
+            "💡 开启后建议把最低金额降至 $2k–5k：聪明钱大单通常拆小，$10k 单笔线与白名单的交集近零",
+          )}
         </span>
       ) : null}
 
       {readonly ? (
-        <Field label="管理令牌">
+        <Field label={t("管理令牌")}>
           <input
             type="password"
             placeholder="x-admin-token"
@@ -527,8 +539,9 @@ function ConditionsPanel({
             autoComplete="off"
           />
           <span className="ds-hint">
-            公开部署为只读 — 保存需服务器 .env 中的
-            ADMIN_TOKEN（仅存本机浏览器）
+            {t(
+              "公开部署为只读 — 保存需服务器 .env 中的 ADMIN_TOKEN（仅存本机浏览器）",
+            )}
           </span>
         </Field>
       ) : null}
@@ -546,16 +559,19 @@ function ConditionsPanel({
           onClick={save}
           disabled={saving || !loaded}
         >
-          {saving ? "保存中…" : "保存"}
+          {saving ? t("保存中…") : t("保存")}
         </button>
         {savedAt ? (
           <span className="up" style={{ fontSize: "var(--t-sm)" }}>
-            已保存 {savedAt}，引擎下一轮(~{pollSeconds}s)生效
+            {t("已保存 {at}，引擎下一轮(~{s}s)生效", {
+              at: savedAt,
+              s: pollSeconds,
+            })}
           </span>
         ) : null}
         {err ? (
           <span className="down" style={{ fontSize: "var(--t-sm)" }}>
-            保存失败: {err}
+            {t("保存失败: {err}", { err })}
           </span>
         ) : null}
       </div>
@@ -564,6 +580,7 @@ function ConditionsPanel({
 }
 
 export default function Page() {
+  const { t } = useLang();
   const [data, setData] = useState<AlertsResponse>({ count: 0, alerts: [] });
   const [lastRefreshed, setLastRefreshed] = useState<string>("");
   const [error, setError] = useState<string>("");
@@ -731,14 +748,18 @@ export default function Page() {
       >
         <div>
           <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-            🐋 Polymarket 大额成交监控
+            {t("🐋 Polymarket 大额成交监控")}
           </h1>
           <div className="ds-hint">
-            共 <span className="mono">{data.count}</span> 条告警
-            {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
-            {error ? <span className="down"> · 刷新失败: {error}</span> : null}
+            {t("共")} <span className="mono">{data.count}</span> {t("条告警")}
+            {lastRefreshed ? t(" · 最后刷新 {at}", { at: lastRefreshed }) : ""}
+            {error ? (
+              <span className="down">
+                {t(" · 刷新失败: {err}", { err: error })}
+              </span>
+            ) : null}
             <span className="muted" style={{ marginLeft: "var(--s-2)" }}>
-              · 每 5 秒自动刷新（后台标签页暂停）
+              {t("· 每 5 秒自动刷新（后台标签页暂停）")}
             </span>
           </div>
         </div>
@@ -761,16 +782,19 @@ export default function Page() {
           className="ds-callout ds-callout--error"
           style={{ marginBottom: "var(--s-4)" }}
         >
-          ⚠️ Telegram 推送通道异常：已连续{" "}
+          {t("⚠️ Telegram 推送通道异常：已连续")}{" "}
           <strong className="mono">
             {data.telegramHealth.consecutiveSendFailures}
           </strong>{" "}
-          次发送失败
+          {t("次发送失败")}
           {data.telegramHealth.lastErrorAt
-            ? `（最近失败 ${fmtTime(data.telegramHealth.lastErrorAt)}）`
+            ? t("（最近失败 {at}）", {
+                at: fmtTime(data.telegramHealth.lastErrorAt),
+              })
             : ""}
-          。新告警仍正常入库并显示在下方列表，仅推送受影响 — 请检查 bot token /
-          频道权限 / 限流。
+          {t(
+            "。新告警仍正常入库并显示在下方列表，仅推送受影响 — 请检查 bot token / 频道权限 / 限流。",
+          )}
           {data.telegramHealth.lastErrorMessage ? (
             <div
               className="muted mono"
@@ -795,31 +819,33 @@ export default function Page() {
           }}
         >
           <span>
-            <Icon s="📐" /> 信号验证（当前列表）
+            <Icon s="📐" /> {t("信号验证（当前列表）")}
           </span>
-          <StatLine label="1h 方向命中" stat={summary.dir1h} />
-          <StatLine label="24h 方向命中" stat={summary.dir24h} />
-          <StatLine label="已结算胜率" stat={summary.settled} />
+          <StatLine label={t("1h 方向命中")} stat={summary.dir1h} />
+          <StatLine label={t("24h 方向命中")} stat={summary.dir24h} />
+          <StatLine label={t("已结算胜率")} stat={summary.settled} />
         </div>
       ) : null}
 
       {data.count === 0 ? (
-        <div className="ds-empty">暂无告警 — worker 抓到大单后会出现在这里</div>
+        <div className="ds-empty">
+          {t("暂无告警 — worker 抓到大单后会出现在这里")}
+        </div>
       ) : (
         <div className="ds-table-wrap">
           <table className="ds-table">
             <thead>
               <tr>
-                <th>市场</th>
-                <th>结果</th>
-                <th>方向</th>
-                <th className="is-right">金额</th>
-                <th className="is-right">价格</th>
-                <th>钱包</th>
-                <th title="信号后 1h/24h 价格变化（按方向着色）与结算结果">
-                  验证
+                <th>{t("市场")}</th>
+                <th>{t("结果")}</th>
+                <th>{t("方向")}</th>
+                <th className="is-right">{t("金额")}</th>
+                <th className="is-right">{t("价格")}</th>
+                <th>{t("钱包")}</th>
+                <th title={t("信号后 1h/24h 价格变化（按方向着色）与结算结果")}>
+                  {t("验证")}
                 </th>
-                <th>时间</th>
+                <th>{t("时间")}</th>
               </tr>
             </thead>
             <tbody>
@@ -848,21 +874,23 @@ export default function Page() {
                         a.title
                       )}
                     </td>
-                    <td data-label="结果">{a.outcome}</td>
-                    <td data-label="方向">
+                    <td data-label={t("结果")}>{a.outcome}</td>
+                    <td data-label={t("方向")}>
                       <SideTag side={a.side} />
                     </td>
-                    <td className="mono is-right" data-label="金额">
+                    <td className="mono is-right" data-label={t("金额")}>
                       ${fmtUsd(a.usd)}
                     </td>
-                    <td className="mono is-right" data-label="价格">
+                    <td className="mono is-right" data-label={t("价格")}>
                       {a.price.toFixed(4)}
                     </td>
-                    <td data-label="钱包">
+                    <td data-label={t("钱包")}>
                       {a.wallet ? (
                         <WalletLink
                           address={a.wallet}
-                          title={`${a.wallet} · 新标签打开钱包档案`}
+                          title={t("{address} · 新标签打开钱包档案", {
+                            address: a.wallet,
+                          })}
                         >
                           {shortWallet(a.wallet)}
                         </WalletLink>
@@ -870,7 +898,7 @@ export default function Page() {
                         <span className="mono">—</span>
                       )}
                     </td>
-                    <td data-label="验证">
+                    <td data-label={t("验证")}>
                       {/* Consensus rows validate too: entry = the group's
                           avgBuyPrice, timed at the last member fill. */}
                       <span
@@ -896,9 +924,14 @@ export default function Page() {
                         {o?.resolved ? (
                           <Icon
                             s={o.won == null ? "➖" : o.won ? "✅" : "❌"}
-                            title={`${iconTip(
-                              o.won == null ? "➖" : o.won ? "✅" : "❌",
-                            )} · 结算价 ${o.resolutionPrice} vs 成交价 ${a.price.toFixed(3)}`}
+                            title={`${t(
+                              iconTip(
+                                o.won == null ? "➖" : o.won ? "✅" : "❌",
+                              ),
+                            )}${t(" · 结算价 {res} vs 成交价 {fill}", {
+                              res: String(o.resolutionPrice),
+                              fill: a.price.toFixed(3),
+                            })}`}
                           />
                         ) : null}
                         {!o ||
@@ -909,7 +942,7 @@ export default function Page() {
                         ) : null}
                       </span>
                     </td>
-                    <td className="mono muted" data-label="时间">
+                    <td className="mono muted" data-label={t("时间")}>
                       {fmtTime(a.createdAt)}
                     </td>
                   </tr>

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Modal, WalletLink, fmtSignedUsdCompact } from "./ui";
+import { useLang } from "./i18n";
 
 type Row = {
   address: string;
@@ -28,6 +29,7 @@ export function WhitelistDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  const { t } = useLang();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [q, setQ] = useState("");
 
@@ -58,14 +60,14 @@ export function WhitelistDialog({
       open={open}
       onClose={onClose}
       width={640}
-      title={`🏆 聪明钱白名单${rows ? ` · ${rows.length} 个钱包` : ""}`}
+      title={`🏆 ${t("聪明钱白名单")}${rows ? t(" · {n} 个钱包", { n: rows.length }) : ""}`}
     >
       <input
         autoFocus
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="搜索地址…（0x…）"
-        aria-label="搜索白名单地址"
+        placeholder={t("搜索地址…（0x…）")}
+        aria-label={t("搜索白名单地址")}
         style={{
           width: "100%",
           marginBottom: "var(--s-3)",
@@ -79,22 +81,22 @@ export function WhitelistDialog({
         }}
       />
       {rows == null ? (
-        <div className="ds-empty">加载中…</div>
+        <div className="ds-empty">{t("加载中…")}</div>
       ) : filtered.length === 0 ? (
         <div className="ds-empty">
           {rows.length === 0
-            ? "白名单为空（引擎首次播种约需 1 分钟）"
-            : "无匹配地址"}
+            ? t("白名单为空（引擎首次播种约需 1 分钟）")
+            : t("无匹配地址")}
         </div>
       ) : (
         <div className="ds-table-wrap">
           <table className="ds-table">
             <thead>
               <tr>
-                <th>地址</th>
-                <th className="is-right">评分</th>
-                <th className="is-right">胜率</th>
-                <th className="is-right">净盈亏</th>
+                <th>{t("地址")}</th>
+                <th className="is-right">{t("评分")}</th>
+                <th className="is-right">{t("胜率")}</th>
+                <th className="is-right">{t("净盈亏")}</th>
               </tr>
             </thead>
             <tbody>
@@ -105,22 +107,24 @@ export function WhitelistDialog({
                       🏆 {shortWallet(r.address)}
                     </WalletLink>
                     {r.isWhitelist ? (
-                      <span className="muted"> · 手动</span>
+                      <span className="muted"> · {t("手动")}</span>
                     ) : null}
                     {r.isMarketMaker ? (
                       <span
                         className="muted"
-                        title="做市机器人（成交市场数 ≥1000）：保留池成员资格积累战绩数据，但不计入共识/分歧投票——做市流是库存再平衡，不是方向性观点"
+                        title={t(
+                          "做市机器人（成交市场数 ≥1000）：保留池成员资格积累战绩数据，但不计入共识/分歧投票——做市流是库存再平衡，不是方向性观点",
+                        )}
                       >
                         {" "}
-                        · 🤖 无投票权
+                        · 🤖 {t("无投票权")}
                       </span>
                     ) : null}
                   </td>
-                  <td className="mono is-right" data-label="评分">
+                  <td className="mono is-right" data-label={t("评分")}>
                     {r.score != null ? Math.round(r.score) : "—"}
                   </td>
-                  <td className="mono is-right" data-label="胜率">
+                  <td className="mono is-right" data-label={t("胜率")}>
                     {r.winRate != null
                       ? `${Math.round(r.winRate * 100)}%`
                       : "—"}
@@ -129,7 +133,7 @@ export function WhitelistDialog({
                     className={`mono is-right ${
                       (r.netPnl ?? 0) >= 0 ? "up" : "down"
                     }`}
-                    data-label="净盈亏"
+                    data-label={t("净盈亏")}
                   >
                     {r.netPnl != null ? fmtSignedUsdCompact(r.netPnl) : "—"}
                   </td>

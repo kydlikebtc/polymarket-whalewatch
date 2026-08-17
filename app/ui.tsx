@@ -375,7 +375,23 @@ export function WalletLink({
 // 实现移至 lib/categoryLabel.ts(2026-08-13 二级分类:合成规则可测,app/
 // 下没有测试基建);这里 re-export 保持既有调用方的 import 面不变,并把
 // 新的 catLabelFine(「体育·NBA」合成)一并暴露给各页面。
+import { catLabelFine as catLabelFineRaw } from "../lib/categoryLabel";
 export { catLabel, catLabelFine } from "../lib/categoryLabel";
+
+// 双语版分类标签:合成/去重规则仍归 catLabelFine 唯一属主,这里只把合成
+// 结果按「·」**逐段**过字典 —— 整串("体育·NBA")永远不会是字典键(词表
+// 收的是单个词元),整串查表必然 miss 并回退中文。段内未知值(NBA/F1 等
+// 拉丁名)透传原文。t 由调用方从 useLang 传入(本函数保持纯函数)。
+export function catLabelFineT(
+  t: (zh: string) => string,
+  category: string | null | undefined,
+  subcategory: string | null | undefined,
+): string {
+  return catLabelFineRaw(category, subcategory)
+    .split("·")
+    .map((seg) => t(seg))
+    .join("·");
+}
 
 /* ----------------------------------------------------------------- Icon */
 

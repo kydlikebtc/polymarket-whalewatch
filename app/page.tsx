@@ -17,6 +17,7 @@ import {
   type SmartInfoLite,
   type WalletStatsLite,
 } from "./ui";
+import { useLang } from "./i18n";
 import { useSoundToggle } from "./useSound";
 import { useNewRecordChime } from "./useNewRecordChime";
 import { useAutoRetryOnError } from "./autoRetry";
@@ -117,10 +118,14 @@ type ScanRowProps = {
 };
 
 const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
+  // Prop `t` is the trade, so the translator gets aliased to `tr` here. The
+  // memo doesn't block language switches: useLang reads context, and context
+  // updates re-render memoized consumers regardless of props.
+  const { t: tr } = useLang();
   const whale = t.usd >= 50000;
   return (
     <tr>
-      <td className="mono muted" data-label="时间">
+      <td className="mono muted" data-label={tr("时间")}>
         {fmtClock(t.ts)}
       </td>
       <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
@@ -141,7 +146,15 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
             slug. */}
         <div className="kpi-sub" style={{ whiteSpace: "nowrap" }}>
           {t.outcome}
-          {t.category ? ` · ${catLabelFine(t.category, t.subcategory)}` : ""}
+          {/* 「体育·NBA」的合成/去重仍归 catLabelFine 唯一属主；这里只把
+              合成结果按「·」逐段过字典（段=类别词表单词，词表不含「·」，
+              未知标签透传英文原文、缺译回退原样）。 */}
+          {t.category
+            ? ` · ${catLabelFine(t.category, t.subcategory)
+                .split("·")
+                .map((seg) => tr(seg))
+                .join("·")}`
+            : ""}
           <MarketSlugActions
             slug={t.slug}
             eventSlug={t.eventSlug}
@@ -149,27 +162,26 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
           />
         </div>
       </td>
-      <td data-label="方向">
+      <td data-label={tr("方向")}>
         <SideTag side={t.side} />
       </td>
-      <td className="mono is-right" data-label="金额">
+      <td className="mono is-right" data-label={tr("金额")}>
         <Icon s={whale ? "🐳" : "💰"} /> ${fmtUsd(t.usd)}
       </td>
-      <td className="mono is-right" data-label="价格">
+      <td className="mono is-right" data-label={tr("价格")}>
         {t.price.toFixed(3)}
       </td>
-      <td data-label="钱包">
-        <WalletLink
-          address={t.wallet ?? ""}
-          title={`${t.wallet} · 新标签打开钱包档案`}
-        >
+      <td data-label={tr("钱包")}>
+        {/* No explicit title: WalletLink's default is this exact copy, already
+            translated via the common dict shard. */}
+        <WalletLink address={t.wallet ?? ""}>
           {shortWallet(t.wallet)}
         </WalletLink>
       </td>
-      <td data-label="地址年龄">
+      <td data-label={tr("地址年龄")}>
         <AgeBadge ageDays={age} />
       </td>
-      <td data-label="战绩">
+      <td data-label={tr("战绩")}>
         <WalletStatsBadge stats={stats} smart={smart} />
       </td>
       <td data-label="tx">
@@ -190,6 +202,7 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
 });
 
 export default function Page() {
+  const { t } = useLang();
   const [minUsd, setMinUsd] = useState<number>(DEFAULTS.minUsd);
   const [side, setSide] = useState<Side>(DEFAULTS.side);
   const [hours, setHours] = useState<Hours>(DEFAULTS.hours);
@@ -469,13 +482,17 @@ export default function Page() {
       >
         <div>
           <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-            🔍 24h 大额成交扫描器
+            🔍 {t("24h 大额成交扫描器")}
           </h1>
           <div className="ds-hint">
-            实时查询 Polymarket 公共 API（不落库）
-            {lastRefreshed ? ` · 最后刷新 ${lastRefreshed}` : ""}
+            {t("实时查询 Polymarket 公共 API（不落库）")}
+            {lastRefreshed
+              ? t(" · 最后刷新 {time}", { time: lastRefreshed })
+              : ""}
             {loading ? (
-              <span style={{ color: "var(--warn-700)" }}> · 加载中…</span>
+              <span style={{ color: "var(--warn-700)" }}>
+                {t(" · 加载中…")}
+              </span>
             ) : null}
           </div>
         </div>
@@ -493,9 +510,9 @@ export default function Page() {
           marginBottom: "var(--s-5)",
         }}
       >
-        <Field label="金额">
+        <Field label={t("金额")}>
           <Segmented<number>
-            ariaLabel="最低金额"
+            ariaLabel={t("最低金额")}
             value={minUsd}
             onChange={setMinUsd}
             options={AMOUNT_PRESETS.map((p) => ({
@@ -506,7 +523,7 @@ export default function Page() {
           <input
             type="number"
             min={0}
-            placeholder="自定义 USD"
+            placeholder={t("自定义 USD")}
             value={customText}
             onChange={(e) => setCustomText(e.target.value)}
             onBlur={applyCustom}
@@ -517,26 +534,26 @@ export default function Page() {
             style={{ width: 130 }}
           />
           <span className="ds-hint">
-            当前 ≥ <span className="mono">${fmtUsd(minUsd)}</span>
+            {t("当前 ≥")} <span className="mono">${fmtUsd(minUsd)}</span>
           </span>
         </Field>
 
-        <Field label="方向">
+        <Field label={t("方向")}>
           <Segmented<Side>
-            ariaLabel="方向"
+            ariaLabel={t("方向")}
             value={side}
             onChange={setSide}
             options={[
-              { label: "全部", value: "ALL" },
-              { label: "买入 BUY", value: "BUY" },
-              { label: "卖出 SELL", value: "SELL" },
+              { label: t("全部"), value: "ALL" },
+              { label: t("买入 BUY"), value: "BUY" },
+              { label: t("卖出 SELL"), value: "SELL" },
             ]}
           />
         </Field>
 
-        <Field label="时间">
+        <Field label={t("时间")}>
           <Segmented<Hours>
-            ariaLabel="时间窗"
+            ariaLabel={t("时间窗")}
             value={hours}
             onChange={setHours}
             options={([1, 6, 24] as Hours[]).map((h) => ({
@@ -554,7 +571,7 @@ export default function Page() {
               load();
             }}
           >
-            刷新
+            {t("刷新")}
           </button>
           <label
             className="ds-hint"
@@ -570,12 +587,12 @@ export default function Page() {
               checked={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.checked)}
             />
-            自动刷新 30s
+            {t("自动刷新 30s")}
           </label>
         </Field>
 
         {/* Price (odds) band — insider money tends to buy at favorable odds. */}
-        <Field label="价格">
+        <Field label={t("价格")}>
           <input
             type="number"
             step={0.01}
@@ -607,36 +624,38 @@ export default function Page() {
                 setMaxPrice("");
               }}
             >
-              清除
+              {t("清除")}
             </button>
           ) : null}
-          <span className="ds-hint">赔率 0–1</span>
+          <span className="ds-hint">{t("赔率 0–1")}</span>
         </Field>
 
         {/* Market category — from the event's gamma tags, server-enriched. */}
-        <Field label="类型">
+        <Field label={t("类型")}>
           <Segmented<string>
-            ariaLabel="市场类型"
+            ariaLabel={t("市场类型")}
             value={category ?? "__ALL__"}
             onChange={(v) => setCategory(v === "__ALL__" ? null : v)}
             options={[
-              { label: "全部", value: "__ALL__" },
-              ...categoryOptions.map((c) => ({ label: c, value: c })),
+              { label: t("全部"), value: "__ALL__" },
+              // 筛选比较（catLabel(t.category) !== category）用原中文标签作
+              // value；只有展示 label 过字典 —— 逻辑零变化。
+              ...categoryOptions.map((c) => ({ label: t(c), value: c })),
             ]}
           />
         </Field>
 
         {/* Address age — insider money tends to use relatively new wallets. */}
-        <Field label="地址年龄">
+        <Field label={t("地址年龄")}>
           <Segmented<number>
-            ariaLabel="地址年龄"
+            ariaLabel={t("地址年龄")}
             value={maxAgeDays ?? AGE_ALL}
             onChange={(v) => setMaxAgeDays(v === AGE_ALL ? null : v)}
             options={[
-              { label: "全部", value: AGE_ALL },
-              { label: "≤1天", value: 1 },
-              { label: "≤7天", value: 7 },
-              { label: "≤30天", value: 30 },
+              { label: t("全部"), value: AGE_ALL },
+              { label: t("≤1天"), value: 1 },
+              { label: t("≤7天"), value: 7 },
+              { label: t("≤30天"), value: 30 },
             ]}
           />
           <span className="ds-hint">≤</span>
@@ -661,7 +680,7 @@ export default function Page() {
             className="ds-input ds-input--mono"
             style={{ width: 56 }}
           />
-          <span className="ds-hint">天</span>
+          <span className="ds-hint">{t("天")}</span>
         </Field>
       </section>
 
@@ -673,30 +692,30 @@ export default function Page() {
           className="ds-callout ds-callout--error"
           style={{ marginBottom: "var(--s-4)" }}
         >
-          扫描失败: {data.error}
+          {t("扫描失败: {msg}", { msg: data.error })}
         </div>
       ) : null}
 
       {/* Stats header */}
       {stats ? (
         <section className="kpi" style={{ marginBottom: "var(--s-5)" }}>
-          <StatCard label="笔数">
+          <StatCard label={t("笔数")}>
             <div className="kpi-value">{stats.count}</div>
           </StatCard>
-          <StatCard label="总额">
+          <StatCard label={t("总额")}>
             <div className="kpi-value">${fmtUsd(stats.totalUsd)}</div>
           </StatCard>
-          <StatCard label="买额 vs 卖额">
+          <StatCard label={t("买额 vs 卖额")}>
             <div
               className="mono"
               style={{ fontSize: "var(--t-md)", margin: "var(--s-2) 0" }}
             >
               <span className="up" style={{ fontWeight: 600 }}>
-                买 ${fmtUsd(buyUsd)}
+                {t("买 {amt}", { amt: `$${fmtUsd(buyUsd)}` })}
               </span>
               <span className="muted"> · </span>
               <span className="down" style={{ fontWeight: 600 }}>
-                卖 ${fmtUsd(sellUsd)}
+                {t("卖 {amt}", { amt: `$${fmtUsd(sellUsd)}` })}
               </span>
             </div>
             <div
@@ -716,7 +735,7 @@ export default function Page() {
               />
             </div>
           </StatCard>
-          <StatCard label="最大单">
+          <StatCard label={t("最大单")}>
             {stats.maxTrade ? (
               <div>
                 <div className="kpi-value" style={{ fontSize: 18 }}>
@@ -748,20 +767,22 @@ export default function Page() {
           className="ds-callout ds-callout--warn"
           style={{ marginBottom: "var(--s-4)" }}
         >
-          ⏱️ 成交太密集，API 回看深度已用满 — 时间窗尾部的部分成交未覆盖
+          ⏱️ {t("成交太密集，API 回看深度已用满 — 时间窗尾部的部分成交未覆盖")}
         </div>
       ) : null}
 
       {/* Filtered count (reflects the client-side price/age filters) */}
       {data && data.trades.length > 0 ? (
         <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
-          符合筛选{" "}
+          {t("符合筛选")}{" "}
           <strong className="mono" style={{ color: "var(--n-800)" }}>
             {displayedTrades.length}
           </strong>{" "}
-          笔
+          {t("笔")}
           {agesStillLoading ? (
-            <span className="muted"> · 地址年龄加载中，结果将随加载补全</span>
+            <span className="muted">
+              {t(" · 地址年龄加载中，结果将随加载补全")}
+            </span>
           ) : null}
         </div>
       ) : null}
@@ -770,15 +791,20 @@ export default function Page() {
       {autoRetrying ? (
         // The pull failed on a cold upstream cache and a one-shot retry is
         // scheduled — show progress instead of an error + empty table.
-        <div className="ds-empty">⏳ 上游缓存预热中，自动重试…</div>
+        <div className="ds-empty">⏳ {t("上游缓存预热中，自动重试…")}</div>
       ) : view === "loading" ? (
         // First fetch, nothing to show yet — a deep 24h pull can take 5-15s
         // and a blank area reads as "the tool is broken".
         <div className="ds-empty">
-          ⏳ 正在扫描 {hours}h 成交 — 深度拉取首次约 5-15 秒，请稍候…
+          ⏳{" "}
+          {t("正在扫描 {hours}h 成交 — 深度拉取首次约 5-15 秒，请稍候…", {
+            hours,
+          })}
         </div>
       ) : view === "empty" ? (
-        <div className="ds-empty">该筛选条件下 {hours}h 内暂无成交</div>
+        <div className="ds-empty">
+          {t("该筛选条件下 {hours}h 内暂无成交", { hours })}
+        </div>
       ) : view === "rows" ? (
         <>
           <div className="ds-table-wrap">
@@ -788,24 +814,30 @@ export default function Page() {
                   <th
                     className="is-sortable"
                     onClick={() => toggleSort("time")}
-                    title="点击按时间排序"
+                    title={t("点击按时间排序")}
                   >
-                    时间{sortArrow("time")}
+                    {t("时间")}
+                    {sortArrow("time")}
                   </th>
-                  <th>市场 / 结果</th>
-                  <th>方向</th>
+                  <th>{t("市场 / 结果")}</th>
+                  <th>{t("方向")}</th>
                   <th
                     className="is-sortable is-right"
                     onClick={() => toggleSort("amount")}
-                    title="点击按金额排序"
+                    title={t("点击按金额排序")}
                   >
-                    金额{sortArrow("amount")}
+                    {t("金额")}
+                    {sortArrow("amount")}
                   </th>
-                  <th className="is-right">价格</th>
-                  <th>钱包</th>
-                  <th>地址年龄</th>
-                  <th title="已结算市场胜率 · 已实现盈亏（🏆 = 聪明钱白名单）">
-                    战绩
+                  <th className="is-right">{t("价格")}</th>
+                  <th>{t("钱包")}</th>
+                  <th>{t("地址年龄")}</th>
+                  <th
+                    title={t(
+                      "已结算市场胜率 · 已实现盈亏（🏆 = 聪明钱白名单）",
+                    )}
+                  >
+                    {t("战绩")}
                   </th>
                   <th>tx</th>
                 </tr>
@@ -829,10 +861,12 @@ export default function Page() {
                 className="ds-btn ds-btn--ghost"
                 onClick={() => setShowAllRows(true)}
               >
-                显示其余 {hiddenCount} 行
+                {t("显示其余 {n} 行", { n: hiddenCount })}
               </button>
               <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
-                统计卡与「符合筛选」计数已包含全部 {displayedTrades.length} 笔
+                {t("统计卡与「符合筛选」计数已包含全部 {n} 笔", {
+                  n: displayedTrades.length,
+                })}
               </div>
             </div>
           ) : null}

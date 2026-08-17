@@ -9,12 +9,13 @@ import {
   StatCard,
   Tag,
   catLabel,
-  catLabelFine,
   fmtSignedUsdCompact,
   type SmartInfoLite,
   type WalletStatsLite,
 } from "../../ui";
+import { useLang } from "../../i18n";
 import { WalletTagChips } from "../../walletTagChips";
+import { subLabel } from "../../../lib/categoryLabel";
 import type { WalletTag } from "../../../lib/walletTags";
 
 type PriceBand = { from: number; to: number; buyUsd: number; buyCount: number };
@@ -109,8 +110,8 @@ function fmtUsd(usd: number): string {
   return usd.toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
-function fmtDateTime(sec: number): string {
-  return new Date(sec * 1000).toLocaleString("zh-CN", { hour12: false });
+function fmtDateTime(sec: number, locale: string): string {
+  return new Date(sec * 1000).toLocaleString(locale, { hour12: false });
 }
 
 const ALERT_TYPE_LABEL: Record<string, string> = {
@@ -124,6 +125,20 @@ export default function WalletPage() {
   const address = (params?.address ?? "").toLowerCase();
   const [data, setData] = useState<WalletResponse | null>(null);
   const [error, setError] = useState<string>("");
+  const { lang, t } = useLang();
+  // 日期本地化:zh 沿用 zh-CN,en 用 en-US(格式随语言,数值不变)。
+  const dtLocale = lang === "en" ? "en-US" : "zh-CN";
+  // catLabelFine 的翻译版:一级/二级各自过 t()后按原规则合成(「体育·NBA」),
+  // 合成串不进字典 —— 组合爆炸,只译词元(见 lib/categoryLabel 同款规则)。
+  const catFineT = (
+    category: string | null | undefined,
+    subcategory: string | null | undefined,
+  ): string => {
+    const primary = t(catLabel(category));
+    if (!subcategory) return primary;
+    const sub = t(subLabel(subcategory));
+    return sub === primary ? primary : `${primary}·${sub}`;
+  };
 
   useEffect(() => {
     if (!address) return;
@@ -169,18 +184,20 @@ export default function WalletPage() {
           {data ? <AgeBadge ageDays={data.ageDays} /> : null}
           {data?.smart ? (
             <Tag variant="brand">
-              🏆 聪明钱
+              {t("🏆 聪明钱")}
               {data.smart.score != null
-                ? ` · 评分 ${Math.round(data.smart.score)}`
+                ? t(" · 评分 {n}", { n: Math.round(data.smart.score) })
                 : ""}
-              {data.smart.isWhitelist ? " · 手动白名单" : ""}
+              {data.smart.isWhitelist ? t(" · 手动白名单") : ""}
             </Tag>
           ) : null}
           {data?.stats?.isMarketMaker ? (
             <Tag variant="warn">
-              🤖 高频做市 / 机器人
+              {t("🤖 高频做市 / 机器人")}
               {data.stats.marketsTraded != null
-                ? ` · ${data.stats.marketsTraded.toLocaleString()} 市场`
+                ? t(" · {n} 市场", {
+                    n: data.stats.marketsTraded.toLocaleString(),
+                  })
                 : ""}
             </Tag>
           ) : null}
@@ -190,7 +207,7 @@ export default function WalletPage() {
           {data?.tags ? (
             <WalletTagChips
               tags={data.tags.filter(
-                (t) => t.key !== "bot" && t.key !== "whitelist",
+                (tag) => tag.key !== "bot" && tag.key !== "whitelist",
               )}
             />
           ) : null}
@@ -201,7 +218,7 @@ export default function WalletPage() {
             target="_blank"
             rel="noreferrer"
           >
-            Polymarket 主页 ↗
+            {t("Polymarket 主页 ↗")}
           </a>
           {" · "}
           <a
@@ -214,8 +231,12 @@ export default function WalletPage() {
           {p?.firstTs && p?.lastTs ? (
             <span className="muted">
               {" "}
-              · 分析窗口：近 {p.tradeCount} 笔成交（
-              {fmtDateTime(p.firstTs)} → {fmtDateTime(p.lastTs)}）
+              ·{" "}
+              {t("分析窗口：近 {n} 笔成交（{from} → {to}）", {
+                n: p.tradeCount,
+                from: fmtDateTime(p.firstTs, dtLocale),
+                to: fmtDateTime(p.lastTs, dtLocale),
+              })}
             </span>
           ) : null}
         </div>
@@ -226,24 +247,30 @@ export default function WalletPage() {
           className="ds-callout ds-callout--error"
           style={{ marginBottom: "var(--s-4)" }}
         >
-          加载失败: {error}
+          {t("加载失败")}: {error}
         </div>
       ) : null}
 
-      {!data && !error ? <div className="ds-empty">档案加载中…</div> : null}
+      {!data && !error ? (
+        <div className="ds-empty">{t("档案加载中…")}</div>
+      ) : null}
 
       {data && p ? (
         <>
           {/* KPI: settled record + window flow */}
           <section className="kpi" style={{ marginBottom: "var(--s-5)" }}>
-            <StatCard label="已结算胜率">
+            <StatCard label={t("已结算胜率")}>
               <div
                 className="kpi-value"
                 title={
                   data.stats?.isMarketMaker
-                    ? "高频做市/机器人(交易过大量不同市场):做市赚点差、非定向下注,胜率不适用"
+                    ? t(
+                        "高频做市/机器人(交易过大量不同市场):做市赚点差、非定向下注,胜率不适用",
+                      )
                     : data.stats?.truncated
-                      ? "已结算市场过多,只能取到按盈亏排序的最赚一部分(赢家偏差),胜率无法可靠统计"
+                      ? t(
+                          "已结算市场过多,只能取到按盈亏排序的最赚一部分(赢家偏差),胜率无法可靠统计",
+                        )
                       : undefined
                 }
               >
@@ -255,35 +282,45 @@ export default function WalletPage() {
               </div>
               <div className="kpi-sub">
                 {!data.stats
-                  ? "无数据"
+                  ? t("无数据")
                   : data.stats.isMarketMaker
-                    ? `高频做市/机器人 · ${data.stats.marketsTraded?.toLocaleString() ?? "海量"} 市场 · 胜率不适用`
+                    ? t("高频做市/机器人 · {n} 市场 · 胜率不适用", {
+                        n:
+                          data.stats.marketsTraded?.toLocaleString() ??
+                          t("海量"),
+                      })
                     : data.stats.truncated
-                      ? `${data.stats.settledCount}+ 个已结算市场 · 过多,胜率不可靠`
-                      : `${data.stats.settledCount} 个已结算市场`}
+                      ? t("{n}+ 个已结算市场 · 过多,胜率不可靠", {
+                          n: data.stats.settledCount,
+                        })
+                      : t("{n} 个已结算市场", {
+                          n: data.stats.settledCount,
+                        })}
               </div>
             </StatCard>
-            <StatCard label="净盈亏">
+            <StatCard label={t("净盈亏")}>
               <div
                 className={`kpi-value ${
                   data.stats?.netPnl != null && data.stats.netPnl < 0
                     ? "down"
                     : "up"
                 }`}
-                title="Polymarket 口径净盈亏（已实现 + 当前持仓浮动盈亏），取自官方 user-pnl 曲线，与主页 Profit/loss 一致"
+                title={t(
+                  "Polymarket 口径净盈亏（已实现 + 当前持仓浮动盈亏），取自官方 user-pnl 曲线，与主页 Profit/loss 一致",
+                )}
               >
                 {data.stats?.netPnl != null
                   ? fmtSignedUsdCompact(data.stats.netPnl)
                   : "—"}
               </div>
               <div className="kpi-sub">
-                已结算 ROI{" "}
+                {t("已结算 ROI")}{" "}
                 {data.stats?.roi != null
                   ? `${(data.stats.roi * 100).toFixed(1)}%`
                   : "—"}
               </div>
             </StatCard>
-            <StatCard label="PUSD 现金余额">
+            <StatCard label={t("PUSD 现金余额")}>
               <div className="kpi-value">
                 {data.pusdBalance != null
                   ? `$${fmtUsd(data.pusdBalance)}`
@@ -291,26 +328,32 @@ export default function WalletPage() {
               </div>
               <div
                 className="kpi-sub"
-                title="Polymarket 账户内未下注的现金（链上 PUSD 余额，实时查询）"
+                title={t(
+                  "Polymarket 账户内未下注的现金（链上 PUSD 余额，实时查询）",
+                )}
               >
-                {data.pusdBalance != null ? "账户内可用资金" : "RPC 暂不可用"}
+                {data.pusdBalance != null
+                  ? t("账户内可用资金")
+                  : t("RPC 暂不可用")}
               </div>
             </StatCard>
-            <StatCard label="近窗买入 / 卖出">
+            <StatCard label={t("近窗买入 / 卖出")}>
               <div className="kpi-value" style={{ fontSize: 18 }}>
                 <span className="up">${fmtUsd(p.buyUsd)}</span>
                 <span className="muted"> / </span>
                 <span className="down">${fmtUsd(p.sellUsd)}</span>
               </div>
-              <div className="kpi-sub">平均每笔 ${fmtUsd(p.avgTradeUsd)}</div>
+              <div className="kpi-sub">
+                {t("平均每笔 ${n}", { n: fmtUsd(p.avgTradeUsd) })}
+              </div>
             </StatCard>
-            <StatCard label="拆单倾向">
+            <StatCard label={t("拆单倾向")}>
               <div className="kpi-value">
                 {p.smallBuyShare != null
                   ? `${Math.round(p.smallBuyShare * 100)}%`
                   : "—"}
               </div>
-              <div className="kpi-sub">买单中 &lt;$1k 的占比</div>
+              <div className="kpi-sub">{t("买单中 <$1k 的占比")}</div>
             </StatCard>
           </section>
 
@@ -318,27 +361,33 @@ export default function WalletPage() {
           {data.holdings && data.holdings.count > 0 ? (
             <section style={{ marginBottom: "var(--s-5)" }}>
               <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-                当前持仓（{data.holdings.count} 个活仓 · 总市值 $
-                {fmtUsd(data.holdings.totalValue)} · 浮动盈亏{" "}
+                {t("当前持仓（{n} 个活仓 · 总市值 ${v} · 浮动盈亏 ", {
+                  n: data.holdings.count,
+                  v: fmtUsd(data.holdings.totalValue),
+                })}
                 <span
                   className={data.holdings.totalCashPnl >= 0 ? "up" : "down"}
                 >
                   {fmtSignedUsdCompact(data.holdings.totalCashPnl)}
                 </span>
-                {data.holdings.truncated ? " · 仅前若干页" : ""}）
+                {data.holdings.truncated ? t(" · 仅前若干页") : ""}
+                {t("）")}
               </div>
               <div className="ds-table-wrap">
                 <table className="ds-table">
                   <thead>
                     <tr>
-                      <th>市场 / 结果</th>
-                      <th className="is-right">份额</th>
-                      <th className="is-right" title="按金额加权的建仓均价">
-                        建仓均价
+                      <th>{t("市场 / 结果")}</th>
+                      <th className="is-right">{t("份额")}</th>
+                      <th
+                        className="is-right"
+                        title={t("按金额加权的建仓均价")}
+                      >
+                        {t("建仓均价")}
                       </th>
-                      <th className="is-right">现价</th>
-                      <th className="is-right">市值</th>
-                      <th className="is-right">浮动盈亏</th>
+                      <th className="is-right">{t("现价")}</th>
+                      <th className="is-right">{t("市值")}</th>
+                      <th className="is-right">{t("浮动盈亏")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -368,27 +417,27 @@ export default function WalletPage() {
                             />
                           </div>
                         </td>
-                        <td className="mono is-right" data-label="份额">
+                        <td className="mono is-right" data-label={t("份额")}>
                           {fmtUsd(h.size)}
                         </td>
                         <td
                           className="mono is-right"
-                          data-label="建仓均价"
+                          data-label={t("建仓均价")}
                           style={{ color: "var(--warn-700)" }}
                         >
                           {h.avgPrice.toFixed(3)}
                         </td>
-                        <td className="mono is-right" data-label="现价">
+                        <td className="mono is-right" data-label={t("现价")}>
                           {h.curPrice.toFixed(3)}
                         </td>
-                        <td className="mono is-right" data-label="市值">
+                        <td className="mono is-right" data-label={t("市值")}>
                           ${fmtUsd(h.currentValue)}
                         </td>
                         <td
                           className={`mono is-right ${
                             h.cashPnl >= 0 ? "up" : "down"
                           }`}
-                          data-label="浮动盈亏"
+                          data-label={t("浮动盈亏")}
                         >
                           {fmtSignedUsdCompact(h.cashPnl)} (
                           {h.percentPnl >= 0 ? "+" : ""}
@@ -403,10 +452,10 @@ export default function WalletPage() {
           ) : data.holdings ? (
             <section style={{ marginBottom: "var(--s-5)" }}>
               <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-                当前持仓
+                {t("当前持仓")}
               </div>
               <div className="ds-empty">
-                该钱包当前没有活跃持仓（或未查询到）
+                {t("该钱包当前没有活跃持仓（或未查询到）")}
               </div>
             </section>
           ) : null}
@@ -415,7 +464,7 @@ export default function WalletPage() {
           {data.categories.length > 0 ? (
             <section style={{ marginBottom: "var(--s-5)" }}>
               <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-                专攻类别（按头部市场成交额）
+                {t("专攻类别（按头部市场成交额）")}
               </div>
               <div
                 style={{
@@ -426,7 +475,7 @@ export default function WalletPage() {
               >
                 {data.categories.map((c) => (
                   <Tag key={c.category} variant="default">
-                    {catLabel(c.category)} {Math.round(c.share * 100)}%
+                    {t(catLabel(c.category))} {Math.round(c.share * 100)}%
                   </Tag>
                 ))}
               </div>
@@ -439,7 +488,7 @@ export default function WalletPage() {
             style={{ padding: "var(--s-4)", marginBottom: "var(--s-5)" }}
           >
             <div className="ds-label" style={{ marginBottom: "var(--s-3)" }}>
-              买入赔率带分布（近 {p.tradeCount} 笔）
+              {t("买入赔率带分布（近 {n} 笔）", { n: p.tradeCount })}
             </div>
             <div
               style={{
@@ -488,7 +537,7 @@ export default function WalletPage() {
                     className="mono muted"
                     style={{ width: 120, flexShrink: 0, textAlign: "right" }}
                   >
-                    ${fmtUsd(b.buyUsd)} · {b.buyCount}笔
+                    ${fmtUsd(b.buyUsd)} · {t("{n}笔", { n: b.buyCount })}
                   </span>
                 </div>
               ))}
@@ -498,18 +547,18 @@ export default function WalletPage() {
           {/* Top markets */}
           <section style={{ marginBottom: "var(--s-5)" }}>
             <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-              头部市场（按成交额）
+              {t("头部市场（按成交额）")}
             </div>
             <div className="ds-table-wrap">
               <table className="ds-table">
                 <thead>
                   <tr>
-                    <th>市场</th>
-                    <th>类别</th>
-                    <th className="is-right">买入</th>
-                    <th className="is-right">卖出</th>
-                    <th className="is-right">净买入</th>
-                    <th className="is-right">笔数</th>
+                    <th>{t("市场")}</th>
+                    <th>{t("类别")}</th>
+                    <th className="is-right">{t("买入")}</th>
+                    <th className="is-right">{t("卖出")}</th>
+                    <th className="is-right">{t("净买入")}</th>
+                    <th className="is-right">{t("笔数")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -528,21 +577,19 @@ export default function WalletPage() {
                           m.title
                         )}
                       </td>
-                      <td className="muted" data-label="类别">
-                        {m.category
-                          ? catLabelFine(m.category, m.subcategory)
-                          : "—"}
+                      <td className="muted" data-label={t("类别")}>
+                        {m.category ? catFineT(m.category, m.subcategory) : "—"}
                       </td>
-                      <td className="mono is-right up" data-label="买入">
+                      <td className="mono is-right up" data-label={t("买入")}>
                         ${fmtUsd(m.buyUsd)}
                       </td>
-                      <td className="mono is-right down" data-label="卖出">
+                      <td className="mono is-right down" data-label={t("卖出")}>
                         ${fmtUsd(m.sellUsd)}
                       </td>
-                      <td className="mono is-right" data-label="净买入">
+                      <td className="mono is-right" data-label={t("净买入")}>
                         ${fmtUsd(m.netUsd)}
                       </td>
-                      <td className="mono is-right" data-label="笔数">
+                      <td className="mono is-right" data-label={t("笔数")}>
                         {m.trades}
                       </td>
                     </tr>
@@ -555,31 +602,37 @@ export default function WalletPage() {
           {/* This tool's alert history for the wallet */}
           <section style={{ marginBottom: "var(--s-5)" }}>
             <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-              本工具历史命中（近 {data.alertHitsWindowDays ?? 90} 天 ·{" "}
-              {data.alertHits.length}）
+              {t("本工具历史命中（近 {d} 天 · {n}）", {
+                d: data.alertHitsWindowDays ?? 90,
+                n: data.alertHits.length,
+              })}
             </div>
             {data.alertHits.length === 0 ? (
               <div className="ds-empty">
-                近 {data.alertHitsWindowDays ?? 90} 天内该钱包未触发过告警
+                {t("近 {d} 天内该钱包未触发过告警", {
+                  d: data.alertHitsWindowDays ?? 90,
+                })}
               </div>
             ) : (
               <div className="ds-table-wrap">
                 <table className="ds-table">
                   <thead>
                     <tr>
-                      <th>类型</th>
-                      <th>市场 / 结果</th>
-                      <th>方向</th>
-                      <th className="is-right">金额</th>
-                      <th className="is-right">价格</th>
-                      <th>时间</th>
+                      <th>{t("类型")}</th>
+                      <th>{t("市场 / 结果")}</th>
+                      <th>{t("方向")}</th>
+                      <th className="is-right">{t("金额")}</th>
+                      <th className="is-right">{t("价格")}</th>
+                      <th>{t("时间")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.alertHits.map((h, i) => (
                       <tr key={`${h.createdAt}-${i}`}>
-                        <td data-label="类型">
-                          {ALERT_TYPE_LABEL[h.type] ?? h.type}
+                        <td data-label={t("类型")}>
+                          {ALERT_TYPE_LABEL[h.type]
+                            ? t(ALERT_TYPE_LABEL[h.type])
+                            : h.type}
                         </td>
                         <td style={{ whiteSpace: "normal", maxWidth: 320 }}>
                           {h.eventSlug ? (
@@ -595,17 +648,17 @@ export default function WalletPage() {
                           )}
                           <div className="kpi-sub">{h.outcome}</div>
                         </td>
-                        <td data-label="方向">
+                        <td data-label={t("方向")}>
                           <SideTag side={h.side} />
                         </td>
-                        <td className="mono is-right" data-label="金额">
+                        <td className="mono is-right" data-label={t("金额")}>
                           ${fmtUsd(h.usd)}
                         </td>
-                        <td className="mono is-right" data-label="价格">
+                        <td className="mono is-right" data-label={t("价格")}>
                           {h.price != null ? h.price.toFixed(3) : "—"}
                         </td>
-                        <td className="mono muted" data-label="时间">
-                          {fmtDateTime(h.createdAt)}
+                        <td className="mono muted" data-label={t("时间")}>
+                          {fmtDateTime(h.createdAt, dtLocale)}
                         </td>
                       </tr>
                     ))}
@@ -618,47 +671,47 @@ export default function WalletPage() {
           {/* Recent trades */}
           <section>
             <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-              最近成交（20）
+              {t("最近成交（20）")}
             </div>
             <div className="ds-table-wrap">
               <table className="ds-table">
                 <thead>
                   <tr>
-                    <th>时间</th>
-                    <th>市场 / 结果</th>
-                    <th>方向</th>
-                    <th className="is-right">金额</th>
-                    <th className="is-right">价格</th>
+                    <th>{t("时间")}</th>
+                    <th>{t("市场 / 结果")}</th>
+                    <th>{t("方向")}</th>
+                    <th className="is-right">{t("金额")}</th>
+                    <th className="is-right">{t("价格")}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.recent.map((t, i) => (
-                    <tr key={`${t.timestamp}-${i}`}>
-                      <td className="mono muted" data-label="时间">
-                        {fmtDateTime(t.timestamp)}
+                  {data.recent.map((r, i) => (
+                    <tr key={`${r.timestamp}-${i}`}>
+                      <td className="mono muted" data-label={t("时间")}>
+                        {fmtDateTime(r.timestamp, dtLocale)}
                       </td>
                       <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
-                        {t.eventSlug ? (
+                        {r.eventSlug ? (
                           <a
-                            href={`https://polymarket.com/event/${t.eventSlug}`}
+                            href={`https://polymarket.com/event/${r.eventSlug}`}
                             target="_blank"
                             rel="noreferrer"
                           >
-                            {t.title}
+                            {r.title}
                           </a>
                         ) : (
-                          t.title
+                          r.title
                         )}
-                        <div className="kpi-sub">{t.outcome}</div>
+                        <div className="kpi-sub">{r.outcome}</div>
                       </td>
-                      <td data-label="方向">
-                        <SideTag side={t.side} />
+                      <td data-label={t("方向")}>
+                        <SideTag side={r.side} />
                       </td>
-                      <td className="mono is-right" data-label="金额">
-                        ${fmtUsd(t.usdcSize)}
+                      <td className="mono is-right" data-label={t("金额")}>
+                        ${fmtUsd(r.usdcSize)}
                       </td>
-                      <td className="mono is-right" data-label="价格">
-                        {t.price.toFixed(3)}
+                      <td className="mono is-right" data-label={t("价格")}>
+                        {r.price.toFixed(3)}
                       </td>
                     </tr>
                   ))}

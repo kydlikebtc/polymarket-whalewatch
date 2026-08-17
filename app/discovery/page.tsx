@@ -11,6 +11,7 @@ import {
 } from "../ui";
 import { WalletTagChips, tagVariant } from "../walletTagChips";
 import { WALLET_TAGS } from "../glossary";
+import { useLang } from "../i18n";
 import type { WalletTag } from "../../lib/walletTags";
 
 // -------------------------------------------------------------- read model
@@ -92,9 +93,13 @@ const CHANNEL_META: Record<string, { icon: string; label: string }> = {
   early_winner: { icon: "🎯", label: "早期赢家" },
 };
 
-function channelLabel(channel: string): string {
+// useLang().t 的签名 —— 下面几个模块级辅助函数在组件树之外,由调用方把
+// 当前语言的 t 穿进来(中文键在 zh 下原样返回,逻辑零变化)。
+type TFn = (zh: string, params?: Record<string, string | number>) => string;
+
+function channelLabel(channel: string, t: TFn): string {
   const m = CHANNEL_META[channel];
-  return m ? `${m.icon} ${m.label}` : channel;
+  return m ? `${m.icon} ${t(m.label)}` : channel;
 }
 
 function shortWallet(w: string): string {
@@ -102,25 +107,25 @@ function shortWallet(w: string): string {
   return w.length > 12 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w;
 }
 
-function fmtAgo(tsSec: number): string {
+function fmtAgo(tsSec: number, t: TFn): string {
   const mins = Math.max(0, Math.round(Date.now() / 1000 - tsSec) / 60);
-  if (mins < 60) return `${Math.round(mins)} 分钟前`;
+  if (mins < 60) return t("{n} 分钟前", { n: Math.round(mins) });
   const h = mins / 60;
-  if (h < 48) return `${Math.round(h)} 小时前`;
-  return `${Math.round(h / 24)} 天前`;
+  if (h < 48) return t("{n} 小时前", { n: Math.round(h) });
+  return t("{n} 天前", { n: Math.round(h / 24) });
 }
 
 // Pool members graduate OUT of this list into the pool tab, so the funnel
 // statuses are binary: still watching, or permanently disqualified.
-function statusTag(status: CandidateRow["status"]) {
-  if (status === "bot") return <Tag variant="warn">🤖 做市机器人</Tag>;
-  return <Tag>候选中</Tag>;
+function statusTag(status: CandidateRow["status"], t: TFn) {
+  if (status === "bot") return <Tag variant="warn">🤖 {t("做市机器人")}</Tag>;
+  return <Tag>{t("候选中")}</Tag>;
 }
 
 // Generic (per-wallet-count-free) chip label for the filter bar.
-function filterChipLabel(key: string, sample: WalletTag): string {
-  if (key.startsWith("ch:")) return channelLabel(key.slice(3));
-  return sample.label.replace(/ ×\d+$/, "");
+function filterChipLabel(key: string, sample: WalletTag, t: TFn): string {
+  if (key.startsWith("ch:")) return channelLabel(key.slice(3), t);
+  return t(sample.label.replace(/ ×\d+$/, ""));
 }
 
 // ---------------------------------------------------------- funnel strip
@@ -159,29 +164,31 @@ function EvidenceDetailRows({
   evidence: EvidenceDetail[];
   colSpan: number;
 }) {
+  const { t } = useLang();
   return (
     <tr>
       <td colSpan={colSpan} style={{ background: "var(--n-50)" }}>
         {evidence.length === 0 ? (
           <div className="ds-hint" style={{ padding: "var(--s-2)" }}>
-            近 30 天无渠道证据 —— 经榜单播种入池（全局榜/分类榜），或证据已滚出
-            30 天窗口
+            {t(
+              "近 30 天无渠道证据 —— 经榜单播种入池（全局榜/分类榜），或证据已滚出 30 天窗口",
+            )}
           </div>
         ) : (
           <table className="ds-table" style={{ margin: "var(--s-2) 0" }}>
             <thead>
               <tr>
-                <th style={{ width: 130 }}>渠道</th>
-                <th>证据</th>
-                <th>市场 · 结果</th>
+                <th style={{ width: 130 }}>{t("渠道")}</th>
+                <th>{t("证据")}</th>
+                <th>{t("市场 · 结果")}</th>
                 <th className="is-right" style={{ width: 110 }}>
-                  金额
+                  {t("金额")}
                 </th>
                 <th className="is-right" style={{ width: 90 }}>
-                  价格
+                  {t("价格")}
                 </th>
                 <th className="is-right" style={{ width: 110 }}>
-                  时间
+                  {t("时间")}
                 </th>
               </tr>
             </thead>
@@ -189,7 +196,7 @@ function EvidenceDetailRows({
               {evidence.map((e) => (
                 <tr key={`${e.channel}:${e.conditionId}`}>
                   <td style={{ whiteSpace: "nowrap" }}>
-                    {channelLabel(e.channel)}
+                    {channelLabel(e.channel, t)}
                   </td>
                   <td style={{ whiteSpace: "normal", lineHeight: 1.5 }}>
                     {e.note}
@@ -227,7 +234,9 @@ function EvidenceDetailRows({
                     ) : (
                       <span
                         className="muted"
-                        title="旧证据行未存市场详情 — 引擎会从 gamma 自动回填（启动后约 1 分钟），个别已下架市场保持空缺"
+                        title={t(
+                          "旧证据行未存市场详情 — 引擎会从 gamma 自动回填（启动后约 1 分钟），个别已下架市场保持空缺",
+                        )}
                       >
                         —
                       </span>
@@ -243,7 +252,7 @@ function EvidenceDetailRows({
                     className="mono is-right"
                     style={{ whiteSpace: "nowrap" }}
                   >
-                    {fmtAgo(e.ts)}
+                    {fmtAgo(e.ts, t)}
                   </td>
                 </tr>
               ))}
@@ -258,6 +267,7 @@ function EvidenceDetailRows({
 // ------------------------------------------------------------------ page
 
 export default function DiscoveryPage() {
+  const { t } = useLang();
   const [data, setData] = useState<DiscoveryPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -383,25 +393,25 @@ export default function DiscoveryPage() {
     <main className="ds-main">
       <header style={{ marginBottom: "var(--s-5)" }}>
         <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-          🔭 聪明钱发现
+          🔭 {t("聪明钱发现")}
         </h1>
         <div className="ds-hint">
-          白名单之外的聪明钱候选漏斗：成交流涌现（共识同行 / 拆单建仓 /
-          内幕签名）+ 已结算市场早期赢家 + 分类榜专家。候选须 30 天内证据广度 ≥3
-          并通过战绩审查（做市机器人硬拒）才会入池。点击行展开证据明细。
+          {t(
+            "白名单之外的聪明钱候选漏斗：成交流涌现（共识同行 / 拆单建仓 / 内幕签名）+ 已结算市场早期赢家 + 分类榜专家。候选须 30 天内证据广度 ≥3 并通过战绩审查（做市机器人硬拒）才会入池。点击行展开证据明细。",
+          )}
         </div>
       </header>
 
       {error && (
         <div className="ds-callout" style={{ marginBottom: "var(--s-4)" }}>
-          加载失败：{error}
+          {t("加载失败：{msg}", { msg: error })}
         </div>
       )}
 
       {/* Live funnel strip — the discovery pipeline with real counts.
           Stages are clickable and drive the tabs/filters below. */}
       <section
-        aria-label="发现漏斗"
+        aria-label={t("发现漏斗")}
         style={{
           display: "flex",
           alignItems: "stretch",
@@ -411,11 +421,11 @@ export default function DiscoveryPage() {
         }}
       >
         <div className="kpi-card" style={{ flex: "1 1 130px" }}>
-          <div className="ds-label">① 30 天证据</div>
+          <div className="ds-label">{t("① 30 天证据")}</div>
           <div className="kpi-value">{data?.counts.evidenceRows ?? "—"}</div>
-          <div className="kpi-sub">成交流涌现 + 结算回溯</div>
+          <div className="kpi-sub">{t("成交流涌现 + 结算回溯")}</div>
         </div>
-        <FunnelArrow label="聚合" />
+        <FunnelArrow label={t("聚合")} />
         <div
           className="kpi-card"
           role="button"
@@ -428,31 +438,33 @@ export default function DiscoveryPage() {
             outline:
               view === "candidates" ? "2px solid var(--brand-500)" : "none",
           }}
-          title="查看候选漏斗列表"
+          title={t("查看候选漏斗列表")}
         >
-          <div className="ds-label">② 候选钱包 →</div>
+          <div className="ds-label">{t("② 候选钱包 →")}</div>
           <div className="kpi-value">
             {data?.counts.candidateWallets ?? "—"}
           </div>
-          <div className="kpi-sub">纯观察 · 不进任何信号</div>
+          <div className="kpi-sub">{t("纯观察 · 不进任何信号")}</div>
         </div>
-        <FunnelArrow label="复发≥3 · 战绩审查" />
+        <FunnelArrow label={t("复发≥3 · 战绩审查")} />
         <div
           className="kpi-card"
           style={{ flex: "1 1 130px", borderColor: "var(--warn-700)" }}
-          title="准入闸门：复发广度 ≥3 → 战绩审查（胜率≥55%&≥10结算 或 盈利&ROI≥5%&≥5结算）→ 做市机器人硬拒。分类榜走旁路：免复发、仅战绩审查。"
+          title={t(
+            "准入闸门：复发广度 ≥3 → 战绩审查（胜率≥55%&≥10结算 或 盈利&ROI≥5%&≥5结算）→ 做市机器人硬拒。分类榜走旁路：免复发、仅战绩审查。",
+          )}
         >
-          <div className="ds-label">③ 准入闸门</div>
+          <div className="ds-label">{t("③ 准入闸门")}</div>
           <div className="kpi-value" aria-hidden>
             ⛩
           </div>
-          <div className="kpi-sub">机器人硬拒 · 分类榜旁路</div>
+          <div className="kpi-sub">{t("机器人硬拒 · 分类榜旁路")}</div>
         </div>
-        <FunnelArrow label="通过" />
+        <FunnelArrow label={t("通过")} />
         <div className="kpi-card" style={{ flex: "2 1 240px", padding: 0 }}>
           <div style={{ padding: "var(--s-4) var(--s-4) 0" }}>
             <div className="ds-label">
-              ④ 共识白名单池 · {data?.counts.poolTotal ?? "—"}
+              {t("④ 共识白名单池 · {n}", { n: data?.counts.poolTotal ?? "—" })}
             </div>
           </div>
           <div
@@ -470,10 +482,10 @@ export default function DiscoveryPage() {
                 e.key === "Enter" && switchView("members", ["src:leaderboard"])
               }
               style={{ flex: 1, cursor: "pointer" }}
-              title="查看全局榜成员（top-100 自带门槛，免审查）"
+              title={t("查看全局榜成员（top-100 自带门槛，免审查）")}
             >
               <div className="kpi-value">{data?.counts.poolGlobal ?? "—"}</div>
-              <div className="kpi-sub">🏛 全局榜 →</div>
+              <div className="kpi-sub">🏛 {t("全局榜")} →</div>
             </div>
             <div
               role="button"
@@ -483,12 +495,12 @@ export default function DiscoveryPage() {
                 e.key === "Enter" && switchView("members", ["grp:discovery"])
               }
               style={{ flex: 1, cursor: "pointer" }}
-              title="查看发现渠道产出的成员（分类榜专家 + 漏斗毕业生）"
+              title={t("查看发现渠道产出的成员（分类榜专家 + 漏斗毕业生）")}
             >
               <div className="kpi-value" style={{ color: "var(--up-700)" }}>
                 {data?.counts.poolDiscovery ?? "—"}
               </div>
-              <div className="kpi-sub">🔭 发现渠道 →</div>
+              <div className="kpi-sub">🔭 {t("发现渠道")} →</div>
             </div>
           </div>
         </div>
@@ -498,32 +510,42 @@ export default function DiscoveryPage() {
           Falling density under stable heat = thresholds drifted out of tune;
           falling heat with stable density = the market itself cooled. */}
       {density && density.length > 0 && (
-        <section aria-label="信号密度" style={{ marginBottom: "var(--s-4)" }}>
+        <section
+          aria-label={t("信号密度")}
+          style={{ marginBottom: "var(--s-4)" }}
+        >
           <div
             className="ds-label"
             style={{ marginBottom: "var(--s-2)" }}
-            title="左侧列 = 共识信号引擎（每日推送 ÷ 当日平均 6h 窗口成交量，$1M 归一——窗口滚动重叠不能求和，平均窗口量是热度的无偏代理）；「新证据」列 = 发现渠道当日首次入账的候选证据行。密度随热度同跌 = 市场降温；热度稳定密度独跌 = 阈值需重校"
+            title={t(
+              "左侧列 = 共识信号引擎（每日推送 ÷ 当日平均 6h 窗口成交量，$1M 归一——窗口滚动重叠不能求和，平均窗口量是热度的无偏代理）；「新证据」列 = 发现渠道当日首次入账的候选证据行。密度随热度同跌 = 市场降温；热度稳定密度独跌 = 阈值需重校",
+            )}
           >
-            📈 信号密度（14 天） · 共识推送 ÷ 平均窗口量 + 发现渠道日产出
+            📈 {t("信号密度（14 天） · 共识推送 ÷ 平均窗口量 + 发现渠道日产出")}
           </div>
           <div className="ds-table-wrap">
             <table className="ds-table">
               <thead>
                 <tr>
-                  <th>日期</th>
-                  <th className="is-right">共识轮</th>
-                  <th className="is-right">平均窗口量</th>
-                  <th className="is-right">原始组</th>
-                  <th className="is-right">分歧剔除</th>
-                  <th className="is-right">推送</th>
-                  <th className="is-right" title="推送 ÷ 平均窗口量（条/$1M）">
-                    密度
+                  <th>{t("日期")}</th>
+                  <th className="is-right">{t("共识轮")}</th>
+                  <th className="is-right">{t("平均窗口量")}</th>
+                  <th className="is-right">{t("原始组")}</th>
+                  <th className="is-right">{t("分歧剔除")}</th>
+                  <th className="is-right">{t("推送")}</th>
+                  <th
+                    className="is-right"
+                    title={t("推送 ÷ 平均窗口量（条/$1M）")}
+                  >
+                    {t("密度")}
                   </th>
                   <th
                     className="is-right"
-                    title="发现渠道（共识同行/拆单建仓/内幕签名/早期赢家）当日首次入账的证据行数"
+                    title={t(
+                      "发现渠道（共识同行/拆单建仓/内幕签名/早期赢家）当日首次入账的证据行数",
+                    )}
                   >
-                    新证据
+                    {t("新证据")}
                   </th>
                 </tr>
               </thead>
@@ -541,7 +563,7 @@ export default function DiscoveryPage() {
                     </td>
                     <td className="mono is-right">{d.fired}</td>
                     <td className="mono is-right">
-                      {d.perM.toFixed(2)} 条/$1M
+                      {t("{n} 条/$1M", { n: d.perM.toFixed(2) })}
                     </td>
                     <td className="mono is-right">{d.evidenceNew}</td>
                   </tr>
@@ -552,10 +574,10 @@ export default function DiscoveryPage() {
         </section>
       )}
       <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
-        🏅 分类榜旁路：六类 × 周/月榜前 25
-        直接进闸门（榜单排名即复发证据，仅过战绩审查） · ↺
-        在池成员每日按战绩重新认证，30
-        天不再合格自动出池——行为再现即可重新成为候选
+        🏅{" "}
+        {t(
+          "分类榜旁路：六类 × 周/月榜前 25 直接进闸门（榜单排名即复发证据，仅过战绩审查） · ↺ 在池成员每日按战绩重新认证，30 天不再合格自动出池——行为再现即可重新成为候选",
+        )}
       </div>
 
       {/* Controls: tab toggle + search */}
@@ -569,16 +591,18 @@ export default function DiscoveryPage() {
         }}
       >
         <Segmented<View>
-          ariaLabel="视图切换"
+          ariaLabel={t("视图切换")}
           value={view}
           onChange={switchView}
           options={[
             {
-              label: `候选漏斗 (${data?.counts.candidateWallets ?? 0})`,
+              label: t("候选漏斗 ({n})", {
+                n: data?.counts.candidateWallets ?? 0,
+              }),
               value: "candidates",
             },
             {
-              label: `白名单池 (${data?.counts.poolTotal ?? 0})`,
+              label: t("白名单池 ({n})", { n: data?.counts.poolTotal ?? 0 }),
               value: "members",
             },
           ]}
@@ -586,21 +610,24 @@ export default function DiscoveryPage() {
         <input
           className="ds-input"
           style={{ minWidth: 260, flex: "0 1 340px" }}
-          placeholder="搜索地址 / 市场 / 标签…"
+          placeholder={t("搜索地址 / 市场 / 标签…")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          aria-label="搜索"
+          aria-label={t("搜索")}
         />
         <button
           className="ds-btn"
           onClick={() => setTagHelpOpen(true)}
-          title="查看全部钱包标签的定义（与说明页同一数据源）"
+          title={t("查看全部钱包标签的定义（与说明页同一数据源）")}
         >
-          🏷 标签说明
+          🏷 {t("标签说明")}
         </button>
         {(activeTags.size > 0 || q) && (
           <span className="ds-hint">
-            {filtered.length}/{rows.length} 条匹配
+            {t("{shown}/{total} 条匹配", {
+              shown: filtered.length,
+              total: rows.length,
+            })}
             <button
               className="ds-btn"
               style={{ marginLeft: "var(--s-2)" }}
@@ -609,7 +636,7 @@ export default function DiscoveryPage() {
                 setQuery("");
               }}
             >
-              清除
+              {t("清除")}
             </button>
           </span>
         )}
@@ -627,7 +654,7 @@ export default function DiscoveryPage() {
           }}
         >
           <span className="ds-label" style={{ marginRight: "var(--s-1)" }}>
-            标签筛选
+            {t("标签筛选")}
           </span>
           {chipStats.map(([key, s]) => {
             const active = activeTags.has(key);
@@ -645,10 +672,10 @@ export default function DiscoveryPage() {
                   outlineOffset: 1,
                   borderRadius: "var(--r-sm)",
                 }}
-                title={`${filterChipLabel(key, s.sample)} — ${s.wallets} 个钱包${active ? "（点击取消）" : ""}`}
+                title={`${t("{label} — {n} 个钱包", { label: filterChipLabel(key, s.sample, t), n: s.wallets })}${active ? t("（点击取消）") : ""}`}
               >
                 <Tag variant={active ? "brand" : tagVariant(s.sample)}>
-                  {filterChipLabel(key, s.sample)}{" "}
+                  {filterChipLabel(key, s.sample, t)}{" "}
                   <span className="mono">{s.wallets}</span>
                 </Tag>
               </button>
@@ -663,17 +690,19 @@ export default function DiscoveryPage() {
           <table className="ds-table">
             <thead>
               <tr>
-                <th style={{ width: 130 }}>钱包</th>
-                <th>标签</th>
+                <th style={{ width: 130 }}>{t("钱包")}</th>
+                <th>{t("标签")}</th>
                 <th
                   className="is-right"
                   style={{ width: 90 }}
-                  title="各渠道去重市场数之和（同一市场被两个渠道命中计两次——两种独立行为签名强于一种）"
+                  title={t(
+                    "各渠道去重市场数之和（同一市场被两个渠道命中计两次——两种独立行为签名强于一种）",
+                  )}
                 >
-                  复发广度
+                  {t("复发广度")}
                 </th>
-                <th>最近证据</th>
-                <th style={{ width: 130 }}>状态</th>
+                <th>{t("最近证据")}</th>
+                <th style={{ width: 130 }}>{t("状态")}</th>
               </tr>
             </thead>
             <tbody>
@@ -682,7 +711,7 @@ export default function DiscoveryPage() {
                   <tr
                     onClick={() => toggleExpand(c.address)}
                     style={{ cursor: "pointer" }}
-                    title="点击展开证据明细"
+                    title={t("点击展开证据明细")}
                   >
                     <td>{walletCell(c.address)}</td>
                     <td>
@@ -701,10 +730,10 @@ export default function DiscoveryPage() {
                         className="ds-hint"
                         style={{ marginLeft: "var(--s-2)" }}
                       >
-                        {fmtAgo(c.lastTs)}
+                        {fmtAgo(c.lastTs, t)}
                       </span>
                     </td>
-                    <td>{statusTag(c.status)}</td>
+                    <td>{statusTag(c.status, t)}</td>
                   </tr>
                   {expanded.has(c.address) && (
                     <EvidenceDetailRows evidence={c.evidence} colSpan={5} />
@@ -715,8 +744,10 @@ export default function DiscoveryPage() {
                 <tr>
                   <td colSpan={5} className="ds-hint">
                     {rows.length === 0
-                      ? "暂无候选 —— 证据由共识循环（每 5 分钟）与每日已结算市场扫描持续积累"
-                      : "无匹配 —— 试试清除搜索或标签筛选"}
+                      ? t(
+                          "暂无候选 —— 证据由共识循环（每 5 分钟）与每日已结算市场扫描持续积累",
+                        )
+                      : t("无匹配 —— 试试清除搜索或标签筛选")}
                   </td>
                 </tr>
               )}
@@ -724,8 +755,10 @@ export default function DiscoveryPage() {
           </table>
           {data && data.counts.candidateWallets > data.candidates.length && (
             <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-              仅加载复发广度前 {data.candidates.length} 名（30 天窗口内共{" "}
-              {data.counts.candidateWallets} 个候选钱包）
+              {t("仅加载复发广度前 {n} 名（30 天窗口内共 {m} 个候选钱包）", {
+                n: data.candidates.length,
+                m: data.counts.candidateWallets,
+              })}
             </div>
           )}
         </div>
@@ -734,23 +767,25 @@ export default function DiscoveryPage() {
           <table className="ds-table">
             <thead>
               <tr>
-                <th style={{ width: 130 }}>钱包</th>
-                <th>标签</th>
+                <th style={{ width: 130 }}>{t("钱包")}</th>
+                <th>{t("标签")}</th>
                 <th className="is-right" style={{ width: 80 }}>
-                  评分
+                  {t("评分")}
                 </th>
                 <th className="is-right" style={{ width: 80 }}>
-                  胜率
+                  {t("胜率")}
                 </th>
                 <th className="is-right" style={{ width: 110 }}>
-                  净盈亏
+                  {t("净盈亏")}
                 </th>
                 <th
                   className="is-right"
                   style={{ width: 110 }}
-                  title="最近一次通过播种/重认证确认资格的时间；30 天不再合格自动出池"
+                  title={t(
+                    "最近一次通过播种/重认证确认资格的时间；30 天不再合格自动出池",
+                  )}
                 >
-                  最近确认
+                  {t("最近确认")}
                 </th>
               </tr>
             </thead>
@@ -760,7 +795,7 @@ export default function DiscoveryPage() {
                   <tr
                     onClick={() => toggleExpand(a.address)}
                     style={{ cursor: "pointer" }}
-                    title="点击展开证据明细"
+                    title={t("点击展开证据明细")}
                   >
                     <td>{walletCell(a.address)}</td>
                     <td>
@@ -790,7 +825,7 @@ export default function DiscoveryPage() {
                       {a.netPnl != null ? fmtSignedUsdCompact(a.netPnl) : "—"}
                     </td>
                     <td className="mono is-right">
-                      {a.updatedAt != null ? fmtAgo(a.updatedAt) : "—"}
+                      {a.updatedAt != null ? fmtAgo(a.updatedAt, t) : "—"}
                     </td>
                   </tr>
                   {expanded.has(a.address) && (
@@ -802,8 +837,10 @@ export default function DiscoveryPage() {
                 <tr>
                   <td colSpan={6} className="ds-hint">
                     {rows.length === 0
-                      ? "暂无 —— 候选通过准入审查（复发 ≥3 + 战绩闸）或分类榜播种后出现在这里"
-                      : "无匹配 —— 试试清除搜索或标签筛选"}
+                      ? t(
+                          "暂无 —— 候选通过准入审查（复发 ≥3 + 战绩闸）或分类榜播种后出现在这里",
+                        )
+                      : t("无匹配 —— 试试清除搜索或标签筛选")}
                   </td>
                 </tr>
               )}
@@ -816,30 +853,33 @@ export default function DiscoveryPage() {
       <Modal
         open={tagHelpOpen}
         onClose={() => setTagHelpOpen(false)}
-        title="🏷 钱包标签说明"
+        title={`🏷 ${t("钱包标签说明")}`}
         width={720}
       >
         <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
-          与「说明」页同一数据源；悬停任意标签也能看到一句话提示。点击下方标签可直接按其筛选当前列表。
+          {t(
+            "与「说明」页同一数据源；悬停任意标签也能看到一句话提示。点击下方标签可直接按其筛选当前列表。",
+          )}
         </div>
         <div className="ds-table-wrap">
           <table className="ds-table">
             <thead>
               <tr>
-                <th style={{ width: 150 }}>标签</th>
-                <th style={{ width: 86 }}>类别</th>
-                <th>定义</th>
+                <th style={{ width: 150 }}>{t("标签")}</th>
+                <th style={{ width: 86 }}>{t("类别")}</th>
+                <th>{t("定义")}</th>
               </tr>
             </thead>
             <tbody>
-              {WALLET_TAGS.map((t) => (
-                <tr key={t.keyPrefix}>
+              {/* 词表串（name/kind/detail）过 t()，译文由 glossary 分片统一供给。 */}
+              {WALLET_TAGS.map((w) => (
+                <tr key={w.keyPrefix}>
                   <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>
-                    {t.icon} {t.name}
+                    {w.icon} {t(w.name)}
                   </td>
-                  <td style={{ whiteSpace: "nowrap" }}>{t.kind}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>{t(w.kind)}</td>
                   <td style={{ whiteSpace: "normal", lineHeight: 1.6 }}>
-                    {t.detail}
+                    {t(w.detail)}
                   </td>
                 </tr>
               ))}
