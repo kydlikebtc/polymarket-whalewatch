@@ -20,6 +20,7 @@ import {
 import { Icon, Modal, Segmented, Tag } from "../ui";
 import { useLang } from "../i18n";
 import { DeepAnalysisPanel, EdgeMatrixTable } from "./DeepAnalysis";
+import type { ExitCounterfactualSummary } from "../../lib/exitCounterfactual";
 import { buildEdgeMatrix } from "../../lib/followInsights";
 import { BUCKET_LOW_SAMPLE_N } from "../../lib/followAnalysis";
 import { useCurrentPrices } from "../useCurrentPrices";
@@ -135,6 +136,8 @@ type FollowStrategyView = {
   id: number;
   name: string;
   enabled: boolean;
+  /** 反事实退出摘要(服务端算好;null/缺失 = 回填中,面板第⑧块省略)。 */
+  exitCounterfactual?: ExitCounterfactualSummary | null;
   params: {
     minWallets: number;
     minPerWalletUsd: number;
@@ -2701,7 +2704,10 @@ function StrategyDetailDialog({
             </div>
             {/* rows 直接喂 open+settled:open 仓只进面板头部「不计入」说明,
                 所有指标只看 settled(口径见 DeepAnalysisPanel 顶部注释)。 */}
-            <DeepAnalysisPanel rows={allPos} />
+            <DeepAnalysisPanel
+              rows={allPos}
+              exitCounterfactual={s.exitCounterfactual}
+            />
           </section>
         ) : tab === "cost" ? (
           <section>
@@ -3987,6 +3993,12 @@ export default function FollowPage() {
                   必须知道样本不独立。 */}
           <DeepAnalysisPanel
             rows={[...byFilter(settledRows), ...byFilter(openRows)]}
+            exitCounterfactual={
+              // 单档筛选时取该档摘要;跨档聚合不给(重复下注下 Δ 不可相加)。
+              effFilter === FILTER_ALL
+                ? undefined
+                : shown.find((x) => x.id === effFilter)?.exitCounterfactual
+            }
             scopeNote={
               effFilter === FILTER_ALL && shown.length >= 2
                 ? t(

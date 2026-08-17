@@ -69,7 +69,7 @@ export const DICT_DEEP: Record<string, string> = {
   "≥7 天": "≥7 d",
 
   // ---------------------------------------------- 面板头部 / 空态 / 警示
-  "暂无已结算仓位 — 深度分析基于落袋结果,有仓位结算后这里会给出 赔率校准/盈亏分布/时间走势/缺陷诊断等七个维度":
+  "暂无已结算仓位 — 深度分析基于落袋结果,有仓位结算后这里会给出 赔率校准/盈亏分布/时间走势/缺陷诊断/反事实退出等八个维度":
     "No settled positions yet — deep analysis runs on realized outcomes. Once positions settle, seven views appear here: odds calibration / PnL distribution / time trend / weakness diagnosis and more",
   "(当前持有中 {n} 仓)": "(currently holding {n} open)",
   "已结算纸面口径(不含浮盈,不含成本 — 成本见「成本分解」)· 平局 (push)不进胜率分母 · 持有中 {n} 仓不计入下方读数":

@@ -37,6 +37,13 @@ const Env = z.object({
   // Origin the worker fetches its own /api/og/weekly card from (weekly report
   // post). Defaults to the embedded-engine case (same process serves Next).
   X_OG_ORIGIN: z.string().default("http://127.0.0.1:3000"),
+  // 对外信号付费频道(批次 1):策略信号实时推送的目的频道。与告警频道
+  // (TELEGRAM_CHANNEL_ID)刻意分开 —— 告警频道是公开的,策略信号实时版
+  // 是付费墙内的。空 = 该通道关闭(fail-closed)。
+  TELEGRAM_SIGNAL_CHANNEL_ID: z.string().default(""),
+  // 公开延迟通道的延迟分钟数(默认 30)。延迟是免费/付费分层的唯一杠杆
+  // (设计 §4.4):免费版不阉割字段,只晚到 —— 公开可验证记录必须完整。
+  SIGNAL_PUBLIC_DELAY_MIN: z.string().default("30"),
 });
 const DEFAULT_POLL_INTERVAL_MS = 4000;
 // Floor, not crash: the engine must survive a bad env edit 7×24. The dangerous
@@ -84,6 +91,22 @@ function parseLargeThresholds(raw: string): number[] {
     );
   }
   return valid.sort((a, b) => a - b);
+}
+
+const DEFAULT_SIGNAL_PUBLIC_DELAY_MIN = 30;
+
+// 与 parsePollIntervalMs 同一姿态:坏值回默认并 warn(引擎必须扛住 .env 手误
+// 7×24),负数没有语义(延迟不能为负)同样回默认。0 合法 —— 运营可显式关闭
+// 延迟(例如测试期),但那是显式选择不是手误。
+function parseSignalPublicDelayMin(raw: string): number {
+  const n = Number(raw);
+  if (raw.trim() === "" || !Number.isFinite(n) || n < 0) {
+    console.warn(
+      `[config] SIGNAL_PUBLIC_DELAY_MIN=${JSON.stringify(raw)} 不是合法分钟数 — 使用默认 ${DEFAULT_SIGNAL_PUBLIC_DELAY_MIN}`,
+    );
+    return DEFAULT_SIGNAL_PUBLIC_DELAY_MIN;
+  }
+  return Math.round(n);
 }
 
 // Boolean env flags: explicit truthy spellings only, everything else (including
@@ -146,6 +169,8 @@ export function parseConfig(raw: Record<string, string | undefined>) {
     ),
     xMinTradeUsd: parseUsdEnv(e.X_MIN_TRADE_USD, 50_000, "X_MIN_TRADE_USD"),
     xOgOrigin: e.X_OG_ORIGIN.replace(/\/+$/, ""),
+    telegramSignalChannelId: e.TELEGRAM_SIGNAL_CHANNEL_ID.trim(),
+    signalPublicDelayMin: parseSignalPublicDelayMin(e.SIGNAL_PUBLIC_DELAY_MIN),
   };
 }
 export type AppConfig = ReturnType<typeof parseConfig>;

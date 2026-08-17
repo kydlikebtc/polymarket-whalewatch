@@ -20,6 +20,10 @@ import { wilsonInterval } from "./outcomeStats";
 import { createPromiseCache } from "./promiseCache";
 import { reverseCandidate } from "./reverse";
 import type { SmartTag } from "./smartWallets";
+import {
+  backfillSignalSettlement,
+  recordStrategySignal,
+} from "./strategySignals";
 import { latestPriceByAsset } from "./trades";
 import type { Trade } from "./types";
 
@@ -820,7 +824,38 @@ export async function runFollowCycle(
           feeUsd,
         );
         // changes===0 说明 UNIQUE 命中(并发/竞态下已被开出),不重复计数。
-        if (res.changes === 1) opened++;
+        if (res.changes === 1) {
+          opened++;
+          // 对外信号台账接线(批次 0):开仓成功即落一条不可变信号事实,
+          // position_id 是信号 → 仓位的因果链。台账是下游功能(投递总线/
+          // API/存证都只消费它),故任何台账故障只 warn —— 绝不反向影响
+          // 纸面开仓主流程,这条红线与 exec_*/formation 归因列同级。
+          try {
+            recordStrategySignal(db, {
+              strategyId: s.id,
+              positionId: Number(res.lastInsertRowid),
+              conditionId: c.conditionId,
+              outcome: c.outcome,
+              outcomeIndex: c.outcomeIndex,
+              asset: c.asset,
+              title: c.title,
+              slug: c.slug,
+              eventSlug: c.eventSlug,
+              formationTs: c.formationTs,
+              referencePrice: c.referencePrice,
+              walletCount: c.walletCount,
+              totalNetUsd: c.totalNetUsd,
+              entryPrice: entry,
+              sizeUsd: s.sizeUsd,
+              emittedAt: nowSec,
+            });
+          } catch (e) {
+            console.warn(
+              `[follow] strategy_signals 台账写入失败(不影响开仓) ${c.conditionId}/${c.outcome}:`,
+              e,
+            );
+          }
+        }
       }
     }
   }
@@ -851,6 +886,20 @@ export async function runFollowCycle(
       const realized = positionRealizedPnl(row.entry_price, exit, row.size_usd);
       upd.run(nowSec, exit, realized, row.id);
       settled++;
+      // 对外信号台账联动(批次 0):结算结果回填到对应信号行(按 position_id
+      // 定位)。老仓(台账上线前开的)无台账行 → no-op;容错纪律同开仓接线。
+      try {
+        backfillSignalSettlement(db, row.id, {
+          settledTs: nowSec,
+          exitPrice: exit,
+          realizedPnl: realized,
+        });
+      } catch (e) {
+        console.warn(
+          `[follow] strategy_signals 结算回填失败(不影响结算) position ${row.id}:`,
+          e,
+        );
+      }
     }
   }
 
@@ -955,6 +1004,11 @@ export interface FollowPositionRow {
   exit_ts: number | null;
   exit_price: number | null;
   realized_pnl: number | null;
+  /**
+   * follow_positions 行 id。/api/follow 的 SELECT 恒带(反事实退出分析按它
+   * join 模拟结果);标记可选仅为兼容大量既有测试夹具 —— 消费方须自行判空。
+   */
+  id?: number;
   /**
    * 开仓时的协议 taker 费(USD)。null = 未知(上线前的老仓,或费率表拿不到),
    * 0 = 该市场确实免费。红线同 markout/exec_*:归因列,不参与 realized_pnl。
@@ -1436,6 +1490,12 @@ export interface FollowStrategyView {
   account: AccountPlan; // 账户推演:备多少钱→接住多少信号(仅展示,不参与任何决策)
   open: FollowPositionWithCategory[]; // status==='open'
   settled: FollowPositionWithCategory[]; // status==='settled',按 exit_ts 降序(最新在前)
+  /**
+   * 反事实退出分析(2026-08-16,lib/exitCounterfactual.ts):该档已结算仓在
+   * 九个退出规则下的假想结果聚合。null/缺失 = 尚无已回填路径(回填中或全部
+   * 不可回填),面板整块省略。
+   */
+  exitCounterfactual?: import("./exitCounterfactual").ExitCounterfactualSummary | null;
 }
 
 /**

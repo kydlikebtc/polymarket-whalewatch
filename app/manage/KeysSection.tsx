@@ -1,0 +1,472 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { CopyButton, Segmented, Tag } from "../ui";
+import { SectionHead } from "./bits";
+import { agoText, authHeaders, timeText } from "./shared";
+
+// 区块:API key 与 webhook 端点管理。
+// 数据面完全复用批次 2/3 的 admin 路由(/api/admin/keys、/api/admin/webhooks)。
+// 明文 key 只在签发响应里出现一次 —— callout 醒目展示 + 站内 CopyButton
+// (自带剪贴板降级与 ✓ 反馈)。tier 选择用 Segmented,与全站同一交互语言。
+
+interface KeyRow {
+  id: number;
+  label: string;
+  tier: string;
+  createdAt: number;
+  revokedAt: number | null;
+  lastUsedAt: number | null;
+}
+
+interface WebhookRow {
+  id: number;
+  api_key_id: number;
+  url: string;
+  active: number;
+  consecutive_failures: number;
+  last_error: string | null;
+  key_label: string;
+  key_tier: string;
+  key_revoked_at: number | null;
+}
+
+const TIERS = [
+  { value: "delayed", label: "delayed(延迟)" },
+  { value: "realtime", label: "realtime(实时)" },
+] as const;
+
+export default function KeysSection({ token }: { token: string }) {
+  const [keys, setKeys] = useState<KeyRow[] | null>(null);
+  const [webhooks, setWebhooks] = useState<WebhookRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [issued, setIssued] = useState<{ id: number; key: string } | null>(
+    null,
+  );
+  const [label, setLabel] = useState("");
+  const [tier, setTier] = useState<"realtime" | "delayed">("delayed");
+  const [whKeyId, setWhKeyId] = useState("");
+  const [whUrl, setWhUrl] = useState("");
+  const [whSecret, setWhSecret] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const [kRes, wRes] = await Promise.all([
+        fetch("/api/admin/keys", { headers: authHeaders(token) }),
+        fetch("/api/admin/webhooks", { headers: authHeaders(token) }),
+      ]);
+      const k = (await kRes.json()) as { keys?: KeyRow[]; error?: string };
+      const w = (await wRes.json()) as {
+        webhooks?: WebhookRow[];
+        error?: string;
+      };
+      if (!kRes.ok || k.error) {
+        setKeys(null);
+        setWebhooks(null);
+        setError(k.error ?? `HTTP ${kRes.status}`);
+        return;
+      }
+      setKeys(k.keys ?? []);
+      setWebhooks(w.webhooks ?? []);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [token]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const issue = async () => {
+    if (!label.trim()) {
+      setError("请先填订户备注(label)");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/keys", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ label: label.trim(), tier }),
+      });
+      const j = (await res.json()) as {
+        id?: number;
+        key?: string;
+        error?: string;
+      };
+      if (!res.ok || j.error || !j.key) {
+        setError(j.error ?? `HTTP ${res.status}`);
+      } else {
+        setIssued({ id: j.id!, key: j.key });
+        setLabel("");
+        await load();
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async (id: number, keyLabel: string) => {
+    // 吊销不可逆(订户立即断连)—— 必须二次确认。
+    if (
+      !window.confirm(
+        `吊销 key #${id}(${keyLabel})?\n该订户的 API 拉取与挂在其上的 webhook 会立即失效,不可恢复。`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await fetch(`/api/admin/keys?id=${id}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const registerWh = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/webhooks", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({
+          apiKeyId: Number(whKeyId),
+          url: whUrl.trim(),
+          secret: whSecret,
+        }),
+      });
+      const j = (await res.json()) as { error?: string };
+      if (!res.ok || j.error) {
+        setError(j.error ?? `HTTP ${res.status}`);
+      } else {
+        setWhUrl("");
+        setWhSecret("");
+        await load();
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disableWh = async (id: number, url: string) => {
+    if (
+      !window.confirm(`停用 webhook #${id}?\n${url}\n重新启用需再登记一条。`)
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await fetch(`/api/admin/webhooks?id=${id}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      });
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const realtimeKeys = (keys ?? []).filter(
+    (k) => k.tier === "realtime" && k.revokedAt == null,
+  );
+
+  return (
+    <section
+      id="keys"
+      className="ds-card"
+      style={{ marginBottom: "var(--s-5)", scrollMarginTop: "var(--s-6)" }}
+    >
+      <SectionHead
+        title="🔑 API key 与 webhook"
+        aside={
+          keys && (
+            <span className="ds-hint num">
+              有效 {keys.filter((k) => k.revokedAt == null).length} / 共{" "}
+              {keys.length}
+            </span>
+          )
+        }
+        hint="key 用于 /api/signals 拉取(realtime=实时全量,delayed=延迟视图);webhook 只可挂在 realtime key 上。库中只存哈希,明文仅签发时显示一次。"
+      />
+      {error && (
+        <div
+          className="ds-callout ds-callout--error"
+          style={{ marginBottom: "var(--s-3)" }}
+        >
+          {error}
+        </div>
+      )}
+      {issued && (
+        <div className="ds-callout" style={{ marginBottom: "var(--s-4)" }}>
+          <b>✅ 已签发 #{issued.id}</b> —— 明文只显示这一次,请立即复制保存:
+          <div
+            className="mono"
+            style={{
+              margin: "var(--s-2) 0",
+              padding: "var(--s-2) var(--s-3)",
+              background: "var(--n-50)",
+              border: "1px solid var(--n-150)",
+              borderRadius: "var(--r-sm, 6px)",
+              wordBreak: "break-all",
+              userSelect: "all",
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--s-2)",
+            }}
+          >
+            {issued.key}
+            <CopyButton text={issued.key} label="复制 key" />
+          </div>
+          <button
+            className="ds-btn ds-btn--sm ds-btn--subtle"
+            onClick={() => setIssued(null)}
+          >
+            我已保存,关闭
+          </button>
+        </div>
+      )}
+
+      <div
+        style={{
+          display: "flex",
+          gap: "var(--s-3)",
+          flexWrap: "wrap",
+          alignItems: "flex-end",
+          marginBottom: "var(--s-4)",
+        }}
+      >
+        <div>
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            订户备注
+          </div>
+          <input
+            className="ds-input"
+            value={label}
+            placeholder="订户A"
+            onChange={(e) => setLabel(e.target.value)}
+          />
+        </div>
+        <div>
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            tier
+          </div>
+          <Segmented
+            ariaLabel="key tier"
+            options={TIERS}
+            value={tier}
+            onChange={(v) => setTier(v)}
+          />
+        </div>
+        <button
+          className="ds-btn ds-btn--primary"
+          disabled={busy}
+          onClick={issue}
+        >
+          签发新 key
+        </button>
+      </div>
+
+      {keys == null ? (
+        <div className="ds-empty">需要有效管理令牌后加载。</div>
+      ) : keys.length === 0 ? (
+        <div className="ds-empty">尚无 key。</div>
+      ) : (
+        <div className="ds-table-wrap" style={{ marginBottom: "var(--s-5)" }}>
+          <table className="ds-table ds-table--compact">
+            <thead>
+              <tr>
+                <th className="is-right">#</th>
+                <th>备注</th>
+                <th>tier</th>
+                <th>签发</th>
+                <th>最近使用</th>
+                <th>状态</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {keys.map((k) => (
+                <tr
+                  key={k.id}
+                  style={k.revokedAt != null ? { opacity: 0.55 } : undefined}
+                >
+                  <td className="is-right num muted">{k.id}</td>
+                  <td style={{ fontWeight: 600 }}>{k.label}</td>
+                  <td>
+                    <Tag variant={k.tier === "realtime" ? "brand" : "default"}>
+                      {k.tier}
+                    </Tag>
+                  </td>
+                  <td className="ds-hint mono">{timeText(k.createdAt)}</td>
+                  <td className="ds-hint">{agoText(k.lastUsedAt)}</td>
+                  <td>
+                    {k.revokedAt != null ? (
+                      <Tag variant="down">已吊销</Tag>
+                    ) : (
+                      <Tag variant="up">有效</Tag>
+                    )}
+                  </td>
+                  <td>
+                    {k.revokedAt == null && (
+                      <button
+                        className="ds-btn ds-btn--sm ds-btn--danger"
+                        disabled={busy}
+                        onClick={() => revoke(k.id, k.label)}
+                      >
+                        吊销
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+        webhook 端点(realtime key 专属,连续失败 10 次自动熔断)
+      </div>
+      <div
+        style={{
+          display: "flex",
+          gap: "var(--s-3)",
+          flexWrap: "wrap",
+          alignItems: "flex-end",
+          marginBottom: "var(--s-4)",
+        }}
+      >
+        <div>
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            挂在 key
+          </div>
+          <select
+            className="ds-input"
+            value={whKeyId}
+            onChange={(e) => setWhKeyId(e.target.value)}
+          >
+            <option value="">选择 realtime key…</option>
+            {realtimeKeys.map((k) => (
+              <option key={k.id} value={String(k.id)}>
+                #{k.id} {k.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={{ flex: "1 1 240px" }}>
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            URL
+          </div>
+          <input
+            className="ds-input ds-input--mono"
+            value={whUrl}
+            placeholder="https://…/hook"
+            onChange={(e) => setWhUrl(e.target.value)}
+            style={{ width: "100%" }}
+          />
+        </div>
+        <div>
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            HMAC secret(≥16 字符)
+          </div>
+          <input
+            className="ds-input ds-input--mono"
+            type="password"
+            value={whSecret}
+            onChange={(e) => setWhSecret(e.target.value)}
+          />
+        </div>
+        <button
+          className="ds-btn ds-btn--primary"
+          disabled={busy || !whKeyId || !whUrl || whSecret.length < 16}
+          onClick={registerWh}
+        >
+          登记端点
+        </button>
+      </div>
+      {webhooks != null && webhooks.length > 0 && (
+        <div className="ds-table-wrap">
+          <table className="ds-table ds-table--compact">
+            <thead>
+              <tr>
+                <th className="is-right">#</th>
+                <th>key</th>
+                <th>URL</th>
+                <th className="is-right">连败</th>
+                <th>状态</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {webhooks.map((w) => (
+                <tr
+                  key={w.id}
+                  style={
+                    w.active !== 1 || w.key_revoked_at != null
+                      ? { opacity: 0.55 }
+                      : undefined
+                  }
+                >
+                  <td className="is-right num muted">{w.id}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    #{w.api_key_id} {w.key_label}
+                  </td>
+                  <td
+                    className="mono"
+                    style={{
+                      maxWidth: 260,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                    title={w.url}
+                  >
+                    {w.url}
+                  </td>
+                  <td className="is-right num">
+                    {w.consecutive_failures}
+                    {w.last_error && (
+                      <span className="ds-hint">({w.last_error})</span>
+                    )}
+                  </td>
+                  <td>
+                    {w.key_revoked_at != null ? (
+                      <Tag variant="down">key 已吊销</Tag>
+                    ) : w.active === 1 ? (
+                      <Tag variant="up">活跃</Tag>
+                    ) : (
+                      <Tag>已停用</Tag>
+                    )}
+                  </td>
+                  <td>
+                    {w.active === 1 && (
+                      <button
+                        className="ds-btn ds-btn--sm ds-btn--danger"
+                        disabled={busy}
+                        onClick={() => disableWh(w.id, w.url)}
+                      >
+                        停用
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}

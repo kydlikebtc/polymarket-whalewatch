@@ -23,7 +23,8 @@ import {
 import { maybeDailyDiscovery } from "../lib/admission";
 import { runFollowCycle } from "../lib/follow";
 import { fetchAskBook } from "../lib/orderBook";
-import { fetchPriceAt } from "../lib/priceHistory";
+import { fetchPriceAt, fetchPriceSeries } from "../lib/priceHistory";
+import { runExitSimBackfill } from "../lib/exitCounterfactual";
 import { wrapSendWithHealth } from "../lib/telegramHealth";
 import {
   createBackfillState,
@@ -38,6 +39,9 @@ import {
 } from "../lib/heartbeat";
 import { createBackupState, maybeDailyBackup } from "../lib/dbBackup";
 import { evaluateHealth } from "../lib/health";
+import { runDeliveryCycle, type DeliveryChannel } from "../lib/signalDelivery";
+import { maybeDailySignalDigest } from "../lib/signalDigest";
+import { listActiveWebhooks, makeWebhookChannel } from "../lib/webhookDelivery";
 import { runBotCycle, type BotUpdate } from "../lib/botCommands";
 import { buildMarketCard, resolveMarketInput } from "../lib/marketCard";
 import { createXClient } from "../lib/xPublisher";
@@ -418,6 +422,20 @@ export function startAlertEngine(): void {
       // pattern as the self-check on the alert loop). Fire and forget: the
       // online-backup API never blocks the engine's writes, and a backup
       // failure must never disturb the backfill cadence.
+      // 反事实退出路径回填(2026-08-16):骑同一 10min 载波,每轮 ≤5 次上游
+      // 请求;存量排空后稳态 ≈ 每天新结算的几仓。失败只 warn,不扰载波节奏。
+      try {
+        const es = await runExitSimBackfill(db, {
+          fetchSeries: fetchPriceSeries,
+        });
+        if (es.processed > 0 || es.failed > 0) {
+          console.log(
+            `[exit-sim] backfilled ${es.processed}, failed ${es.failed}, pending ${es.pending}`,
+          );
+        }
+      } catch (e) {
+        console.error("[exit-sim] backfill cycle error", e);
+      }
       maybeDailyBackup(db, backupState)
         .then((r) => {
           if (r) {
@@ -553,6 +571,110 @@ export function startAlertEngine(): void {
     setTimeout(xLoop, 45_000);
     console.log(
       `[engine] X broadcast enabled · 60s cadence · budget $${cfg.xMonthlyBudgetUsd}/mo · whale floor $${cfg.xMinTradeUsd}`,
+    );
+  }
+
+  // --- 对外信号投递循环(第七个循环,批次 1) -----------------------------
+  // 消费 strategy_signals 台账、扇出到已配置的通道。信号产生(followCycle)
+  // 与投递在此彻底解耦:通道一个都没配时循环整个不启动(fail-closed),
+  // 引擎其余六个循环零感知。幂等/失败语义见 lib/signalDelivery.ts 文件头。
+  {
+    const DELIVERY_INTERVAL_MS = 30_000;
+    const tgChannels: DeliveryChannel[] = [];
+    if (cfg.telegramBotToken && cfg.telegramSignalChannelId) {
+      // 付费频道:实时(minEmitAgeSec=0)。与告警频道分开的独立 chatId。
+      const paidCreds = {
+        botToken: cfg.telegramBotToken,
+        chatId: cfg.telegramSignalChannelId,
+      };
+      tgChannels.push({
+        key: "tg_paid",
+        minEmitAgeSec: 0,
+        send: (html) => sendMessage(paidCreds, html),
+      });
+    }
+    // 公开延迟通道的 send 单独留一份引用:每日存证 digest 也发这里。
+    const publicSend = cfg.telegramEnabled
+      ? (html: string) => sendMessage(creds, html)
+      : undefined;
+    if (publicSend) {
+      // 复用告警频道,晚 signalPublicDelayMin 分钟 —— 免费/付费分层的唯一
+      // 杠杆是延迟,字段不阉割(公开可验证记录必须完整)。
+      tgChannels.push({
+        key: "tg_public",
+        minEmitAgeSec: cfg.signalPublicDelayMin * 60,
+        send: publicSend,
+      });
+    }
+    // 循环无条件启动:webhook 端点是运行时经 admin API 登记的 DB 行,每轮
+    // 重新拉取 —— 新登记的端点 30s 内生效,零重启。TG 通道一个没配且当轮
+    // 也无 webhook 时,runDeliveryCycle 对空通道数组是纯 no-op。
+    async function deliveryLoop() {
+      try {
+        const webhookChannels = listActiveWebhooks(db).map((ep) =>
+          makeWebhookChannel(db, ep, {
+            onDisabled: (endpoint, error) => {
+              // 熔断通报走运营者告警频道(best-effort):订户端点死了,
+              // 沉默是最贵的故障形态。
+              send?.(
+                `⚠️ webhook 端点 #${endpoint.id} 连续失败已熔断停用(${error})\n${endpoint.url}`,
+              ).catch(() => {});
+            },
+          }),
+        );
+        const channels = [...tgChannels, ...webhookChannels];
+        if (channels.length > 0) {
+          const r = await runDeliveryCycle({
+            db,
+            channels,
+            publicUrl: cfg.publicUrl,
+            // 引擎停跳时冻结投递(宁静默不误导)。delivery 自己的 beat 在
+            // 循环末尾无条件打点,冻结轮也算活着 —— 停跳判定只由其余循环触发。
+            checkHealth: () => ({
+              ok: evaluateHealth(
+                getHeartbeats(db),
+                Math.floor(Date.now() / 1000),
+                getEngineStart(db),
+              ).ok,
+            }),
+          });
+          if (r.sent > 0) {
+            console.log(`[delivery] pushed ${r.sent} message(s)`);
+          }
+          if (r.skippedStale > 0) {
+            console.warn(
+              `[delivery] ${r.skippedStale} stale signal(s) skipped (never pushed — too old to act on)`,
+            );
+          }
+          // 每日存证 digest 搭投递载波(day-gated,claim-first),发公开频道。
+          // fire-and-forget:存证失败绝不扰动投递节奏。
+          maybeDailySignalDigest(db, publicSend)
+            .then((d) => {
+              if (d?.sent) {
+                console.log(
+                  `[digest] 存证 ${d.day} · ${d.count} 条 · ${d.digest.slice(0, 16)}…`,
+                );
+              }
+            })
+            .catch((e) => console.error("[digest] 存证推送失败", e));
+        }
+        beat(db, "delivery");
+      } catch (e) {
+        console.error("[delivery] cycle error", e);
+      }
+      setTimeout(deliveryLoop, DELIVERY_INTERVAL_MS);
+    }
+    // 45s 首跑:错开 consensus(30s)/evidence(60s),且首轮 followCycle
+    // (最早 30s+)落台账前投递本来就无事可做。
+    setTimeout(deliveryLoop, 45_000);
+    console.log(
+      tgChannels.length > 0
+        ? `[delivery] signal delivery loop enabled (${tgChannels
+            .map((c) => c.key)
+            .join(
+              ", ",
+            )} + runtime webhooks, public delay ${cfg.signalPublicDelayMin}min)`
+        : "[delivery] delivery loop running (TG channels unset — webhook-only; set TELEGRAM_SIGNAL_CHANNEL_ID / TELEGRAM_CHANNEL_ID to enable TG)",
     );
   }
 

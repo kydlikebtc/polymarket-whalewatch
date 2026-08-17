@@ -49,3 +49,33 @@ export async function fetchPriceAt(
   }
   return best ? best.p : null;
 }
+
+/**
+ * 区间内的完整价格序列(~10min 蜡烛)。用途:反事实退出分析的路径回填 ——
+ * 价格不可变,每仓终生只取一次(lib/exitCounterfactual.ts)。返回未过滤的
+ * 有效点(t/p 皆有限数),排序与区间卫生由消费方(simulatePosition)负责,
+ * 这里只做传输层校验。空数组 = 无点(过期/失活 token),调用方据此写墓碑。
+ */
+export async function fetchPriceSeries(
+  tokenId: string,
+  startTs: number,
+  endTs: number,
+): Promise<{ t: number; p: number }[]> {
+  const url =
+    `${CLOB_API}/prices-history?market=${tokenId}` +
+    `&startTs=${startTs}&endTs=${endTs}&fidelity=10`;
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(15_000),
+    headers: { "User-Agent": "polymarket-monitor" },
+  });
+  if (!res.ok) throw new Error(`fetchPriceSeries ${res.status}`);
+  const raw = (await res.json()) as { history?: { t: number; p: number }[] };
+  const points = Array.isArray(raw.history) ? raw.history : [];
+  return points.filter(
+    (pt) =>
+      typeof pt.t === "number" &&
+      typeof pt.p === "number" &&
+      Number.isFinite(pt.t) &&
+      Number.isFinite(pt.p),
+  );
+}
