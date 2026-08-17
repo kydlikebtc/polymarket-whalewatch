@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AdminSignalOverview } from "../../lib/adminOverview";
-import { Tag } from "../ui";
+import { Segmented, Tag } from "../ui";
 import AlertRulesSection from "./AlertRulesSection";
 import HealthSection, { type HealthReport } from "./HealthSection";
 import KeysSection from "./KeysSection";
@@ -22,12 +22,28 @@ import { authHeaders } from "./shared";
 
 const AUTO_REFRESH_MS = 60_000;
 
-const SECTIONS = [
-  { id: "signals", label: "📡 推送信号" },
-  { id: "rules", label: "🔔 提醒规则" },
+// 分区改为 tab:五个区块平铺时页面很长,而运营者每次进来通常只关心其中
+// 一件事(放开某档推送 / 看循环是否还活着 / 签发一个 key)。原来的锚点
+// 跳转按钮只是把长页面卷到某处,信息仍然全部堆在同一屏之下。
+const TABS = [
+  { id: "push", label: "📡 推送与提醒" },
   { id: "health", label: "🩺 健康度" },
-  { id: "keys", label: "🔑 key / webhook" },
+  { id: "access", label: "🔑 接入" },
+  { id: "x", label: "𝕏 播报账号" },
 ] as const;
+type TabId = (typeof TABS)[number]["id"];
+
+// StatusStrip 发出的是**区块** id(它不该知道 tab 怎么分组),这里把它映射
+// 到承载该区块的 tab —— 契约不变,StatusStrip 零改动。
+const SECTION_TAB: Record<string, TabId> = {
+  signals: "push",
+  rules: "push",
+  health: "health",
+  keys: "access",
+  x: "x",
+};
+
+const TAB_STORAGE_KEY = "manageTab";
 
 export default function ManagePage() {
   const [token, setToken] = useState("");
@@ -40,10 +56,20 @@ export default function ManagePage() {
   // 水合后又变绿」的闪烁。
   const hydrated = useRef(false);
 
+  const [tab, setTab] = useState<TabId>("push");
+
   useEffect(() => {
     setToken(window.localStorage.getItem("adminToken") ?? "");
+    // 运营页常开不关,刷新后回到上次那个 tab 比每次都弹回第一个更顺手。
+    const saved = window.localStorage.getItem(TAB_STORAGE_KEY);
+    if (saved && TABS.some((x) => x.id === saved)) setTab(saved as TabId);
     hydrated.current = true;
   }, []);
+
+  const selectTab = (id: TabId) => {
+    setTab(id);
+    window.localStorage.setItem(TAB_STORAGE_KEY, id);
+  };
 
   const saveToken = (v: string) => {
     setToken(v);
@@ -93,8 +119,8 @@ export default function ManagePage() {
     return () => clearInterval(timer);
   }, [loadAll]);
 
-  const jump = (id: string) =>
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+  // 状态条上的 chip 点击:切到承载该区块的 tab(切完区块就在首屏,不必再滚动)。
+  const jump = (id: string) => selectTab(SECTION_TAB[id] ?? "push");
 
   return (
     <main className="ds-main">
@@ -170,27 +196,32 @@ export default function ManagePage() {
             </div>
           )}
         </div>
-        <nav
-          style={{ display: "flex", gap: "var(--s-2)", flexWrap: "wrap" }}
-          aria-label="分区导航"
-        >
-          {SECTIONS.map((s) => (
-            <button
-              key={s.id}
-              className="ds-btn ds-btn--ghost ds-btn--sm"
-              onClick={() => jump(s.id)}
-            >
-              {s.label}
-            </button>
-          ))}
-        </nav>
       </div>
 
-      <SignalsSection token={token} overview={overview} reload={loadAll} />
-      <AlertRulesSection token={token} />
-      <HealthSection health={health} ops={overview?.ops ?? null} />
-      <KeysSection token={token} />
-      <XAccountsSection token={token} />
+      <div style={{ marginBottom: "var(--s-5)" }}>
+        <Segmented
+          options={TABS.map((x) => ({ value: x.id, label: x.label }))}
+          value={tab}
+          onChange={(v) => selectTab(v)}
+          ariaLabel="运营分区"
+          className="ds-segmented--wrap"
+        />
+      </div>
+
+      {/* 每个 tab 只挂载自己的区块:各 Section 在挂载时拉取自己的数据,
+          切走即卸载,回来重新拉 —— 运营页的数据本来就要求新鲜,重挂载
+          顺带成了「切 tab 即刷新」。 */}
+      {tab === "push" && (
+        <>
+          <SignalsSection token={token} overview={overview} reload={loadAll} />
+          <AlertRulesSection token={token} />
+        </>
+      )}
+      {tab === "health" && (
+        <HealthSection health={health} ops={overview?.ops ?? null} />
+      )}
+      {tab === "access" && <KeysSection token={token} />}
+      {tab === "x" && <XAccountsSection token={token} />}
     </main>
   );
 }
