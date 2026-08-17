@@ -400,22 +400,6 @@ export default function Page() {
         <SoundToggle on={soundOn} onToggle={toggle} />
       </header>
 
-      {/* 告警条件的编辑入口统一收敛到 /manage(同一份 config 表)——
-          本页只呈现结果:两处面板改同一份配置时,谁覆盖谁说不清。 */}
-      <div className="ds-callout" style={{ marginBottom: "var(--s-4)" }}>
-        {t("告警条件（金额 / 方向 / 赔率 / 地址年龄 / 冷却 / 聪明钱）统一在运营页配置：")}
-        <a href="/manage" style={{ marginLeft: 4 }}>
-          /manage
-        </a>
-        {data.smartWalletCount != null ? (
-          <span className="muted" style={{ marginLeft: "var(--s-2)" }}>
-            {t("白名单 {n} 个", { n: data.smartWalletCount })}
-            {data.smartAlerts24h != null
-              ? ` · ${t("近24h {n} 条", { n: data.smartAlerts24h })}`
-              : ""}
-          </span>
-        ) : null}
-      </div>
 
       {/* Push-channel health callout — "no messages" must be tellable apart
           from "no large trades". Gated on `failing` (streak ≥ threshold), so

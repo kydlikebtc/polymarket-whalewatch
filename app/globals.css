@@ -214,15 +214,11 @@ h3 {
   flex-shrink: 0; /* the nav scrolls; the brand never crumples */
 }
 
-/* 375px-class phones: brand + 5 nav links + tag cannot fit — reclaim the
-   decorative 只读监控 tag's width for the nav and tighten the gutters. */
+/* 375px-class phones: tighten the gutters so brand + nav still fit. */
 @media (max-width: 600px) {
   .topbar__inner {
     padding: 0 var(--s-3);
     gap: var(--s-3);
-  }
-  .topbar .ds-tag {
-    display: none;
   }
 }
 .topbar__nav {
@@ -233,16 +229,16 @@ h3 {
      into a page-level horizontal scroll. min-width:0 lets the flex item
      actually shrink below its content (flex min-width defaults to auto). */
   min-width: 0;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none; /* the row IS the scroller — no visible bar */
-}
-.topbar__nav::-webkit-scrollbar {
-  display: none;
+  /* 分组下拉后项目数远少于视口宽度,不再需要横向滚动;而 overflow:auto 会把
+     绝对定位的下拉面板裁成一条缝,必须是 visible。 */
+  overflow-x: visible;
 }
 .nav-link {
   display: inline-flex;
   align-items: center;
+  /* 顶栏里既有 <a> 也有 <button>(分组按钮、语言切换)。button 默认用系统
+     UI 字体且不继承,不写这条就会与相邻链接字体不一致。 */
+  font-family: inherit;
   height: 32px;
   padding: 0 var(--s-3);
   border-radius: var(--r-sm);
@@ -268,10 +264,6 @@ h3 {
 }
 .topbar__nav {
   gap: 0;
-  /* 下拉面板绝对定位在按钮下方,不能被 nav 的横向滚动裁掉。分组后项目
-     数已远少于视口宽度,溢出滚动不再需要 —— overflow 改回 visible,
-     否则展开的菜单会被 clip 成一条缝。 */
-  overflow-x: visible;
 }
 .nav-link {
   padding: 0 var(--s-2);
@@ -289,13 +281,32 @@ html[lang="en"] .nav-link {
   background: none;
   border: none;
   cursor: pointer;
-  font: inherit;
+  /* 只继承字体族(button 默认是系统 UI 字体,与顶栏其余项不一致)。
+     字号/字重必须留给 .nav-link —— 简写 `font: inherit` 会把它们一起
+     重置掉,分组按钮就会比旁边的链接小一号(用户实测「字体都不一样大」)。*/
+  font-family: inherit;
   gap: 4px;
 }
+/* 实心三角(border 画法)而非字符 ▾ —— 后者在 11px 下笔画细到几乎看不见,
+   用户实测「下拉很不明显」。border 画法粗细与颜色完全可控,且不受字体
+   渲染差异影响;currentColor 让它跟随按钮的 hover/激活态一起变亮。 */
 .nav-group__caret {
-  font-size: 9px;
-  opacity: 0.6;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  opacity: 0.75;
   transform: translateY(1px);
+  transition: transform var(--d-fast) var(--ease);
+}
+/* 展开时箭头翻转:折叠/展开两态在视觉上必须能一眼区分。 */
+.nav-group__btn[aria-expanded="true"] .nav-group__caret {
+  transform: translateY(-1px) rotate(180deg);
+}
+.nav-group__btn[aria-expanded="true"] {
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.06);
 }
 .nav-group__menu {
   position: absolute;

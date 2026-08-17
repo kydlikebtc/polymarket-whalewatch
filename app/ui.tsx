@@ -148,9 +148,7 @@ function NavGroup({
         onClick={() => setOpen((v) => !v)}
       >
         {t(label)}
-        <span className="nav-group__caret" aria-hidden>
-          ▾
-        </span>
+        <span className="nav-group__caret" aria-hidden />
       </button>
       {open ? (
         <div className="nav-group__menu" role="menu">
@@ -235,7 +233,6 @@ export function TopNav() {
         >
           {lang === "zh" ? "EN" : "中文"}
         </button>
-        <Tag>{t("只读监控")}</Tag>
       </div>
     </nav>
   );
