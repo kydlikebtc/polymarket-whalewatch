@@ -44,7 +44,7 @@ describe("completeAuth", () => {
               accessToken: "at",
               accessSecret: "as",
               userId: "42",
-              screenName: "PolyWhaleWatch",
+              screenName: "PolyWhaleFeedHQ",
             };
           },
         };
@@ -61,7 +61,7 @@ describe("completeAuth", () => {
       accessToken: "at",
       accessSecret: "as",
       userId: "42",
-      screenName: "PolyWhaleWatch",
+      screenName: "PolyWhaleFeedHQ",
     });
   });
 });

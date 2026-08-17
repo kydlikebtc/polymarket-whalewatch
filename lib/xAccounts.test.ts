@@ -17,7 +17,7 @@ const NOW = Math.floor(Date.UTC(2026, 7, 17, 12) / 1000);
 function seed(db: DB, over: Partial<Parameters<typeof upsertAccount>[1]> = {}) {
   return upsertAccount(db, {
     userId: "111",
-    screenName: "PolyWhaleWatch",
+    screenName: "PolyWhaleFeedHQ",
     accessToken: "tok1",
     accessSecret: "sec1",
     nowSec: NOW,
@@ -32,7 +32,7 @@ describe("upsertAccount", () => {
     const rows = listAccounts(db);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      screenName: "PolyWhaleWatch",
+      screenName: "PolyWhaleFeedHQ",
       isActive: true,
     });
   });
@@ -147,7 +147,7 @@ describe("resolveXCreds", () => {
     ).toMatchObject({
       accessToken: "tok1",
       source: "db",
-      screenName: "PolyWhaleWatch",
+      screenName: "PolyWhaleFeedHQ",
     });
   });
   it("env 只配了一半 = 没配(半套凭据发不出帖)", () => {

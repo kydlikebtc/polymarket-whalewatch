@@ -18,8 +18,9 @@ X 播报账号。本设计把 worker 已有的信号管线加一个 X publisher 
 
 ## 2. 前置条件（用户手工完成）
 
-1. 创建 X 账号（handle 候选：`@PolyWhaleWatch` / `@WhaleWatchPoly`），
-   bio 放网站链接 + "Research tool, not financial advice"。
+1. 创建 X 账号（已定：**`@PolyWhaleFeedHQ`**；显示名 `WhaleWatch 🐳 Polymarket Smart Money`
+   —— handle 保留 whale 词根，与网站 whalewatch.wired.fund、TG @Polymarket_WhaleWatch
+   三处品牌一致），bio 放网站链接 + TG 入口 + "Research tool, not financial advice"。
 2. developer.x.com 以 pay-per-use 注册应用、绑付款方式、**X 后台设 $15 spending cap**（平台侧兜底）。
 3. 生成 OAuth 1.0a 凭据（consumer key/secret + access token/secret，Read & Write），
    四个值写入服务器 `.env`。
