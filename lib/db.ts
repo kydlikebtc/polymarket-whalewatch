@@ -28,6 +28,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS x_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, dedup_key TEXT NOT NULL, alert_id INTEGER, text TEXT NOT NULL, has_link INTEGER NOT NULL DEFAULT 0, est_cost_usd REAL NOT NULL DEFAULT 0, x_post_id TEXT, status TEXT NOT NULL, created_at INTEGER NOT NULL);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_x_posts_kind_dedup ON x_posts(kind, dedup_key);
     CREATE INDEX IF NOT EXISTS idx_x_posts_created_at ON x_posts(created_at);
+    CREATE INDEX IF NOT EXISTS idx_token_map_condition ON token_map(condition_id);
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
     CREATE INDEX IF NOT EXISTS idx_candidates_evidence_ts ON wallet_candidates(evidence_ts);
     CREATE INDEX IF NOT EXISTS idx_market_tilt_history_ts ON market_tilt_history(ts);
