@@ -15,7 +15,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { formatAge, type AgeTone } from "./ageFormat";
 import { iconTip } from "./glossary";
@@ -172,7 +172,21 @@ function NavGroup({
 
 export function TopNav() {
   const pathname = usePathname();
+  const router = useRouter();
   const { lang, setLang, t } = useLang();
+  // 分组下拉带来的性能退化补偿:<Link> 的自动预取靠「进入视口」触发,而
+  // 折叠状态下菜单里的 Link 根本不在 DOM 里 —— 改成下拉之前 9 个链接常驻
+  // 顶栏、页面一加载就全部预取完;之后每次点击都要现场下载页面 chunk,
+  // 表现为「切换页面卡顿」。这里在挂载时显式预取全部目标,把行为拉回改版前。
+  useEffect(() => {
+    for (const entry of NAV) {
+      if ("items" in entry) {
+        for (const i of entry.items) router.prefetch(i.href);
+      } else {
+        router.prefetch(entry.href);
+      }
+    }
+  }, [router]);
   return (
     <nav className="topbar">
       <div className="topbar__inner">

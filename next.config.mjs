@@ -5,6 +5,16 @@ const projectRoot = dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  experimental: {
+    // 客户端路由缓存:全站页面都是 force-dynamic,Next 默认几乎不缓存它们的
+    // RSC payload,于是每次点击导航都要一次服务端往返(线上还叠加网络延迟)。
+    // 这里的 payload 只是页面骨架 —— 各页真实数据一律由客户端自己 fetch,
+    // 所以缓存 60s 不会让任何数字变旧,只是省掉重复的 shell 往返。
+    staleTimes: {
+      dynamic: 60,
+      static: 180,
+    },
+  },
   // Keep the native better-sqlite3 module out of the server bundle so the
   // read-only dashboard can require it at runtime (Next 15+ stable key).
   serverExternalPackages: ["better-sqlite3"],

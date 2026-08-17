@@ -974,3 +974,53 @@ tr:hover .copy-btn,
     align-items: flex-start;
   }
 }
+
+/* =====================================================================
+   Route-transition skeleton (app/loading.tsx)
+   路由切换时的骨架屏。存在本身比样式更重要:没有 loading 边界,Next 的
+   客户端导航会阻塞在旧页面直到新 payload 就绪(表现为「点了没反应」)。
+   ===================================================================== */
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+.skeleton {
+  background: var(--n-100);
+  border-radius: var(--r-sm);
+  animation: skeleton-pulse 1.2s var(--ease) infinite;
+}
+.skeleton--title {
+  height: 32px;
+  width: 300px;
+  max-width: 60%;
+  margin-bottom: var(--s-3);
+}
+.skeleton--line {
+  height: 14px;
+  margin-bottom: var(--s-5);
+}
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s-4);
+  margin-bottom: var(--s-5);
+}
+.skeleton--card {
+  height: 92px;
+  border-radius: var(--r-md);
+}
+.skeleton--block {
+  height: 320px;
+  border-radius: var(--r-md);
+}
+/* 尊重系统的「减少动态效果」设置。 */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
