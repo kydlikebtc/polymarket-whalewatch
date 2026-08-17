@@ -3,6 +3,9 @@
 // Shared design-system primitives (MM Manage v3) for the Polymarket monitor.
 // Single source of truth so the three pages stop duplicating inline styles.
 // Visuals live in app/globals.css; these components only wire props → classes.
+//
+// 双语化:所有用户可见文案过 useLang().t(中文键);中文键即字典键,缺译
+// 回退中文(lib/i18n/core)。代码注释不翻译。
 
 import {
   useEffect,
@@ -15,6 +18,7 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { formatAge, type AgeTone } from "./ageFormat";
 import { iconTip } from "./glossary";
+import { useLang } from "./i18n";
 import type { MarketPos } from "./useMarketPositions";
 
 /* --------------------------------------------------------------- tip-pop */
@@ -70,12 +74,13 @@ const NAV = [
 
 export function TopNav() {
   const pathname = usePathname();
+  const { lang, setLang, t } = useLang();
   return (
     <nav className="topbar">
       <div className="topbar__inner">
         <span className="topbar__brand">
           <span aria-hidden>🐋</span>
-          Polymarket 监控
+          {t("Polymarket 监控")}
         </span>
         <div className="topbar__nav">
           {NAV.map((item) => (
@@ -85,7 +90,7 @@ export function TopNav() {
               className="nav-link"
               data-active={pathname === item.href}
             >
-              {item.label}
+              {t(item.label)}
             </Link>
           ))}
         </div>
@@ -97,7 +102,7 @@ export function TopNav() {
           href="https://t.me/Polymarket_WhaleWatch"
           target="_blank"
           rel="noreferrer"
-          title="Telegram 频道：实时信号推送，每条自带 30 天可验证命中率"
+          title={t("Telegram 频道：实时信号推送，每条自带 30 天可验证命中率")}
           onClick={(e) => {
             e.preventDefault();
             window.open(
@@ -107,9 +112,20 @@ export function TopNav() {
             );
           }}
         >
-          📣 TG 频道
+          📣 {t("TG 频道")}
         </a>
-        <Tag>只读监控</Tag>
+        {/* 语言切换:显示的是「切过去」的目标语言。 */}
+        <button
+          type="button"
+          className="nav-link"
+          onClick={() => setLang(lang === "zh" ? "en" : "zh")}
+          title={t("切换语言")}
+          aria-label={t("切换语言")}
+          style={{ background: "none", border: "none", cursor: "pointer" }}
+        >
+          {lang === "zh" ? "EN" : "中文"}
+        </button>
+        <Tag>{t("只读监控")}</Tag>
       </div>
     </nav>
   );
@@ -204,13 +220,14 @@ export function CopyButton({
   label?: string;
 }) {
   const [copied, setCopied] = useState(false);
+  const { t } = useLang();
   if (!text) return null;
   return (
     <button
       type="button"
       className={copied ? "copy-btn is-copied" : "copy-btn"}
-      title={copied ? "已复制" : `${label}：${text}`}
-      aria-label={`${label} ${text}`}
+      title={copied ? t("已复制") : `${t(label)}: ${text}`}
+      aria-label={`${t(label)} ${text}`}
       onClick={(e) => {
         e.stopPropagation();
         e.preventDefault();
@@ -278,6 +295,7 @@ export function MarketSlugActions({
   eventSlug?: string | null;
   conditionId?: string | null;
 }) {
+  const { t } = useLang();
   const s = slug || eventSlug || "";
   if (!s && !conditionId) return null;
   const cardHref = conditionId ? `/market/${conditionId}` : null;
@@ -287,7 +305,7 @@ export function MarketSlugActions({
       {s && (
         <QuietLink
           href={`${TRADE_LINK_BASE}${encodeURIComponent(s)}`}
-          title={`在 wired.fund 打开交易页：${s}`}
+          title={t("在 wired.fund 打开交易页：{s}", { s })}
         >
           ↗
         </QuietLink>
@@ -298,7 +316,9 @@ export function MarketSlugActions({
           href={cardHref}
           target="_blank"
           rel="noreferrer"
-          title="打开市场信号卡：共识/分歧 · 聪明钱敞口 · 拆单 · 新钱包 · 告警战绩"
+          title={t(
+            "打开市场信号卡：共识/分歧 · 聪明钱敞口 · 拆单 · 新钱包 · 告警战绩",
+          )}
           onClick={(e) => {
             e.stopPropagation();
             e.preventDefault();
@@ -330,6 +350,7 @@ export function WalletLink({
   children: ReactNode;
   title?: string;
 }) {
+  const { t } = useLang();
   const href = `/wallet/${address.toLowerCase()}`;
   return (
     <a
@@ -337,7 +358,7 @@ export function WalletLink({
       href={href}
       target="_blank"
       rel="noreferrer"
-      title={title ?? `${address} · 新标签打开钱包档案`}
+      title={title ?? t("{address} · 新标签打开钱包档案", { address })}
       onClick={(e) => {
         e.stopPropagation(); // never trigger the row's expand/select
         e.preventDefault();
@@ -362,10 +383,13 @@ export { catLabel, catLabelFine } from "../lib/categoryLabel";
 // a TAP shows the same text as a popover (see tip-pop above) so touch screens
 // aren't locked out of the explanations. Tooltip text comes from
 // app/glossary.ts (the same source as /glossary), so meanings can never drift
-// between the hover, the popover and the docs page.
+// between the hover, the popover and the docs page. 译文键=词表原文,由
+// glossary 字典分片统一供给。
 export function Icon({ s, title }: { s: string; title?: string }) {
-  const tip = title ?? iconTip(s);
-  if (!tip) return <span>{s}</span>;
+  const { t } = useLang();
+  const rawTip = title ?? iconTip(s);
+  if (!rawTip) return <span>{s}</span>;
+  const tip = t(rawTip);
   return (
     <span
       className="tip-pop"
@@ -447,11 +471,14 @@ const AGE_CLASS: Record<AgeTone, string> = {
 // from formatAge per product choice; tone drives the (financial) color.
 // Tip is tap-reachable via the shared tip-pop popover (cursor comes with it).
 export function AgeBadge({ ageDays }: { ageDays: number | null | undefined }) {
-  const { text, tone } = formatAge(ageDays);
+  const { lang, t } = useLang();
+  const { text, tone } = formatAge(ageDays, lang);
   const title =
     ageDays == null
-      ? iconTip("…")
-      : "地址年龄：钱包首次 Polymarket 活动至今。🆕 = ≤30 天新钱包，红色 = <7 天 — 为一笔交易专门开的新钱包是最强内幕信号之一";
+      ? t(iconTip("…") ?? "")
+      : t(
+          "地址年龄：钱包首次 Polymarket 活动至今。🆕 = ≤30 天新钱包，红色 = <7 天 — 为一笔交易专门开的新钱包是最强内幕信号之一",
+        );
   return (
     <span
       className={`${AGE_CLASS[tone]} tip-pop`}
@@ -505,8 +532,11 @@ export function WalletStatsBadge({
   stats: WalletStatsLite | null | undefined;
   smart?: SmartInfoLite | null;
 }) {
+  const { t } = useLang();
   const trophyTip = smart
-    ? `聪明钱白名单${smart.score != null ? ` · 评分 ${Math.round(smart.score)}` : ""}`
+    ? smart.score != null
+      ? t("聪明钱白名单 · 评分 {score}", { score: Math.round(smart.score) })
+      : t("聪明钱白名单")
     : "";
   const trophy = smart ? (
     <span
@@ -529,9 +559,10 @@ export function WalletStatsBadge({
   // so we skip it entirely and label the wallet (see lib/walletStats). Must come
   // BEFORE the settledCount===0 branch (a market maker has no fetched positions).
   if (stats && stats.isMarketMaker) {
-    const mmTitle =
-      `🤖 高频做市 / 机器人：交易过 ${stats.marketsTraded?.toLocaleString() ?? "海量"} 个不同市场，` +
-      "胜率不适用（做市赚点差、非定向下注）\n盈亏为净盈亏（官方 user-pnl 口径）";
+    const mmTitle = t(
+      "🤖 高频做市 / 机器人：交易过 {n} 个不同市场，胜率不适用（做市赚点差、非定向下注）\n盈亏为净盈亏（官方 user-pnl 口径）",
+      { n: stats.marketsTraded?.toLocaleString() ?? t("海量") },
+    );
     const mmTone = stats.netPnl != null && stats.netPnl < 0 ? "down" : "up";
     return (
       <span className="mono" style={{ whiteSpace: "nowrap" }}>
@@ -553,8 +584,8 @@ export function WalletStatsBadge({
         {trophy ? " " : ""}
         <span
           className="tip-pop"
-          title="无已结算战绩"
-          {...tipPopProps("无已结算战绩")}
+          title={t("无已结算战绩")}
+          {...tipPopProps(t("无已结算战绩"))}
         >
           —
         </span>
@@ -569,12 +600,18 @@ export function WalletStatsBadge({
   const pct = stats.winRate != null ? Math.round(stats.winRate * 100) : null;
   const tone = stats.netPnl != null && stats.netPnl < 0 ? "down" : "up";
   const title = stats.truncated
-    ? `已结算 ${stats.settledCount}+ 市场 · 胜率/ROI 无法可靠统计（结算过多，只取到按盈亏排序的最赚一部分）` +
-      "\n盈亏为净盈亏（官方 user-pnl 口径，不受截断影响）"
-    : `已结算 ${stats.settledCount} 市场` +
-      (pct != null ? ` · 胜率 ${pct}%` : "") +
-      (stats.roi != null ? ` · ROI ${(stats.roi * 100).toFixed(1)}%` : "") +
-      "\n盈亏数字为净盈亏（已实现+浮动，官方 user-pnl 口径），非上面的已结算口径";
+    ? t(
+        "已结算 {n}+ 市场 · 胜率/ROI 无法可靠统计（结算过多，只取到按盈亏排序的最赚一部分）\n盈亏为净盈亏（官方 user-pnl 口径，不受截断影响）",
+        { n: stats.settledCount },
+      )
+    : t("已结算 {n} 市场", { n: stats.settledCount }) +
+      (pct != null ? t(" · 胜率 {pct}%", { pct }) : "") +
+      (stats.roi != null
+        ? t(" · ROI {roi}%", { roi: (stats.roi * 100).toFixed(1) })
+        : "") +
+      t(
+        "\n盈亏数字为净盈亏（已实现+浮动，官方 user-pnl 口径），非上面的已结算口径",
+      );
   return (
     <span className="mono" style={{ whiteSpace: "nowrap" }}>
       {trophy}
@@ -600,6 +637,7 @@ export function SoundToggle({
   on: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useLang();
   return (
     <button
       type="button"
@@ -607,11 +645,13 @@ export function SoundToggle({
       onClick={onToggle}
       aria-pressed={on}
       title={
-        on ? "新增记录时播放气泡提示音（点击关闭）" : "开启新增记录气泡提示音"
+        on
+          ? t("新增记录时播放气泡提示音（点击关闭）")
+          : t("开启新增记录气泡提示音")
       }
       style={{ flexShrink: 0 }}
     >
-      {on ? "🔔 提示音 开" : "🔕 提示音 关"}
+      {on ? `🔔 ${t("提示音 开")}` : `🔕 ${t("提示音 关")}`}
     </button>
   );
 }
@@ -644,6 +684,7 @@ export function Modal({
   // 16px 不变——用户反馈明确是「两边」,不该连带动没人抱怨的垂直节奏。
   padding?: string;
 }) {
+  const { t } = useLang();
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -725,7 +766,7 @@ export function Modal({
           <button
             className="ds-btn ds-btn--ghost"
             onClick={onClose}
-            aria-label="关闭"
+            aria-label={t("关闭")}
           >
             ✕
           </button>
@@ -763,24 +804,26 @@ export function HoldingCell({
   pos?: MarketPos;
   loading?: boolean;
 }) {
+  const { t } = useLang();
   if (!pos) {
     return loading ? (
       <span className="mono muted">…</span>
     ) : (
       <span
         className="muted"
-        title="当前在该结果无持仓（窗口内买过但已清仓/转向）"
+        title={t("当前在该结果无持仓（窗口内买过但已清仓/转向）")}
       >
         —
       </span>
     );
   }
   const tone = pos.cashPnl >= 0 ? "up" : "down";
-  const title =
-    `${Math.round(pos.size).toLocaleString("en-US")} 股 · 现价 ${pos.curPrice.toFixed(3)} · ` +
-    `建仓 ${pos.avgPrice.toFixed(3)} · 浮盈 ${pos.cashPnl >= 0 ? "+" : ""}$${Math.round(
-      pos.cashPnl,
-    ).toLocaleString("en-US")}`;
+  const title = t("{shares} 股 · 现价 {cur} · 建仓 {avg} · 浮盈 {pnl}", {
+    shares: Math.round(pos.size).toLocaleString("en-US"),
+    cur: pos.curPrice.toFixed(3),
+    avg: pos.avgPrice.toFixed(3),
+    pnl: `${pos.cashPnl >= 0 ? "+" : ""}$${Math.round(pos.cashPnl).toLocaleString("en-US")}`,
+  });
   return (
     <span className="mono" title={title}>
       ${Math.round(pos.currentValue).toLocaleString("en-US")}{" "}

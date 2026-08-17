@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { cookies, headers } from "next/headers";
 import "./globals.css";
 import { TopNav } from "./ui";
+import { LangProvider } from "./i18n";
+import { LANG_COOKIE, pickLang } from "../lib/i18n/core";
 import { siteBase } from "../lib/seo";
 
 const BASE = siteBase();
@@ -56,9 +59,19 @@ const JSON_LD = JSON.stringify({
   ],
 });
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  // 语言判定在服务端完成(cookie 优先、首访看 Accept-Language),Provider
+  // 初始值与 <html lang> 同源 → SSR 首帧与客户端一致,零水合错位。
+  const lang = pickLang(
+    (await cookies()).get(LANG_COOKIE)?.value,
+    (await headers()).get("accept-language"),
+  );
   return (
-    <html lang="zh-CN">
+    <html lang={lang === "en" ? "en" : "zh-CN"}>
       <head>
         {/* Fonts via <link> (not next/font) so the build never blocks on a
             network fetch and degrades gracefully to system fonts offline. */}
@@ -76,8 +89,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <script type="application/ld+json">{JSON_LD}</script>
       </head>
       <body>
-        <TopNav />
-        {children}
+        <LangProvider initial={lang}>
+          <TopNav />
+          {children}
+        </LangProvider>
       </body>
     </html>
   );
