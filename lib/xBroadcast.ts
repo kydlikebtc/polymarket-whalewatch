@@ -104,6 +104,7 @@ function parseCandidate(
     impact24h?: number | null;
     liquidity?: number | null;
     hoursToEnd?: number | null;
+    category?: string | null;
   } | null;
   return {
     alertId: row.id,
@@ -119,6 +120,9 @@ function parseCandidate(
       pct24h: ctx?.impact24h != null ? ctx.impact24h * 100 : null,
       liquidityUsd: ctx?.liquidity ?? null,
       hoursToEnd: ctx?.hoursToEnd ?? null,
+      // 赛道标签的来源:gamma 富化时带回的一级类别(英文原文)。缺失时
+      // buildTags 只出根标签,不会产生废标签。
+      category: ctx?.category ?? null,
     }),
   };
 }

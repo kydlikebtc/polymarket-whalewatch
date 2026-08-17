@@ -69,10 +69,13 @@ describe("runXBroadcastCycle", () => {
     recordAlert(db, "large", "t1", whalePayload(), NOW - 60);
     const client = fakeClient();
     expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
-    expect(client.posts[0]).toContain(
-      '🐳 $67K YES on "Chiefs win Super Bowl LX?" @ 67¢',
-    );
-    expect(client.posts[0]).toContain("12% of 24h vol");
+    // 结构化布局:抬头 / 标的+方向 / 佐证 / 标签(见 lib/xComposer)。
+    expect(client.posts[0]).toContain("🐳 WHALE BUY · $67K");
+    expect(client.posts[0]).toContain("Chiefs win Super Bowl LX?");
+    expect(client.posts[0]).toContain("└ YES @ 67¢");
+    expect(client.posts[0]).toContain("📊 12% of 24h vol");
+    // 赛道标签取自 marketCtx.category。
+    expect(client.posts[0]).toContain("#Polymarket #Sports");
     const row = db
       .prepare("SELECT status, x_post_id, est_cost_usd, alert_id FROM x_posts")
       .get() as {
@@ -128,8 +131,9 @@ describe("runXBroadcastCycle", () => {
     );
     const client = fakeClient();
     expect(await runXBroadcastCycle(deps(db, client))).toBe(2);
-    expect(client.posts[0]).toMatch(/^🔥 CONSENSUS: 3 top-PnL wallets/);
-    expect(client.posts[1]).toMatch(/^🐳/);
+    expect(client.posts[0]).toMatch(/^🔥 SMART-MONEY CONSENSUS/);
+    expect(client.posts[0]).toContain("#SmartMoney");
+    expect(client.posts[1]).toMatch(/^🐳 WHALE BUY/);
   });
 
   it("stops posting when the monthly budget is exhausted (fail-closed)", async () => {
@@ -226,8 +230,9 @@ describe("runXBroadcastCycle", () => {
     recordAlert(db, "smart", "t1", JSON.stringify(p), NOW - 60);
     const client = fakeClient();
     expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
+    // 未富化 → 无佐证段、无赛道标签,但结构与根标签仍在。
     expect(client.posts[0]).toBe(
-      '🐳 $67K YES on "Chiefs win Super Bowl LX?" @ 67¢',
+      "🐳 WHALE BUY · $67K\n\nChiefs win Super Bowl LX?\n└ YES @ 67¢\n\n#Polymarket",
     );
   });
 
@@ -255,7 +260,7 @@ describe("runXBroadcastCycle", () => {
         deps(db, client, { kinds: { whale: false, consensus: true } }),
       ),
     ).toBe(1);
-    expect(client.posts[0]).toMatch(/^🔥 CONSENSUS/);
+    expect(client.posts[0]).toMatch(/^🔥 SMART-MONEY CONSENSUS/);
     const rows = db
       .prepare("SELECT kind, status FROM x_posts ORDER BY kind")
       .all() as { kind: string; status: string }[];

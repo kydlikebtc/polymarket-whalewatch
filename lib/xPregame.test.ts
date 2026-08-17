@@ -96,7 +96,11 @@ describe("runPregameCycle", () => {
     const d = deps(db, client, { "0xc1": meta("0xc1", 3) });
     expect(await runPregameCycle(d)).toBe(1);
     expect(client.posts[0]).toBe(
-      '⏰ Settles in 3h: "Market 0xc1"\nSmart money fired 2 alerts totaling $90K in the last 24h · leaning YES @ 61¢',
+      "⏰ SETTLING IN 3H\n\n" +
+        "Market 0xc1\n" +
+        "└ Leaning YES @ 61¢\n\n" +
+        "📡 2 smart-money signals · $90K in 24h\n\n" +
+        "#Polymarket #Sports #SmartMoney",
     );
     const row = db
       .prepare("SELECT kind, status, has_link, est_cost_usd FROM x_posts")
@@ -137,8 +141,8 @@ describe("runPregameCycle", () => {
     whaleAlert(db, "b2", "0xc1", 80_000, "No", NOW - 700, "SELL");
     const client = fakeClient();
     await runPregameCycle(deps(db, client, { "0xc1": meta("0xc1", 2) }));
-    expect(client.posts[0]).toContain("2 alerts totaling $100K");
-    expect(client.posts[0]).toContain("leaning YES");
+    expect(client.posts[0]).toContain("📡 2 smart-money signals · $100K in 24h");
+    expect(client.posts[0]).toContain("└ Leaning YES");
   });
 
   it("caps at 3 markets per cycle, ranked by alert count then usd", async () => {

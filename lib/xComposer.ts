@@ -32,12 +32,76 @@ function outcomeDisplay(outcome: string): string {
   return outcome.length <= 3 ? outcome.toUpperCase() : outcome;
 }
 
+// ---- 话题标签 ----------------------------------------------------------
+//
+// 标签是 X 上的可发现性入口:不带标签的帖子只有关注者看得到,带了就能进
+// 话题流。但标签也吃字符(280 硬上限),所以规则是「少而准」:
+//   · #Polymarket 恒定 —— 这是账号赖以被找到的根标签;
+//   · 赛道标签取二级优先(#NFL 比 #Sports 精准得多,受众也更集中),
+//     没有二级才退到一级;
+//   · 类型标签只给独家能力(#SmartMoney),大单这种人人都有的不加。
+// 未知/脏值一律丢弃 —— 宁可少一个标签,也不要 #undefined 这种废标签。
+const ROOT_TAG = "#Polymarket";
+
+// 一级类别到标签的映射。gamma 给的是英文原文,多数可直接当标签;这里只
+// 修正少数不适合做标签的写法,其余透传。
+const CATEGORY_TAG: Record<string, string> = {
+  Politics: "Politics",
+  Elections: "Elections",
+  Sports: "Sports",
+  Esports: "Esports",
+  Crypto: "Crypto",
+  Economy: "Economy",
+  Finance: "Finance",
+  Business: "Business",
+  Tech: "Tech",
+  Science: "Science",
+  Culture: "Culture",
+  World: "World",
+  Weather: "Weather",
+  Games: "Gaming",
+  Geopolitics: "Geopolitics",
+};
+
+/** 合法标签体:只留字母数字,首字符非数字。产不出就返回 null。 */
+function toTag(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const body = raw.replace(/[^A-Za-z0-9]/g, "");
+  if (!body || /^[0-9]/.test(body)) return null;
+  return `#${body}`;
+}
+
+export interface TagInput {
+  category?: string | null;
+  subcategory?: string | null;
+  /** 独家信号类型(共识/发现)加 #SmartMoney;大单不加。 */
+  smartMoney?: boolean;
+}
+
+/** 组装标签行。恒有 #Polymarket;赛道二级优先;去重且保持稳定顺序。 */
+export function buildTags(i: TagInput): string {
+  const out: string[] = [ROOT_TAG];
+  const track =
+    toTag(i.subcategory) ??
+    toTag(i.category ? (CATEGORY_TAG[i.category] ?? i.category) : null);
+  if (track && !out.includes(track)) out.push(track);
+  if (i.smartMoney) out.push("#SmartMoney");
+  return out.join(" ");
+}
+
 // 剥掉标题里的 URL(见文件头不变量 2)并收敛空白。
 function sanitizeTitle(title: string): string {
   return title
     .replace(/https?:\/\/\S+/gi, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+// 紧凑形态,给结构化布局的佐证段用(那里已有 ⏳ 图标点题)。
+function settleShort(hoursToEnd: number): string {
+  if (hoursToEnd < 1) return "<1h to settle";
+  if (hoursToEnd < 48) return `${Math.round(hoursToEnd)}h to settle`;
+  return `${Math.round(hoursToEnd / 24)}d to settle`;
 }
 
 function settlesIn(hoursToEnd: number): string {
@@ -68,27 +132,37 @@ export interface WhalePostInput {
   pct24h?: number | null;
   liquidityUsd?: number | null;
   hoursToEnd?: number | null;
+  category?: string | null;
+  subcategory?: string | null;
 }
 
 /**
- * 🐳 $184K YES on "Chiefs win Super Bowl LX?" @ 67¢
- * 12% of 24h vol · liquidity $229K · settles in 5h
+ * 结构化布局(读者在时间线上是「扫」不是「读」):
  *
- * 第二行是 Gamma 富化段:哪段缺哪段整段省略(未富化的告警只发第一行),
- * 绝不用 0/N-A 占位 —— 假数字比没数字更伤可信度。
+ *   🐳 WHALE BUY · $184K
+ *
+ *   Chiefs win Super Bowl LX?
+ *   └ YES @ 67¢
+ *
+ *   📊 12% of 24h vol · 💧 $229K liq · ⏳ 5h to settle
+ *
+ *   #Polymarket #NFL
+ *
+ * 首行给结论(什么事+多大),中段给标的与方向,再给佐证,末行给标签。
+ * 佐证段哪项缺就省哪项,整段都没有就整行不要 —— 绝不用 0/N-A 占位。
  */
 export function composeWhalePost(i: WhalePostInput): string {
-  const emoji = i.usd >= WHALE_SIREN_USD ? "🚨" : "🐳";
-  const sold = i.side === "SELL" ? " SOLD" : "";
-  const ctx: string[] = [];
-  if (i.pct24h != null) ctx.push(`${Math.round(i.pct24h)}% of 24h vol`);
-  if (i.liquidityUsd != null)
-    ctx.push(`liquidity ${usdCompact(i.liquidityUsd)}`);
-  if (i.hoursToEnd != null) ctx.push(settlesIn(i.hoursToEnd));
-  const ctxLine = ctx.length > 0 ? `\n${ctx.join(" · ")}` : "";
+  const siren = i.usd >= WHALE_SIREN_USD;
+  const head = `${siren ? "🚨" : "🐳"} WHALE ${i.side === "SELL" ? "SELL" : "BUY"} · ${usdCompact(i.usd)}`;
+  const facts: string[] = [];
+  if (i.pct24h != null) facts.push(`📊 ${Math.round(i.pct24h)}% of 24h vol`);
+  if (i.liquidityUsd != null) facts.push(`💧 ${usdCompact(i.liquidityUsd)} liq`);
+  if (i.hoursToEnd != null) facts.push(`⏳ ${settleShort(i.hoursToEnd)}`);
+  const factLine = facts.length > 0 ? `\n\n${facts.join(" · ")}` : "";
+  const tags = buildTags({ category: i.category, subcategory: i.subcategory });
   return fitByTruncatingTitle(
     (title) =>
-      `${emoji} ${usdCompact(i.usd)}${sold} ${outcomeDisplay(i.outcome)} on "${title}" @ ${i.priceCents}¢${ctxLine}`,
+      `${head}\n\n${title}\n└ ${outcomeDisplay(i.outcome)} @ ${i.priceCents}¢${factLine}\n\n${tags}`,
     sanitizeTitle(i.title),
   );
 }
@@ -98,13 +172,27 @@ export interface ConsensusPostInput {
   outcome: string;
   title: string;
   totalUsd: number;
+  category?: string | null;
+  subcategory?: string | null;
 }
 
-/** 🔥 CONSENSUS: 3 top-PnL wallets bought the SAME side of "…" · combined $92K on YES */
+/**
+ *   🔥 SMART-MONEY CONSENSUS
+ *
+ *   Fed cut in Sept?
+ *   └ 3 top-PnL wallets → YES · $92K combined
+ *
+ *   #Polymarket #Economy #SmartMoney
+ */
 export function composeConsensusPost(i: ConsensusPostInput): string {
+  const tags = buildTags({
+    category: i.category,
+    subcategory: i.subcategory,
+    smartMoney: true,
+  });
   return fitByTruncatingTitle(
     (title) =>
-      `🔥 CONSENSUS: ${i.walletCount} top-PnL wallets bought the SAME side of "${title}" · combined ${usdCompact(i.totalUsd)} on ${outcomeDisplay(i.outcome)}`,
+      `🔥 SMART-MONEY CONSENSUS\n\n${title}\n└ ${i.walletCount} top-PnL wallets → ${outcomeDisplay(i.outcome)} · ${usdCompact(i.totalUsd)} combined\n\n${tags}`,
     sanitizeTitle(i.title),
   );
 }
@@ -116,22 +204,35 @@ export interface PregamePostInput {
   totalUsd: number;
   topSide?: string | null;
   topSidePriceCents?: number | null;
+  category?: string | null;
+  subcategory?: string | null;
 }
 
 /**
- * ⏰ Settles in 3h: "Lakers vs Celtics"
- * Smart money fired 7 alerts totaling $310K in the last 24h · leaning YES @ 61¢
+ *   ⏰ SETTLING IN 3H
+ *
+ *   Lakers vs Celtics
+ *   └ Leaning YES @ 61¢
+ *
+ *   📡 7 smart-money signals · $310K in 24h
+ *
+ *   #Polymarket #NBA #SmartMoney
  */
 export function composePregamePost(i: PregamePostInput): string {
-  const leaning =
+  const head = `⏰ SETTLING IN ${settleShort(i.hoursToEnd).replace(" to settle", "").toUpperCase()}`;
+  const lean =
     i.topSide != null
-      ? ` · leaning ${outcomeDisplay(i.topSide)}` +
+      ? `\n└ Leaning ${outcomeDisplay(i.topSide)}` +
         (i.topSidePriceCents != null ? ` @ ${i.topSidePriceCents}¢` : "")
       : "";
-  const settle = settlesIn(i.hoursToEnd).replace(/^settles/, "Settles");
+  const tags = buildTags({
+    category: i.category,
+    subcategory: i.subcategory,
+    smartMoney: true,
+  });
   return fitByTruncatingTitle(
     (title) =>
-      `⏰ ${settle}: "${title}"\nSmart money fired ${i.alertCount} alerts totaling ${usdCompact(i.totalUsd)} in the last 24h${leaning}`,
+      `${head}\n\n${title}${lean}\n\n📡 ${i.alertCount} smart-money signals · ${usdCompact(i.totalUsd)} in 24h\n\n${tags}`,
     sanitizeTitle(i.title),
   );
 }
@@ -146,20 +247,36 @@ export interface WeeklyPostInput {
   url: string;
 }
 
-/** 周报是唯一允许带 URL 的模板(唯一的 $0.20 帖,导流入口)。 */
+/**
+ * 周报是唯一允许带 URL 的模板(唯一的 $0.20 帖,导流入口)。
+ *
+ *   📊 WEEKLY REPORT · Aug 10–16
+ *
+ *   19 paper strategies tracking Polymarket smart money
+ *
+ *   ✅ 42 settled · 55% win rate
+ *   💰 PnL +$1.2K
+ *   🏆 Best: Mega Whale +12.3% ROI
+ *
+ *   Full verified record: https://…
+ *
+ *   #Polymarket #PredictionMarkets #SmartMoney
+ */
 export function composeWeeklyPost(i: WeeklyPostInput): string {
   const pnl = `${i.pnlUsd >= 0 ? "+" : ""}${usdCompact(i.pnlUsd)}`;
-  const mid = [
-    `Settled ${i.settled} positions`,
-    ...(i.winRatePct != null ? [`win rate ${Math.round(i.winRatePct)}%`] : []),
-    `PnL ${pnl}`,
-  ].join(" · ");
+  const settledLine =
+    i.winRatePct != null
+      ? `✅ ${i.settled} settled · ${Math.round(i.winRatePct)}% win rate`
+      : `✅ ${i.settled} settled`;
   const roi = `${i.bestRoiPct >= 0 ? "+" : ""}${Math.round(i.bestRoiPct * 10) / 10}%`;
   return (
-    `📊 Weekly report (${i.weekLabel}) — 19 paper strategies tracking Polymarket smart money\n` +
-    `${mid}\n` +
-    `Best: ${strategyEn(i.bestName)} ${roi} ROI\n` +
-    `Full verified track record: ${i.url}`
+    `📊 WEEKLY REPORT · ${i.weekLabel}\n\n` +
+    `19 paper strategies tracking Polymarket smart money\n\n` +
+    `${settledLine}\n` +
+    `💰 PnL ${pnl}\n` +
+    `🏆 Best: ${strategyEn(i.bestName)} ${roi} ROI\n\n` +
+    `Full verified record: ${i.url}\n\n` +
+    `#Polymarket #PredictionMarkets #SmartMoney`
   );
 }
 

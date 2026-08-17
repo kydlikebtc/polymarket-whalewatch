@@ -98,7 +98,8 @@ describe("maybeWeeklyPost", () => {
     const client = fakeClient();
     expect(await maybeWeeklyPost(deps(db, client))).toBe(true);
     expect(client.pngPosts).toHaveLength(1);
-    expect(client.pngPosts[0].text).toContain("Weekly report");
+    expect(client.pngPosts[0].text).toContain("📊 WEEKLY REPORT");
+    expect(client.pngPosts[0].text).toContain("#Polymarket");
     expect(client.pngPosts[0].text).toContain(
       "https://whalewatch.wired.fund/follow?utm_source=x",
     );

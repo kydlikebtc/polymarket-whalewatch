@@ -5,6 +5,7 @@ import {
   composePregamePost,
   composeWeeklyPost,
   usdCompact,
+  buildTags,
   strategyEn,
   STRATEGY_EN,
 } from "./xComposer";
@@ -30,42 +31,46 @@ describe("composeWhalePost", () => {
     pct24h: 12,
     liquidityUsd: 229_000,
     hoursToEnd: 5,
+    category: "Sports",
+    subcategory: "NFL",
   };
-  it("renders the full two-line template", () => {
+  it("结构化四段:标题行 / 标的+方向 / 佐证 / 标签", () => {
     expect(composeWhalePost(base)).toBe(
-      '🐳 $184K YES on "Chiefs win Super Bowl LX?" @ 67¢\n' +
-        "12% of 24h vol · liquidity $229K · settles in 5h",
+      "🐳 WHALE BUY · $184K\n\n" +
+        "Chiefs win Super Bowl LX?\n" +
+        "└ YES @ 67¢\n\n" +
+        "📊 12% of 24h vol · 💧 $229K liq · ⏳ 5h to settle\n\n" +
+        "#Polymarket #NFL",
     );
   });
-  it("SELL side reads SOLD; ≥$250k upgrades to 🚨", () => {
+  it("SELL 与 🚨 分档在首行体现", () => {
     expect(composeWhalePost({ ...base, side: "SELL" })).toContain(
-      "$184K SOLD YES on",
+      "🐳 WHALE SELL · $184K",
     );
-    expect(composeWhalePost({ ...base, usd: 250_000 })).toMatch(/^🚨/);
+    expect(composeWhalePost({ ...base, usd: 250_000 })).toMatch(
+      /^🚨 WHALE BUY/,
+    );
   });
-  it("long outcomes keep their casing (only Yes/No get shouted)", () => {
-    expect(
-      composeWhalePost({ ...base, outcome: "Kansas City Chiefs" }),
-    ).toContain('Kansas City Chiefs on "');
-  });
-  it("omits missing context segments entirely (un-enriched alert)", () => {
+  it("佐证缺失就整段省略,绝不用 0/N-A 占位", () => {
     const t = composeWhalePost({
       ...base,
       pct24h: null,
       liquidityUsd: null,
       hoursToEnd: null,
     });
-    expect(t).toBe('🐳 $184K YES on "Chiefs win Super Bowl LX?" @ 67¢');
-    expect(t).not.toContain("·");
+    expect(t).toBe(
+      "🐳 WHALE BUY · $184K\n\nChiefs win Super Bowl LX?\n└ YES @ 67¢\n\n#Polymarket #NFL",
+    );
+    expect(t).not.toContain("📊");
   });
-  it("stays ≤280 chars by truncating the title with … (URL-free invariant)", () => {
+  it("含标签时仍守住 ≤280 与无 URL 两条硬不变量", () => {
     const t = composeWhalePost({ ...base, title: "A".repeat(300) });
     expect([...t].length).toBeLessThanOrEqual(280);
     expect(t).toContain("…");
-    // 帖内 URL 计费 $0.20/条(13×),模板层就不允许出现。
+    expect(t).toContain("#Polymarket");
     expect(t).not.toContain("http");
   });
-  it("strips URLs smuggled inside a market title (link post costs 13×)", () => {
+  it("剥掉标题里混入的 URL(带链接帖计费 13×)", () => {
     const t = composeWhalePost({
       ...base,
       title: "Weird market https://evil.example/x ok?",
@@ -76,22 +81,26 @@ describe("composeWhalePost", () => {
 });
 
 describe("composeConsensusPost", () => {
-  it("renders wallet count / side / combined usd", () => {
+  it("结构化 + #SmartMoney(独家能力才加这个标签)", () => {
     expect(
       composeConsensusPost({
         walletCount: 3,
         outcome: "Yes",
         title: "Fed cut in Sept?",
         totalUsd: 92_000,
+        category: "Economy",
       }),
     ).toBe(
-      '🔥 CONSENSUS: 3 top-PnL wallets bought the SAME side of "Fed cut in Sept?" · combined $92K on YES',
+      "🔥 SMART-MONEY CONSENSUS\n\n" +
+        "Fed cut in Sept?\n" +
+        "└ 3 top-PnL wallets → YES · $92K combined\n\n" +
+        "#Polymarket #Economy #SmartMoney",
     );
   });
 });
 
 describe("composePregamePost", () => {
-  it("renders settle window + 24h smart-money aggregate + leaning side", () => {
+  it("结构化:结算倒计时抬头 + 站位 + 聚合佐证 + 标签", () => {
     expect(
       composePregamePost({
         title: "Lakers vs Celtics",
@@ -100,13 +109,18 @@ describe("composePregamePost", () => {
         totalUsd: 310_000,
         topSide: "Yes",
         topSidePriceCents: 61,
+        category: "Sports",
+        subcategory: "NBA",
       }),
     ).toBe(
-      '⏰ Settles in 3h: "Lakers vs Celtics"\n' +
-        "Smart money fired 7 alerts totaling $310K in the last 24h · leaning YES @ 61¢",
+      "⏰ SETTLING IN 3H\n\n" +
+        "Lakers vs Celtics\n" +
+        "└ Leaning YES @ 61¢\n\n" +
+        "📡 7 smart-money signals · $310K in 24h\n\n" +
+        "#Polymarket #NBA #SmartMoney",
     );
   });
-  it("omits the leaning clause when no dominant side", () => {
+  it("无明显站位时省略该行", () => {
     const t = composePregamePost({
       title: "Lakers vs Celtics",
       hoursToEnd: 2,
@@ -115,13 +129,14 @@ describe("composePregamePost", () => {
       topSide: null,
       topSidePriceCents: null,
     });
-    expect(t).not.toContain("leaning");
+    expect(t).not.toContain("Leaning");
     expect(t).not.toContain("http");
+    expect(t).toContain("#Polymarket");
   });
 });
 
 describe("composeWeeklyPost", () => {
-  it("renders the fund summary and is the ONLY template allowed a URL", () => {
+  it("结构化战绩卡 —— 唯一允许带 URL 的模板", () => {
     const t = composeWeeklyPost({
       weekLabel: "Aug 10–16",
       settled: 42,
@@ -132,13 +147,17 @@ describe("composeWeeklyPost", () => {
       url: "https://whalewatch.wired.fund/follow?utm_source=x",
     });
     expect(t).toBe(
-      "📊 Weekly report (Aug 10–16) — 19 paper strategies tracking Polymarket smart money\n" +
-        "Settled 42 positions · win rate 55% · PnL +$1.2K\n" +
-        "Best: Mega Whale +12.3% ROI\n" +
-        "Full verified track record: https://whalewatch.wired.fund/follow?utm_source=x",
+      "📊 WEEKLY REPORT · Aug 10–16\n\n" +
+        "19 paper strategies tracking Polymarket smart money\n\n" +
+        "✅ 42 settled · 55% win rate\n" +
+        "💰 PnL +$1.2K\n" +
+        "🏆 Best: Mega Whale +12.3% ROI\n\n" +
+        "Full verified record: https://whalewatch.wired.fund/follow?utm_source=x\n\n" +
+        "#Polymarket #PredictionMarkets #SmartMoney",
     );
+    expect([...t].length).toBeLessThanOrEqual(280);
   });
-  it("negative PnL and null win rate degrade gracefully", () => {
+  it("负 PnL 与无胜率样本时优雅降级", () => {
     const t = composeWeeklyPost({
       weekLabel: "Aug 10–16",
       settled: 0,
@@ -148,9 +167,36 @@ describe("composeWeeklyPost", () => {
       bestRoiPct: -2.5,
       url: "https://x.example/f",
     });
-    expect(t).toContain("PnL -$310");
+    expect(t).toContain("💰 PnL -$310");
     expect(t).not.toContain("win rate");
-    expect(t).toContain("Whale Follow -2.5% ROI");
+    expect(t).toContain("🏆 Best: Whale Follow -2.5% ROI");
+  });
+});
+
+describe("buildTags", () => {
+  it("恒有根标签;赛道取二级优先(#NFL 比 #Sports 精准)", () => {
+    expect(buildTags({ category: "Sports", subcategory: "NFL" })).toBe(
+      "#Polymarket #NFL",
+    );
+    expect(buildTags({ category: "Sports" })).toBe("#Polymarket #Sports");
+    expect(buildTags({})).toBe("#Polymarket");
+  });
+  it("#SmartMoney 只给独家类型(共识/赛前),大单不加", () => {
+    expect(buildTags({ category: "Crypto", smartMoney: true })).toBe(
+      "#Polymarket #Crypto #SmartMoney",
+    );
+  });
+  it("脏值丢弃而不是产出 #undefined 这种废标签", () => {
+    expect(buildTags({ category: "  ", subcategory: "!!!" })).toBe(
+      "#Polymarket",
+    );
+    // 数字开头不是合法标签体。
+    expect(buildTags({ subcategory: "2026Election" })).toBe("#Polymarket");
+    // 空格/连字符压掉后仍是合法标签。
+    expect(buildTags({ subcategory: "Formula 1" })).toBe("#Polymarket #Formula1");
+  });
+  it("未知一级类别透传(新赛道上线不必等代码改)", () => {
+    expect(buildTags({ category: "Music" })).toBe("#Polymarket #Music");
   });
 });
 

@@ -187,6 +187,9 @@ export async function runPregameCycle(d: PregameDeps): Promise<number> {
       totalUsd: c.totalUsd,
       topSide,
       topSidePriceCents,
+      // 赛道标签:meta 的一级类别(gamma 原文)。二级分类不在 MarketMeta 上,
+      // 要它得查 event_category —— 留给后续,当前退到一级已足够精准。
+      category: c.meta.category,
     });
 
     if (claim.run(dedup, text, costOf(false), nowSec).changes === 0) {
