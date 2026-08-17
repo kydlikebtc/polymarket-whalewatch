@@ -45,6 +45,7 @@ import { listActiveWebhooks, makeWebhookChannel } from "../lib/webhookDelivery";
 import { runBotCycle, type BotUpdate } from "../lib/botCommands";
 import { buildMarketCard, resolveMarketInput } from "../lib/marketCard";
 import { createXClient } from "../lib/xPublisher";
+import { markPosted, resolveXCreds } from "../lib/xAccounts";
 import { runXBroadcastCycle } from "../lib/xBroadcast";
 import { runPregameCycle } from "../lib/xPregame";
 import { maybeWeeklyPost } from "../lib/xWeekly";
@@ -525,19 +526,50 @@ export function startAlertEngine(): void {
   // 发一条周报图卡。X 侧任何失败只记日志 —— 与 Telegram 主链路物理隔离。
   // 预算:本地 $X_MONTHLY_BUDGET_USD 台账 fail-closed(xQuota),X 后台的
   // spending cap 是第二道保险。
-  if (cfg.xEnabled) {
-    const xClient = createXClient({
-      apiKey: cfg.xApiKey,
-      apiSecret: cfg.xApiSecret,
-      accessToken: cfg.xAccessToken,
-      accessSecret: cfg.xAccessSecret,
-    });
+  if (cfg.xAppConfigured) {
     const X_LOOP_MS = 60_000;
     const PREGAME_GAP_MS = 10 * 60_000;
     let lastPregameAt = 0;
+    // 发帖凭据每轮解析(不缓存):/manage 里切换授权账号后,下一轮 ≤60s
+    // 自动改用新账号,无需重启引擎。client 按凭据缓存,凭据没变就复用同一个。
+    let cached: {
+      token: string;
+      client: ReturnType<typeof createXClient>;
+    } | null = null;
+    let warnedNoCreds = false;
     async function xLoop() {
       try {
-        await runXBroadcastCycle({
+        const creds = resolveXCreds(db, cfg);
+        if (!creds) {
+          // 没有任何可用账号:静默待命(只提示一次,不刷屏)。授权一个账号
+          // 或补上 .env 的 access token 后,下一轮自动开工。
+          if (!warnedNoCreds) {
+            warnedNoCreds = true;
+            console.log(
+              "[engine] X broadcast idle — no authorized account yet (授权入口:/manage 的「𝕏 播报账号」区)",
+            );
+          }
+          beat(db, "x_broadcast");
+          setTimeout(xLoop, X_LOOP_MS);
+          return;
+        }
+        warnedNoCreds = false;
+        if (!cached || cached.token !== creds.accessToken) {
+          cached = {
+            token: creds.accessToken,
+            client: createXClient({
+              apiKey: cfg.xApiKey,
+              apiSecret: cfg.xApiSecret,
+              accessToken: creds.accessToken,
+              accessSecret: creds.accessSecret,
+            }),
+          };
+          console.log(
+            `[engine] X broadcast posting as ${creds.screenName ? `@${creds.screenName}` : "(env token)"} (${creds.source})`,
+          );
+        }
+        const xClient = cached.client;
+        const posted = await runXBroadcastCycle({
           db,
           client: xClient,
           budgetUsd: cfg.xMonthlyBudgetUsd,
@@ -552,13 +584,18 @@ export function startAlertEngine(): void {
             budgetUsd: cfg.xMonthlyBudgetUsd,
           });
         }
-        await maybeWeeklyPost({
+        const weekly = await maybeWeeklyPost({
           db,
           client: xClient,
           ogOrigin: cfg.xOgOrigin,
           publicUrl: cfg.publicUrl,
           budgetUsd: cfg.xMonthlyBudgetUsd,
         });
+        // 账号活跃度打点(/manage 据此显示「最近发帖」)。只对库里的授权
+        // 账号打点 —— env 回退模式没有对应的行。
+        if (creds.source === "db" && creds.userId && (posted > 0 || weekly)) {
+          markPosted(db, creds.userId, Math.floor(Date.now() / 1000));
+        }
         // 心跳:beat 表示"这轮跑完了"。x_broadcast 不在 health 的期望清单里
         // (可选功能,未配置的部署不该因它报 stale),有 beat 时按默认阈值判活。
         beat(db, "x_broadcast");

@@ -155,13 +155,11 @@ export function parseConfig(raw: Record<string, string | undefined>) {
     xApiSecret: e.X_API_SECRET,
     xAccessToken: e.X_ACCESS_TOKEN,
     xAccessSecret: e.X_ACCESS_SECRET,
-    // X broadcast is on only when ALL FOUR creds are non-empty.
-    xEnabled: !!(
-      e.X_API_KEY &&
-      e.X_API_SECRET &&
-      e.X_ACCESS_TOKEN &&
-      e.X_ACCESS_SECRET
-    ),
+    // App 级凭据(consumer key/secret)齐了就够启动 X 循环 —— 发帖用的
+    // account 级 token 由 lib/xAccounts.resolveXCreds 每轮解析:优先
+    // /manage 授权的账号,回退这里的 X_ACCESS_TOKEN/SECRET(首版单账号
+    // 配置不被破坏)。所以这个标志只管 App 侧,不再要求四件套齐全。
+    xAppConfigured: !!(e.X_API_KEY && e.X_API_SECRET),
     xMonthlyBudgetUsd: parseUsdEnv(
       e.X_MONTHLY_BUDGET_USD,
       15,

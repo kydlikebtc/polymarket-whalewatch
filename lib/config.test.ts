@@ -106,20 +106,22 @@ describe("parseConfig", () => {
     );
   });
 
-  it("xEnabled 仅当四个 X 凭据全非空(缺任一即关,与 telegramEnabled 同款开关语义)", () => {
-    expect(parseConfig({}).xEnabled).toBe(false);
-    const full = {
+  it("xAppConfigured 只看 App 级两件套(account token 由 xAccounts 每轮解析)", () => {
+    expect(parseConfig({}).xAppConfigured).toBe(false);
+    expect(parseConfig({ X_API_KEY: "k" }).xAppConfigured).toBe(false);
+    expect(parseConfig({ X_API_SECRET: "s" }).xAppConfigured).toBe(false);
+    // 多账号授权后 .env 里可以完全没有 access token —— 循环照常启动。
+    expect(
+      parseConfig({ X_API_KEY: "k", X_API_SECRET: "s" }).xAppConfigured,
+    ).toBe(true);
+    // env 单账号回退配置仍原样透出,供 resolveXCreds 兜底。
+    const c = parseConfig({
       X_API_KEY: "k",
       X_API_SECRET: "s",
       X_ACCESS_TOKEN: "t",
       X_ACCESS_SECRET: "ts",
-    };
-    expect(parseConfig(full).xEnabled).toBe(true);
-    for (const missing of Object.keys(full)) {
-      const partial: Record<string, string> = { ...full };
-      delete partial[missing];
-      expect(parseConfig(partial).xEnabled).toBe(false);
-    }
+    });
+    expect(c).toMatchObject({ xAccessToken: "t", xAccessSecret: "ts" });
   });
 
   it("X 预算/大单阈值默认 15/50000,非法值 warn 后回退默认(7×24 不因坏 env 崩)", () => {
