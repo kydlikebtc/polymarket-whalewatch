@@ -1,12 +1,14 @@
 // 共享层字典分片(TopNav/ui.tsx 组件/layout)。键=中文原文,值=英文译文。
 export const DICT_COMMON: Record<string, string> = {
+  信号与战绩: "Signals & Record",
+  信号战绩: "Signal Record",
   // TopNav
   "24h 扫描": "24h Scan",
-  实时告警: "Alerts",
+  实时告警: "Live Alerts",
   拆单累计: "Accumulation",
-  "共识 / 分歧": "Consensus",
+  "共识 / 分歧": "Consensus / Disagreement",
   聪明钱发现: "Discovery",
-  市场卡: "Market",
+  市场卡: "Market Card",
   策略中心: "Strategy Center",
   说明: "Glossary",
   "Polymarket 监控": "Polymarket WhaleWatch",

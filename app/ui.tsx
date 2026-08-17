@@ -9,6 +9,7 @@
 
 import {
   useEffect,
+  useRef,
   useState,
   type FocusEvent as ReactFocusEvent,
   type MouseEvent as ReactMouseEvent,
@@ -61,17 +62,115 @@ function tipPopProps(tip: string) {
 
 /* ---------------------------------------------------------------- TopNav */
 
-const NAV = [
+// 顶栏信息架构:两个高频直达入口(首页 / 说明)夹着三个下拉分组。
+// 页面涨到 9 个后平铺会挤进 overflow-x 滚动区(用户实测「信号战绩看不到」),
+// 而分组同时解决拥挤与「这些页面彼此什么关系」的认知问题 —— 按用户在做
+// 什么分:看盘 / 追聪明钱 / 看策略战绩。
+type NavItem = { href: string; label: string };
+type NavEntry = NavItem | { label: string; items: NavItem[] };
+
+// 分区按数据性质递进:客观行情 → 我们识别的主体 → 我们自己的产出与验证。
+//   市场    = 同一批成交的不同切片(全市场流 / 按钱包聚合 / 按单市场)
+//   聪明钱  = 谁值得跟(发现) + 他们在做什么(共识/分歧)
+//   信号与战绩 = 本工具发了什么信号、策略跑成什么样、对外公开战绩
+// 24h 扫描是最高频入口故不折叠;说明是低频但要随时可达,同样直达。
+const NAV: NavEntry[] = [
   { href: "/", label: "24h 扫描" },
-  { href: "/alerts", label: "实时告警" },
-  { href: "/accumulation", label: "拆单累计" },
-  { href: "/consensus", label: "共识 / 分歧" },
-  { href: "/discovery", label: "聪明钱发现" },
-  { href: "/market", label: "市场卡" },
-  { href: "/follow", label: "策略中心" },
-  { href: "/record", label: "信号战绩" },
+  {
+    label: "市场",
+    items: [
+      { href: "/accumulation", label: "拆单累计" },
+      { href: "/market", label: "市场卡" },
+    ],
+  },
+  {
+    label: "聪明钱",
+    items: [
+      { href: "/consensus", label: "共识 / 分歧" },
+      { href: "/discovery", label: "聪明钱发现" },
+    ],
+  },
+  {
+    label: "信号与战绩",
+    items: [
+      { href: "/alerts", label: "实时告警" },
+      { href: "/follow", label: "策略中心" },
+      { href: "/record", label: "信号战绩" },
+    ],
+  },
   { href: "/glossary", label: "说明" },
-] as const;
+];
+
+// 一个下拉分组。**只由点击控制**:hover 展开叠加 click 切换会互相打架
+// (鼠标移上去已经展开,这一下点击反而把它关掉,表现为「点了没反应」),
+// 而且鼠标路过顶栏就弹菜单本身也是干扰。纯 click 在触屏与桌面行为一致。
+// 点击组外、Esc、以及点进任意子项都收起。组内含当前页时按钮显示激活态,
+// 这样折叠状态下也能看出「我在哪一组」。
+function NavGroup({
+  label,
+  items,
+  pathname,
+  t,
+}: {
+  label: string;
+  items: NavItem[];
+  pathname: string;
+  t: (zh: string) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const active = items.some((i) => i.href === pathname);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="nav-group">
+      <button
+        type="button"
+        className="nav-link nav-group__btn"
+        data-active={active}
+        aria-expanded={open}
+        aria-haspopup="true"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {t(label)}
+        <span className="nav-group__caret" aria-hidden>
+          ▾
+        </span>
+      </button>
+      {open ? (
+        <div className="nav-group__menu" role="menu">
+          {items.map((i) => (
+            <Link
+              key={i.href}
+              href={i.href}
+              className="nav-group__item"
+              data-active={pathname === i.href}
+              role="menuitem"
+              onClick={() => setOpen(false)}
+            >
+              {t(i.label)}
+            </Link>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export function TopNav() {
   const pathname = usePathname();
@@ -84,16 +183,26 @@ export function TopNav() {
           {t("Polymarket 监控")}
         </span>
         <div className="topbar__nav">
-          {NAV.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="nav-link"
-              data-active={pathname === item.href}
-            >
-              {t(item.label)}
-            </Link>
-          ))}
+          {NAV.map((entry) =>
+            "items" in entry ? (
+              <NavGroup
+                key={entry.label}
+                label={entry.label}
+                items={entry.items}
+                pathname={pathname}
+                t={t}
+              />
+            ) : (
+              <Link
+                key={entry.href}
+                href={entry.href}
+                className="nav-link"
+                data-active={pathname === entry.href}
+              >
+                {t(entry.label)}
+              </Link>
+            ),
+          )}
         </div>
         <span style={{ flex: 1 }} />
         {/* External channel link — same explicit window.open fallback as

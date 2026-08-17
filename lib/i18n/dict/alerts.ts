@@ -1,5 +1,8 @@
 // alerts 页字典分片 —— 键=中文原文,值=英文译文。由该页改造代理独家填写。
 export const DICT_ALERTS: Record<string, string> = {
+  "告警条件（金额 / 方向 / 赔率 / 地址年龄 / 冷却 / 聪明钱）统一在运营页配置：":
+    "Alert conditions (amount / side / odds / wallet age / cooldown / smart money) are configured on the ops page:",
+  "近24h {n} 条": "{n} in 24h",
   // Header
   "🐋 Polymarket 大额成交监控": "🐋 Polymarket Whale Trade Monitor",
   共: "Total",
@@ -29,7 +32,7 @@ export const DICT_ALERTS: Record<string, string> = {
   冷却窗口: "Cooldown",
   "分钟（同一钱包·同一市场冷却期内只推首笔，其余仅入库；0 = 关闭）":
     "minutes (per wallet & market, only the first fill pushes during cooldown, the rest just log; 0 = off)",
-  聪明钱: "Smart money",
+  聪明钱: "Smart Money",
   "只推送聪明钱白名单钱包（🏆，每日自动从官方盈利榜播种）":
     "Only push whitelisted smart-money wallets (🏆, seeded daily from the official profit leaderboard)",
   "白名单 {n} 个": "Whitelist: {n} wallets",
