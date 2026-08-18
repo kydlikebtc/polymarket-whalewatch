@@ -156,3 +156,50 @@ export function queueDepth(db: DB): number {
       .get() as { n: number }
   ).n;
 }
+
+// --- 积压探针 --------------------------------------------------------------
+//
+// 覆盖插件通道最难发现的故障:**插件死了但没报错**。
+// 熔断只在插件"跑起来了但撞墙"时触发;如果 Chrome 把 service worker 回收后
+// 没重启、或者运营者关了自动发帖忘了开、或者机器休眠了,插件根本不会来拉队列,
+// 服务端这边一条错误都收不到 —— 唯一的症状就是队列在涨。
+//
+// 「持续超阈值」而不是「一超就报」:一波信号涌入(赛事密集时段)本来就会
+// 短暂堆积,插件几轮就能消化。只有堆着不降才说明没人在消费。
+
+/** 超过多少条算积压。插件一轮拉 3 条、60s 一轮,正常态深度个位数。 */
+export const BACKLOG_THRESHOLD = 20;
+/** 持续多久才报警。15 分钟 ≈ 15 轮都没消化掉,不可能是正常波动。 */
+export const BACKLOG_SUSTAIN_MS = 15 * 60_000;
+
+/**
+ * 有状态的积压判定。放在 worker 进程内存里(重启即复位,可接受:重启后
+ * 若真的还在积压,15 分钟后会重新报)。
+ */
+export class BacklogWatch {
+  private since: number | null = null;
+  private alerted = false;
+
+  /** 每轮调用。返回非 null = 该发这条告警。 */
+  observe(depth: number, nowMs: number): string | null {
+    if (depth < BACKLOG_THRESHOLD) {
+      // 降下去了就复位 —— 下次再堵会重新报(否则一次报警之后永远静默)。
+      this.since = null;
+      this.alerted = false;
+      return null;
+    }
+    if (this.since === null) {
+      this.since = nowMs;
+      return null;
+    }
+    if (this.alerted) return null; // 已报过,不刷屏
+    if (nowMs - this.since < BACKLOG_SUSTAIN_MS) return null;
+    this.alerted = true;
+    const mins = Math.round((nowMs - this.since) / 60_000);
+    return (
+      `⚠️ 𝕏 插件队列积压：${depth} 条待发已持续 ${mins} 分钟无人领取。\n` +
+      `请检查本机 Chrome 是否在运行、插件是否启用、x.com 是否还登录着。\n` +
+      `（急用可在 /manage 把发帖通道切回「API 直发」）`
+    );
+  }
+}

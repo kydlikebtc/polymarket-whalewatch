@@ -51,7 +51,7 @@ import {
   getXDeliveryChannel,
   getXKindSwitches,
 } from "../lib/xSettings";
-import { queueDepth, reclaimStale } from "../lib/xQueue";
+import { BacklogWatch, queueDepth, reclaimStale } from "../lib/xQueue";
 import { projectBusSignals } from "../lib/signalBus";
 import { busTypeAllowed } from "../lib/apiKeys";
 import { runXBroadcastCycle } from "../lib/xBroadcast";
@@ -554,6 +554,10 @@ export function startAlertEngine(): void {
     const X_LOOP_MS = 60_000;
     const PREGAME_GAP_MS = 10 * 60_000;
     let lastPregameAt = 0;
+    // 插件通道最难发现的故障是「插件死了但没报错」——它不会来拉队列,服务端
+    // 一条错误都收不到,唯一症状就是队列在涨。熔断覆盖不了这种(那要插件先
+    // 跑起来才有故障可报)。
+    const backlog = new BacklogWatch();
     // 发帖凭据每轮解析(不缓存):/manage 里切换授权账号后,下一轮 ≤60s
     // 自动改用新账号,无需重启引擎。client 按凭据缓存,凭据没变就复用同一个。
     let cached: {
@@ -634,6 +638,16 @@ export function startAlertEngine(): void {
           const depth = queueDepth(db);
           if (depth > 0) {
             console.log(`[engine] x extension queue depth: ${depth}`);
+          }
+          const backlogAlert = backlog.observe(depth, Date.now());
+          if (backlogAlert) {
+            console.error(`[engine] ${backlogAlert.replace(/\n/g, " ")}`);
+            if (rawSend) {
+              // 尽力而为:告警发不出去不能拖累播报循环本身。
+              await rawSend(backlogAlert).catch((e) =>
+                console.error("[engine] x backlog alert 发送失败", e),
+              );
+            }
           }
           beat(db, "x_broadcast");
           setTimeout(xLoop, X_LOOP_MS);

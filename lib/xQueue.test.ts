@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { openDb, type DB } from "./db";
-import { ackQueued, leaseQueued, queueDepth, reclaimStale } from "./xQueue";
+import {
+  ackQueued,
+  BACKLOG_SUSTAIN_MS,
+  BacklogWatch,
+  leaseQueued,
+  queueDepth,
+  reclaimStale,
+} from "./xQueue";
 
 const NOW = Math.floor(Date.UTC(2026, 7, 18, 12) / 1000);
 
@@ -269,5 +276,53 @@ describe("queueDepth", () => {
        VALUES ('whale', 'api1', 't', 0, 0.015, 'claimed', 'api', ?)`,
     ).run(NOW);
     expect(queueDepth(db)).toBe(2);
+  });
+});
+
+describe("BacklogWatch —— 「插件死了但没报错」的唯一探针", () => {
+  it("低于阈值不报警", () => {
+    const w = new BacklogWatch();
+    expect(w.observe(5, 0)).toBeNull();
+    expect(w.observe(5, 60 * 60_000)).toBeNull();
+  });
+
+  it("超阈值但没持续够久,先不报 —— 一波信号涌入是正常的", () => {
+    const w = new BacklogWatch();
+    expect(w.observe(30, 0)).toBeNull();
+    expect(w.observe(30, BACKLOG_SUSTAIN_MS - 1)).toBeNull();
+  });
+
+  it("持续超阈值到点才报,且带上积压条数与持续时长", () => {
+    const w = new BacklogWatch();
+    w.observe(30, 0);
+    const alert = w.observe(30, BACKLOG_SUSTAIN_MS);
+    expect(alert).toContain("30");
+    expect(alert).toContain("𝕏");
+  });
+
+  it("报过一次就不再刷屏(直到恢复)", () => {
+    const w = new BacklogWatch();
+    w.observe(30, 0);
+    expect(w.observe(30, BACKLOG_SUSTAIN_MS)).not.toBeNull();
+    expect(w.observe(35, BACKLOG_SUSTAIN_MS + 60_000)).toBeNull();
+    expect(w.observe(40, BACKLOG_SUSTAIN_MS * 3)).toBeNull();
+  });
+
+  it("积压降下去即复位,下次再堵会重新报", () => {
+    const w = new BacklogWatch();
+    w.observe(30, 0);
+    expect(w.observe(30, BACKLOG_SUSTAIN_MS)).not.toBeNull();
+    w.observe(0, BACKLOG_SUSTAIN_MS + 1000); // 恢复
+    w.observe(30, BACKLOG_SUSTAIN_MS + 2000); // 又堵上
+    expect(w.observe(30, BACKLOG_SUSTAIN_MS * 2 + 2000)).not.toBeNull();
+  });
+
+  it("中途掉到阈值以下会重新计时,不会攒够时长误报", () => {
+    const w = new BacklogWatch();
+    w.observe(30, 0);
+    w.observe(1, 60_000); // 消化掉了
+    w.observe(30, 120_000); // 重新堆积,计时从这里算
+    expect(w.observe(30, 120_000 + BACKLOG_SUSTAIN_MS - 1)).toBeNull();
+    expect(w.observe(30, 120_000 + BACKLOG_SUSTAIN_MS)).not.toBeNull();
   });
 });
