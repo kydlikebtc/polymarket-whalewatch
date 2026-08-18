@@ -113,18 +113,6 @@ function aggregateRecentAlerts(db: DB, nowSec: number): Map<string, MarketAgg> {
   return byCid;
 }
 
-function topSideOf(agg: MarketAgg): string | null {
-  let best: string | null = null;
-  let bestUsd = 0;
-  for (const [outcome, usd] of agg.buyUsdByOutcome) {
-    if (usd > bestUsd) {
-      best = outcome;
-      bestUsd = usd;
-    }
-  }
-  return best;
-}
-
 function utcDay(nowSec: number): number {
   return Math.floor(nowSec / 86400);
 }
@@ -184,10 +172,17 @@ export async function runPregameCycle(d: PregameDeps): Promise<number> {
       continue;
     }
 
-    const topSide = topSideOf(c);
+    // 双边站位:BUY 金额降序取前两名 —— composer 的三种局面(X-to-1 /
+    // every-signal / SPLIT)全由这两个数字决定。SELL 在聚合层就不进
+    // buyUsdByOutcome(离场≠站边),这里只做纯排序。
+    const sides = [...c.buyUsdByOutcome.entries()]
+      .map(([name, usd]) => ({ name, usd }))
+      .filter((s) => s.usd > 0)
+      .sort((a, b) => b.usd - a.usd)
+      .slice(0, 2);
     let topSidePriceCents: number | null = null;
-    if (topSide) {
-      const idx = c.meta.outcomes.indexOf(topSide);
+    if (sides.length > 0) {
+      const idx = c.meta.outcomes.indexOf(sides[0].name);
       const price = idx >= 0 ? c.meta.outcomePrices[idx] : undefined;
       if (typeof price === "number" && Number.isFinite(price)) {
         topSidePriceCents = Math.round(price * 100);
@@ -205,8 +200,7 @@ export async function runPregameCycle(d: PregameDeps): Promise<number> {
       title: c.title,
       hoursToEnd: c.hoursToEnd,
       alertCount: c.alertCount,
-      totalUsd: c.totalUsd,
-      topSide,
+      sides,
       topSidePriceCents,
       // 赛道标签走本地 event_category(只读,零上游请求)。原先取
       // meta.category,但 gamma 的该字段实测恒为空(745/745),标签因此

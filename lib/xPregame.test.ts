@@ -91,7 +91,7 @@ function deps(db: DB, client: XClient, metas: Record<string, MarketMeta>) {
 }
 
 describe("runPregameCycle", () => {
-  it("posts an in-window market once with leaning side, and dedups within the UTC day", async () => {
+  it("posts an in-window market once with both sides' money, and dedups within the UTC day", async () => {
     const db = openDb(":memory:");
     // 赛道标签取自 event_category(告警 payload 的 eventSlug='e'),
     // 而不是 meta.category —— 后者在 gamma 上实测恒为空。
@@ -103,11 +103,12 @@ describe("runPregameCycle", () => {
     const client = fakeClient();
     const d = deps(db, client, { "0xc1": meta("0xc1", 3) });
     expect(await runPregameCycle(d)).toBe(1);
+    // 60K/30K 恰好压在 2.0 比例边界上 → 走 X-to-1(≥2 含边界),不是 SPLIT。
     expect(client.posts[0]).toBe(
-      "⏰ SETTLING IN 3H\n\n" +
+      "⏰ SETTLES IN 3H — smart money is 2-to-1 on YES\n\n" +
         "Market 0xc1\n" +
-        "└ Leaning YES @ 61¢\n\n" +
-        "📡 2 smart-money signals · $90K in 24h\n\n" +
+        "└ YES @ 61¢\n\n" +
+        "📡 2 signals in 24h · $60K on YES vs $30K on NO\n\n" +
         "#Polymarket #NBA",
     );
     const row = db
@@ -143,14 +144,19 @@ describe("runPregameCycle", () => {
     expect(client.posts).toHaveLength(0);
   });
 
-  it("SELL alerts count toward totals but not toward the leaning side", async () => {
+  it("SELL alerts count toward the signal count but never toward sides money", async () => {
     const db = openDb(":memory:");
     whaleAlert(db, "b1", "0xc1", 20_000, "Yes", NOW - 600, "BUY");
     whaleAlert(db, "b2", "0xc1", 80_000, "No", NOW - 700, "SELL");
     const client = fakeClient();
     await runPregameCycle(deps(db, client, { "0xc1": meta("0xc1", 2) }));
-    expect(client.posts[0]).toContain("📡 2 smart-money signals · $100K in 24h");
-    expect(client.posts[0]).toContain("└ Leaning YES");
+    // SELL 是离场:计入热度(2 signals),但它的 $80K 不进资金行,也不给
+    // No 制造一个假想的对立面 —— 对面 BUY 为 0 就走 every-signal 局面。
+    expect(client.posts[0]).toContain("— every signal is on YES");
+    expect(client.posts[0]).toContain("└ YES @ 61¢");
+    expect(client.posts[0]).toContain(
+      "📡 2 signals in 24h · all $20K on one side",
+    );
   });
 
   it("caps at 3 markets per cycle, ranked by alert count then usd", async () => {

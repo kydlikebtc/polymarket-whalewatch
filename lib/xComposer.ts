@@ -437,42 +437,71 @@ export function composeConsensusPost(i: ConsensusPostInput): string {
   return fitPost(ladder, sanitizeTitle(i.title));
 }
 
+export interface PregameSide {
+  name: string;
+  usd: number; // 该结果上的 BUY 金额(24h)
+}
+
 export interface PregamePostInput {
   title: string;
   hoursToEnd: number;
   alertCount: number;
-  totalUsd: number;
-  topSide?: string | null;
+  /** sides[0] 的现价(¢),取不到就省略。 */
   topSidePriceCents?: number | null;
+  /** 按 BUY 金额降序,composer 用前两个。空数组 = 无方向可讲。 */
+  sides?: PregameSide[];
   category?: string | null;
   subcategory?: string | null;
 }
 
 /**
- *   ⏰ SETTLING IN 3H
- *
- *   Lakers vs Celtics
- *   └ Leaning YES @ 61¢
- *
- *   📡 7 smart-money signals · $310K in 24h
- *
- *   #Polymarket #NBA
+ * 三种局面三种讲法(buyUsdByOutcome 存了两边,旧模板只讲 Leaning 一边):
+ *   比例 ≥2   ⏰ SETTLES IN 3H — smart money is 7-to-1 on Lakers
+ *   对面为 0  ⏰ SETTLES IN 6H — every signal is on Nongshim Red Force
+ *   比例 <2   ⏰ SETTLES IN 2H — smart money is SPLIT on this one
+ * 资金行:$310K on Lakers vs $42K on Celtics / all $13.1K on one side。
+ * 分歧不硬讲成 Leaning —— SPLIT 本身就是好故事。
  */
 export function composePregamePost(i: PregamePostInput): string {
-  const head = `⏰ SETTLING IN ${settleShort(i.hoursToEnd).replace(" to settle", "").toUpperCase()}`;
-  const lean =
-    i.topSide != null
-      ? `\n└ Leaning ${outcomeDisplay(i.topSide)}` +
-        (i.topSidePriceCents != null ? ` @ ${i.topSidePriceCents}¢` : "")
+  const hh = settleShort(i.hoursToEnd).replace(" to settle", "").toUpperCase();
+  const s0 = i.sides?.[0];
+  const s1 = i.sides?.[1];
+  let stance = "";
+  let leanPrefix = "";
+  if (s0 && s0.usd > 0) {
+    if (s1 && s1.usd > 0) {
+      const ratio = s0.usd / s1.usd;
+      if (ratio >= 2) {
+        stance = ` — smart money is ${Math.round(ratio)}-to-1 on ${outcomeDisplay(s0.name)}`;
+      } else {
+        stance = " — smart money is SPLIT on this one";
+        leanPrefix = "Slight lean ";
+      }
+    } else {
+      stance = ` — every signal is on ${outcomeDisplay(s0.name)}`;
+    }
+  }
+  const head = `⏰ SETTLES IN ${hh}${stance}`;
+  const lean = s0
+    ? `\n└ ${leanPrefix}${outcomeDisplay(s0.name)}` +
+      (i.topSidePriceCents != null ? ` @ ${i.topSidePriceCents}¢` : "")
+    : "";
+  const sig = `📡 ${i.alertCount} signal${i.alertCount === 1 ? "" : "s"} in 24h`;
+  const moneyClause =
+    s0 && s0.usd > 0
+      ? s1 && s1.usd > 0
+        ? ` · ${usdCompact(s0.usd)} on ${outcomeDisplay(s0.name)} vs ${usdCompact(s1.usd)} on ${outcomeDisplay(s1.name)}`
+        : ` · all ${usdCompact(s0.usd)} on one side`
       : "";
   const tags = buildTags({
     category: i.category,
     subcategory: i.subcategory,
     title: i.title,
   });
-  return fitByTruncatingTitle(
-    (title) =>
-      `${head}\n\n${title}${lean}\n\n📡 ${i.alertCount} smart-money signals · ${usdCompact(i.totalUsd)} in 24h\n\n${tags}`,
+  const variant = (withMoney: boolean) => (title: string) =>
+    `${head}\n\n${title}${lean}\n\n${sig}${withMoney ? moneyClause : ""}\n\n${tags}`;
+  return fitPost(
+    moneyClause ? [variant(true), variant(false)] : [variant(false)],
     sanitizeTitle(i.title),
   );
 }

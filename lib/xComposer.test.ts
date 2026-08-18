@@ -155,36 +155,33 @@ describe("composeConsensusPost", () => {
 });
 
 describe("composePregamePost", () => {
-  it("结构化:结算倒计时抬头 + 站位 + 聚合佐证 + 标签", () => {
+  it("结构化全输出锁定:单边站位 every-signal 抬头 + └ 行 + 资金段 + 标签", () => {
     expect(
       composePregamePost({
         title: "Lakers vs Celtics",
         hoursToEnd: 3,
         alertCount: 7,
-        totalUsd: 310_000,
-        topSide: "Yes",
+        sides: [{ name: "Yes", usd: 310_000 }],
         topSidePriceCents: 61,
         category: "Sports",
         subcategory: "NBA",
       }),
     ).toBe(
-      "⏰ SETTLING IN 3H\n\n" +
+      "⏰ SETTLES IN 3H — every signal is on YES\n\n" +
         "Lakers vs Celtics\n" +
-        "└ Leaning YES @ 61¢\n\n" +
-        "📡 7 smart-money signals · $310K in 24h\n\n" +
+        "└ YES @ 61¢\n\n" +
+        "📡 7 signals in 24h · all $310K on one side\n\n" +
         "#Polymarket #NBA",
     );
   });
-  it("无明显站位时省略该行", () => {
+  it("无站位(sides 缺省)时省略 └ 行与资金段", () => {
     const t = composePregamePost({
       title: "Lakers vs Celtics",
       hoursToEnd: 2,
       alertCount: 3,
-      totalUsd: 55_000,
-      topSide: null,
-      topSidePriceCents: null,
     });
-    expect(t).not.toContain("Leaning");
+    expect(t).not.toContain("└");
+    expect(t).toContain("📡 3 signals in 24h\n");
     expect(t).not.toContain("http");
     expect(t).toContain("#Polymarket");
   });
@@ -744,5 +741,85 @@ describe("composeConsensusPost v2", () => {
     });
     expect(weightedLength(t)).toBeLessThanOrEqual(280);
     expect(t).not.toMatch(/https?:\/\//);
+  });
+});
+
+describe("composePregamePost v2", () => {
+  const base = {
+    title: "Lakers vs Celtics",
+    hoursToEnd: 3,
+    alertCount: 7,
+    topSidePriceCents: 61,
+    sides: [
+      { name: "Lakers", usd: 310_000 },
+      { name: "Celtics", usd: 42_000 },
+    ],
+  };
+  it("比例 ≥2:X-to-1 抬头 + 双边资金行", () => {
+    const t = composePregamePost(base);
+    expect(t).toContain("⏰ SETTLES IN 3H — smart money is 7-to-1 on Lakers");
+    expect(t).toContain("└ Lakers @ 61¢");
+    expect(t).toContain(
+      "📡 7 signals in 24h · $310K on Lakers vs $42K on Celtics",
+    );
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
+  });
+  it("一边倒:every signal 抬头 + all on one side(不输出 vs $0)", () => {
+    const t = composePregamePost({
+      ...base,
+      hoursToEnd: 6,
+      alertCount: 1,
+      topSidePriceCents: 62,
+      title: "LoL: Nongshim Red Force vs DN SOOPers - Game 1 Winner",
+      sides: [{ name: "Nongshim Red Force", usd: 13_100 }],
+    });
+    expect(t).toContain("— every signal is on Nongshim Red Force");
+    expect(t).toContain("📡 1 signal in 24h · all $13.1K on one side");
+    expect(t).not.toContain("vs $0");
+  });
+  it("比例 <2:SPLIT 抬头 + Slight lean 前缀(分歧本身是好故事)", () => {
+    const t = composePregamePost({
+      ...base,
+      hoursToEnd: 2,
+      alertCount: 9,
+      topSidePriceCents: 54,
+      title: "Chiefs vs Bills",
+      sides: [
+        { name: "Chiefs", usd: 180_000 },
+        { name: "Bills", usd: 150_000 },
+      ],
+    });
+    expect(t).toContain("— smart money is SPLIT on this one");
+    expect(t).toContain("└ Slight lean Chiefs @ 54¢");
+  });
+  it("无 sides(全 SELL 市场):裸抬头不崩,资金行不出", () => {
+    const t = composePregamePost({ ...base, sides: [] });
+    expect(t).toContain("⏰ SETTLES IN 3H\n");
+    expect(t).toContain("📡 7 signals in 24h\n");
+  });
+  it("二元市场 outcome 大写:YES/NO 经 outcomeDisplay", () => {
+    const t = composePregamePost({
+      ...base,
+      sides: [
+        { name: "Yes", usd: 200_000 },
+        { name: "No", usd: 50_000 },
+      ],
+    });
+    expect(t).toContain("4-to-1 on YES");
+    expect(t).toContain("$200K on YES vs $50K on NO");
+  });
+  it("硬不变量:超长标题先丢资金段再截标题,≤280 加权 + 无 URL", () => {
+    // 钉住 fitPost 阶梯前提(最简底座 ≤278):标题被截时资金段已让位,
+    // 抬头故事(X-to-1)与 └ 行保留 —— 标题是最后才动的。
+    const t = composePregamePost({
+      ...base,
+      title:
+        "Will " + "the committee ".repeat(20) + "decide? https://leak.example",
+    });
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
+    expect(t).not.toMatch(/https?:\/\//);
+    expect(t).not.toContain("$310K on Lakers"); // 资金段先丢
+    expect(t).toContain("7-to-1 on Lakers"); // 抬头故事保留
+    expect(t).toContain("…");
   });
 });
