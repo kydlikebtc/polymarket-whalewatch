@@ -18,12 +18,13 @@ describe("apiKeys — 签发/校验/吊销", () => {
     const issued = issueApiKey(db, { label: "订户A", tier: "realtime" }, 1000);
     expect(issued.key).toMatch(/^wlk_/);
     const info = verifyApiKey(db, issued.key, 2000);
-    // 未指定订阅范围 = 不限(busTypes: null)。
+    // 未指定订阅范围 = 不限(busTypes: null);写能力默认关(canXQueue: false)。
     expect(info).toEqual({
       id: issued.id,
       label: "订户A",
       tier: "realtime",
       busTypes: null,
+      canXQueue: false,
     });
     const row = db
       .prepare("SELECT last_used_at, key_hash FROM api_keys WHERE id = ?")
@@ -99,7 +100,11 @@ describe("订阅范围(bus_types)", () => {
   it("不指定 / 空数组 = 不限(既有 key 升级后语义不变)", () => {
     const db = openDb(":memory:");
     const a = issueApiKey(db, { label: "全量", tier: "realtime" });
-    const b = issueApiKey(db, { label: "空数组", tier: "delayed", busTypes: [] });
+    const b = issueApiKey(db, {
+      label: "空数组",
+      tier: "delayed",
+      busTypes: [],
+    });
     expect(verifyApiKey(db, a.key)?.busTypes).toBeNull();
     // 「没勾任何类型」只能理解为「不限」——存成空数组会变成什么都收不到。
     expect(verifyApiKey(db, b.key)?.busTypes).toBeNull();
@@ -121,5 +126,44 @@ describe("订阅范围(bus_types)", () => {
     expect(busTypeAllowed(["large"], "large")).toBe(true);
     expect(busTypeAllowed(["large"], "consensus")).toBe(false);
     expect(busTypeAllowed(["strategy"], "strategy")).toBe(true);
+  });
+});
+
+describe("𝕏 发帖队列能力位(can_x_queue)", () => {
+  it("默认不给 —— 既有 key 不该因升级凭空获得发帖权", () => {
+    const db = openDb(":memory:");
+    const k = issueApiKey(db, { label: "reader", tier: "realtime" });
+    expect(verifyApiKey(db, k.key)!.canXQueue).toBe(false);
+  });
+
+  it("签发时可勾选", () => {
+    const db = openDb(":memory:");
+    const k = issueApiKey(db, {
+      label: "extension",
+      tier: "realtime",
+      canXQueue: true,
+    });
+    expect(verifyApiKey(db, k.key)!.canXQueue).toBe(true);
+  });
+
+  it("管理列表带出能力位(/manage 要显示哪把 key 能发帖)", () => {
+    const db = openDb(":memory:");
+    issueApiKey(db, { label: "a", tier: "delayed" });
+    issueApiKey(db, { label: "b", tier: "realtime", canXQueue: true });
+    expect(listApiKeys(db).map((r) => [r.label, r.canXQueue])).toEqual([
+      ["a", false],
+      ["b", true],
+    ]);
+  });
+
+  it("吊销后连能力位一起失效", () => {
+    const db = openDb(":memory:");
+    const k = issueApiKey(db, {
+      label: "ext",
+      tier: "realtime",
+      canXQueue: true,
+    });
+    revokeApiKey(db, verifyApiKey(db, k.key)!.id);
+    expect(verifyApiKey(db, k.key)).toBeNull();
   });
 });

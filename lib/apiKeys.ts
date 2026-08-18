@@ -30,6 +30,14 @@ export function issueApiKey(
      * 省略/空数组 = 全部 —— 既有 key 与不关心分类的订阅方语义不变。
      */
     busTypes?: string[] | null;
+    /**
+     * 是否允许消费 𝕏 发帖队列(/api/x-queue)。默认 false。
+     *
+     * 与 busTypes 的「NULL = 不限」相反,这里默认关:busTypes 管的是**读**,
+     * 多给一点数据无非是范围宽;can_x_queue 管的是**写**(能替账号发推),
+     * 最小权限在这一侧只能默认拒绝。
+     */
+    canXQueue?: boolean;
   },
   nowSec: number = Math.floor(Date.now() / 1000),
 ): IssuedKey {
@@ -38,7 +46,7 @@ export function issueApiKey(
   const key = `wlk_${randomBytes(24).toString("base64url")}`;
   const res = db
     .prepare(
-      "INSERT INTO api_keys (key_hash, label, tier, created_at, bus_types) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO api_keys (key_hash, label, tier, created_at, bus_types, can_x_queue) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .run(
       hashKey(key),
@@ -50,6 +58,7 @@ export function issueApiKey(
       opts.busTypes && opts.busTypes.length > 0
         ? JSON.stringify(opts.busTypes)
         : null,
+      opts.canXQueue ? 1 : 0,
     );
   return { id: Number(res.lastInsertRowid), key };
 }
@@ -60,6 +69,8 @@ export interface ApiKeyInfo {
   tier: ApiKeyTier;
   /** null = 不限(全部类型);数组 = 只订阅这些。 */
   busTypes: string[] | null;
+  /** 是否允许消费 𝕏 发帖队列(写权限,默认 false)。 */
+  canXQueue: boolean;
 }
 
 /**
@@ -75,10 +86,16 @@ export function verifyApiKey(
   if (!token) return null;
   const row = db
     .prepare(
-      "SELECT id, label, tier, bus_types FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL",
+      "SELECT id, label, tier, bus_types, can_x_queue FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL",
     )
     .get(hashKey(token)) as
-    | { id: number; label: string; tier: string; bus_types: string | null }
+    | {
+        id: number;
+        label: string;
+        tier: string;
+        bus_types: string | null;
+        can_x_queue: number;
+      }
     | undefined;
   if (!row) return null;
   db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(
@@ -90,6 +107,7 @@ export function verifyApiKey(
     label: row.label,
     tier: row.tier === "realtime" ? "realtime" : "delayed",
     busTypes: parseBusTypes(row.bus_types),
+    canXQueue: row.can_x_queue === 1,
   };
 }
 
@@ -139,6 +157,8 @@ export interface ApiKeyRow {
   createdAt: number;
   revokedAt: number | null;
   lastUsedAt: number | null;
+  busTypes: string[] | null;
+  canXQueue: boolean;
 }
 
 /** 管理列表:无明文无 hash(hash 也是秘密的影子,列表用不着它)。 */
@@ -146,7 +166,7 @@ export function listApiKeys(db: DB): ApiKeyRow[] {
   return (
     db
       .prepare(
-        "SELECT id, label, tier, created_at, revoked_at, last_used_at, bus_types FROM api_keys ORDER BY id",
+        "SELECT id, label, tier, created_at, revoked_at, last_used_at, bus_types, can_x_queue FROM api_keys ORDER BY id",
       )
       .all() as {
       id: number;
@@ -156,6 +176,7 @@ export function listApiKeys(db: DB): ApiKeyRow[] {
       revoked_at: number | null;
       last_used_at: number | null;
       bus_types: string | null;
+      can_x_queue: number;
     }[]
   ).map((r) => ({
     id: r.id,
@@ -165,5 +186,6 @@ export function listApiKeys(db: DB): ApiKeyRow[] {
     revokedAt: r.revoked_at,
     lastUsedAt: r.last_used_at,
     busTypes: parseBusTypes(r.bus_types),
+    canXQueue: r.can_x_queue === 1,
   }));
 }
