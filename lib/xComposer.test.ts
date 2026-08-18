@@ -10,6 +10,7 @@ import {
   entityTag,
   strategyEn,
   STRATEGY_EN,
+  weightedLength,
 } from "./xComposer";
 
 describe("usdCompact", () => {
@@ -296,7 +297,9 @@ describe("entityTag(第三个标签)", () => {
     // 真实数据踩到的:#WorldCup 在足球世界杯赛期会被足球内容淹没,
     // 给一场 CS 比赛贴这个标签,精准度还不如不加。
     expect(
-      entityTag("Counter-Strike: Team Falcons vs K27 (BO1) - Esports World Cup Group B"),
+      entityTag(
+        "Counter-Strike: Team Falcons vs K27 (BO1) - Esports World Cup Group B",
+      ),
     ).toBe("#CS2");
     expect(entityTag("LoL: T1 vs DN SOOPers — Esports World Cup")).toBe(
       "#LeagueOfLegends",
@@ -436,7 +439,30 @@ describe("composeSettlementPost · 卖单方向", () => {
   });
 
   it("脏价(0 / >100)仍然只报结果", () => {
-    expect(composeSettlementPost({ ...sell, entryCents: 0, won: true })).not.toContain("¢");
-    expect(composeSettlementPost({ ...sell, entryCents: 140, won: true })).not.toContain("¢");
+    expect(
+      composeSettlementPost({ ...sell, entryCents: 0, won: true }),
+    ).not.toContain("¢");
+    expect(
+      composeSettlementPost({ ...sell, entryCents: 140, won: true }),
+    ).not.toContain("¢");
+  });
+});
+
+describe("weightedLength", () => {
+  it("拉丁字母/数字/常用标点计 1", () => {
+    expect(weightedLength("WHALE: $200K @ 80")).toBe(17);
+    expect(weightedLength("¢")).toBe(1); // U+00A2 在拉丁补充区
+    expect(weightedLength("·")).toBe(1); // U+00B7
+    expect(weightedLength("—")).toBe(1); // U+2014 em dash 在 [8208,8223]
+  });
+  it("emoji 与制表符号计 2", () => {
+    expect(weightedLength("🐳")).toBe(2);
+    expect(weightedLength("└")).toBe(2); // U+2514
+    expect(weightedLength("…")).toBe(2); // U+2026 不在权 1 区间
+    expect(weightedLength("⏳")).toBe(2);
+  });
+  it("混排:真实抬头行", () => {
+    // 🐳(2) + 空格(1)*5 + "WHALE:"(6) + "$200K"(5) + "says"(4) + "NO"(2) + "@"(1) + "80¢"(3)
+    expect(weightedLength("🐳 WHALE: $200K says NO @ 80¢")).toBe(29);
   });
 });

@@ -9,6 +9,25 @@
 
 export const X_POST_MAX_CHARS = 280;
 
+// X 的加权计数(twitter-text v3 口径):下列码点区间计 1,其余(emoji、└、…、
+// ⏱ 等)计 2。旧实现用 [...s].length 数码点,每帖比 X 的算法少算 3~5 —— 填满
+// 280 额度后这个差值就是折叠事故,必须按 X 的尺子量。
+const WEIGHT_1_RANGES: [number, number][] = [
+  [0, 4351], // 拉丁/西里尔/希腊等基本区
+  [8192, 8205], // 常用空白与零宽
+  [8208, 8223], // 连字符/引号/em dash
+  [8242, 8247], // prime marks
+];
+
+export function weightedLength(s: string): number {
+  let w = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) as number;
+    w += WEIGHT_1_RANGES.some(([a, b]) => cp >= a && cp <= b) ? 1 : 2;
+  }
+  return w;
+}
+
 // 大单帖的告警级前缀分档:🚨 是"停下来看"级别,与 TG 的 🐳/💰 分层同思路。
 export const WHALE_SIREN_USD = 250_000;
 
