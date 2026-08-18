@@ -34,7 +34,7 @@ export function weightedLength(s: string): number {
 export const WHALE_SIREN_USD = 250_000;
 
 /**
- * 首行改讲「占 24h 成交量比例」的门槛(百分数)。
+ * 抬头追加「超过全市场全天成交量」断言的门槛(百分数)。
  *
  * $121K 在 Polymarket 上不算罕见,但「一笔单子就等于该市场全天所有人的
  * 成交量」很罕见。时间线上读者只扫首行,最稀奇的那个事实必须放在那里,
@@ -221,6 +221,10 @@ function fitByTruncatingTitle(
  * 变体阶梯限长:variants 从最富到最简排列(每个 build 把 title 恰好嵌入一次),
  * 取第一个 ≤280 加权的;全超才截标题 —— 降级顺序从「砍标题」反转成「先丢可选
  * 事实行」:市场标题是读者判断"这事关不关我"的唯一依据,最后才动。
+ *
+ * 前提:最简变体底座须 ≤278 加权(留 2 给省略号)—— 由各模板的超长标题
+ * 测试钉住。每个 build 必须把 title 恰好嵌入一次:嵌两次会少扣预算截不
+ * 干净,嵌零次会输出悬空省略号。
  */
 export function fitPost(
   variants: ((title: string) => string)[],
@@ -257,40 +261,67 @@ export interface WhalePostInput {
   hoursToEnd?: number | null;
   category?: string | null;
   subcategory?: string | null;
+  /**
+   * type='smart'(白名单聪明钱)时传入:凭证行数据。null 段省略,全 null 时
+   * 凭证行整行不出但 🏆 抬头保留(「当时是白名单钱包」是告警时刻的事实)。
+   * 不传/null = 匿名大单(type='large'),沿用 🐳/🚨 抬头。
+   */
+  smart?: { winRate?: number | null; netPnl?: number | null } | null;
+  /**
+   * 承诺行开关。调用方按双闸门判定(见 xBroadcast):hoursToEnd ≤144h
+   * (xSettled 只补发 7 天内原帖,超过就是空头支票)且 settled 功能开着。
+   */
+  promiseSettled?: boolean;
 }
 
+export const SETTLE_PROMISE_LINE = "Result posted at settlement — win or lose.";
+
 /**
- * 结构化布局(读者在时间线上是「扫」不是「读」):
+ * 断言式抬头(v2):`$200K says NO @ 80¢` 是一句有立场的人话 —— quote-tweet
+ * 的饵;`says {outcome}` 对任意 outcome 语法成立(says YES / says Lakers)。
+ * BUY→says,SELL→sells(卖出≠看反,不硬造方向)。旧抬头 `🐳 WHALE BUY ·
+ * $200K` 是类目标签,每条一样,读者视觉免疫;outcome+价格并入首行后,
+ * 通知预览一行就能读完整个信号。
  *
- *   🐳 WHALE BUY · $184K
+ *   🐳 WHALE: $200K says NO @ 80¢
  *
- *   Chiefs win Super Bowl LX?
- *   └ YES @ 67¢
+ *   Will Bitcoin dip to $45,000 by December 31, 2026?
  *
- *   📊 12% of 24h vol · 💧 $229K liq · ⏳ 5h to settle
+ *   📊 94% of 24h vol · 💧 $186K liq · ⏳ 136d to settle
  *
- *   #Polymarket #NFL
+ *   #Polymarket $BTC
  *
- * 首行给结论(什么事+多大),中段给标的与方向,再给佐证,末行给标签。
  * 佐证段哪项缺就省哪项,整段都没有就整行不要 —— 绝不用 0/N-A 占位。
+ * 降级阶梯:丢承诺行 → 丢佐证行 → 丢凭证行 → 截标题。
  */
 export function composeWhalePost(i: WhalePostInput): string {
-  const siren = i.usd >= WHALE_SIREN_USD;
-  const icon = siren ? "🚨" : "🐳";
-  const side = i.side === "SELL" ? "SELL" : "BUY";
-  // 反常度优先:占比过线时首行讲「这一笔 vs 全市场全天」,否则回到金额抬头。
+  const isSmart = i.smart != null;
+  const icon = isSmart ? "🏆" : i.usd >= WHALE_SIREN_USD ? "🚨" : "🐳";
+  const label = isSmart ? "SMART MONEY" : "WHALE";
+  const verb = i.side === "SELL" ? "sells" : "says";
   const headline = i.pct24h != null && i.pct24h >= IMPACT_HEADLINE_PCT;
-  const head = headline
-    ? `${icon} ${usdCompact(i.usd)} ${side} · ${Math.round(i.pct24h as number)}% of this market's 24h volume`
-    : `${icon} WHALE ${side} · ${usdCompact(i.usd)}`;
+  const head =
+    `${icon} ${label}: ${usdCompact(i.usd)} ${verb} ` +
+    `${outcomeDisplay(i.outcome)} @ ${i.priceCents}¢` +
+    (headline ? " — more than this market's entire 24h volume" : "");
+  // Track record 凭证行(仅聪明钱)。
+  const cred: string[] = [];
+  if (isSmart) {
+    const seg: string[] = [];
+    const wr = i.smart?.winRate;
+    if (wr != null) seg.push(`${Math.round(wr * 100)}% win rate`);
+    const pnl = i.smart?.netPnl;
+    // usdCompact 负数自带 - 号,只在 ≥0 时补 +。
+    if (pnl != null) seg.push(`${pnl >= 0 ? "+" : ""}${usdCompact(pnl)} PnL`);
+    if (seg.length > 0) cred.push(`Track record: ${seg.join(" · ")}`);
+  }
   const facts: string[] = [];
-  // 首行已讲占比就不再在佐证段重复,把字符让给流动性/倒计时。
+  // 抬头已讲占比就不再在佐证段重复,把字符让给流动性/倒计时。
   if (i.pct24h != null && !headline)
     facts.push(`📊 ${Math.round(i.pct24h)}% of 24h vol`);
   if (i.liquidityUsd != null)
     facts.push(`💧 ${usdCompact(i.liquidityUsd)} liq`);
   if (i.hoursToEnd != null) facts.push(`⏳ ${settleShort(i.hoursToEnd)}`);
-  const factLine = facts.length > 0 ? `\n\n${facts.join(" · ")}` : "";
   // 实体标签按【原始标题】匹配,而不是可能被截断的展示标题 —— 否则
   // 长标题被截后会丢标签,同一个市场的帖子标签还会时有时无。
   const tags = buildTags({
@@ -298,11 +329,26 @@ export function composeWhalePost(i: WhalePostInput): string {
     subcategory: i.subcategory,
     title: i.title,
   });
-  return fitByTruncatingTitle(
-    (title) =>
-      `${head}\n\n${title}\n└ ${outcomeDisplay(i.outcome)} @ ${i.priceCents}¢${factLine}\n\n${tags}`,
-    sanitizeTitle(i.title),
-  );
+  const variant =
+    (withFacts: boolean, withCred: boolean, withPromise: boolean) =>
+    (title: string) => {
+      const mid = [
+        ...(withCred ? cred : []),
+        ...(withFacts && facts.length > 0 ? [facts.join(" · ")] : []),
+      ];
+      return (
+        `${head}\n\n${title}` +
+        (mid.length > 0 ? `\n\n${mid.join("\n")}` : "") +
+        (withPromise ? `\n\n${SETTLE_PROMISE_LINE}` : "") +
+        `\n\n${tags}`
+      );
+    };
+  const promise = i.promiseSettled === true;
+  const ladder = [variant(true, true, promise)];
+  if (promise) ladder.push(variant(true, true, false));
+  ladder.push(variant(false, true, false));
+  if (cred.length > 0) ladder.push(variant(false, false, false));
+  return fitPost(ladder, sanitizeTitle(i.title));
 }
 
 export interface ConsensusPostInput {

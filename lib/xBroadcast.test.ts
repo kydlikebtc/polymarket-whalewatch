@@ -72,10 +72,10 @@ describe("runXBroadcastCycle", () => {
     recordAlert(db, "large", "t1", whalePayload(), NOW - 60);
     const client = fakeClient();
     expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
-    // 结构化布局:抬头 / 标的+方向 / 佐证 / 标签(见 lib/xComposer)。
-    expect(client.posts[0]).toContain("🐳 WHALE BUY · $67K");
+    // 结构化布局:断言抬头(含标的+方向+价格)/ 标题 / 佐证 / 标签
+    // (见 lib/xComposer composeWhalePost v2)。
+    expect(client.posts[0]).toContain("🐳 WHALE: $67K says YES @ 67¢");
     expect(client.posts[0]).toContain("Chiefs win Super Bowl LX?");
-    expect(client.posts[0]).toContain("└ YES @ 67¢");
     expect(client.posts[0]).toContain("📊 12% of 24h vol");
     // 赛道标签取自 event_category 表(未缓存 ⇒ 只出根标签,且不去抓)。
     expect(client.posts[0]).toContain("#Polymarket");
@@ -136,7 +136,7 @@ describe("runXBroadcastCycle", () => {
     expect(await runXBroadcastCycle(deps(db, client))).toBe(2);
     expect(client.posts[0]).toMatch(/^🔥 SMART-MONEY CONSENSUS/);
     expect(client.posts[0]).not.toContain("#SmartMoney");
-    expect(client.posts[1]).toMatch(/^🐳 WHALE BUY/);
+    expect(client.posts[1]).toMatch(/^🐳 WHALE: /);
   });
 
   it("stops posting when the monthly budget is exhausted (fail-closed)", async () => {
@@ -236,7 +236,7 @@ describe("runXBroadcastCycle", () => {
     // 未富化 → 无佐证段、无赛道标签,但结构与根标签仍在。
     expect(client.posts[0]).toBe(
       // 赛道标签缺失(无 event_category 行),但标题命中实体白名单。
-        "🐳 WHALE BUY · $67K\n\nChiefs win Super Bowl LX?\n└ YES @ 67¢\n\n#Polymarket #SuperBowl",
+      "🐳 WHALE: $67K says YES @ 67¢\n\nChiefs win Super Bowl LX?\n\n#Polymarket #SuperBowl",
     );
   });
 

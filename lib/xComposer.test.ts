@@ -38,29 +38,31 @@ describe("composeWhalePost", () => {
     category: "Sports",
     subcategory: "NFL",
   };
-  it("结构化四段:标题行 / 标的+方向 / 佐证 / 标签", () => {
+  it("结构化四段:断言抬头 / 标题 / 佐证 / 标签", () => {
     expect(composeWhalePost(base)).toBe(
-      "🐳 WHALE BUY · $184K\n\n" +
-        "Chiefs win Super Bowl LX?\n" +
-        "└ YES @ 67¢\n\n" +
+      "🐳 WHALE: $184K says YES @ 67¢\n\n" +
+        "Chiefs win Super Bowl LX?\n\n" +
         "📊 12% of 24h vol · 💧 $229K liq · ⏳ 5h to settle\n\n" +
         // 三标签:平台 + 赛道 + 标题命中的实体(Super Bowl)。
         "#Polymarket #NFL #SuperBowl",
     );
   });
-  it("单笔占满全天成交量时,首行改讲反常度而不是金额", () => {
-    // $121K 在 Polymarket 上不算罕见,但「一笔单子 = 该市场全天所有人成交量
-    // 的 115%」很罕见。时间线上只有首行有机会被扫到,最稀奇的事实必须放在
+  it("单笔占满全天成交量时,抬头追加反常断言", () => {
+    // $121K 在 Polymarket 上不算罕见,但「一笔单子 ≥ 该市场全天所有人的
+    // 成交量」很罕见。时间线上只有首行有机会被扫到,最稀奇的事实必须放在
     // 那里 —— 否则它躺在第三行中间,等于没说。
     const t = composeWhalePost({ ...base, usd: 121_000, pct24h: 115 });
-    expect(t).toMatch(/^🐳 \$121K BUY · 115% of this market's 24h volume/);
-    // 首行已经讲了占比,佐证段不再重复 📊,把字符让给别的事实。
+    expect(t).toMatch(
+      /^🐳 WHALE: \$121K says YES @ 67¢ — more than this market's entire 24h volume/,
+    );
+    // 抬头已经讲了占比,佐证段不再重复 📊,把字符让给别的事实。
     expect(t).not.toContain("📊");
     expect(t).toContain("💧");
   });
-  it("占比未过线时保持原有金额抬头(不为了戏剧性而夸张)", () => {
+  it("占比未过线时保持普通断言抬头(不为了戏剧性而夸张)", () => {
     const t = composeWhalePost({ ...base, pct24h: 12 });
-    expect(t).toMatch(/^🐳 WHALE BUY · \$184K/);
+    expect(t).toMatch(/^🐳 WHALE: \$184K says YES @ 67¢/);
+    expect(t).not.toContain("entire 24h volume");
     expect(t).toContain("📊 12% of 24h vol"); // 仍作为佐证出现
   });
   it("反常抬头下 🚨 分档与 SELL 方向都不丢", () => {
@@ -70,15 +72,15 @@ describe("composeWhalePost", () => {
       side: "SELL",
       pct24h: 150,
     });
-    expect(t).toMatch(/^🚨 \$300K SELL · 150% of this market's 24h volume/);
+    expect(t).toMatch(
+      /^🚨 WHALE: \$300K sells YES @ 67¢ — more than this market's entire 24h volume/,
+    );
   });
   it("SELL 与 🚨 分档在首行体现", () => {
     expect(composeWhalePost({ ...base, side: "SELL" })).toContain(
-      "🐳 WHALE SELL · $184K",
+      "🐳 WHALE: $184K sells YES @ 67¢",
     );
-    expect(composeWhalePost({ ...base, usd: 250_000 })).toMatch(
-      /^🚨 WHALE BUY/,
-    );
+    expect(composeWhalePost({ ...base, usd: 250_000 })).toMatch(/^🚨 WHALE: /);
   });
   it("佐证缺失就整段省略,绝不用 0/N-A 占位", () => {
     const t = composeWhalePost({
@@ -88,7 +90,7 @@ describe("composeWhalePost", () => {
       hoursToEnd: null,
     });
     expect(t).toBe(
-      "🐳 WHALE BUY · $184K\n\nChiefs win Super Bowl LX?\n└ YES @ 67¢\n\n#Polymarket #NFL #SuperBowl",
+      "🐳 WHALE: $184K says YES @ 67¢\n\nChiefs win Super Bowl LX?\n\n#Polymarket #NFL #SuperBowl",
     );
     expect(t).not.toContain("📊");
   });
@@ -497,5 +499,90 @@ describe("fitPost", () => {
     const lean = (t: string) => `HEAD\n\n${t}${tags}`;
     const title = "🐳".repeat(300);
     expect(weightedLength(fitPost([lean], title))).toBeLessThanOrEqual(280);
+  });
+  it("全超时用最简(最后一个)变体截断,不是第一个", () => {
+    // 钉住 variants[variants.length-1]:误改成 variants[0] 会让截断发生在
+    // 最富变体上 —— 标题被砍得更狠,可选事实行反而全保留,降级顺序倒置。
+    const rich = (t: string) => `RICH\n\nEXTRA LINE\n\n${t}${tags}`;
+    const lean = (t: string) => `LEAN\n\n${t}${tags}`;
+    const title = "T".repeat(400); // 两个变体都必超
+    const out = fitPost([rich, lean], title);
+    expect(out.startsWith("LEAN")).toBe(true);
+    expect(out).not.toContain("EXTRA LINE");
+    expect(weightedLength(out)).toBeLessThanOrEqual(280);
+  });
+});
+
+describe("composeWhalePost v2", () => {
+  const base = {
+    usd: 200_000,
+    side: "BUY" as const,
+    outcome: "No",
+    title: "Will Bitcoin dip to $45,000 by December 31, 2026?",
+    priceCents: 80,
+    pct24h: 94,
+    liquidityUsd: 186_000,
+    hoursToEnd: 136 * 24,
+  };
+  it("匿名大单:断言式抬头 says + outcome + 价格一行读完", () => {
+    const t = composeWhalePost(base);
+    expect(t.startsWith("🐳 WHALE: $200K says NO @ 80¢")).toBe(true);
+    expect(t).toContain("📊 94% of 24h vol");
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
+  });
+  it("SELL 用 sells(卖出≠看反,不硬造方向)", () => {
+    const t = composeWhalePost({ ...base, side: "SELL" });
+    expect(t).toContain("$200K sells NO @ 80¢");
+  });
+  it("占比 ≥100% 升级抬头,佐证行不重复占比", () => {
+    const t = composeWhalePost({ ...base, usd: 300_000, pct24h: 140 });
+    expect(t).toContain(
+      "🚨 WHALE: $300K says NO @ 80¢ — more than this market's entire 24h volume",
+    );
+    expect(t).not.toContain("% of 24h vol");
+  });
+  it("smart 传入 → 🏆 抬头 + Track record 行(null 段省略)", () => {
+    const t = composeWhalePost({
+      ...base,
+      smart: { winRate: 0.74, netPnl: 1_200_000 },
+    });
+    expect(t.startsWith("🏆 SMART MONEY: $200K says NO @ 80¢")).toBe(true);
+    expect(t).toContain("Track record: 74% win rate · +$1.2M PnL");
+  });
+  it("smart 全 null → 🏆 抬头保留,凭证行整行不出", () => {
+    const t = composeWhalePost({ ...base, smart: {} });
+    expect(t.startsWith("🏆 SMART MONEY:")).toBe(true);
+    expect(t).not.toContain("Track record");
+  });
+  it("负 PnL 照实输出(Just the record)", () => {
+    const t = composeWhalePost({ ...base, smart: { netPnl: -50_000 } });
+    expect(t).toContain("Track record: -$50K PnL");
+  });
+  it("promiseSettled → 承诺行独立成段", () => {
+    const t = composeWhalePost({
+      ...base,
+      hoursToEnd: 30,
+      promiseSettled: true,
+    });
+    expect(t).toContain("\n\nResult posted at settlement — win or lose.\n\n");
+  });
+  it("超长标题:先丢承诺行再丢佐证行,标题最后才截", () => {
+    const t = composeWhalePost({
+      ...base,
+      title: "Will " + "the committee ".repeat(18) + "decide?",
+      promiseSettled: true,
+    });
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
+    expect(t).not.toContain("Result posted");
+  });
+  it("硬不变量:≤280 加权 + 无 URL", () => {
+    const t = composeWhalePost({
+      ...base,
+      smart: { winRate: 0.74, netPnl: 1_200_000 },
+      promiseSettled: true,
+      title: base.title + " https://example.com/x",
+    });
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
+    expect(t).not.toMatch(/https?:\/\//);
   });
 });
