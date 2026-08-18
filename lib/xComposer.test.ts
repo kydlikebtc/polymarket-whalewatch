@@ -4,8 +4,10 @@ import {
   composeConsensusPost,
   composePregamePost,
   composeWeeklyPost,
+  composeSettlementPost,
   usdCompact,
   buildTags,
+  entityTag,
   strategyEn,
   STRATEGY_EN,
 } from "./xComposer";
@@ -40,8 +42,33 @@ describe("composeWhalePost", () => {
         "Chiefs win Super Bowl LX?\n" +
         "└ YES @ 67¢\n\n" +
         "📊 12% of 24h vol · 💧 $229K liq · ⏳ 5h to settle\n\n" +
-        "#Polymarket #NFL",
+        // 三标签:平台 + 赛道 + 标题命中的实体(Super Bowl)。
+        "#Polymarket #NFL #SuperBowl",
     );
+  });
+  it("单笔占满全天成交量时,首行改讲反常度而不是金额", () => {
+    // $121K 在 Polymarket 上不算罕见,但「一笔单子 = 该市场全天所有人成交量
+    // 的 115%」很罕见。时间线上只有首行有机会被扫到,最稀奇的事实必须放在
+    // 那里 —— 否则它躺在第三行中间,等于没说。
+    const t = composeWhalePost({ ...base, usd: 121_000, pct24h: 115 });
+    expect(t).toMatch(/^🐳 \$121K BUY · 115% of this market's 24h volume/);
+    // 首行已经讲了占比,佐证段不再重复 📊,把字符让给别的事实。
+    expect(t).not.toContain("📊");
+    expect(t).toContain("💧");
+  });
+  it("占比未过线时保持原有金额抬头(不为了戏剧性而夸张)", () => {
+    const t = composeWhalePost({ ...base, pct24h: 12 });
+    expect(t).toMatch(/^🐳 WHALE BUY · \$184K/);
+    expect(t).toContain("📊 12% of 24h vol"); // 仍作为佐证出现
+  });
+  it("反常抬头下 🚨 分档与 SELL 方向都不丢", () => {
+    const t = composeWhalePost({
+      ...base,
+      usd: 300_000,
+      side: "SELL",
+      pct24h: 150,
+    });
+    expect(t).toMatch(/^🚨 \$300K SELL · 150% of this market's 24h volume/);
   });
   it("SELL 与 🚨 分档在首行体现", () => {
     expect(composeWhalePost({ ...base, side: "SELL" })).toContain(
@@ -59,7 +86,7 @@ describe("composeWhalePost", () => {
       hoursToEnd: null,
     });
     expect(t).toBe(
-      "🐳 WHALE BUY · $184K\n\nChiefs win Super Bowl LX?\n└ YES @ 67¢\n\n#Polymarket #NFL",
+      "🐳 WHALE BUY · $184K\n\nChiefs win Super Bowl LX?\n└ YES @ 67¢\n\n#Polymarket #NFL #SuperBowl",
     );
     expect(t).not.toContain("📊");
   });
@@ -81,21 +108,45 @@ describe("composeWhalePost", () => {
 });
 
 describe("composeConsensusPost", () => {
-  it("结构化 + #SmartMoney(独家能力才加这个标签)", () => {
+  it("结构化,带聚钱均价 —— 读者要能判断现在还跟不跟得上", () => {
     expect(
       composeConsensusPost({
         walletCount: 3,
         outcome: "Yes",
         title: "Fed cut in Sept?",
         totalUsd: 92_000,
+        priceCents: 58,
         category: "Economy",
       }),
     ).toBe(
       "🔥 SMART-MONEY CONSENSUS\n\n" +
         "Fed cut in Sept?\n" +
-        "└ 3 top-PnL wallets → YES · $92K combined\n\n" +
-        "#Polymarket #Economy #SmartMoney",
+        "└ 3 top-PnL wallets → YES @ 58¢ · $92K combined\n\n" +
+        "#Polymarket #Economy #Fed",
     );
+  });
+  it("二级分类优先(#MLB 比 #Sports 精准)", () => {
+    expect(
+      composeConsensusPost({
+        walletCount: 2,
+        outcome: "Atlanta Braves",
+        title: "Atlanta Braves vs. Minnesota Twins",
+        totalUsd: 18_400,
+        priceCents: 58,
+        category: "Sports",
+        subcategory: "MLB",
+      }),
+    ).toContain("#Polymarket #MLB");
+  });
+  it("缺价格时省略该段,不用 0¢ 占位", () => {
+    const t = composeConsensusPost({
+      walletCount: 2,
+      outcome: "Yes",
+      title: "Fed cut in Sept?",
+      totalUsd: 18_400,
+    });
+    expect(t).toContain("→ YES · $18.4K combined");
+    expect(t).not.toContain("¢");
   });
 });
 
@@ -117,7 +168,7 @@ describe("composePregamePost", () => {
         "Lakers vs Celtics\n" +
         "└ Leaning YES @ 61¢\n\n" +
         "📡 7 smart-money signals · $310K in 24h\n\n" +
-        "#Polymarket #NBA #SmartMoney",
+        "#Polymarket #NBA",
     );
   });
   it("无明显站位时省略该行", () => {
@@ -153,7 +204,7 @@ describe("composeWeeklyPost", () => {
         "💰 PnL +$1.2K\n" +
         "🏆 Best: Mega Whale +12.3% ROI\n\n" +
         "Full verified record: https://whalewatch.wired.fund/follow?utm_source=x\n\n" +
-        "#Polymarket #PredictionMarkets #SmartMoney",
+        "#Polymarket #PredictionMarkets",
     );
     expect([...t].length).toBeLessThanOrEqual(280);
   });
@@ -181,9 +232,11 @@ describe("buildTags", () => {
     expect(buildTags({ category: "Sports" })).toBe("#Polymarket #Sports");
     expect(buildTags({})).toBe("#Polymarket");
   });
-  it("#SmartMoney 只给独家类型(共识/赛前),大单不加", () => {
-    expect(buildTags({ category: "Crypto", smartMoney: true })).toBe(
-      "#Polymarket #Crypto #SmartMoney",
+  it("不再产出 #SmartMoney —— 它在加密圈已被营销号用滥,引来的是垃圾流量", () => {
+    // 且 X 对多标签帖降权:两个精准标签 > 三个含泛滥词的标签。
+    expect(buildTags({ category: "Crypto" })).toBe("#Polymarket #Crypto");
+    expect(buildTags({ category: "Sports", subcategory: "MLB" })).not.toContain(
+      "#SmartMoney",
     );
   });
   it("脏值丢弃而不是产出 #undefined 这种废标签", () => {
@@ -193,7 +246,9 @@ describe("buildTags", () => {
     // 数字开头不是合法标签体。
     expect(buildTags({ subcategory: "2026Election" })).toBe("#Polymarket");
     // 空格/连字符压掉后仍是合法标签。
-    expect(buildTags({ subcategory: "Formula 1" })).toBe("#Polymarket #Formula1");
+    expect(buildTags({ subcategory: "Formula 1" })).toBe(
+      "#Polymarket #Formula1",
+    );
   });
   it("未知一级类别透传(新赛道上线不必等代码改)", () => {
     expect(buildTags({ category: "Music" })).toBe("#Polymarket #Music");
@@ -206,5 +261,182 @@ describe("STRATEGY_EN", () => {
     expect(strategyEn("反巨鲸")).toBe("Inverse Whale");
     expect(strategyEn("一边倒分歧")).toBe("Lopsided Majority");
     expect(strategyEn("未知新档")).toBe("未知新档");
+  });
+});
+
+describe("entityTag(第三个标签)", () => {
+  it("按白名单命中主体,大小写不敏感", () => {
+    expect(entityTag("Will Bitcoin close above $95,000 in August?")).toBe(
+      "#Bitcoin",
+    );
+    expect(entityTag("FIFA World Cup: France vs Norway")).toBe("#WorldCup");
+    expect(entityTag("Counter-Strike: MIBR vs Astralis (BO1)")).toBe("#CS2");
+    expect(entityTag("Fed cut rates in September?")).toBe("#Fed");
+  });
+
+  it("词边界:Fed 不误伤 Federer,sol 不误伤 solution", () => {
+    // 这类误伤会产出与内容无关的标签 —— 比不加标签更糟(像机器人)。
+    expect(entityTag("Wimbledon: Federer vs Nadal")).toBe("#Wimbledon");
+    expect(entityTag("Will the solution be adopted?")).toBeNull();
+  });
+
+  it("名单外一律不加 —— 宁可少一个,也不要 #Will / #June 这种废标签", () => {
+    expect(entityTag("Atlanta Braves vs. Minnesota Twins")).toBeNull();
+    expect(entityTag("Will Norway win on 2026-06-28?")).toBeNull();
+    expect(entityTag("")).toBeNull();
+    expect(entityTag(null)).toBeNull();
+  });
+
+  it("顺序即优先级,只取第一个命中", () => {
+    // 标题同时含 Bitcoin 与 Election 时取靠前的 Bitcoin。
+    expect(entityTag("Bitcoin price on election day?")).toBe("#Bitcoin");
+  });
+
+  it("具体项目压过泛赛事名 —— Esports World Cup 该标 #CS2 不是 #WorldCup", () => {
+    // 真实数据踩到的:#WorldCup 在足球世界杯赛期会被足球内容淹没,
+    // 给一场 CS 比赛贴这个标签,精准度还不如不加。
+    expect(
+      entityTag("Counter-Strike: Team Falcons vs K27 (BO1) - Esports World Cup Group B"),
+    ).toBe("#CS2");
+    expect(entityTag("LoL: T1 vs DN SOOPers — Esports World Cup")).toBe(
+      "#LeagueOfLegends",
+    );
+    // 没有更具体标的时,泛赛事名仍然可用。
+    expect(entityTag("FIFA World Cup: France vs Norway")).toBe("#WorldCup");
+  });
+});
+
+describe("buildTags 三标签上限", () => {
+  it("平台 + 赛道 + 主体,最多三个", () => {
+    const tags = buildTags({
+      category: "Crypto",
+      subcategory: "Bitcoin",
+      title: "Will Bitcoin close above $95,000?",
+    });
+    // 赛道二级已是 #Bitcoin,实体同名 → 去重,不出现两次。
+    expect(tags).toBe("#Polymarket #Bitcoin");
+  });
+
+  it("赛道与主体不同名时才凑满三个", () => {
+    expect(
+      buildTags({
+        category: "Sports",
+        subcategory: "Esports",
+        title: "Counter-Strike: MIBR vs Astralis",
+      }),
+    ).toBe("#Polymarket #Esports #CS2");
+  });
+
+  it("标题无命中时退回两标签", () => {
+    expect(
+      buildTags({
+        category: "Sports",
+        subcategory: "MLB",
+        title: "Atlanta Braves vs. Minnesota Twins",
+      }),
+    ).toBe("#Polymarket #MLB");
+  });
+
+  it("标签数恒不超过 3", () => {
+    const tags = buildTags({
+      category: "Politics",
+      subcategory: "Geopolitics",
+      title: "Will Trump win the 2026 election?",
+    });
+    expect(tags.split(" ").length).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("composeSettlementPost(结算战报)", () => {
+  const base = {
+    title: "Baltimore Orioles vs. Tampa Bay Rays",
+    outcome: "Baltimore Orioles",
+    entryCents: 40,
+    won: true,
+    category: "Sports",
+    subcategory: "MLB",
+  };
+
+  it("赢单:标出入场价 → 结算价与名义回报", () => {
+    expect(composeSettlementPost(base)).toBe(
+      "✅ SETTLED · CALLED IT\n\n" +
+        "Baltimore Orioles vs. Tampa Bay Rays\n" +
+        "└ Baltimore Orioles 40¢ → $1.00 · +150%\n\n" +
+        "#Polymarket #MLB",
+    );
+  });
+
+  it("输单一样发 —— 只发赢的就是 cherry-picking,等于自毁「just the record」", () => {
+    // 这条是产品立场,不是技术细节:账号简介写着 No screenshots. Just the
+    // record. 只挑赢的发,读者第一次对照就会发现,信任一次性归零。
+    const t = composeSettlementPost({ ...base, won: false });
+    expect(t).toBe(
+      "❌ SETTLED · MISSED\n\n" +
+        "Baltimore Orioles vs. Tampa Bay Rays\n" +
+        "└ Baltimore Orioles 40¢ → $0.00 · -100%\n\n" +
+        "#Polymarket #MLB",
+    );
+  });
+
+  it("高价入场的赢单回报小(40¢ 赢 +150%,90¢ 赢只有 +11%)", () => {
+    expect(composeSettlementPost({ ...base, entryCents: 90 })).toContain(
+      "90¢ → $1.00 · +11%",
+    );
+  });
+
+  it("守住 ≤280 与无 URL 两条硬不变量", () => {
+    const t = composeSettlementPost({ ...base, title: "A".repeat(300) });
+    expect([...t].length).toBeLessThanOrEqual(280);
+    expect(t).not.toContain("http");
+  });
+
+  it("入场价缺失/越界时不编回报率,只报结果", () => {
+    const t = composeSettlementPost({ ...base, entryCents: null });
+    expect(t).toContain("✅ SETTLED · CALLED IT");
+    expect(t).not.toContain("%");
+    expect(t).not.toContain("→");
+  });
+});
+
+describe("composeSettlementPost · 卖单方向", () => {
+  // 真实数据实测踩到的 bug:settleWon 对 SELL 的 won 语义是「卖出后价格
+  // 下跌」,套用买入的 entry→$1.00 公式会把「卖对了」说成「买赢了」,
+  // 数字与方向全错。
+  const sell = {
+    title: "The Hundred, Women: Welsh Fire vs London Spirit",
+    outcome: "Welsh Fire",
+    entryCents: 100,
+    side: "SELL" as const,
+    category: "Sports",
+  };
+
+  it("卖对了 = 标的归零,写成 Sold …¢ → $0.00", () => {
+    expect(composeSettlementPost({ ...sell, won: true })).toContain(
+      "└ Sold Welsh Fire at 100¢ → $0.00",
+    );
+  });
+
+  it("卖错了 = 标的结算为 $1", () => {
+    expect(composeSettlementPost({ ...sell, won: false })).toContain(
+      "└ Sold Welsh Fire at 100¢ → $1.00",
+    );
+  });
+
+  it("卖单不编回报率(空头的回报基准在预测市场没有统一口径)", () => {
+    expect(composeSettlementPost({ ...sell, won: true })).not.toContain("%");
+  });
+
+  it("100¢ 成交合法,不该因边界检查丢掉整段价格", () => {
+    // 以 $1.00 卖出很常见;老边界写的是 c < 100,把这类整段吞掉了。
+    expect(composeSettlementPost({ ...sell, won: true })).toContain("100¢");
+    // 买方 100¢ 入场则回报恒为 0%,也应照实显示。
+    expect(
+      composeSettlementPost({ ...sell, side: "BUY", won: true }),
+    ).toContain("100¢ → $1.00 · +0%");
+  });
+
+  it("脏价(0 / >100)仍然只报结果", () => {
+    expect(composeSettlementPost({ ...sell, entryCents: 0, won: true })).not.toContain("¢");
+    expect(composeSettlementPost({ ...sell, entryCents: 140, won: true })).not.toContain("¢");
   });
 });

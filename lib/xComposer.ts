@@ -12,6 +12,18 @@ export const X_POST_MAX_CHARS = 280;
 // 大单帖的告警级前缀分档:🚨 是"停下来看"级别,与 TG 的 🐳/💰 分层同思路。
 export const WHALE_SIREN_USD = 250_000;
 
+/**
+ * 首行改讲「占 24h 成交量比例」的门槛(百分数)。
+ *
+ * $121K 在 Polymarket 上不算罕见,但「一笔单子就等于该市场全天所有人的
+ * 成交量」很罕见。时间线上读者只扫首行,最稀奇的那个事实必须放在那里,
+ * 否则它躺在第三行佐证段中间等于没说。
+ *
+ * 门槛取 100% 而不是更低:低于 100% 的"80% of 24h volume"要读者自己换算
+ * 才知道稀不稀奇,而"超过全天成交量"是一句不需要基准就成立的断言。
+ */
+export const IMPACT_HEADLINE_PCT = 100;
+
 /** $184K / $1.25M / $900 —— X 上寸字寸金,K/M 压缩 + 去尾零。 */
 export function usdCompact(n: number): string {
   const abs = Math.abs(n);
@@ -38,9 +50,11 @@ function outcomeDisplay(outcome: string): string {
 // 话题流。但标签也吃字符(280 硬上限),所以规则是「少而准」:
 //   · #Polymarket 恒定 —— 这是账号赖以被找到的根标签;
 //   · 赛道标签取二级优先(#NFL 比 #Sports 精准得多,受众也更集中),
-//     没有二级才退到一级;
-//   · 类型标签只给独家能力(#SmartMoney),大单这种人人都有的不加。
+//     没有二级才退到一级。
 // 未知/脏值一律丢弃 —— 宁可少一个标签,也不要 #undefined 这种废标签。
+//
+// 2026-08-18 去掉了 #SmartMoney:它在加密圈已被营销号用滥,引来的是垃圾
+// 流量而非目标读者;X 又对多标签帖降权。两个精准标签好过三个含泛滥词的。
 const ROOT_TAG = "#Polymarket";
 
 // 一级类别到标签的映射。gamma 给的是英文原文,多数可直接当标签;这里只
@@ -71,21 +85,80 @@ function toTag(raw: string | null | undefined): string | null {
   return `#${body}`;
 }
 
+/**
+ * 实体标签白名单:标题里出现这些主体时,补一个它自己的话题标签。
+ *
+ * 为什么用白名单而不是从标题自动抽词:自动抽必然产出 #Will / #June /
+ * #Group 这类废标签,而废标签既稀释相关性权重又显得像机器人。名单驱动
+ * 意味着「宁可不加」。
+ *
+ * 选词依据是本地告警标题的实际词频 + 该标签在 X 上是否真有活跃话题流:
+ *   · 加密币种 —— #Bitcoin 是持续活跃的大话题流,本地标题里也最高频(76)
+ *   · 重大赛事 —— World Cup(86) / Wimbledon(42) 等赛期内流量极大
+ *   · 电竞项目 —— LoL(37) / Dota(29) 各有稳定社区
+ *   · 宏观政治 —— Fed / Trump / Election
+ * 刻意不收的:国家名(#France 这类泛地理标签,绝大多数内容与预测市场无关)
+ * 和具体球队名(写法不统一、单队标签流量低)。
+ *
+ * 顺序即优先级,只取第一个命中。全部用词边界,避免 Fed 误伤 Federer。
+ *
+ * ⚠️ 排序原则:**具体项目优先于泛赛事名**。实测踩过的坑 ——
+ * "Counter-Strike: Team Falcons vs K27 — Esports World Cup" 若让 world cup
+ * 先命中就会标成 #WorldCup,而那个标签在足球世界杯赛期会被足球内容彻底
+ * 淹没,精准度反而不如不加。电竞项目、币种这类"标的本身"因此排在前面。
+ */
+const ENTITY_TAGS: [RegExp, string][] = [
+  // 币种:标的即主体,最具体。
+  [/\bbitcoin\b|\bbtc\b/i, "#Bitcoin"],
+  [/\bethereum\b|\beth\b/i, "#Ethereum"],
+  [/\bsolana\b|\bsol\b/i, "#Solana"],
+  [/\bxrp\b|\bripple\b/i, "#XRP"],
+  [/\bdogecoin\b|\bdoge\b/i, "#Dogecoin"],
+  // 电竞项目:必须排在 world cup 之前(Esports World Cup 是电竞赛事)。
+  [/\bcounter-?strike\b|\bcs2\b/i, "#CS2"],
+  [/\bleague of legends\b|\blol\b/i, "#LeagueOfLegends"],
+  [/\bdota\b/i, "#Dota2"],
+  [/\bvalorant\b/i, "#Valorant"],
+  // 泛赛事名:只在没有更具体标的时才用。
+  [/\bwimbledon\b/i, "#Wimbledon"],
+  [/\bus open\b/i, "#USOpen"],
+  [/\bsuper bowl\b/i, "#SuperBowl"],
+  [/\bworld cup\b/i, "#WorldCup"],
+  [/\bolympics?\b/i, "#Olympics"],
+  // 宏观/政治。
+  [/\btrump\b/i, "#Trump"],
+  [/\bfederal reserve\b|\bfed\b/i, "#Fed"],
+  [/\belections?\b/i, "#Election"],
+];
+
+/** 标题命中的实体标签,没有就 null。 */
+export function entityTag(title: string | null | undefined): string | null {
+  if (!title) return null;
+  for (const [re, tag] of ENTITY_TAGS) if (re.test(title)) return tag;
+  return null;
+}
+
 export interface TagInput {
   category?: string | null;
   subcategory?: string | null;
-  /** 独家信号类型(共识/发现)加 #SmartMoney;大单不加。 */
-  smartMoney?: boolean;
+  /** 市场标题 —— 用于匹配实体标签(第三个标签)。 */
+  title?: string | null;
 }
 
-/** 组装标签行。恒有 #Polymarket;赛道二级优先;去重且保持稳定顺序。 */
+/**
+ * 组装标签行:#Polymarket + 赛道(二级优先) + 实体,去重且顺序稳定。
+ *
+ * 上限 3 个是刻意的:标签越多,每个标签上的相关性权重越稀释,而 X 对
+ * 堆标签的帖子本就降权。三个的构成是「平台 + 赛道 + 主体」,彼此不重叠。
+ */
 export function buildTags(i: TagInput): string {
   const out: string[] = [ROOT_TAG];
   const track =
     toTag(i.subcategory) ??
     toTag(i.category ? (CATEGORY_TAG[i.category] ?? i.category) : null);
   if (track && !out.includes(track)) out.push(track);
-  if (i.smartMoney) out.push("#SmartMoney");
+  const entity = entityTag(i.title);
+  if (entity && !out.includes(entity)) out.push(entity);
   return out.join(" ");
 }
 
@@ -153,13 +226,28 @@ export interface WhalePostInput {
  */
 export function composeWhalePost(i: WhalePostInput): string {
   const siren = i.usd >= WHALE_SIREN_USD;
-  const head = `${siren ? "🚨" : "🐳"} WHALE ${i.side === "SELL" ? "SELL" : "BUY"} · ${usdCompact(i.usd)}`;
+  const icon = siren ? "🚨" : "🐳";
+  const side = i.side === "SELL" ? "SELL" : "BUY";
+  // 反常度优先:占比过线时首行讲「这一笔 vs 全市场全天」,否则回到金额抬头。
+  const headline = i.pct24h != null && i.pct24h >= IMPACT_HEADLINE_PCT;
+  const head = headline
+    ? `${icon} ${usdCompact(i.usd)} ${side} · ${Math.round(i.pct24h as number)}% of this market's 24h volume`
+    : `${icon} WHALE ${side} · ${usdCompact(i.usd)}`;
   const facts: string[] = [];
-  if (i.pct24h != null) facts.push(`📊 ${Math.round(i.pct24h)}% of 24h vol`);
-  if (i.liquidityUsd != null) facts.push(`💧 ${usdCompact(i.liquidityUsd)} liq`);
+  // 首行已讲占比就不再在佐证段重复,把字符让给流动性/倒计时。
+  if (i.pct24h != null && !headline)
+    facts.push(`📊 ${Math.round(i.pct24h)}% of 24h vol`);
+  if (i.liquidityUsd != null)
+    facts.push(`💧 ${usdCompact(i.liquidityUsd)} liq`);
   if (i.hoursToEnd != null) facts.push(`⏳ ${settleShort(i.hoursToEnd)}`);
   const factLine = facts.length > 0 ? `\n\n${facts.join(" · ")}` : "";
-  const tags = buildTags({ category: i.category, subcategory: i.subcategory });
+  // 实体标签按【原始标题】匹配,而不是可能被截断的展示标题 —— 否则
+  // 长标题被截后会丢标签,同一个市场的帖子标签还会时有时无。
+  const tags = buildTags({
+    category: i.category,
+    subcategory: i.subcategory,
+    title: i.title,
+  });
   return fitByTruncatingTitle(
     (title) =>
       `${head}\n\n${title}\n└ ${outcomeDisplay(i.outcome)} @ ${i.priceCents}¢${factLine}\n\n${tags}`,
@@ -172,6 +260,11 @@ export interface ConsensusPostInput {
   outcome: string;
   title: string;
   totalUsd: number;
+  /**
+   * 聚钱的金额加权买入均价(¢)。缺失则整段省略 —— 老告警行没有这个字段,
+   * 用 0¢ 占位会让读者以为白送。
+   */
+  priceCents?: number | null;
   category?: string | null;
   subcategory?: string | null;
 }
@@ -180,19 +273,24 @@ export interface ConsensusPostInput {
  *   🔥 SMART-MONEY CONSENSUS
  *
  *   Fed cut in Sept?
- *   └ 3 top-PnL wallets → YES · $92K combined
+ *   └ 3 top-PnL wallets → YES @ 58¢ · $92K combined
  *
- *   #Polymarket #Economy #SmartMoney
+ *   #Polymarket #Economy
+ *
+ * 均价是这条帖子里最实用的一个数:没有它,读者知道"有聪明钱进场"却无从
+ * 判断现在还跟不跟得上 —— 而这正是他看完唯一想做的决定。TG 版一直有,
+ * X 版此前漏传(2026-08-18 补)。
  */
 export function composeConsensusPost(i: ConsensusPostInput): string {
   const tags = buildTags({
     category: i.category,
     subcategory: i.subcategory,
-    smartMoney: true,
+    title: i.title,
   });
+  const at = i.priceCents != null ? ` @ ${i.priceCents}¢` : "";
   return fitByTruncatingTitle(
     (title) =>
-      `🔥 SMART-MONEY CONSENSUS\n\n${title}\n└ ${i.walletCount} top-PnL wallets → ${outcomeDisplay(i.outcome)} · ${usdCompact(i.totalUsd)} combined\n\n${tags}`,
+      `🔥 SMART-MONEY CONSENSUS\n\n${title}\n└ ${i.walletCount} top-PnL wallets → ${outcomeDisplay(i.outcome)}${at} · ${usdCompact(i.totalUsd)} combined\n\n${tags}`,
     sanitizeTitle(i.title),
   );
 }
@@ -216,7 +314,7 @@ export interface PregamePostInput {
  *
  *   📡 7 smart-money signals · $310K in 24h
  *
- *   #Polymarket #NBA #SmartMoney
+ *   #Polymarket #NBA
  */
 export function composePregamePost(i: PregamePostInput): string {
   const head = `⏰ SETTLING IN ${settleShort(i.hoursToEnd).replace(" to settle", "").toUpperCase()}`;
@@ -228,11 +326,83 @@ export function composePregamePost(i: PregamePostInput): string {
   const tags = buildTags({
     category: i.category,
     subcategory: i.subcategory,
-    smartMoney: true,
+    title: i.title,
   });
   return fitByTruncatingTitle(
     (title) =>
       `${head}\n\n${title}${lean}\n\n📡 ${i.alertCount} smart-money signals · ${usdCompact(i.totalUsd)} in 24h\n\n${tags}`,
+    sanitizeTitle(i.title),
+  );
+}
+
+export interface SettlementPostInput {
+  title: string;
+  outcome: string;
+  /** 原信号的入场价(¢)。缺失/越界时只报结果,不编回报率。 */
+  entryCents?: number | null;
+  /**
+   * 原信号方向。**必须传对** —— outcomeStats.settleWon 的 won 对 SELL 的
+   * 语义是「卖出后价格下跌」,套用买入的 `entry → $1.00` 公式会把卖对了
+   * 说成买赢了,数字和方向全错(实测真实数据时踩到)。
+   */
+  side?: "BUY" | "SELL";
+  won: boolean;
+  category?: string | null;
+  subcategory?: string | null;
+}
+
+/**
+ * 结算战报 —— 对已发过的信号帖做 self-reply,补上"后来呢"。
+ *
+ *   ✅ SETTLED · CALLED IT
+ *
+ *   Baltimore Orioles vs. Tampa Bay Rays
+ *   └ Baltimore Orioles 40¢ → $1.00 · +150%
+ *
+ *   #Polymarket #MLB
+ *
+ * 三点设计立场:
+ *
+ * 1. **输的也发**。账号简介写着 "No screenshots. Just the record." —— 只挑
+ *    赢的发,读者第一次对照原帖就会发现,信任一次性归零。而且一串有输有赢
+ *    的记录,比一串全赢可信得多。
+ * 2. **只报单笔事实,不报统计**。"40¢ → $1.00 · +150%" 是这一笔的可验证
+ *    算术;"我们胜率 65%" 则是统计声明 —— 后者当前样本量根本撑不住
+ *    (见 scripts/edge-audit)。单笔事实现在就能说,统计要等样本。
+ * 3. **回报率是名义值**:按信号价买入、持有到结算,不含手续费与滑点。
+ *    真实成交要扣 taker 费(见 lib/fees,中间价位约 2.5%)。这里不标注是
+ *    因为 280 字符太贵,而"入场价 → 结算价"本身已经把原始事实给全了。
+ */
+export function composeSettlementPost(i: SettlementPostInput): string {
+  const head = i.won ? "✅ SETTLED · CALLED IT" : "❌ SETTLED · MISSED";
+  const c = i.entryCents;
+  // 边界含 100¢:以 $1.00 成交是合法的(卖方尤其常见),排掉它会让整段价格
+  // 信息凭空消失。只排 ≤0 与 >100 这种脏值。
+  const priced = c != null && Number.isFinite(c) && c > 0 && c <= 100;
+  const isSell = i.side === "SELL";
+  let line = `└ ${outcomeDisplay(i.outcome)}`;
+  if (priced) {
+    const entry = c as number;
+    // 二元结算:赢的那边归 $1,输的那边归 $0。
+    // BUY 赢 ⇒ 结算 $1;SELL 赢 ⇒ 价格跌到 $0(卖方不用赔)。
+    const settle = i.won === !isSell ? "$1.00" : "$0.00";
+    if (isSell) {
+      // 卖方是空头,「回报率」的基准(保证金/占用资金)在预测市场里没有
+      // 统一口径 —— 与其编一个,不如只给两个可核对的价格。
+      line = `└ Sold ${outcomeDisplay(i.outcome)} at ${entry}¢ → ${settle}`;
+    } else {
+      // 买入并持有到结算的名义回报:赢 = 每份额从 entry¢ 变 $1,输 = 归零。
+      const pct = i.won ? Math.round((100 / entry - 1) * 100) : -100;
+      line += ` ${entry}¢ → ${settle} · ${pct >= 0 ? "+" : ""}${pct}%`;
+    }
+  }
+  const tags = buildTags({
+    category: i.category,
+    subcategory: i.subcategory,
+    title: i.title,
+  });
+  return fitByTruncatingTitle(
+    (title) => `${head}\n\n${title}\n${line}\n\n${tags}`,
     sanitizeTitle(i.title),
   );
 }
@@ -276,7 +446,9 @@ export function composeWeeklyPost(i: WeeklyPostInput): string {
     `💰 PnL ${pnl}\n` +
     `🏆 Best: ${strategyEn(i.bestName)} ${roi} ROI\n\n` +
     `Full verified record: ${i.url}\n\n` +
-    `#Polymarket #PredictionMarkets #SmartMoney`
+    // 周报没有赛道可言(全站汇总),用品类标签代替;#SmartMoney 与其它模板
+    // 一同去掉,理由见 buildTags 上方注释。
+    `#Polymarket #PredictionMarkets`
   );
 }
 

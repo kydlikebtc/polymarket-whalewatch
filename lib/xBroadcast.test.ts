@@ -20,6 +20,9 @@ function fakeClient(behavior?: (text: string) => void): XClient & {
     async postWithPng() {
       throw new Error("not used in broadcast");
     },
+    async replyText() {
+      throw new Error("replies not used in this cycle");
+    },
   };
 }
 
@@ -74,8 +77,8 @@ describe("runXBroadcastCycle", () => {
     expect(client.posts[0]).toContain("Chiefs win Super Bowl LX?");
     expect(client.posts[0]).toContain("└ YES @ 67¢");
     expect(client.posts[0]).toContain("📊 12% of 24h vol");
-    // 赛道标签取自 marketCtx.category。
-    expect(client.posts[0]).toContain("#Polymarket #Sports");
+    // 赛道标签取自 event_category 表(未缓存 ⇒ 只出根标签,且不去抓)。
+    expect(client.posts[0]).toContain("#Polymarket");
     const row = db
       .prepare("SELECT status, x_post_id, est_cost_usd, alert_id FROM x_posts")
       .get() as {
@@ -132,7 +135,7 @@ describe("runXBroadcastCycle", () => {
     const client = fakeClient();
     expect(await runXBroadcastCycle(deps(db, client))).toBe(2);
     expect(client.posts[0]).toMatch(/^🔥 SMART-MONEY CONSENSUS/);
-    expect(client.posts[0]).toContain("#SmartMoney");
+    expect(client.posts[0]).not.toContain("#SmartMoney");
     expect(client.posts[1]).toMatch(/^🐳 WHALE BUY/);
   });
 
@@ -232,7 +235,8 @@ describe("runXBroadcastCycle", () => {
     expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
     // 未富化 → 无佐证段、无赛道标签,但结构与根标签仍在。
     expect(client.posts[0]).toBe(
-      "🐳 WHALE BUY · $67K\n\nChiefs win Super Bowl LX?\n└ YES @ 67¢\n\n#Polymarket",
+      // 赛道标签缺失(无 event_category 行),但标题命中实体白名单。
+        "🐳 WHALE BUY · $67K\n\nChiefs win Super Bowl LX?\n└ YES @ 67¢\n\n#Polymarket #SuperBowl",
     );
   });
 
@@ -273,5 +277,100 @@ describe("runXBroadcastCycle", () => {
       await runXBroadcastCycle(db && deps(db, client, { kinds: undefined })),
     ).toBe(0);
     expect(client.posts).toHaveLength(1);
+  });
+});
+
+describe("话题标签与共识均价的接线", () => {
+  // 背景(2026-08-18 实测):赛道标签功能从上线起就没生效过。buildTags 设计
+  // 为「二级优先」,但数据取自 marketCtx.category —— 而 gamma /markets 的
+  // category 字段在本地 745 个市场里 100% 为空。真正有分类的是
+  // event_category 表(291 条一级 / 127 条二级)。于是账号上每条帖子的标签
+  // 都只有 #Polymarket,精准赛道流量一次都没吃到。
+  it("大单帖的赛道标签取自 event_category(二级优先)", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO event_category (event_slug, category, subcategory, fetched_at) VALUES ('sb', 'Sports', 'NFL', 100)",
+    ).run();
+    recordAlert(db, "large", "t1", whalePayload(), NOW - 60);
+    const client = fakeClient();
+    await runXBroadcastCycle(deps(db, client));
+    expect(client.posts[0]).toContain("#Polymarket #NFL");
+  });
+
+  it("没有二级时退到一级", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO event_category (event_slug, category, subcategory, fetched_at) VALUES ('sb', 'Politics', '', 100)",
+    ).run();
+    recordAlert(db, "large", "t1", whalePayload(), NOW - 60);
+    const client = fakeClient();
+    await runXBroadcastCycle(deps(db, client));
+    expect(client.posts[0]).toContain("#Polymarket #Politics");
+  });
+
+  it("分类未缓存时只出根标签 —— 绝不为一个标签去打 gamma", async () => {
+    // 红线:播报跑在引擎循环里,标签是锦上添花,不值得占用监控主链路的
+    // 上游请求预算。readEventCategories 是纯本地读。
+    const db = openDb(":memory:");
+    recordAlert(db, "large", "t1", whalePayload(), NOW - 60);
+    const client = fakeClient();
+    await runXBroadcastCycle(deps(db, client));
+    // 赛道标签一个都不该出现(那需要 event_category 命中);实体标签
+    // 来自标题匹配,是纯函数,不涉及任何查询。
+    expect(client.posts[0]).toContain("#Polymarket");
+    expect(client.posts[0]).not.toContain("#Sports");
+    expect(client.posts[0]).not.toContain("#NFL");
+  });
+
+  it("共识帖带聚钱均价与赛道标签", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO event_category (event_slug, category, subcategory, fetched_at) VALUES ('mlb-ev', 'Sports', 'MLB', 100)",
+    ).run();
+    recordAlert(
+      db,
+      "consensus",
+      "consensus:0xc9:Braves:2",
+      JSON.stringify({
+        conditionId: "0xc9",
+        title: "Atlanta Braves vs. Minnesota Twins",
+        outcome: "Atlanta Braves",
+        eventSlug: "mlb-ev",
+        walletCount: 2,
+        totalNetUsd: 18_400,
+        avgBuyPrice: 0.58,
+        params: {},
+      }),
+      NOW - 30,
+    );
+    const client = fakeClient();
+    await runXBroadcastCycle(deps(db, client));
+    // 均价是读者判断「现在还跟不跟得上」的唯一依据。
+    expect(client.posts[0]).toContain(
+      "└ 2 top-PnL wallets → Atlanta Braves @ 58¢ · $18.4K combined",
+    );
+    expect(client.posts[0]).toContain("#Polymarket #MLB");
+  });
+
+  it("老共识行没有 avgBuyPrice 时优雅降级,不出 0¢", async () => {
+    const db = openDb(":memory:");
+    recordAlert(
+      db,
+      "consensus",
+      "consensus:0xc8:Yes:3",
+      JSON.stringify({
+        conditionId: "0xc8",
+        title: "Fed cut in Sept?",
+        outcome: "Yes",
+        walletCount: 3,
+        totalNetUsd: 92_000,
+        params: {},
+      }),
+      NOW - 30,
+    );
+    const client = fakeClient();
+    await runXBroadcastCycle(deps(db, client));
+    expect(client.posts[0]).toContain("→ YES · $92K combined");
+    expect(client.posts[0]).not.toContain("0¢");
   });
 });

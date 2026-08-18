@@ -4,6 +4,7 @@ import {
   fetchEventCategories,
   fetchMarketMeta,
   getEventCategories,
+  readEventCategories,
   getMarketMeta,
   parseUmaDisputed,
   tradeMarketContext,
@@ -539,5 +540,50 @@ describe("tradeMarketContext", () => {
     );
     expect(past?.hoursToEnd).toBe(0);
     expect(past?.impact24h).toBeNull();
+  });
+});
+
+describe("readEventCategories(只读)", () => {
+  it("命中本地缓存,且绝不触发任何上游请求", () => {
+    // 这条是红线测试:X 播报/信号投影都跑在引擎循环里,为一个锦上添花的
+    // 话题标签多打一次 gamma,就是拿监控主链路的预算换装饰。
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO event_category (event_slug, category, subcategory, fetched_at) VALUES ('ev-a', 'Sports', 'MLB', 100)",
+    ).run();
+    const out = readEventCategories(db, ["ev-a"]);
+    expect(out["ev-a"]).toEqual({ category: "Sports", subcategory: "MLB" });
+  });
+
+  it("未缓存的 slug 返回 null/null —— 拿不到就不加标签,不去抓", () => {
+    const db = openDb(":memory:");
+    const out = readEventCategories(db, ["never-seen"]);
+    expect(out["never-seen"]).toEqual({ category: null, subcategory: null });
+  });
+
+  it("'' 哨兵(抓过但无该级)转成 null,与 getEventCategories 同口径", () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO event_category (event_slug, category, subcategory, fetched_at) VALUES ('ev-b', 'Politics', '', 100)",
+    ).run();
+    expect(readEventCategories(db, ["ev-b"])).toEqual({
+      "ev-b": { category: "Politics", subcategory: null },
+    });
+  });
+
+  it("老行(subcategory 为 NULL)照样供一级 —— 只读路径不重抓,能给多少给多少", () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO event_category (event_slug, category, fetched_at) VALUES ('ev-old', 'Crypto', 100)",
+    ).run();
+    expect(readEventCategories(db, ["ev-old"])).toEqual({
+      "ev-old": { category: "Crypto", subcategory: null },
+    });
+  });
+
+  it("空/重复 slug 安全:去重且不产生空键", () => {
+    const db = openDb(":memory:");
+    const out = readEventCategories(db, ["", "ev-a", "ev-a"]);
+    expect(Object.keys(out)).toEqual(["ev-a"]);
   });
 });

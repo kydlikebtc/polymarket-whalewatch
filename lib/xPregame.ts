@@ -10,6 +10,7 @@
 // "这 3 个市场以外都不配发";10 分钟后重试的成本只是一次内存聚合。
 import type { DB } from "./db";
 import type { MarketMeta } from "./gamma";
+import { readEventCategories } from "./gamma";
 import type { XClient } from "./xPublisher";
 import { isPermanentXError } from "./xPublisher";
 import { composePregamePost } from "./xComposer";
@@ -37,6 +38,12 @@ interface MarketAgg {
   alertCount: number;
   totalUsd: number;
   buyUsdByOutcome: Map<string, number>;
+  /**
+   * 取自首条告警 payload —— 话题标签要靠它查 event_category。
+   * MarketMeta 上没有这个字段(且其 category 实测恒为空),而告警 payload
+   * 本来就带着,零额外成本。
+   */
+  eventSlug: string | null;
 }
 
 // 近 24h 告警按市场聚合(JS 侧聚合:payload 是 JSON,SQL 内算金额既慢又脆;
@@ -67,6 +74,12 @@ function aggregateRecentAlerts(db: DB, nowSec: number): Map<string, MarketAgg> {
         alertCount: 0,
         totalUsd: 0,
         buyUsdByOutcome: new Map(),
+        eventSlug:
+          typeof p.eventSlug === "string" && p.eventSlug
+            ? p.eventSlug
+            : typeof p.slug === "string" && p.slug
+              ? p.slug
+              : null,
       };
       byCid.set(cid, agg);
     }
@@ -180,6 +193,14 @@ export async function runPregameCycle(d: PregameDeps): Promise<number> {
         topSidePriceCents = Math.round(price * 100);
       }
     }
+    // 只读本地分类:拿不到就不加标签,绝不为它打一次 gamma。
+    const t = c.eventSlug
+      ? readEventCategories(d.db, [c.eventSlug])[c.eventSlug]
+      : undefined;
+    const taxonomy = {
+      category: t?.category ?? null,
+      subcategory: t?.subcategory ?? null,
+    };
     const text = composePregamePost({
       title: c.title,
       hoursToEnd: c.hoursToEnd,
@@ -187,9 +208,10 @@ export async function runPregameCycle(d: PregameDeps): Promise<number> {
       totalUsd: c.totalUsd,
       topSide,
       topSidePriceCents,
-      // 赛道标签:meta 的一级类别(gamma 原文)。二级分类不在 MarketMeta 上,
-      // 要它得查 event_category —— 留给后续,当前退到一级已足够精准。
-      category: c.meta.category,
+      // 赛道标签走本地 event_category(只读,零上游请求)。原先取
+      // meta.category,但 gamma 的该字段实测恒为空(745/745),标签因此
+      // 一直只有根标签 —— 与 xBroadcast 同一处修复。
+      ...taxonomy,
     });
 
     if (claim.run(dedup, text, costOf(false), nowSec).changes === 0) {

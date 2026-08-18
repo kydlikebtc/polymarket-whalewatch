@@ -17,6 +17,7 @@ import type { DB } from "./db";
 import type { XClient } from "./xPublisher";
 import { isPermanentXError } from "./xPublisher";
 import { composeConsensusPost, composeWhalePost } from "./xComposer";
+import { readEventCategories } from "./gamma";
 import { costOf, quotaDecision } from "./xQuota";
 import { notionalUsd } from "./trades";
 
@@ -54,6 +55,7 @@ interface Candidate {
 
 // 容错解析一行告警 → 候选。返回 null = 结构不可用(记 skipped,原因进日志)。
 function parseCandidate(
+  db: DB,
   row: AlertRow,
   minTradeUsd: number,
 ): Candidate | null | "below_floor" {
@@ -63,6 +65,19 @@ function parseCandidate(
   } catch {
     return null;
   }
+  // 赛道标签的唯一来源:本地 event_category 表(只读,绝不触发上游请求)。
+  // 早期版本取 marketCtx.category,但 gamma /markets 的 category 字段实测
+  // 恒为空(本地 745 个市场无一有值)—— 于是 buildTags 的「二级优先」设计
+  // 从未生效,线上每条帖子都只有 #Polymarket。
+  const taxonomyOf = (slug: unknown) => {
+    if (typeof slug !== "string" || !slug) return {};
+    const t = readEventCategories(db, [slug])[slug];
+    return {
+      category: t?.category ?? null,
+      subcategory: t?.subcategory ?? null,
+    };
+  };
+
   if (row.type === "consensus") {
     const walletCount = p.walletCount;
     const outcome = p.outcome;
@@ -76,11 +91,21 @@ function parseCandidate(
     ) {
       return null;
     }
+    // 均价:老告警行没有这个字段 → 传 null,模板整段省略而不是显示 0¢。
+    const avg = p.avgBuyPrice;
     return {
       alertId: row.id,
       kind: "consensus",
       usd: totalUsd,
-      text: composeConsensusPost({ walletCount, outcome, title, totalUsd }),
+      text: composeConsensusPost({
+        walletCount,
+        outcome,
+        title,
+        totalUsd,
+        priceCents:
+          typeof avg === "number" && avg > 0 ? Math.round(avg * 100) : null,
+        ...taxonomyOf(p.eventSlug),
+      }),
     };
   }
   // large / smart:payload = {...Trade, marketCtx?, params}
@@ -120,9 +145,9 @@ function parseCandidate(
       pct24h: ctx?.impact24h != null ? ctx.impact24h * 100 : null,
       liquidityUsd: ctx?.liquidity ?? null,
       hoursToEnd: ctx?.hoursToEnd ?? null,
-      // 赛道标签的来源:gamma 富化时带回的一级类别(英文原文)。缺失时
-      // buildTags 只出根标签,不会产生废标签。
-      category: ctx?.category ?? null,
+      // 赛道标签走 event_category(见 taxonomyOf 上方注释);Trade 的
+      // eventSlug 缺失时退到 market slug,两者都没有就只出根标签。
+      ...taxonomyOf(p.eventSlug ?? p.slug),
     }),
   };
 }
@@ -165,7 +190,7 @@ export async function runXBroadcastCycle(d: XBroadcastDeps): Promise<number> {
   const candidates: Candidate[] = [];
   let skipped = 0;
   for (const row of rows) {
-    const c = parseCandidate(row, d.minTradeUsd);
+    const c = parseCandidate(d.db, row, d.minTradeUsd);
     const dedup = `alert:${row.id}`;
     if (c === null) {
       skip.run(

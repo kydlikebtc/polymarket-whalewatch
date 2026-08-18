@@ -18,6 +18,9 @@ function fakeClient(): XClient & { posts: string[] } {
     async postWithPng() {
       throw new Error("unused");
     },
+    async replyText() {
+      throw new Error("replies not used in this cycle");
+    },
   };
 }
 
@@ -90,6 +93,11 @@ function deps(db: DB, client: XClient, metas: Record<string, MarketMeta>) {
 describe("runPregameCycle", () => {
   it("posts an in-window market once with leaning side, and dedups within the UTC day", async () => {
     const db = openDb(":memory:");
+    // 赛道标签取自 event_category(告警 payload 的 eventSlug='e'),
+    // 而不是 meta.category —— 后者在 gamma 上实测恒为空。
+    db.prepare(
+      "INSERT INTO event_category (event_slug, category, subcategory, fetched_at) VALUES ('e', 'Sports', 'NBA', 100)",
+    ).run();
     whaleAlert(db, "a1", "0xc1", 60_000, "Yes", NOW - 3600);
     whaleAlert(db, "a2", "0xc1", 30_000, "No", NOW - 7200);
     const client = fakeClient();
@@ -100,7 +108,7 @@ describe("runPregameCycle", () => {
         "Market 0xc1\n" +
         "└ Leaning YES @ 61¢\n\n" +
         "📡 2 smart-money signals · $90K in 24h\n\n" +
-        "#Polymarket #Sports #SmartMoney",
+        "#Polymarket #NBA",
     );
     const row = db
       .prepare("SELECT kind, status, has_link, est_cost_usd FROM x_posts")

@@ -11,6 +11,15 @@ export interface XClient {
   postText(text: string): Promise<string>;
   /** 上传 PNG 后带图发帖(周报成绩单),返回 X post id。 */
   postWithPng(text: string, png: Buffer): Promise<string>;
+  /**
+   * 回复自己的某条帖(结算战报),返回新帖 id。
+   *
+   * 只用于 self-reply:回自己发过的信号帖,形成"信号 → 结果"的 thread。
+   * 绝不用于回复他人 —— X 的自动化规则明令禁止「自动化 @/回复以触达
+   * 未主动请求的用户」,违者帖子被移出搜索甚至封号,而且 @ 别人根本
+   * 不会把帖子推进对方的粉丝流,违规且无效。
+   */
+  replyText(text: string, inReplyToPostId: string): Promise<string>;
 }
 
 /**
@@ -52,6 +61,12 @@ export function createXClient(c: XCreds): XClient {
         media_type: "image/png",
       });
       const r = await api.v2.tweet(text, { media: { media_ids: [mediaId] } });
+      return r.data.id;
+    },
+    async replyText(text: string, inReplyToPostId: string): Promise<string> {
+      const r = await api.v2.tweet(text, {
+        reply: { in_reply_to_tweet_id: inReplyToPostId },
+      });
       return r.data.id;
     },
   };

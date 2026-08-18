@@ -447,6 +447,36 @@ export async function fetchEventCategories(
  * (比 null 更接近事实 —— 一级本来就抓到过),二级保持 null 下次再试,
  * 不清空、不覆写旧行。
  */
+/**
+ * 只读版:仅查本地 event_category,**绝不触发任何上游请求**。
+ *
+ * 给跑在引擎循环里的投影/播报路径用(X 播报的话题标签、信号总线投影)。
+ * 那些路径的红线是「只读本地表」—— 标签是锦上添花,为它多打一次 gamma
+ * 就是拿监控主链路的请求预算换装饰。缓存没有就返回 null/null,调用方
+ * 少加一个标签即可,而不是去抓。
+ *
+ * 与 getEventCategories 的口径保持一致:'' 哨兵(抓过但无该级)转 null。
+ * 差别只在 miss 的处理 —— 那边回填,这边放弃。
+ */
+export function readEventCategories(
+  db: DB,
+  slugs: string[],
+): Record<string, EventTaxonomy> {
+  const sel = db.prepare(
+    "SELECT category, subcategory FROM event_category WHERE event_slug = ?",
+  );
+  const out: Record<string, EventTaxonomy> = {};
+  for (const s of [...new Set(slugs.filter(Boolean))]) {
+    const row = sel.get(s) as
+      { category: string | null; subcategory: string | null } | undefined;
+    out[s] = {
+      category: row?.category || null,
+      subcategory: row?.subcategory || null,
+    };
+  }
+  return out;
+}
+
 export async function getEventCategories(
   db: DB,
   slugs: string[],

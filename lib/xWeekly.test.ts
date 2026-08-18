@@ -44,6 +44,9 @@ function fakeClient(): XClient & {
       pngPosts.push({ text, bytes: png.length });
       return `x${pngPosts.length}`;
     },
+    async replyText() {
+      throw new Error("replies not used in this cycle");
+    },
   };
 }
 
