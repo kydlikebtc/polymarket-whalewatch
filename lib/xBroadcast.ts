@@ -34,6 +34,17 @@ export interface XBroadcastDeps {
    * 关掉的类型在解析阶段就落 'skipped' 台账行,既不重复扫描也不烧预算。
    */
   kinds?: { whale?: boolean; consensus?: boolean };
+  /**
+   * 投递通道。省略 = 'api'(首版行为)。
+   *
+   * 'extension' 下本函数**一条帖都不发**:候选落成 status='queued' 交给本机
+   * Chrome 插件消费,`client` 全程不被触碰(所以插件模式下连 X App 凭据都
+   * 不需要)。返回值仍是"本轮发出去几条",即恒 0 —— 真正的发送在插件那头,
+   * 由 /api/x-queue/ack 结算。
+   */
+  channel?: "api" | "extension";
+  /** 日上限覆盖(仅 extension 通道传;api 通道用 xQuota 的预算导向常量)。 */
+  caps?: Record<string, number>;
   nowSec?: number;
 }
 
@@ -133,6 +144,7 @@ function parseCandidate(
  */
 export async function runXBroadcastCycle(d: XBroadcastDeps): Promise<number> {
   const nowSec = d.nowSec ?? Math.floor(Date.now() / 1000);
+  const channel = d.channel ?? "api";
   const rows = d.db
     .prepare(
       `SELECT a.id, a.type, a.dedup_key, a.payload, a.created_at
@@ -151,8 +163,15 @@ export async function runXBroadcastCycle(d: XBroadcastDeps): Promise<number> {
      VALUES (?, ?, ?, ?, 0, 0, 'skipped', ?)`,
   );
   const claim = d.db.prepare(
-    `INSERT OR IGNORE INTO x_posts (kind, dedup_key, alert_id, text, has_link, est_cost_usd, status, created_at)
-     VALUES (?, ?, ?, ?, 0, ?, 'claimed', ?)`,
+    `INSERT OR IGNORE INTO x_posts (kind, dedup_key, alert_id, text, has_link, est_cost_usd, status, channel, created_at)
+     VALUES (?, ?, ?, ?, 0, ?, 'claimed', 'api', ?)`,
+  );
+  // 插件通道的入队。成本记 0(边际成本为零),channel 记 'extension'。
+  // 复用同一个 (kind, dedup_key) 唯一索引做幂等 —— 与 api 通道共享一份
+  // "这条 alert 处理过没有"的真相,所以切换通道既不会重发也不会断档。
+  const enqueue = d.db.prepare(
+    `INSERT OR IGNORE INTO x_posts (kind, dedup_key, alert_id, text, has_link, est_cost_usd, status, channel, created_at)
+     VALUES (?, ?, ?, ?, 0, 0, 'queued', 'extension', ?)`,
   );
   const settle = d.db.prepare(
     "UPDATE x_posts SET status = ?, x_post_id = ? WHERE kind = ? AND dedup_key = ?",
@@ -207,6 +226,10 @@ export async function runXBroadcastCycle(d: XBroadcastDeps): Promise<number> {
       hasLink: false,
       budgetUsd: d.budgetUsd,
       nowSec,
+      caps: d.caps,
+      // 插件通道走浏览器已登录会话,不经按量付费 API —— 成本为零,月预算
+      // 熔断对它无意义(而且必须跳过:本月 API 花超时不该连累免费帖)。
+      costUsd: channel === "extension" ? 0 : undefined,
     });
     if (!decision.ok) {
       skip.run(c.kind, dedup, c.alertId, c.text, nowSec);
@@ -214,6 +237,15 @@ export async function runXBroadcastCycle(d: XBroadcastDeps): Promise<number> {
       console.log(
         `[xBroadcast] quota rejected alert=${c.alertId} kind=${c.kind}: ${decision.reason}`,
       );
+      continue;
+    }
+    if (channel === "extension") {
+      // 落队列即本轮终点:发帖动作发生在插件那头,由 ack 路由结算。
+      if (enqueue.run(c.kind, dedup, c.alertId, c.text, nowSec).changes === 0) {
+        console.log(
+          `[xBroadcast] skip alert=${c.alertId}: already queued/handled`,
+        );
+      }
       continue;
     }
     if (

@@ -275,3 +275,97 @@ describe("runXBroadcastCycle", () => {
     expect(client.posts).toHaveLength(1);
   });
 });
+
+describe("runXBroadcastCycle —— extension 通道", () => {
+  it("不发帖,只落 queued;client 一次都不该被碰", async () => {
+    const db = openDb(":memory:");
+    recordAlert(db, "large", "t1", whalePayload(), NOW - 60);
+    const client = fakeClient();
+    const posted = await runXBroadcastCycle(
+      deps(db, client, { channel: "extension" }),
+    );
+    // 返回 0 是正确语义:本轮确实一条都没发出去(发帖动作在插件那头)。
+    expect(posted).toBe(0);
+    expect(client.posts).toHaveLength(0);
+    const row = db
+      .prepare(
+        "SELECT status, channel, est_cost_usd, text, alert_id FROM x_posts",
+      )
+      .get() as {
+      status: string;
+      channel: string;
+      est_cost_usd: number;
+      text: string;
+      alert_id: number;
+    };
+    expect(row.status).toBe("queued");
+    expect(row.channel).toBe("extension");
+    // 边际成本为零 —— 台账不能虚记开销,否则 api 通道的预算熔断会被误伤。
+    expect(row.est_cost_usd).toBe(0);
+    // 帖文在服务端就渲染好:插件是"哑"的,不含任何模板逻辑。
+    expect(row.text).toContain("🐳 WHALE BUY · $67K");
+  });
+
+  it("第二轮不重复入队(与 api 通道共享同一个幂等键)", async () => {
+    const db = openDb(":memory:");
+    recordAlert(db, "large", "t1", whalePayload(), NOW - 60);
+    const client = fakeClient();
+    await runXBroadcastCycle(deps(db, client, { channel: "extension" }));
+    await runXBroadcastCycle(deps(db, client, { channel: "extension" }));
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM x_posts").get() as { n: number }).n,
+    ).toBe(1);
+  });
+
+  it("切通道不重发:api 发过的那条,切到 extension 后不会再入队", async () => {
+    // 这是"两条通道共享 x_posts"的核心收益 —— 幂等键只有一份。
+    const db = openDb(":memory:");
+    recordAlert(db, "large", "t1", whalePayload(), NOW - 60);
+    const client = fakeClient();
+    expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
+    await runXBroadcastCycle(deps(db, client, { channel: "extension" }));
+    const rows = db
+      .prepare("SELECT status, channel FROM x_posts")
+      .all() as { status: string; channel: string }[];
+    expect(rows).toEqual([{ status: "posted", channel: "api" }]);
+  });
+
+  it("kinds 关掉的类型照样落 skipped 台账,不会每轮重扫", async () => {
+    const db = openDb(":memory:");
+    recordAlert(db, "large", "t1", whalePayload(), NOW - 60);
+    const client = fakeClient();
+    await runXBroadcastCycle(
+      deps(db, client, {
+        channel: "extension",
+        kinds: { whale: false, consensus: true },
+      }),
+    );
+    expect(
+      (db.prepare("SELECT status FROM x_posts").get() as { status: string })
+        .status,
+    ).toBe("skipped");
+  });
+
+  it("caps 覆盖生效:日上限打满后落 skipped 而不是入队", async () => {
+    const db = openDb(":memory:");
+    // 先塞满 2 条已发,再把 cap 设成 2
+    for (let i = 0; i < 2; i++) {
+      db.prepare(
+        `INSERT INTO x_posts (kind, dedup_key, text, has_link, est_cost_usd, status, channel, created_at)
+         VALUES ('whale', ?, '', 0, 0, 'posted', 'extension', ?)`,
+      ).run(`seed${i}`, NOW);
+    }
+    recordAlert(db, "large", "t1", whalePayload(), NOW - 60);
+    const client = fakeClient();
+    await runXBroadcastCycle(
+      deps(db, client, {
+        channel: "extension",
+        caps: { whale: 2, pregame: 6 },
+      }),
+    );
+    const row = db
+      .prepare("SELECT status FROM x_posts WHERE dedup_key LIKE 'alert:%'")
+      .get() as { status: string };
+    expect(row.status).toBe("skipped");
+  });
+});
