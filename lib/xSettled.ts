@@ -127,6 +127,11 @@ export async function runSettledCycle(d: XSettledDeps): Promise<number> {
       // 写成「买赢了」(见 composeSettlementPost 注释)。
       side: r.kind === "consensus" ? "BUY" : p.side === "SELL" ? "SELL" : "BUY",
       won: r.won === 1,
+      // r.kind 是 string,但 SQL WHERE 已限定 IN ('whale','consensus') ——
+      // 三元只是类型收窄,不是业务分支。
+      signalKind: r.kind === "consensus" ? "consensus" : "whale",
+      // posted_at = 原帖 x_posts.created_at(SELECT 里本就带出,白拿)。
+      postedAgoSec: nowSec - r.posted_at,
       category: t?.category ?? null,
       subcategory: t?.subcategory ?? null,
     });

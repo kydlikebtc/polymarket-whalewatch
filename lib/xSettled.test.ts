@@ -106,11 +106,12 @@ describe("runSettledCycle", () => {
     expect(await runSettledCycle(deps(db, client))).toBe(1);
     // in_reply_to 必须是我们自己发过的那条 —— 这是红线,绝不回复他人。
     expect(client.replies[0].replyTo).toBe("1900000001");
-    // 调用点尚未传 signalKind/postedAgoSec(Task 10)→ └ 行是退化形态。
+    // └ 行完整形态:信号类型(kind → Whale/Consensus)+ posted-ago
+    // (原帖 x_posts.created_at 距 now 1h)—— 读者顺 thread 可自行核验。
     expect(client.replies[0].text).toBe(
       "✅ CALLED IT · 40¢ → $1.00 (+150%)\n\n" +
         "Baltimore Orioles vs. Tampa Bay Rays\n" +
-        "└ Signal on Baltimore Orioles\n\n" +
+        "└ Whale signal on Baltimore Orioles, posted 1h ago\n\n" +
         "#Polymarket #MLB",
     );
   });
@@ -194,7 +195,31 @@ describe("runSettledCycle", () => {
     await runSettledCycle(deps(db, client));
     // 58¢ → $1 = +72%
     expect(client.replies[0].text).toContain("58¢ → $1.00 (+72%)");
-    expect(client.replies[0].text).toContain("└ Signal on YES");
+    expect(client.replies[0].text).toContain("└ Consensus signal on YES");
+  });
+
+  it("└ 行带信号类型与 posted-ago —— 隔了两天的共识信号写明 posted 2d ago", async () => {
+    const db = openDb(":memory:");
+    seedSignal(db, {
+      alertKey: "c2",
+      xPostId: "1900000012",
+      won: true,
+      kind: "consensus",
+      type: "consensus",
+      postedAt: NOW - 2 * 86400,
+      payload: {
+        conditionId: "0xc9",
+        title: "Fed cut rates in September?",
+        outcome: "Yes",
+        walletCount: 2,
+        totalNetUsd: 18_400,
+        avgBuyPrice: 0.58,
+      },
+    });
+    const client = fakeClient();
+    await runSettledCycle(deps(db, client));
+    expect(client.replies[0].text).toContain("Consensus signal");
+    expect(client.replies[0].text).toContain("posted 2d ago");
   });
 
   it("预算耗尽时不发,也不落 skipped(配额是全局闸,明天还该补)", async () => {
