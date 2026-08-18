@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Telegram channel — questions and signal discussion
+    url: https://t.me/Polymarket_WhaleWatch
+    about: Usage questions, "is this signal normal?", and general discussion. Faster than an issue, and the live alert stream is right there.
+  - name: Signal API access — field semantics and integration
+    url: https://github.com/kydlikebtc/polymarket-whalewatch/blob/main/docs/api-access.md
+    about: Endpoints, auth tiers, per-field units and types, and webhook receiver requirements. Field semantics are governed by this document — read it before filing an integration bug.
+  - name: Commercial or redistribution licensing
+    url: https://github.com/kydlikebtc
+    about: This project is source-available for personal research only. Commercial use and redistribution need a separate written grant — contact the copyright holder, do not open an issue.
+  - name: Security vulnerability (private report)
+    url: https://github.com/kydlikebtc/polymarket-whalewatch/security/advisories/new
+    about: Auth bypass, credential exposure, tier escape on the feed. Report privately — never in a public issue.

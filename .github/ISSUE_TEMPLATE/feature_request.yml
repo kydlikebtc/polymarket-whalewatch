@@ -1,0 +1,76 @@
+name: Feature request
+description: Propose a capability. Describe the problem, not the solution you already picked.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Proposals involving automated trading, order placement, position
+        management, private keys, or bypassing Polymarket authentication will
+        not be accepted** — including flag-gated or "dry-run only" versions.
+        This is a read-only research tool; `/follow` is a paper simulation by
+        design. See [Out of scope in CONTRIBUTING.md](https://github.com/kydlikebtc/polymarket-whalewatch/blob/main/CONTRIBUTING.md#out-of-scope).
+
+        A well-stated problem gets a better answer than a well-specified
+        solution — several existing features exist in a different shape than
+        originally requested because the underlying problem turned out to be
+        something else.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to find out or act on, and what stops you today? Describe the situation, not the feature. "I can't tell whether a strategy's edge is decaying or the market just got quiet" is a problem; "add a chart" is a solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How you work around it now
+      description: Manual steps, a spreadsheet, a SQL query against `data.sqlite`, polling an endpoint yourself, or "I don't — I just don't get this information". The cost of the workaround is the main evidence for how much the feature is worth.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Which layer does this belong to
+      description: Best guess is fine — it mostly determines who reviews it and whether the change has to survive an engine restart.
+      options:
+        - Worker / alerting (detection, thresholds, engine loops)
+        - Dashboard (a page, a filter, a chart, wording)
+        - Outbound feed (/api/signals, webhooks, Telegram or 𝕏 delivery)
+        - Ops (health, backups, /manage, deployment, rate limits)
+        - Strategy centre (/follow — paper strategies, analysis, record)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: How would you know it works
+      description: For anything that produces a number or a signal, what would convince you it is right rather than merely present? This project's credibility rests on published numbers being defensible, so a feature that cannot be checked after the fact is a hard sell.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you open a PR for this
+      options:
+        - "Yes — I'd like to implement it"
+        - "Maybe, with guidance on where it belongs"
+        - "No, just proposing"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: "This does not involve automated trading, order placement, private keys, or bypassing Polymarket authentication"
+          required: true

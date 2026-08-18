@@ -2,144 +2,123 @@
 
 # 🐳 Polymarket WhaleWatch
 
-**Real-time monitoring for large trades, split-buy accumulation, fresh-wallet activity, and smart-money consensus on [Polymarket](https://polymarket.com) prediction markets — with a built-in validation loop that tells you whether the signals were any good.**
+**A 7×24 monitor for large fills, split-buy accumulation, fresh-wallet activity and smart-money consensus on [Polymarket](https://polymarket.com) — with a validation loop that grades its own signals, and a public record of how badly some of them did.**
 
+[![CI](https://github.com/kydlikebtc/polymarket-whalewatch/actions/workflows/ci.yml/badge.svg)](https://github.com/kydlikebtc/polymarket-whalewatch/actions/workflows/ci.yml)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Next.js 16](https://img.shields.io/badge/Next.js%2016-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org/)
-[![Node 20+](https://img.shields.io/badge/Node-20%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Node 22](https://img.shields.io/badge/Node-22-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-![Tests](https://img.shields.io/badge/tests-545%20passing-3fb950)
 [![Telegram](https://img.shields.io/badge/Telegram-%E9%A2%91%E9%81%93-26A5E4?logo=telegram&logoColor=white)](https://t.me/Polymarket_WhaleWatch)
-![License](https://img.shields.io/badge/license-research%20use-blue)
+[![License: source-available](https://img.shields.io/badge/license-source--available-blue)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/kydlikebtc/polymarket-whalewatch?color=blue)](https://github.com/kydlikebtc/polymarket-whalewatch/commits/main)
-[![Stars](https://img.shields.io/github/stars/kydlikebtc/polymarket-whalewatch?style=social)](https://github.com/kydlikebtc/polymarket-whalewatch/stargazers)
+
+**English** · [中文](README.zh-CN.md)
 
 ![Polymarket WhaleWatch dashboard](docs/dashboard.png)
 
-<sub>The 24h scanner filtered to <code>$100k+</code> buys — whale fills across markets with live address-age badges (<code>🆕</code> flags fresh wallets, some only days old) and per-row odds. Layer on the insider-hunt combo (price <code>0.5–0.9</code> + address age <code>≤7天</code>) to collapse the firehose down to suspicious fresh-wallet money.</sub>
+<sub>The 24h scanner with the amount floor at <code>$10,000</code> — 1,911 matching fills across markets, each row carrying a live address-age badge (<code>🆕</code> flags fresh wallets, some only days old), settled track record, and per-row odds. Raise the floor, or layer on the insider-hunt combo (price <code>0.5–0.9</code> + address age <code>≤7天</code>), to collapse the firehose. <em>Screenshot captured 2026-07-08; the top bar has since been reorganised into two direct links plus three dropdown groups, and a 中/EN toggle added.</em></sub>
 
 </div>
 
 ---
 
-A whale on Polymarket rarely announces themselves. They split a big position into many small orders, use freshly-created wallets, and buy at favorable odds. **WhaleWatch surfaces exactly that** — a 7×24 worker that pushes large fills to Telegram, plus a web dashboard to hunt the patterns single-trade alerts miss.
+A whale on Polymarket rarely announces themselves. They split a big position into many small orders, use freshly-created wallets, and buy at favorable odds. **WhaleWatch surfaces exactly that** — a worker that pushes large fills to Telegram within seconds, a dashboard for hunting the patterns single-trade alerts miss, and a paper-trading ledger that keeps score in public.
 
-> **中文简介**：监控 Polymarket 上的大额成交、拆单建仓、新钱包行为和**聪明钱共识**。后台 worker 实时把大单推送到 Telegram（🏆 标注高胜率白名单钱包，白名单每日自动从官方盈利榜播种）；网页看板可按金额 / 买卖 / 价格(赔率) / 地址年龄筛选，每行自带**已结算战绩徽章**（胜率 · 净盈亏，净盈亏取自官方 user-pnl 曲线，与 Polymarket 主页 Profit/loss 一致），点击任意地址进入**钱包档案页**（**当前持仓** / 赔率带直方图 / 专攻类别 / 拆单倾向，新标签打开）。当 ≥2 个白名单钱包同向买入同一结果时触发**共识告警**；对立结果都有聪明钱时归为**分歧**（共识与分歧同页、互斥）。**验证闭环**自动回填每条告警信号后 1h/24h 的价格走势与最终结算结果——直接回答"这些信号到底准不准"。全站图标（💰🐳🧩🆕🏆🔥✅❌➖📐）**鼠标悬停即出解释**，`/glossary` 说明页收录所有符号与名词定义。全程只查询公开 API，不归档成交流水。
-
-> ⚠️ Research / monitoring tool only. Uses **public** Polymarket data — no authentication, no trading. Not financial advice.
+> ⚠️ **Research and monitoring tool only.** It reads **public** Polymarket data — no authentication, no keys, no trading, no custody of funds. Nothing here is financial advice. Read [What we actually know](#-what-we-actually-know--and-what-we-dont) before you treat any signal as tradeable.
 
 ---
 
 ## ✨ At a glance
 
-|     | Capability                 | What it catches                                                                   |
-| :-: | :------------------------- | :-------------------------------------------------------------------------------- |
-| 🔔  | **Large-trade alerts**     | Big executed fills, pushed to Telegram in seconds                                 |
-| 🧩  | **Split-buy detection**    | Positions built from many small sub-threshold orders                              |
-| 🆕  | **Fresh-wallet flagging**  | Address lifespan + new-wallet badges on every row                                 |
-| 🎯  | **Insider-hunt filters**   | New wallet **＋** favorable odds **＋** pre-settlement rush                       |
-| 🏆  | **Smart-money whitelist**  | Auto-seeded daily from the official profit leaderboards, 🏆-tagged live           |
-| 🔭  | **Discovery channels**     | Skilled-but-small wallets the boards miss — funneled through an admission gate    |
-| 🏷️  | **Wallet tags**            | Source attribution + behavior labels (split-buyer, early winner…) on every wallet |
-| 🔥  | **Consensus detection**    | ≥N whitelist wallets independently buying the SAME outcome                        |
-| ⚖️  | **Disagreement detection** | Smart money split across OPPOSING outcomes — a quality-weighted balance           |
-| 📈  | **Track-record badges**    | Settled win-rate · realized PnL on every wallet, plus a full dossier              |
-| 📐  | **Validation loop**        | 1h/24h follow-through + settlement result on every alert it fired                 |
+|     | Capability                 | What it catches                                                                    |
+| :-: | :------------------------- | :--------------------------------------------------------------------------------- |
+| 🔔  | **Large-trade alerts**     | Big executed fills, pushed to Telegram in seconds, tiered by USD size              |
+| 🧩  | **Split-buy detection**    | Positions built from many sub-threshold orders — invisible to single-fill monitors |
+| 🆕  | **Fresh-wallet flagging**  | Verified address lifespan + new-wallet badges on every row                         |
+| 🎯  | **Insider-hunt filters**   | New wallet **＋** favorable odds **＋** pre-settlement rush                        |
+| 🏆  | **Smart-money whitelist**  | Auto-seeded daily from the official profit leaderboards, 🏆-tagged live            |
+| 🔭  | **Discovery channels**     | Skilled-but-small wallets the boards structurally miss, behind an admission gate   |
+| 🔥  | **Consensus detection**    | ≥N whitelist wallets independently buying the SAME outcome                         |
+| ⚖️  | **Disagreement detection** | Smart money split across OPPOSING outcomes — a quality-weighted balance            |
+| 📈  | **Track records**          | Settled win-rate · authoritative net PnL on every wallet, plus a full dossier      |
+| 📐  | **Validation loop**        | 1h/24h follow-through + settlement result on **every** alert it fired              |
+| 🧾  | **Strategy centre**        | 19 paper strategies incl. 6 reverse controls, executed against real order books    |
+| 📜  | **Public scorecard**       | Signals actually published, hashed into a daily append-only digest chain           |
+| 🔌  | **Signals API**            | Machine feed with realtime/delayed tiers, per-key scoping, HMAC webhooks           |
+|  𝕏  | **Auto-broadcast**         | Whale fills, consensus, pre-game roundups and a weekly report card to X            |
+| 🩺  | **Ops hardening**          | Read-only public guard, rate limits, daily snapshots, dead-man's switch            |
 
 ---
 
-## 🚀 Features
+## 🚀 What it does
 
-### 🔔 Large-trade alerts (worker)
+### Layer 1 — the firehose, made searchable
 
-- Polls the public Polymarket trades feed every few seconds and pushes **rich Telegram alerts** for fills above a USD threshold (tiered, e.g. `💰 ≥$10k`, `🐳 ≥$50k`).
-- Every alert is **context-enriched via the Gamma API**: `占24h量 18% · 流动性 $229k · 距结算 5h` — a $15k fill into a $30k/day market means far more than $100k into the election main market.
-- **Cold-start seeding** silently marks the existing backlog as seen on first launch, so you don't get blasted with hundreds of historical trades.
-- Persistent dedup (SQLite, unique-indexed) — a restart never replays or skips an alert.
-- Resilient: retries transient API timeouts; transient Gamma failures **defer** (never swallow) matching trades; process-level guards for 7×24 uptime.
+- **24h scanner** (`/`) — every large fill in a rolling window. Filter by **amount**, **side**, **window** (1h/6h/24h), **price band**, **address age**, and **event category** (sports drilled down to league level, e.g. `体育·NBA`). Filters apply client-side, so switching them is instant; the trade feed itself is never archived.
+- **Split-buy accumulation board** (`/accumulation`) — aggregates trades by `(wallet, market, outcome)` and ranks by **net buy-in**, catching wallets that build a large position through many sub-threshold orders. Every counted fill is below the single-fill alert threshold, so nothing double-counts against an alert that already fired.
+- **Alert engine + history** (`/alerts`) — the worker records every match to SQLite and optionally pushes it to Telegram. Defaults are calibrated, not guessed: 28.6% of raw alerts landed at a price ≥0.90 — settlement-sweep fills on near-certain outcomes carrying almost no information — so `maxPrice` defaults to `0.95` to keep that tail out; and a single wallet re-firing on the same market accounted for 14.2% of all pushes, so a 30-minute per-wallet-per-market cooldown folds them.
 
-### 🏆 Smart-money whitelist + live tagging
+### Layer 2 — who is worth watching
 
-- Seeded **daily and automatically** from the official profit leaderboards (WEEK / MONTH / ALL, merged per wallet; volume-0 holding accounts dropped; stale wallets age out after 30 days; manual whitelist entries are permanent).
-- Top earners get a **settled track-record enrichment** from `/closed-positions` — win rate, realized PnL, ROI — feeding an explainable 0-100 score (profit 40 + capital efficiency 30 + win rate 30).
-- The alert engine cross-checks every fill against the whitelist in real time: 🏆 prefix on Telegram, `type='smart'` in history, plus a **smart-only alert mode**. On the dashboard the whitelist count is **clickable → a searchable dialog** of every whitelisted wallet (score · win rate · realized PnL, each linking to its dossier).
+- **Smart-money whitelist** — seeded daily from the official profit leaderboards (WEEK/MONTH/ALL merged), enriched with a settled track record, and scored 0–100 on an explainable split (profit 40 + capital efficiency 30 + win rate 30). Market-maker bots (≥1000 markets traded) are labelled 🤖 rather than quietly counted as skill.
+- **Discovery channels** (`/discovery`) — the leaderboards rank by **size**, so they structurally miss skilled-but-small wallets. Three channels widen the funnel — firehose emergence (consensus echo · clean splitter · insider signature), early winners in freshly-settled markets, and category-board specialists — and every candidate must clear the same **admission gate** on track record: a settled win rate ≥55% over ≥10 markets **with positive net PnL**, _or_ ROI ≥5% over ≥5 settled markets — deliberately not the 0–100 score, whose profit axis would re-import the size bias. Wallets surfaced from the firehose and early-winner channels must additionally recur across ≥3 distinct markets within 30 days before they are even evaluated; category-board specialists arrive pre-filtered by their own board and go straight to the track-record gate. Membership ages out after 30 days without re-qualifying.
+- **Wallet dossier** (`/wallet/<address>`) — current holdings, verified address age, settled win rate / ROI / authoritative net PnL, odds-band histogram, category focus, split-buy tendency, idle on-chain cash, and this tool's own alert history for that wallet.
 
-### 🔭 Smart-money discovery channels (聪明钱发现)
+### Layer 3 — consensus, disagreement, and keeping score
 
-The leaderboards rank by **size**, so they structurally miss skilled-but-small wallets. Three discovery channels widen the funnel — every candidate flows through the same **admission gate** before touching the pool (pool membership _is_ the consensus whitelist, so candidacy is free but membership is earned):
+- **Consensus** (`/consensus`) — a 5-minute loop scans a 6h window and fires `🔥 聪明钱共识` when ≥N whitelist wallets each net-buy ≥$X of the same outcome, alerting only on **formation and escalation**, never on repeats.
+- **Disagreement** — when smart money piles into _opposing_ outcomes, the naive view reports two contradictory "consensuses". Disagreement detection collapses that into one honest signal: a **quality-weighted balance** (net buy × wallet score) that leans 一边倒 or 势均力敌. Same-wallet-both-sides hedgers are dropped as fake opposition, and the two states are **mutually exclusive** — a contested market can never masquerade as consensus.
+- **Validation loop** (📐) — every fired alert gets its 1h/24h price follow-through and final settlement result backfilled on a 10-minute cadence, whether or not anyone looked at it. Confidence intervals are computed **per market, not per alert**, because many alerts in one market are copies of a single random outcome.
+- **Strategy centre** (`/follow`) — 19 paper strategies across 6 detector families, including **6 reverse controls** that take the opposite side of the same signal. Entry uses a real CLOB order-book snapshot walked level by level, so modelled slippage is execution cost rather than a guess, and protocol taker fees are charged (Polymarket is _not_ fee-free: 72 of the top 100 markets have fees enabled, covering 57.8% of 24h volume). Zero real capital, at every step.
+- **Public scorecard** (`/record`) — only counts signals that were actually **published** through a delivery channel, not the full paper history. Each UTC day of published signals is hashed into an append-only digest chain posted to the public Telegram channel, so the record cannot be quietly edited after the fact.
 
-- **🔁🧩🕵️ Firehose emergence** — the consensus loop's own 6h trade window, run backwards: non-pool wallets that **echo a smart-money consensus** (same outcome, ≥$2k net), run a **clean split-buy accumulation** (≥3 sub-$10k fills netting ≥$5k, no hedge/MM suspicion), or match the **insider signature** (≤7-day-old address, single ≥$5k fill at 0.5–0.9). Zero extra trade requests.
-- **🎯 Early winners** — freshly-settled markets (gamma `closedTime` ordering, verified: `endDate` is useless for this) swept once each via `/trades?market=`: wallets that bought the **winning** outcome at ≤40¢ **≥24h before resolution** — skill, not size. Closed markets are immutable, so each scan is permanent.
-- **🏅 Category boards** — the segmented leaderboards (`sports/politics/crypto/culture/tech/finance`, verified live): specialists who dominate one vertical but never crack the global top-100 (a politics #1 at $38k pnl vs the global #1 at $8M the same week). Only wallets absent from the global boards are added.
+### Layer 4 — getting signals out
 
-**Admission gate**: recurrence (≥3 distinct markets of evidence in 30d) → track-record review (settled win-rate ≥55% over ≥10 markets, _or_ positive net PnL with ROI ≥5% — deliberately not the 0-100 score, whose profit axis would re-import the size bias) → market-maker bots (≥1000 markets) hard-rejected. Admitted wallets age out after 30 days unless they keep re-qualifying. Every pool member carries a `source` attribution (`leaderboard` / `category:<cat>` / `discovered:<channel>`) so channel effectiveness can be scored later. The **`/discovery` board** shows the whole funnel: evidence → candidates → verdicts.
+- **Telegram** — tiered large-fill alerts enriched with market context (`占24h量 18% · 流动性 $229k · 距结算 5h`), consensus pushes, a daily 🩺 self-check, and an interactive bot: DM it a market link and it replies with a signal card. Delivery targets are managed in the console, with a paid realtime channel and a public delayed channel carrying the _same fields_ — only the delay differs.
+- **Signals API** (`/api/signals`) — a machine feed serving only already-persisted state, so consumer traffic can never eat into the engine's upstream budget. Keys are issued per subscriber (stored as sha256, revocable individually), scoped to signal types server-side, and tiered `realtime` / `delayed`. Failures degrade to a **structurally complete empty feed flagged unhealthy**, so a consumer can never mistake an outage for a quiet day. Contract: [`docs/api-access.md`](docs/api-access.md), rendered in-app at `/api-docs`.
+- **Webhooks** — HMAC-signed (`X-Signature: sha256=…`) push for realtime-tier keys, with 4xx treated as permanent failure and 5xx retried.
+- **𝕏 auto-broadcast** — whale fills, consensus, pre-game roundups, a Monday report-card image, and self-replies posting the settled result of earlier posts (wins _and_ losses). The `alerts` table doubles as the post queue, so an X outage can never touch the Telegram path.
 
-### 🔥 Consensus detection (聪明钱共识)
+### Layer 5 — running it 7×24
 
-Two or three unrelated high-win-rate wallets independently buying the **same outcome** beats any single whale fill. A 5-minute worker loop scans a 6h window and pushes `🔥 聪明钱共识` when ≥N whitelist wallets each net-buy ≥$X of one outcome — alerting only on **formation and escalation** (a third wallet joining), never repeats. Expanding any consensus group — or disagreement market below — lists its wallets with both their **window net-buy (flow)** and their **current position in that market (stock)**, lazily fetched per market; a fresh entry, a long-time accumulator, and someone who already sold out then read differently at a glance.
-
-### ⚖️ Disagreement detection (聪明钱分歧)
-
-When smart money piles into a market's **opposing outcomes**, the old per-outcome view showed it as two contradictory "consensuses". Disagreement detection collapses that into one honest signal — a **quality-weighted balance** (each wallet's net buy × its 0–100 score, so a top wallet's $10k outweighs a fresh wallet's $20k) that leans **一边倒** (one side dominates) or **势均力敌** (genuinely split). Same-wallet-both-sides hedgers are dropped as fake opposition. The `/consensus` board now shows **🔥 共识 and ⚖️ 分歧 under a tab toggle**, and the two are **mutually exclusive** — a contested market is classified as disagreement and never masquerades as a consensus. Read-only by design: it reports the balance, never a follow/skip call. Each live consensus group still shows the smart-money entry price vs the current price (**仍可跟 +1.2¢** / 已跑).
-
-### 📊 Web dashboard (Next.js)
-
-- **24h Scanner** — every large fill in a rolling window. Filter by **amount**, **buy/sell**, **time window (1h/6h/24h)**, **price band (odds)**, and **address age**; sort by time or amount. Live, no database.
-- **Track-record badges (战绩)** — every wallet row shows its settled win rate and realized PnL (`72% · +$38k`), computed from `/closed-positions` and cached for a day. Same badge on the accumulation board.
-- **Wallet dossier (`/wallet/<address>`, opens in a new tab)** — click any address: **current live holdings** (per-market shares / entry price / current price / value / unrealized PnL, each with ⧉ copy-slug + ↗ trade-page jump), age, win rate/ROI, category focus, **odds-band histogram**, split-buy tendency, this tool's own alert history, recent trades. One click replaces ten minutes of block-explorer digging.
-- **Split-buy accumulation board (拆单累计买入榜)** — aggregates trades by `(wallet, market, outcome)` and ranks by **NET buy-in**, catching wallets that build a large position through many sub-threshold orders. In live testing, single-trade monitoring missed **~60%** of ≥$10k accumulators.
-- **Alert history + validation (📐)** — every fired alert shows the market price **1h/24h after the signal** (direction-colored ¢ deltas) and the final settlement result (✅/❌/➖ for 50-50 pushes), plus a live strip: _24h direction hit-rate · settled win-rate_. The worker sweeps **every** non-terminal alert on a 10-minute cadence (dashboard views still fill in on demand), so the hit-rate denominator is the full alert history — not just the alerts somebody happened to look at. The tool grades its own signals, watched or not.
-- **Address age on every wallet** — lifespan since the wallet's first Polymarket activity, badged `🆕` for new addresses (hours/minutes under a day, exact days ≤30d). Permanently cached.
-- **Built-in glossary (`/glossary`)** — every symbol (💰 🐳 🧩 🆕 🏆 🔥 ⚖️ ✅ ❌ ➖ 📐) and term (冲击占比 · 跟单空间 · 评分构成 · 质量加权 · 内幕猎杀组合 …) is documented on a reference page, **and hovering any icon anywhere in the dashboard shows the same explanation** — tooltips and the docs page share one data source (`app/glossary.ts`), so they can never drift apart.
-- **Bilingual UI (中文 / English)** — a 中/EN toggle in the top bar switches the entire dashboard, glossary included. The language is decided server-side (cookie, falling back to `Accept-Language`), so the first paint already matches and nothing flashes or re-hydrates. Chinese source strings double as dictionary keys, so a missing translation degrades to Chinese instead of an empty label — and two test gates keep it honest: one fails on any `t()` call without a translation, another on the same term translated two different ways across pages.
-
-### 🎯 The insider-hunt combo
-
-Abnormal insider-information money tends to **buy at favorable odds using relatively new wallets, close to settlement**. Set the scanner to **price `0.5–0.9` + address age `≤7天`** and the firehose collapses to a short list of exactly that signature; the alert engine adds a **距结算 ≤N 小时** condition to catch the pre-settlement rush.
-
-### 🔍 Query-only by design
-
-No trade-feed archival. Wallet history, track records, price history, and settlements are all **queried on demand** from Polymarket's public APIs (`/closed-positions`, `/activity`, `/prices-history`, Gamma) — the SQLite file holds only rebuildable caches and tiny dedup state. Delete it and the system rebuilds itself.
+- **Public read-only guard** — under `NODE_ENV=production` the dashboard is read-only for visitors: writes require `ADMIN_TOKEN`, and expensive fan-out routes are rate-limited in _upstream requests_ rather than HTTP requests (one wallet-stats lookup can cost ~42 upstream calls). Override with `PUBLIC_READONLY=1|0`.
+- **Operations console** (`/manage`) — token-gated _before render_: until the token verifies, the page shows nothing but the input box, because even the tab labels leak operational structure. Behind it: alert rules, delivery targets, engine health, API keys, and X accounts.
+- **Public status page** (`/status`) — per-loop heartbeats with plain-language consequences ("what you'll stop seeing"). Deliberately kept out of the site nav: a green light does not deserve a slot on a trader's main path.
+- **Durability** — daily SQLite online backup (WAL-safe, newest 7 kept), `GET /api/health` returning 503 the moment any loop stops beating (wired to the Compose healthcheck), and an optional `HEALTHCHECK_PING_URL` dead-man's switch that alerts you through a channel independent of this host.
 
 ---
 
-## 📸 More views
+## 🧪 What we actually know — and what we don't
 
-<table>
-<tr>
-<td width="50%" valign="top">
-<img src="docs/discovery.png" alt="Smart-money discovery funnel">
-<br><sub><b>Smart-money discovery funnel (<code>/discovery</code>)</b> — the live pipeline with real counts: 30-day evidence → candidate wallets → admission gate → whitelist pool. Every stage is clickable; rows carry behavior tags (🔁 echo · 🧩 splitter · 🕵️ insider · 🎯 early winner) and expand into the full evidence detail. Tag chips filter with AND semantics.</sub>
-</td>
-<td width="50%" valign="top">
-<img src="docs/discovery-pool.png" alt="Whitelist pool with wallet tags">
-<br><sub><b>Whitelist pool, in full</b> — all members (global boards + category specialists + graduated candidates) with source attribution, derived behavior tags, score / settled win-rate / net PnL. Honest by construction: market-maker bots are labeled 🤖, and upstream funnel evidence rides along on every member row.</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<img src="docs/accumulation.png" alt="Split-buy accumulation board">
-<br><sub><b>Split-buy accumulation board</b> — wallets ranked by <b>NET buy-in</b>, with size-weighted average odds, address age, and per-row time. Expand any row to see the underlying sub-threshold orders that built the position.</sub>
-</td>
-<td width="50%" valign="top">
-<img src="docs/alerts.png" alt="Configurable alert engine">
-<br><sub><b>Configurable alert engine</b> — set amount / side / price band / address-age conditions right in the dashboard; the embedded worker records every match to SQLite and (optionally) pushes it to Telegram.</sub>
-</td>
-</tr>
-</table>
+Most monitoring tools show you signals and let you assume they work. This one ran the audit and publishes the result, including the parts that hurt.
+
+**The audit.** [`scripts/edge-audit.ts`](scripts/edge-audit.ts) re-scores every settled alert under three corrections, any one of which flips the conclusion on the same data:
+
+1. **Price calibration** — `edge = P(won) − implied probability`. Without it you are measuring who bought safer tickets, not who was smarter (old wallets averaged 0.708, new wallets 0.577).
+2. **Fees** — charged with the same `rate × p × (1−p)` formula the app uses. About 1.2 points at mid-range prices, enough to turn any thin edge into an illusion.
+3. **Market clustering** — many alerts in one market share a single settlement, so they are N copies of one random event. Ignoring this understates the error bar by ~1.9×.
+
+**What it found**, as of the 2026-08-18 run:
+
+- **Zero of 60 tested groupings survive Bonferroni correction** (critical |z| = 3.34). Full-sample baseline net edge: `−0.87 ± 3.04` — not significant.
+- **"Bigger fill = smarter money" is refuted.** All 7 size tiers show no edge, and the `$200k+` tier is the _worst_ (−5.3). This one has no sampling bias; the evidence is strong.
+- **"Fresh wallet = insider" is unproven, not refuted** — only 22 alerts across 12 markets, and address age is resolved for just 43% of wallets, non-randomly.
+- Post-signal 1h price reaction predicts settlement strongly, but that is **hindsight**: chasing at the actual 1h price scores −3.9, not significant. No tradeable directional edge was found.
+
+**The strategy centre agrees.** Recorded live paper performance (2026-08-13) for six tiers, the three size-driven ones first: 巨鲸 37% / −33.9% · 超级巨鲸 40% / −29.8% · 巨鲸精英 10% / −82% — then 分歧解除 33% / −32.7% · 高分独狼 0% / −100% · 早期赢家跟投 48% / −18.7%, which key off disagreement resolution, wallet score and early-winner status rather than fill size. That is why 6 **reverse control** tiers exist — same detector, same parameters, opposite side — and why 逆势少数边 (+38.9%) is kept as the counter-example rather than quietly dropped.
+
+**The limitation that outranks every number above.** The dataset is **10 effective trading days, not 52**: 95% of it lands in a six-day window in late June 2026, 78% is sports (many "distinct markets" are different lines on the same match), and there is a **43-day outage from 2026-06-30 to 2026-08-12** during which nothing was recorded. The stall alarm that would have caught it was built but not yet deployed. Any hit-rate you read on the site rests on that base.
+
+**What this means for you.** Treat this as an instrument for _finding things to look at_, not a source of trade signals. The validation loop works; what it lacks is enough validated sample. Thresholds will be re-derived only after 30 real trading days of uninterrupted data.
 
 ---
 
 ## ⚡ Quick start
 
-### Production (server, the default) — Docker Compose
+### Production (the default) — Docker Compose
 
-This is a 7×24 monitor: signals fire around the clock, the validation loop's
-statistics assume no blind windows, and a paper-trading experiment with
-wake-hours-only coverage is statistically polluted. **The canonical deployment
-is a small always-on server** (any $5 VPS) running the bundled Compose setup —
-dashboard + embedded engine in one container, SQLite on a named volume,
-`restart: unless-stopped`.
+This is a 7×24 monitor: signals fire around the clock, the validation statistics assume no blind windows, and — as the section above shows — a coverage gap silently poisons months of conclusions. **The canonical deployment is a small always-on server** (any $5 VPS) running the bundled Compose setup: dashboard + embedded engine in one container, SQLite on a named volume, `restart: unless-stopped`.
 
 ```bash
 git clone https://github.com/kydlikebtc/polymarket-whalewatch && cd polymarket-whalewatch
@@ -149,42 +128,22 @@ docker compose up -d --build
 docker compose logs -f     # engine heartbeat: [engine] starting · [consensus] window …
 ```
 
-The engine sends a daily 🩺 self-check to Telegram (cycles per loop · alerts
-fired · longest within-day stall) — silence from a loop becomes a visible
-fact instead of an invisible gap.
-
-Production hardening (all on by default in the docker image):
-
-- **Public read-only guard** — with `NODE_ENV=production` the dashboard is
-  read-only for visitors: config writes require `ADMIN_TOKEN` (`.env`) via the
-  `x-admin-token` header (the 告警条件 panel has a token field), and the
-  expensive lookup routes are per-IP rate limited. Override either way with
-  `PUBLIC_READONLY=1|0`.
-- **Daily SQLite snapshot** — the engine snapshots the live db to
-  `<data dir>/backups/data-<utc-day>.sqlite` once per UTC day (SQLite online
-  backup, WAL-safe, keeps the newest 7). Copy them off-host for real disaster
-  cover.
-- **Liveness** — `GET /api/health` returns 503 whenever an engine loop stops
-  beating (the compose healthcheck uses it, so `docker ps` shows
-  `(unhealthy)` on hangs), and an optional `HEALTHCHECK_PING_URL`
-  (healthchecks.io / Uptime Kuma) gets a ping every minute while all loops
-  are fresh — pings stopping alerts you even if the whole host dies.
+Set `ADMIN_TOKEN` in `.env` before exposing the port publicly — without it, remote writes are disabled entirely, which is safe but leaves you unable to manage the instance from the browser.
 
 ### Local development
 
-Requirements: **Node 20+**.
+Requirements: **Node 22** (what the Docker image builds and ships on; `package.json` declares no `engines` floor, and older majors are untested).
 
 ```bash
 npm install
 
-# Web dashboard + embedded engine → http://localhost:3000
-npm run dev
+npm run dev            # dashboard + embedded engine → http://localhost:3000
+npm run test           # 1346 tests across 105 files, no network, ~2s
+npm run typecheck      # tsc --noEmit
+npm run worker         # optional: run the engine as a standalone process instead
 
-# Run tests
-npm run test
-
-# Zero-credential live smoke test of the whole pipeline (no Telegram needed)
-npx tsx scripts/dry-run.ts
+npx tsx scripts/dry-run.ts     # zero-credential live smoke test of the whole pipeline
+npx tsx scripts/edge-audit.ts  # re-run the three-layer edge audit against your own db
 ```
 
 ### Enable Telegram alerts
@@ -197,107 +156,132 @@ npx tsx scripts/dry-run.ts
 npx tsx scripts/test-telegram.ts   # send a test message
 ```
 
+Leave both blank to run in record-only mode — matches still land in SQLite and on `/alerts`.
+
 ### Enable 𝕏 auto-broadcast (optional)
 
-The worker can mirror its best signals to an X (Twitter) account in English — whale fills, smart-money consensus, pre-settlement roundups, and a Monday report card image. The `alerts` table doubles as the post queue, so an X outage can never touch the Telegram pipeline.
+Only the **app-level** key pair is required; the posting account is authorized separately through `/manage → 𝕏 播报账号` (3-legged OAuth, multiple accounts, one active at a time, switching takes effect within a cycle without a restart). Register `<PUBLIC_URL>/api/x-callback` as the app's callback URI first.
 
 ```bash
-# in .env — only the APP-level pair is required (it identifies your developer app):
+# in .env:
 #   X_API_KEY=...             # developer.x.com app (pay-per-use plan), OAuth 1.0a
 #   X_API_SECRET=...
 #   X_MONTHLY_BUDGET_USD=15   # local fail-closed spend fuse (default 15)
-#   X_MIN_TRADE_USD=50000     # whale-post floor (default 50k — X quota is scarce, TG isn't)
+#   X_MIN_TRADE_USD=50000     # whale-post floor — X quota is scarce, Telegram isn't
 #   X_OG_ORIGIN=http://127.0.0.1:3000   # where the worker fetches /api/og/weekly
-#
-# Optional single-account fallback (skip it if you authorize via /manage):
-#   X_ACCESS_TOKEN=...        # of the posting account, Read & Write
-#   X_ACCESS_SECRET=...
 ```
 
-**Which account posts** is managed in `/manage` → **𝕏 播报账号**: click _授权新账号_, sign in as the bot account, approve, and its token lands in the DB (3-legged OAuth — the app belongs to you, the token belongs to whichever account approved). Multiple accounts can be authorized; exactly one is _使用中_ at a time and switching takes effect on the next cycle (≤60s) without a restart. Register `<PUBLIC_URL>/api/x-callback` as the app's Callback URI first. With no authorized account the loop falls back to the `X_ACCESS_TOKEN` pair above, and with neither it simply idles.
+2026 pay-per-use pricing: $0.015 per text post, $0.20 per link post (only the weekly report card carries a link), so $15/month ≈ 33 posts/day. Daily caps: whale 20, pre-game 3, settled self-replies 5; consensus is naturally rare and uncapped. Set the same cap in the X developer dashboard as a platform-side backstop.
 
-Pricing facts (2026 pay-per-use): $0.015 per text post, $0.20 per link post — only the weekly report card carries a link. Budget math: $15/mo ≈ 28 posts/day. Set the same cap in the X developer dashboard as a platform-side backstop. Daily caps: whale 20, pregame 3; consensus is naturally rare and uncapped.
+Every environment variable is documented in [`.env.example`](.env.example).
 
 ---
 
 ## 🧠 How it works
 
-- **Data source** — Polymarket public Data API (`data-api.polymarket.com`) + Gamma API (`gamma-api.polymarket.com`) + CLOB price history (`clob.polymarket.com/prices-history`). No auth, no keys.
-- **Scanner fetch strategy** — the API times out (HTTP 408, ~5.75s) on expensive high-`filterAmount` queries, so the dashboard always fetches at a **fast low floor** and applies the higher amount / side / price / age filters **client-side**. Switching filters is instant.
-- **Address age** — `GET /activity?user=<wallet>&sortDirection=ASC&limit=1` → the oldest activity timestamp ≈ the wallet's "birth" on Polymarket. Cached forever in SQLite (`wallet_age`).
-- **Net P/L (authoritative)** — the wallet badge / dossier "净盈亏" is the **last point of the cumulative curve** from `GET user-pnl-api.polymarket.com/user-pnl?user_address=<wallet>&interval=1m&fidelity=1d`. This is the exact figure Polymarket shows on a profile ("Profit/loss") — one request, no offset cap, and it correctly **nets** held-to-zero losers. It replaced a `/closed-positions` sum that was **sorted by `realizedPnl` DESC and capped at 400 rows**, feeding high-volume wallets a winners-only slice (a live sample read +$22.96M when the true net was −$6.14M).
-- **Win rate / ROI** — still derived from `GET /closed-positions?user=` (every settled position with `realizedPnl`; `totalBought` is **shares**, so cost basis is `totalBought × avgPrice`) merged with resolved-but-unclosed losers from `/positions` (survivorship fix). Pagination is capped (raised from 8→40 pages); beyond it the record is flagged `truncated` and the win rate reads as an upper bound.
-- **Leaderboard quirks (verified live)** — `rank` comes back as a string, pages clamp at 50 rows, deep offsets silently re-serve the same rows (wallet-dedup is the only reliable termination), and `pnl` is mark-to-market — consistent with the authoritative net figure used for scoring.
-- **Validation** — past prices are immutable, so 1h/24h follow-through is fetched once from `/prices-history` and cached permanently; settlements come from Gamma `closed/outcomePrices` (closed-market metadata never expires).
-- **Worker ≠ dashboard** — the worker is the _stateful, alerting_ path (writes SQLite, pushes Telegram); the dashboard is the _stateless, exploratory_ path (reads the live API). They're decoupled through SQLite.
+- **Upstream** — Polymarket Data API (`data-api.polymarket.com`), Gamma API (`gamma-api.polymarket.com`), CLOB price history _and_ order-book snapshots (`clob.polymarket.com`), the user-PnL API (`user-pnl-api.polymarket.com`), and public Polygon RPC for on-chain idle balances. No auth, no keys, no writes.
+- **Scanner fetch strategy** — the API times out (HTTP 408, ~5.75s) on expensive high-`filterAmount` queries, so the dashboard always fetches at a **low floor** and applies the higher amount / side / price / age filters client-side.
+- **Address age** — one `/activity?sortBy=TIMESTAMP&sortDirection=ASC` probe yields a _candidate_ first-activity timestamp, which is then verified by walking backwards (up to 8 probes) before it is trusted. Only verified timestamps are cached permanently; unverified ones are retried.
+- **Net PnL (authoritative)** — the last point of the cumulative curve from `user-pnl?interval=1m&fidelity=1d`. This is the exact figure Polymarket shows on a profile, and it correctly **nets** held-to-zero losers. It replaced a `/closed-positions` sum that was sorted by `realizedPnl` DESC and row-capped, feeding high-volume wallets a winners-only slice (one live sample read +$22.96M when the true net was −$6.14M).
+- **Win rate / ROI** — from `/closed-positions` (`totalBought` is **shares**, so cost basis is `totalBought × avgPrice`), merged with resolved-but-unclosed losers from `/positions` to fix survivorship. Both paginate to 20 pages of 50; beyond that the record is flagged `truncated` and win rate / ROI are **withheld entirely** (rendered as `—`) rather than shown as a wrong number — the true values are unrecoverable from a capped, PnL-sorted slice, so an honest "unknown" beats a confident lie.
+- **Leaderboard quirks (verified live)** — `rank` comes back as a string, pages clamp at 50 rows, and deep offsets silently re-serve the same rows, so wallet-dedup is the only reliable termination condition.
+- **Validation** — past prices are immutable, so follow-through is fetched once and cached permanently; settlements come from Gamma closed-market metadata, which never expires.
+- **Worker ≠ dashboard** — the worker is the _stateful, alerting_ path (writes SQLite, pushes Telegram/X); the dashboard is the _stateless, exploratory_ path (reads the live API). They are decoupled through SQLite. In the Docker image the worker runs embedded in the Next.js process; `npm run worker` runs it standalone.
 
-Design notes and the runtime-verification checklist live in [`docs/plans/`](docs/plans).
+Full subsystem walkthrough, data-flow diagram, request paths and design constraints: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ---
 
-## 🗂️ Project structure
+## 🗂️ Repository layout
 
 ```
-lib/        shared core — Polymarket/Telegram clients, types, SQLite, pure logic
-  polymarket.ts    trades feed (getLargeTrades / getTradesWindow, retry + validation)
-  accumulate.ts    split-buy aggregation (pure)
-  walletAge.ts     first-activity lookup + SQLite cache
-  walletStats.ts   settled track record from /closed-positions (win rate · PnL · ROI)
-  walletProfile.ts recent-activity analysis (odds bands · market focus · split tendency)
-  leaderboard.ts   official profit-leaderboard client (clamp/dedup aware)
-  smartWallets.ts  daily whitelist seeding + scoring + live tag lookup
-  consensus.ts     smart-money consensus detection + state-deduped alerting
-  disagreement.ts  smart-money DISAGREEMENT (opposing outcomes, quality-weighted balance)
-  marketSignals.ts consensus <-> disagreement mutual exclusion (page-level)
-  holdings.ts      a wallet's current live positions from /positions
-  gamma.ts         market metadata (volume/liquidity/endDate/resolution) + cache
-  priceHistory.ts  CLOB prices-history point lookup
-  alertOutcomes.ts per-alert 1h/24h follow-through + settlement backfill
-  alertEngine.ts / alert.ts / alertConditions.ts
-  seen.ts / poll.ts / trades.ts / db.ts / config.ts / telegram.ts / mapLimit.ts
-worker/     7×24 polling worker (4s alert cycle + 5min consensus loop + daily seed)
-app/        Next.js dashboard
-  page.tsx                24h scanner (+ price/age filters, track-record badges)
-  accumulation/page.tsx   split-buy ranking board
-  consensus/page.tsx      combined 🔥 consensus + ⚖️ disagreement board (tab toggle)
-  DisagreementSection.tsx quality-weighted disagreement table (balance bar)
-  WhitelistDialog.tsx     searchable whitelist dialog (opened from the clickable count)
-  alerts/page.tsx         alert history + validation column + conditions panel
-  wallet/[address]/page.tsx  wallet dossier (+ current holdings)
-  glossary/page.tsx       icon & term reference (same source as hover tooltips)
-  glossary.ts             single source of truth for every symbol/term
-  api/{scan,accumulation,consensus,whitelist,positions,wallet-age,wallet-stats,alert-outcomes,alerts,alert-config}/route.ts
-  api/wallet/[address]/route.ts
-scripts/    dry-run.ts · watch.ts · test-telegram.ts
-docs/plans/ design + implementation docs
+lib/            90 modules — upstream clients, alert engine, smart-money scoring,
+                consensus/disagreement, strategy simulation, validation stats,
+                signal bus & delivery, Telegram/X publishing, ops health
+  i18n/         bilingual dictionaries + two test gates (coverage, term conflicts)
+worker/         the engine — 8 loops, embedded in Next or standalone
+app/            Next.js dashboard: 14 pages, 27 API route handlers
+scripts/        dry-run · edge-audit · watch · test-telegram · issue-key
+docs/           API contracts, 24 design documents, screenshots  → docs/README.md
 ```
 
-**Stack:** TypeScript · Next.js 16 · better-sqlite3 · zod · vitest · 357 unit tests.
+Stack: TypeScript · Next.js 16 · React 19 · better-sqlite3 · zod · vitest. 1346 tests across 105 files, no network and no fixture server — nearly every module is a pure core with I/O injected.
+
+State lives in one SQLite file (31 tables). Most of it is **rebuildable cache** — delete it and prices, ages and market metadata refill themselves. Some of it is **not**: the alert ledger, published-signal records, issued API keys (stored only as sha256), authorized X tokens and delivery targets are gone for good. Back it up; the engine already snapshots daily, but only off-host copies survive losing the host.
 
 ---
 
 ## 🗺️ Roadmap
 
-- [x] Large-trade Telegram alerts (worker)
-- [x] 24h scanner with amount / side / time / **price** / **address-age** filters
-- [x] Split-buy accumulation detection (dashboard)
-- [x] Wallet-age annotation with new-address badges
-- [x] Smart-money whitelist (daily leaderboard seed → settled win-rate/ROI scoring → live 🏆 tagging)
-- [x] Smart-money **consensus** detection + board + push alerts
-- [x] Smart-money **disagreement** detection — combined board (tab toggle), quality-weighted balance, mutually exclusive with consensus
-- [x] Wallet dossier **current holdings** + clickable searchable whitelist + new-tab dossier links
-- [x] Wallet track-record badges + full dossier page
-- [x] Market-context enrichment (impact ratio · liquidity · pre-settlement rush condition)
+- [x] Large-trade Telegram alerts, tiered and context-enriched
+- [x] 24h scanner with amount / side / window / price / address-age / category filters
+- [x] Split-buy accumulation detection
+- [x] Verified wallet-age annotation with fresh-address badges
+- [x] Smart-money whitelist — daily leaderboard seed → settled scoring → live 🏆 tagging
+- [x] Consensus detection, and disagreement as a mutually-exclusive quality-weighted balance
+- [x] Discovery channels behind a recurrence + track-record admission gate
+- [x] Wallet dossier with live holdings, odds-band histogram and on-chain idle cash
 - [x] Validation loop: 1h/24h follow-through + settlement backfill on every alert
-- [x] Smart-money **discovery channels**: firehose emergence (echo/splitter/insider) · early winners in settled markets · category-board specialists — all behind a recurrence + track-record **admission gate**, with per-wallet `source` attribution and a `/discovery` funnel board
-- [x] Consensus-follow **paper simulation** (`/follow` board — forward paper P&L, settlement-only equity curve, slippage vs smart-money entry, per-strategy A/B; zero real capital)
-- [ ] Channel effectiveness scorecard (per-source forward hit-rate via the validation loop — the `source` column is the groundwork)
+- [x] Strategy centre: 19 tiers, order-book execution modelling, protocol fees, 6 reverse controls
+- [x] Event sub-categories (sports drilled to league level)
+- [x] Deep analysis panel + track×strategy edge matrix + exit counterfactuals
+- [x] Signal bus, subscriber API keys, HMAC webhooks, daily digest chain, public scorecard
+- [x] 𝕏 auto-broadcast with settled self-replies and a weekly report card
+- [x] Bilingual UI (中/EN) with coverage and term-conflict test gates
+- [x] Ops hardening: read-only guard, rate limits, daily snapshots, dead-man's switch
+- [x] Three-layer edge audit codified as a re-runnable script
+- [ ] **30 uninterrupted trading days of data**, then re-derive every threshold — the blocker for everything below
+- [ ] Channel effectiveness scorecard (per-source forward hit-rate; the `source` column is the groundwork)
 - [ ] Accumulation → Telegram alerts (stateful, tier-crossing dedup)
-- [ ] Event-level accumulation (across correlated sub-markets)
-- [ ] Threshold calibration via backtesting (needs an opt-in trade archive — everything above is query-only)
+- [ ] Event-level accumulation across correlated sub-markets
 
 ---
 
+## 📸 More views
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/discovery.png" alt="Smart-money discovery funnel">
+<br><sub><b>Discovery funnel (<code>/discovery</code>)</b> — 30-day evidence → candidate wallets → admission gate → whitelist pool, with real counts. Rows carry behaviour tags (🔁 echo · 🧩 splitter · 🕵️ insider · 🎯 early winner) and expand into the full evidence detail. <em>2026-07-08.</em></sub>
+</td>
+<td width="50%" valign="top">
+<img src="docs/discovery-pool.png" alt="Whitelist pool with wallet tags">
+<br><sub><b>Whitelist pool, in full</b> — every member with source attribution, derived behaviour tags, score / settled win-rate / net PnL. Honest by construction: market-maker bots are labelled 🤖 rather than counted as skill. <em>2026-07-08.</em></sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/accumulation.png" alt="Split-buy accumulation board">
+<br><sub><b>Split-buy accumulation board</b> — wallets ranked by <b>net buy-in</b>, with size-weighted average odds and address age. Expand any row to see the sub-threshold orders that built the position. <em>2026-06-30.</em></sub>
+</td>
+<td width="50%" valign="top">
+<img src="docs/alerts.png" alt="Alert history with validation">
+<br><sub><b>Alert history + validation</b> — every fired alert with its 1h/24h follow-through and settlement result. <em>2026-06-30; alert-rule editing has since moved to <code>/manage</code>, and the confidence interval is now computed per market.</em></sub>
+</td>
+</tr>
+</table>
+
+---
+
+## 📚 Documentation
+
+| Document                                   | What's in it                                                                |
+| ------------------------------------------ | --------------------------------------------------------------------------- |
+| [ARCHITECTURE.md](ARCHITECTURE.md)         | Data flow, all subsystems, worker loops, request paths, design constraints  |
+| [CHANGELOG.md](CHANGELOG.md)               | What shipped when — including the corrections that changed reported numbers |
+| [CONTRIBUTING.md](CONTRIBUTING.md)         | Dev commands, test conventions, commit format, what is out of scope         |
+| [SECURITY.md](SECURITY.md)                 | Private reporting channel, and which secrets live in the SQLite file        |
+| [docs/README.md](docs/README.md)           | Index of 24 design documents, screenshots, and the two API contracts        |
+| [docs/api-access.md](docs/api-access.md)   | Subscriber-facing Signals API reference (also served in-app at `/api-docs`) |
+| [docs/signals-api.md](docs/signals-api.md) | Internal contract for `/api/signals` — trade-offs and definition history    |
+
+---
+
+## 📄 License
+
+Source-available for **personal and research use** — read it, audit it, learn from it, self-host it. Commercial use and redistribution are not granted; see [LICENSE](LICENSE). This is deliberately not an OSI-approved open source license, so GitHub displays it as "Other".
+
 <div align="center">
-<sub>For personal research use · Not affiliated with Polymarket · Built with public data only</sub>
+<sub>Not affiliated with Polymarket · Public data only · No trading, no custody, not financial advice</sub>
 </div>

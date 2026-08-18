@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to the same branch makes the older run's verdict irrelevant —
+# cancel it instead of paying for two answers about code that no longer exists.
+# Note: only github.workflow and github.ref are interpolated here, and never
+# inside a `run:` script — no attacker-controlled github.event.* value is ever
+# expanded into a shell command in this workflow.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# This workflow only compiles and runs tests. It posts no comments, cuts no
+# releases, publishes no packages — so read access to the repo is all it needs.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: typecheck + unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Node 22 mirrors the Dockerfile, which uses node:22-bookworm-slim for
+      # BOTH the builder and the runner stage. Keeping CI on the same major
+      # version means what passes here is compiled against what ships.
+      # (package.json has no "engines" field, so the Dockerfile is the only
+      # place this project actually pins a Node version.)
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # npm ci, not npm install: package-lock.json is committed and CI should
+      # fail loudly on lockfile drift rather than silently resolving around it.
+      # better-sqlite3 is a native module; ubuntu-latest ships python3/make/g++,
+      # matching what the Dockerfile builder stage installs for the same reason.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # vitest run. No secrets are wired into this workflow on purpose: the
+      # suite passes against a bare checkout with no .env file present.
+      - name: Unit tests
+        run: npm test
