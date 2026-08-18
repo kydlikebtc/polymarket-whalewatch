@@ -109,6 +109,8 @@ export interface WeeklyPostDeps {
   ogOrigin: string;
   publicUrl: string;
   budgetUsd: number;
+  /** 'extension' 下只入队不发帖,也不抓图(插件自己取)。 */
+  channel?: "api" | "extension";
   nowSec?: number;
   fetchImpl?: typeof fetch;
 }
@@ -116,6 +118,7 @@ export interface WeeklyPostDeps {
 /** 周一 ≥13:00 UTC 发一次周报(图卡 + 链接)。返回是否发出。 */
 export async function maybeWeeklyPost(d: WeeklyPostDeps): Promise<boolean> {
   const nowSec = d.nowSec ?? Math.floor(Date.now() / 1000);
+  const channel = d.channel ?? "api";
   const fetchImpl = d.fetchImpl ?? fetch;
   const now = new Date(nowSec * 1000);
   if (now.getUTCDay() !== 1 || now.getUTCHours() < WEEKLY_POST_UTC_HOUR) {
@@ -142,9 +145,45 @@ export async function maybeWeeklyPost(d: WeeklyPostDeps): Promise<boolean> {
     hasLink: true,
     budgetUsd: d.budgetUsd,
     nowSec,
+    costUsd: channel === "extension" ? 0 : undefined,
   });
   if (!decision.ok) {
     console.log(`[xWeekly] quota rejected: ${decision.reason}`);
+    return false;
+  }
+
+  // rows 按周 PnL 降序,"Best" 取 ROI 最高的档(样本≥1 已由 settled>0 保证)。
+  // 文案在取图之前算:它是纯函数、零副作用,而插件通道根本不需要那张图。
+  const best = [...report.rows].sort(
+    (a, b) => (b.roiPct ?? -Infinity) - (a.roiPct ?? -Infinity),
+  )[0];
+  const text = composeWeeklyPost({
+    weekLabel: report.weekLabel,
+    settled: report.settled,
+    winRatePct: report.winRatePct,
+    pnlUsd: report.pnlUsd,
+    bestName: best.name,
+    bestRoiPct: best.roiPct ?? 0,
+    url: `${d.publicUrl}/follow?utm_source=x`,
+  });
+
+  if (channel === "extension") {
+    // 只入队。**刻意不抓图**:插件那头会自己从 /api/og/weekly 下载再塞进 X
+    // 的 file input(路由按 kind='weekly' 把地址填进 imageUrl),服务端再抓
+    // 一遍纯属浪费,还会把一次可恢复的网络抖动变成"这周报没了"。
+    // has_link 保留 1(它描述帖子形态),但成本记 0 —— 插件通道下带链接帖
+    // 不再是 $0.20/条,这正是切过来的收益之一。
+    const queued = d.db
+      .prepare(
+        `INSERT OR IGNORE INTO x_posts (kind, dedup_key, text, has_link, est_cost_usd, status, channel, created_at)
+         VALUES ('weekly', ?, ?, 1, 0, 'queued', 'extension', ?)`,
+      )
+      .run(dedup, text, nowSec);
+    if (queued.changes > 0) {
+      console.log(
+        `[xWeekly] weekly report queued for the extension channel (${report.weekLabel}, ${report.settled} settled)`,
+      );
+    }
     return false;
   }
 
@@ -164,24 +203,10 @@ export async function maybeWeeklyPost(d: WeeklyPostDeps): Promise<boolean> {
     return false;
   }
 
-  // rows 按周 PnL 降序,"Best" 取 ROI 最高的档(样本≥1 已由 settled>0 保证)。
-  const best = [...report.rows].sort(
-    (a, b) => (b.roiPct ?? -Infinity) - (a.roiPct ?? -Infinity),
-  )[0];
-  const text = composeWeeklyPost({
-    weekLabel: report.weekLabel,
-    settled: report.settled,
-    winRatePct: report.winRatePct,
-    pnlUsd: report.pnlUsd,
-    bestName: best.name,
-    bestRoiPct: best.roiPct ?? 0,
-    url: `${d.publicUrl}/follow?utm_source=x`,
-  });
-
   const claimed = d.db
     .prepare(
-      `INSERT OR IGNORE INTO x_posts (kind, dedup_key, text, has_link, est_cost_usd, status, created_at)
-       VALUES ('weekly', ?, ?, 1, ?, 'claimed', ?)`,
+      `INSERT OR IGNORE INTO x_posts (kind, dedup_key, text, has_link, est_cost_usd, status, channel, created_at)
+       VALUES ('weekly', ?, ?, 1, ?, 'claimed', 'api', ?)`,
     )
     .run(dedup, text, costOf(true), nowSec);
   if (claimed.changes === 0) {

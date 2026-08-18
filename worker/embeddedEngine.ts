@@ -46,7 +46,12 @@ import { runBotCycle, type BotUpdate } from "../lib/botCommands";
 import { buildMarketCard, resolveMarketInput } from "../lib/marketCard";
 import { createXClient } from "../lib/xPublisher";
 import { markPosted, resolveXCreds } from "../lib/xAccounts";
-import { getXKindSwitches } from "../lib/xSettings";
+import {
+  getXDailyCaps,
+  getXDeliveryChannel,
+  getXKindSwitches,
+} from "../lib/xSettings";
+import { queueDepth, reclaimStale } from "../lib/xQueue";
 import { projectBusSignals } from "../lib/signalBus";
 import { busTypeAllowed } from "../lib/apiKeys";
 import { runXBroadcastCycle } from "../lib/xBroadcast";
@@ -536,7 +541,16 @@ export function startAlertEngine(): void {
   // 发一条周报图卡。X 侧任何失败只记日志 —— 与 Telegram 主链路物理隔离。
   // 预算:本地 $X_MONTHLY_BUDGET_USD 台账 fail-closed(xQuota),X 后台的
   // spending cap 是第二道保险。
-  if (cfg.xAppConfigured) {
+  //
+  // 两条投递通道(config 表 x_delivery_channel,/manage 可切,≤60s 生效):
+  //   'api'       —— 本进程用 X API 直发(下面这一大段)。
+  //   'extension' —— 只把候选落成 queued,由运营者本机 Chrome 插件消费。
+  //
+  // 循环**无条件启动**(不再门控在 cfg.xAppConfigured 上):extension 通道
+  // 压根不需要 X App 凭据(发帖用的是插件那头浏览器里已登录的会话),如果
+  // 仍按老门控走,一台从没配过 X App 的部署切到插件通道后必须重启才生效,
+  // 这违背「切换 ≤60s 自动生效」的承诺。空转成本是每 60s 读两行 config。
+  {
     const X_LOOP_MS = 60_000;
     const PREGAME_GAP_MS = 10 * 60_000;
     let lastPregameAt = 0;
@@ -549,6 +563,90 @@ export function startAlertEngine(): void {
     let warnedNoCreds = false;
     async function xLoop() {
       try {
+        const channel = getXDeliveryChannel(db);
+        const kindsNow = getXKindSwitches(db);
+
+        // 队列的两个 TTL 回收:每轮都跑,且**与当前通道无关**。切回 api 之后
+        // 队列里的残留也必须按 TTL 收敛成 expired,否则会永远挂着 —— 而且
+        // 一旦哪天再切回 extension,那批隔夜旧闻会立刻被插件取走发出去。
+        const stale = reclaimStale(db, {
+          nowSec: Math.floor(Date.now() / 1000),
+          queueTtlSec: cfg.xQueueTtlSec,
+          leaseTtlSec: cfg.xLeaseTtlSec,
+        });
+        if (stale.expired > 0 || stale.reclaimed > 0) {
+          console.log(
+            `[engine] x queue reclaim: ${stale.expired} expired (>${cfg.xQueueTtlSec}s unclaimed), ${stale.reclaimed} lease-timeout (>${cfg.xLeaseTtlSec}s no ack)`,
+          );
+        }
+
+        if (channel === "extension") {
+          // 插件通道:只入队。三类内容(大单/共识、赛前、周报)各自的 cycle
+          // 内部已按 channel 分叉,client 不会被触碰 —— 所以这里传一个
+          // 永远不该被调用的哨兵,一旦哪天分叉写漏了,测试和日志会立刻炸出来
+          // 而不是静默走 API 花钱。
+          const caps = getXDailyCaps(db);
+          const noClient = {
+            postText(): Promise<string> {
+              throw new Error(
+                "[engine] extension 通道下不该调用 X API —— 某个 cycle 的 channel 分叉写漏了",
+              );
+            },
+            postWithPng(): Promise<string> {
+              throw new Error(
+                "[engine] extension 通道下不该调用 X API —— 某个 cycle 的 channel 分叉写漏了",
+              );
+            },
+          };
+          await runXBroadcastCycle({
+            db,
+            client: noClient,
+            channel: "extension",
+            budgetUsd: cfg.xMonthlyBudgetUsd,
+            minTradeUsd: cfg.xMinTradeUsd,
+            kinds: kindsNow,
+            caps,
+          });
+          if (
+            kindsNow.pregame &&
+            Date.now() - lastPregameAt >= PREGAME_GAP_MS
+          ) {
+            lastPregameAt = Date.now();
+            await runPregameCycle({
+              db,
+              client: noClient,
+              channel: "extension",
+              getMeta: (cids) => getMarketMeta(db, cids),
+              budgetUsd: cfg.xMonthlyBudgetUsd,
+              caps,
+            });
+          }
+          if (kindsNow.weekly) {
+            await maybeWeeklyPost({
+              db,
+              client: noClient,
+              channel: "extension",
+              ogOrigin: cfg.xOgOrigin,
+              publicUrl: cfg.publicUrl,
+              budgetUsd: cfg.xMonthlyBudgetUsd,
+            });
+          }
+          const depth = queueDepth(db);
+          if (depth > 0) {
+            console.log(`[engine] x extension queue depth: ${depth}`);
+          }
+          beat(db, "x_broadcast");
+          setTimeout(xLoop, X_LOOP_MS);
+          return;
+        }
+
+        // --- 以下是 api 通道,与首版一字不变 ---
+        if (!cfg.xAppConfigured) {
+          // 没配 X App 且当前是 api 通道:静默待命(切到插件通道即可开工)。
+          beat(db, "x_broadcast");
+          setTimeout(xLoop, X_LOOP_MS);
+          return;
+        }
         const creds = resolveXCreds(db, cfg);
         if (!creds) {
           // 没有任何可用账号:静默待命(只提示一次,不刷屏)。授权一个账号
@@ -670,16 +768,16 @@ export function startAlertEngine(): void {
           // 投递属于后续批次,那时这里按 sourceType 再分流。
           .filter((ep) => busTypeAllowed(ep.busTypes, "strategy"))
           .map((ep) =>
-          makeWebhookChannel(db, ep, {
-            onDisabled: (endpoint, error) => {
-              // 熔断通报走运营者告警频道(best-effort):订户端点死了,
-              // 沉默是最贵的故障形态。
-              send?.(
-                `⚠️ webhook 端点 #${endpoint.id} 连续失败已熔断停用(${error})\n${endpoint.url}`,
-              ).catch(() => {});
-            },
-          }),
-        );
+            makeWebhookChannel(db, ep, {
+              onDisabled: (endpoint, error) => {
+                // 熔断通报走运营者告警频道(best-effort):订户端点死了,
+                // 沉默是最贵的故障形态。
+                send?.(
+                  `⚠️ webhook 端点 #${endpoint.id} 连续失败已熔断停用(${error})\n${endpoint.url}`,
+                ).catch(() => {});
+              },
+            }),
+          );
         const channels = [...tgChannels, ...webhookChannels];
         if (channels.length > 0) {
           const r = await runDeliveryCycle({

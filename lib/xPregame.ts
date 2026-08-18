@@ -28,6 +28,10 @@ export interface PregameDeps {
   client: XClient;
   getMeta: (cids: string[]) => Promise<Record<string, MarketMeta>>;
   budgetUsd: number;
+  /** 'extension' 下只入队不发帖(client 不被触碰),语义同 xBroadcast。 */
+  channel?: "api" | "extension";
+  /** 日上限覆盖(仅 extension 通道传)。 */
+  caps?: Record<string, number>;
   nowSec?: number;
 }
 
@@ -119,6 +123,7 @@ function utcDay(nowSec: number): number {
 /** 一轮赛前扫描。返回成功发帖数;瞬态发帖错误 rethrow(下轮重试)。 */
 export async function runPregameCycle(d: PregameDeps): Promise<number> {
   const nowSec = d.nowSec ?? Math.floor(Date.now() / 1000);
+  const channel = d.channel ?? "api";
   const byCid = aggregateRecentAlerts(d.db, nowSec);
   if (byCid.size === 0) return 0;
 
@@ -142,8 +147,13 @@ export async function runPregameCycle(d: PregameDeps): Promise<number> {
     "SELECT 1 FROM x_posts WHERE kind = 'pregame' AND dedup_key = ?",
   );
   const claim = d.db.prepare(
-    `INSERT OR IGNORE INTO x_posts (kind, dedup_key, text, has_link, est_cost_usd, status, created_at)
-     VALUES ('pregame', ?, ?, 0, ?, 'claimed', ?)`,
+    `INSERT OR IGNORE INTO x_posts (kind, dedup_key, text, has_link, est_cost_usd, status, channel, created_at)
+     VALUES ('pregame', ?, ?, 0, ?, 'claimed', 'api', ?)`,
+  );
+  // 插件通道入队(成本 0)。与 api 通道共用 (kind, dedup_key) 幂等键。
+  const enqueue = d.db.prepare(
+    `INSERT OR IGNORE INTO x_posts (kind, dedup_key, text, has_link, est_cost_usd, status, channel, created_at)
+     VALUES ('pregame', ?, ?, 0, 0, 'queued', 'extension', ?)`,
   );
   const settle = d.db.prepare(
     "UPDATE x_posts SET status = ?, x_post_id = ? WHERE kind = 'pregame' AND dedup_key = ?",
@@ -162,6 +172,8 @@ export async function runPregameCycle(d: PregameDeps): Promise<number> {
       hasLink: false,
       budgetUsd: d.budgetUsd,
       nowSec,
+      caps: d.caps,
+      costUsd: channel === "extension" ? 0 : undefined,
     });
     if (!decision.ok) {
       // 不落行:cap/预算是全局闸,不是这个市场的罪(见文件头)。
@@ -192,6 +204,12 @@ export async function runPregameCycle(d: PregameDeps): Promise<number> {
       category: c.meta.category,
     });
 
+    if (channel === "extension") {
+      if (enqueue.run(dedup, text, nowSec).changes === 0) {
+        console.log(`[xPregame] skip ${c.conditionId}: already queued/handled`);
+      }
+      continue;
+    }
     if (claim.run(dedup, text, costOf(false), nowSec).changes === 0) {
       console.log(
         `[xPregame] skip ${c.conditionId}: claimed by another process`,

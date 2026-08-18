@@ -37,6 +37,8 @@ const Env = z.object({
   // Origin the worker fetches its own /api/og/weekly card from (weekly report
   // post). Defaults to the embedded-engine case (same process serves Next).
   X_OG_ORIGIN: z.string().default("http://127.0.0.1:3000"),
+  X_QUEUE_TTL_SEC: z.string().default(""),
+  X_LEASE_TTL_SEC: z.string().default(""),
   // 对外信号付费频道(批次 1):策略信号实时推送的目的频道。与告警频道
   // (TELEGRAM_CHANNEL_ID)刻意分开 —— 告警频道是公开的,策略信号实时版
   // 是付费墙内的。空 = 该通道关闭(fail-closed)。
@@ -121,12 +123,12 @@ function parseBoolEnv(raw: string): boolean {
 // interval parser): a NaN budget would poison every `spent >= budget`
 // comparison and silently DISABLE the spend fuse — the one failure mode a
 // metered API must never have. Unset ("") stays silent on the default.
-function parseUsdEnv(raw: string, def: number, label: string): number {
+function parsePositiveEnv(raw: string, def: number, label: string): number {
   if (raw.trim() === "") return def;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
     console.warn(
-      `[config] ${label}=${JSON.stringify(raw)} is not a positive number — using default ${def} (a NaN/negative value would break the spend fuse)`,
+      `[config] ${label}=${JSON.stringify(raw)} is not a positive number — using default ${def} (a NaN/negative value would disable whatever this guards: the spend fuse, or a queue/lease TTL that would then never reclaim)`,
     );
     return def;
   }
@@ -160,13 +162,23 @@ export function parseConfig(raw: Record<string, string | undefined>) {
     // /manage 授权的账号,回退这里的 X_ACCESS_TOKEN/SECRET(首版单账号
     // 配置不被破坏)。所以这个标志只管 App 侧,不再要求四件套齐全。
     xAppConfigured: !!(e.X_API_KEY && e.X_API_SECRET),
-    xMonthlyBudgetUsd: parseUsdEnv(
+    xMonthlyBudgetUsd: parsePositiveEnv(
       e.X_MONTHLY_BUDGET_USD,
       15,
       "X_MONTHLY_BUDGET_USD",
     ),
-    xMinTradeUsd: parseUsdEnv(e.X_MIN_TRADE_USD, 50_000, "X_MIN_TRADE_USD"),
+    xMinTradeUsd: parsePositiveEnv(
+      e.X_MIN_TRADE_USD,
+      50_000,
+      "X_MIN_TRADE_USD",
+    ),
     xOgOrigin: e.X_OG_ORIGIN.replace(/\/+$/, ""),
+    // 插件通道:queued 无人认领多久算过期。运营者的浏览器是常挂机的,所以
+    // 这个 TTL 只在异常(Chrome 崩溃/断网/X 掉登录)时起作用 —— 2h 覆盖绝
+    // 大多数临时故障,又不至于让一次长时间掉线在恢复后喷出半天的旧闻。
+    xQueueTtlSec: parsePositiveEnv(e.X_QUEUE_TTL_SEC, 7200, "X_QUEUE_TTL_SEC"),
+    // 插件取走后多久没 ack 就退回队列(浏览器崩溃、标签页被手动关掉)。
+    xLeaseTtlSec: parsePositiveEnv(e.X_LEASE_TTL_SEC, 300, "X_LEASE_TTL_SEC"),
     telegramSignalChannelId: e.TELEGRAM_SIGNAL_CHANNEL_ID.trim(),
     signalPublicDelayMin: parseSignalPublicDelayMin(e.SIGNAL_PUBLIC_DELAY_MIN),
   };

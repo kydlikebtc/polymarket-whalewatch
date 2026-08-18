@@ -167,3 +167,63 @@ describe("maybeWeeklyPost", () => {
     ).toBe(0);
   });
 });
+
+describe("maybeWeeklyPost —— extension 通道", () => {
+  it("入队而不发帖,且**不去抓图** —— 图由插件自己从 /api/og/weekly 取", async () => {
+    const db = openDb(":memory:");
+    seedPosition(db, "巨鲸", 100, MONDAY_13 - 86400);
+    const client = fakeClient();
+    let fetched = 0;
+    const countingFetch = (async (...args: Parameters<typeof fetch>) => {
+      fetched++;
+      return okFetch(...args);
+    }) as typeof fetch;
+
+    const sent = await maybeWeeklyPost(
+      deps(db, client, { channel: "extension", fetchImpl: countingFetch }),
+    );
+    // 返回 false = 本轮没发出去(与 xBroadcast 返回 0 同一语义)。
+    expect(sent).toBe(false);
+    expect(client.pngPosts).toHaveLength(0);
+    // 服务端抓图纯属浪费:插件那头会自己下载再塞进 X 的 file input。
+    expect(fetched).toBe(0);
+
+    const row = db
+      .prepare(
+        "SELECT kind, status, channel, has_link, est_cost_usd, text FROM x_posts",
+      )
+      .get() as {
+      kind: string;
+      status: string;
+      channel: string;
+      has_link: number;
+      est_cost_usd: number;
+      text: string;
+    };
+    expect(row).toMatchObject({
+      kind: "weekly",
+      status: "queued",
+      channel: "extension",
+      // has_link 保留 1(它描述帖子形态,不是计费口径)
+      has_link: 1,
+      // 但成本是 0 —— 插件通道下带链接帖不再是 $0.20
+      est_cost_usd: 0,
+    });
+    expect(row.text).toContain("📊 WEEKLY REPORT");
+    expect(row.text).toContain(
+      "https://whalewatch.wired.fund/follow?utm_source=x",
+    );
+  });
+
+  it("同一周不重复入队", async () => {
+    const db = openDb(":memory:");
+    seedPosition(db, "巨鲸", 100, MONDAY_13 - 86400);
+    const client = fakeClient();
+    const d = deps(db, client, { channel: "extension" });
+    await maybeWeeklyPost(d);
+    await maybeWeeklyPost(d);
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM x_posts").get() as { n: number }).n,
+    ).toBe(1);
+  });
+});

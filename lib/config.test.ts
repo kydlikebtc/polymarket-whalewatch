@@ -153,3 +153,19 @@ describe("parseConfig", () => {
     );
   });
 });
+
+describe("插件通道 TTL", () => {
+  it("两个 TTL 有默认值(2h 队列 / 5min 租约)", () => {
+    const c = parseConfig({});
+    expect(c.xQueueTtlSec).toBe(7200);
+    expect(c.xLeaseTtlSec).toBe(300);
+  });
+  it("可被 env 覆盖", () => {
+    expect(parseConfig({ X_QUEUE_TTL_SEC: "600" }).xQueueTtlSec).toBe(600);
+    expect(parseConfig({ X_LEASE_TTL_SEC: "60" }).xLeaseTtlSec).toBe(60);
+  });
+  it("坏值回落默认 —— TTL 是回收闸门,NaN 会让队列永远收不掉", () => {
+    expect(parseConfig({ X_QUEUE_TTL_SEC: "abc" }).xQueueTtlSec).toBe(7200);
+    expect(parseConfig({ X_LEASE_TTL_SEC: "-5" }).xLeaseTtlSec).toBe(300);
+  });
+});

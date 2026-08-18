@@ -188,3 +188,56 @@ describe("runPregameCycle", () => {
     ).toBe(3);
   });
 });
+
+describe("runPregameCycle —— extension 通道", () => {
+  it("不发帖只入队,text 与 api 通道逐字一致", async () => {
+    const db = openDb(":memory:");
+    whaleAlert(db, "a1", "0xc1", 60_000, "Yes", NOW - 3600);
+    whaleAlert(db, "a2", "0xc1", 30_000, "No", NOW - 7200);
+
+    // 先在一个干净库上跑 api 通道拿到基准文案
+    const ref = openDb(":memory:");
+    whaleAlert(ref, "a1", "0xc1", 60_000, "Yes", NOW - 3600);
+    whaleAlert(ref, "a2", "0xc1", 30_000, "No", NOW - 7200);
+    const refClient = fakeClient();
+    await runPregameCycle(deps(ref, refClient, { "0xc1": meta("0xc1", 3) }));
+
+    const client = fakeClient();
+    const posted = await runPregameCycle({
+      ...deps(db, client, { "0xc1": meta("0xc1", 3) }),
+      channel: "extension" as const,
+    });
+    expect(posted).toBe(0);
+    expect(client.posts).toHaveLength(0);
+    const row = db
+      .prepare("SELECT status, channel, est_cost_usd, text FROM x_posts")
+      .get() as {
+      status: string;
+      channel: string;
+      est_cost_usd: number;
+      text: string;
+    };
+    expect(row).toMatchObject({
+      status: "queued",
+      channel: "extension",
+      est_cost_usd: 0,
+    });
+    // 模板是共享的纯函数 —— 换通道绝不该改变帖文一个字符。
+    expect(row.text).toBe(refClient.posts[0]);
+  });
+
+  it("同一 UTC 日不重复入队", async () => {
+    const db = openDb(":memory:");
+    whaleAlert(db, "a1", "0xc1", 60_000, "Yes", NOW - 3600);
+    const client = fakeClient();
+    const d = {
+      ...deps(db, client, { "0xc1": meta("0xc1", 3) }),
+      channel: "extension" as const,
+    };
+    await runPregameCycle(d);
+    await runPregameCycle(d);
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM x_posts").get() as { n: number }).n,
+    ).toBe(1);
+  });
+});

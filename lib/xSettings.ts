@@ -132,10 +132,13 @@ export function setXDeliveryChannel(db: DB, c: XDeliveryChannel): void {
 // 防封号 + 防刷屏。所以是另一套数值,且必须运营者可调 —— 不同账号权重、
 // 不同运营阶段的容忍度不一样,这是运营决策不是代码常量。
 
-export interface XDailyCaps {
+// 刻意用 type alias 而不是 interface:只有前者带隐式索引签名,才能直接传给
+// quotaDecision 的 `caps?: Record<string, number>`(interface 会报
+// "Index signature for type 'string' is missing")。
+export type XDailyCaps = {
   whale: number;
   pregame: number;
-}
+};
 
 const CAPS_KEY = "x_daily_caps";
 export const DEFAULT_X_DAILY_CAPS: XDailyCaps = { whale: 100, pregame: 6 };
