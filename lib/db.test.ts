@@ -5,6 +5,78 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { openDb } from "./db";
 describe("openDb", () => {
+  it("插件通道迁移:x_posts 有 channel/leased_at,api_keys 有 can_x_queue", () => {
+    const db = openDb(":memory:");
+    const cols = (t: string) =>
+      (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map(
+        (c) => c.name,
+      );
+    expect(cols("x_posts")).toContain("channel");
+    expect(cols("x_posts")).toContain("leased_at");
+    expect(cols("api_keys")).toContain("can_x_queue");
+  });
+
+  it("插件通道迁移对老库幂等:缺列的旧库重开补齐,老行归因为 api", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wwmig-"));
+    const path = join(dir, "old.db");
+    try {
+      // 造一个「首版形态」的老库:x_posts / api_keys 都还没有新列。
+      const legacy = new Database(path);
+      legacy
+        .prepare(
+          `CREATE TABLE x_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
+             dedup_key TEXT NOT NULL, alert_id INTEGER, text TEXT NOT NULL,
+             has_link INTEGER NOT NULL DEFAULT 0, est_cost_usd REAL NOT NULL DEFAULT 0,
+             x_post_id TEXT, status TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+        )
+        .run();
+      legacy
+        .prepare(
+          `CREATE TABLE api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             key_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL,
+             tier TEXT NOT NULL DEFAULT 'delayed', created_at INTEGER NOT NULL,
+             revoked_at INTEGER, last_used_at INTEGER)`,
+        )
+        .run();
+      legacy
+        .prepare(
+          `INSERT INTO x_posts (kind, dedup_key, text, status, created_at)
+           VALUES ('whale', 'legacy-1', 'old post', 'posted', 1)`,
+        )
+        .run();
+      legacy.close();
+
+      const db = openDb(path);
+      const cols = (t: string) =>
+        (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map(
+          (c) => c.name,
+        );
+      expect(cols("x_posts")).toContain("channel");
+      expect(cols("x_posts")).toContain("leased_at");
+      expect(cols("api_keys")).toContain("can_x_queue");
+      // 老行必须落到 'api':它们确实是 API 通道发的,通道归因不能凭空是 NULL。
+      const row = db
+        .prepare(
+          "SELECT channel, leased_at FROM x_posts WHERE dedup_key = 'legacy-1'",
+        )
+        .get() as { channel: string; leased_at: number | null };
+      expect(row).toEqual({ channel: "api", leased_at: null });
+      db.close();
+      // 重开一次:ALTER 的 duplicate-column 必须被静默吞掉,不能抛。
+      const db2 = openDb(path);
+      expect(
+        (
+          db2.prepare("SELECT COUNT(*) AS n FROM x_posts").get() as {
+            n: number;
+          }
+        ).n,
+      ).toBe(1);
+      db2.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("creates the seen_trades table", () => {
     const db = openDb(":memory:");
     const row = db

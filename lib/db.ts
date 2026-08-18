@@ -27,10 +27,10 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS strategy_signals (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER NOT NULL, position_id INTEGER, condition_id TEXT NOT NULL, outcome TEXT NOT NULL, outcome_index INTEGER, asset TEXT, title TEXT, slug TEXT, event_slug TEXT, formation_ts INTEGER NOT NULL, reference_price REAL, wallet_count INTEGER, total_net_usd REAL, entry_price REAL, size_usd REAL, emitted_at INTEGER NOT NULL, settled INTEGER DEFAULT 0, settled_ts INTEGER, exit_price REAL, won INTEGER, realized_pnl REAL, UNIQUE(strategy_id, condition_id, outcome));
     CREATE INDEX IF NOT EXISTS idx_strategy_signals_emitted ON strategy_signals(emitted_at);
     CREATE TABLE IF NOT EXISTS signal_deliveries (signal_id INTEGER NOT NULL, event TEXT NOT NULL, channel TEXT NOT NULL, delivered_at INTEGER, status TEXT NOT NULL, PRIMARY KEY (signal_id, event, channel));
-    CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, key_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL, tier TEXT NOT NULL DEFAULT 'delayed', created_at INTEGER NOT NULL, revoked_at INTEGER, last_used_at INTEGER, bus_types TEXT);
+    CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, key_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL, tier TEXT NOT NULL DEFAULT 'delayed', created_at INTEGER NOT NULL, revoked_at INTEGER, last_used_at INTEGER, bus_types TEXT, can_x_queue INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS webhook_endpoints (id INTEGER PRIMARY KEY AUTOINCREMENT, api_key_id INTEGER NOT NULL, url TEXT NOT NULL, secret TEXT NOT NULL, active INTEGER DEFAULT 1, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS market_tilt_history (condition_id TEXT NOT NULL, ts INTEGER NOT NULL, lead_outcome TEXT, minor_outcome TEXT, minor_net_usd REAL, tilt_pct REAL, PRIMARY KEY (condition_id, ts));
-    CREATE TABLE IF NOT EXISTS x_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, dedup_key TEXT NOT NULL, alert_id INTEGER, text TEXT NOT NULL, has_link INTEGER NOT NULL DEFAULT 0, est_cost_usd REAL NOT NULL DEFAULT 0, x_post_id TEXT, status TEXT NOT NULL, created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS x_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, dedup_key TEXT NOT NULL, alert_id INTEGER, text TEXT NOT NULL, has_link INTEGER NOT NULL DEFAULT 0, est_cost_usd REAL NOT NULL DEFAULT 0, x_post_id TEXT, status TEXT NOT NULL, created_at INTEGER NOT NULL, channel TEXT NOT NULL DEFAULT 'api', leased_at INTEGER);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_x_posts_kind_dedup ON x_posts(kind, dedup_key);
     CREATE INDEX IF NOT EXISTS idx_x_posts_created_at ON x_posts(created_at);
     CREATE INDEX IF NOT EXISTS idx_token_map_condition ON token_map(condition_id);
@@ -63,6 +63,34 @@ export function openDb(path = "data.sqlite") {
   } catch {
     // column already present
   }
+  // 𝕏 插件发帖通道批次(2026-08-18,见 docs/plans/2026-08-18-x-extension-channel-design.md):
+  //   x_posts.channel   —— 'api'(worker 用 X API 直发)| 'extension'(本机
+  //     Chrome 插件用已登录会话代发)。没有这一列,切换通道后 /manage 的历史
+  //     就无法回答「这批是哪条通道发的、哪条失败率更高」。老行 DEFAULT 'api'
+  //     是准确归因而非兜底:它们确实都是 API 通道发出去的。
+  //   x_posts.leased_at —— 插件取走队列条目的时刻。extension 通道下 claim 的
+  //     持有者在网络另一头,所以这把锁必须带 TTL:超时未 ack 则退回 queued,
+  //     否则浏览器一崩,这条帖要么永久卡死要么每轮重发。
+  //   api_keys.can_x_queue —— 队列端点的能力位。默认 0:既有 key 不该因为
+  //     升级而凭空获得发帖权(最小权限,与 bus_types 的 NULL=全部相反,因为
+  //     那是读、这是写)。
+  for (const [table, col, type] of [
+    ["x_posts", "channel", "TEXT NOT NULL DEFAULT 'api'"],
+    ["x_posts", "leased_at", "INTEGER"],
+    ["api_keys", "can_x_queue", "INTEGER NOT NULL DEFAULT 0"],
+  ] as const) {
+    try {
+      db.prepare(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`).run();
+    } catch {
+      // column already present
+    }
+  }
+  // 队列扫描索引必须建在上面那批 ALTER **之后**:老库里 x_posts 已存在,
+  // 顶部的 CREATE TABLE IF NOT EXISTS 是空操作,channel 列此刻才刚补上。
+  // 建在 exec 块里会在老库上直接抛 "no such column: channel"。
+  db.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_x_posts_status_channel ON x_posts(status, channel)",
+  ).run();
   // event_category gained subcategory(二级分类,2026-08-13:体育按 NBA/MLB/
   // 足球等联盟拆分,详见 lib/gamma.ts SUBCATEGORIES 与设计文档
   // docs/plans/2026-08-13-event-subcategory-design.md)。三态语义:NULL =
