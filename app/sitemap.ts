@@ -18,7 +18,8 @@ const STATIC_PAGES: { path: string; priority: number }[] = [
   { path: "/discovery", priority: 0.7 },
   { path: "/alerts", priority: 0.6 },
   { path: "/glossary", priority: 0.6 },
-  { path: "/status", priority: 0.3 },
+  // /status 不列入:它已从导航撤下,主动请搜索引擎收录一个不对外推的运维页
+  // 是自相矛盾的。页面仍可直达,只是不做站外推广。
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {

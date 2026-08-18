@@ -244,8 +244,13 @@ export default function ManagePage() {
             </span>
           )}
         </div>
+        {/* /status 不在全站导航里,/manage 是它唯一的常规入口 —— 所以这条
+            链接放在页头而不是只放在健康度区块内:运维在别的 tab 上发现数字
+            不对劲时,不该还要先切回健康度才找得到去处。 */}
         <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
           无入口页面(不在导航栏)。令牌只存本浏览器,与 /alerts 配置面板共用。
+          <span className="muted"> · </span>
+          <Link href="/status">🩺 系统状态页 →</Link>
         </div>
       </header>
 
