@@ -9,6 +9,31 @@
 
 export const X_POST_MAX_CHARS = 280;
 
+// X 的字符计数不是码点数,是 twitter-text 的**加权长度**:defaultWeight=200、
+// scale=100、maxWeightedTweetLength=280 —— 只有下面这几段码位权重 100(算 1 个
+// 字符),其余一律 200(算 2 个)。emoji、制表符号(└)、省略号(…)全在后者。
+//
+// 为什么必须较真:模板里固定有 🐳/📊/💧/⏳/└ 五个双宽字符,截断时还会补一个
+// …,所以按码点截到 280 的帖子在 X 眼里是 286 —— 直接 403 被拒。危险带比
+// 截断更宽:非截断帖只要码点数 ≥276 就已经超了。
+const LIGHT_RANGES: readonly (readonly [number, number])[] = [
+  [0x0000, 0x10ff],
+  [0x2000, 0x200d],
+  [0x2010, 0x201f],
+  [0x2032, 0x2037],
+  [0x2043, 0x2043],
+];
+
+/** 一段文本在 X 眼里占几个字符。遍历码点(不是 UTF-16 单元)。 */
+export function weightedLength(s: string): number {
+  let w = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)!;
+    w += LIGHT_RANGES.some(([a, b]) => cp >= a && cp <= b) ? 1 : 2;
+  }
+  return w;
+}
+
 // 大单帖的告警级前缀分档:🚨 是"停下来看"级别,与 TG 的 🐳/💰 分层同思路。
 export const WHALE_SIREN_USD = 250_000;
 
@@ -156,7 +181,8 @@ export function composeWhalePost(i: WhalePostInput): string {
   const head = `${siren ? "🚨" : "🐳"} WHALE ${i.side === "SELL" ? "SELL" : "BUY"} · ${usdCompact(i.usd)}`;
   const facts: string[] = [];
   if (i.pct24h != null) facts.push(`📊 ${Math.round(i.pct24h)}% of 24h vol`);
-  if (i.liquidityUsd != null) facts.push(`💧 ${usdCompact(i.liquidityUsd)} liq`);
+  if (i.liquidityUsd != null)
+    facts.push(`💧 ${usdCompact(i.liquidityUsd)} liq`);
   if (i.hoursToEnd != null) facts.push(`⏳ ${settleShort(i.hoursToEnd)}`);
   const factLine = facts.length > 0 ? `\n\n${facts.join(" · ")}` : "";
   const tags = buildTags({ category: i.category, subcategory: i.subcategory });

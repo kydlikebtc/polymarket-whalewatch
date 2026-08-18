@@ -8,7 +8,25 @@ import {
   buildTags,
   strategyEn,
   STRATEGY_EN,
+  weightedLength,
 } from "./xComposer";
+
+describe("weightedLength(X 的加权字符口径)", () => {
+  it("ASCII 逐字符算 1", () => {
+    expect(weightedLength("hello")).toBe(5);
+  });
+  it("emoji 算 2 —— 这正是码点计数漏掉的那一半", () => {
+    expect(weightedLength("🐳")).toBe(2);
+    expect(weightedLength("📊💧⏳")).toBe(6);
+  });
+  it("制表符号与省略号也算 2(模板里真实用到的两个)", () => {
+    expect(weightedLength("└")).toBe(2);
+    expect(weightedLength("…")).toBe(2);
+  });
+  it("¢ 在权重 100 段内,算 1(模板里的价格符号不该被误判)", () => {
+    expect(weightedLength("67¢")).toBe(3);
+  });
+});
 
 describe("usdCompact", () => {
   it("formats sub-K / K / M with minimal decimals", () => {
@@ -193,7 +211,9 @@ describe("buildTags", () => {
     // 数字开头不是合法标签体。
     expect(buildTags({ subcategory: "2026Election" })).toBe("#Polymarket");
     // 空格/连字符压掉后仍是合法标签。
-    expect(buildTags({ subcategory: "Formula 1" })).toBe("#Polymarket #Formula1");
+    expect(buildTags({ subcategory: "Formula 1" })).toBe(
+      "#Polymarket #Formula1",
+    );
   });
   it("未知一级类别透传(新赛道上线不必等代码改)", () => {
     expect(buildTags({ category: "Music" })).toBe("#Polymarket #Music");
