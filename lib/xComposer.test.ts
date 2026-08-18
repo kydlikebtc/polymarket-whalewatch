@@ -566,6 +566,17 @@ describe("composeWhalePost v2", () => {
     });
     expect(t).toContain("\n\nResult posted at settlement — win or lose.\n\n");
   });
+  it("中间梯级:承诺先丢,佐证还在", () => {
+    // 钉住阶梯的中间态:repeat(11) 让全量变体恰好超限、去掉承诺行后又装得
+    // 下 —— 若 promise/facts 的丢弃顺序被对调,📊 断言立刻红。
+    const mid = composeWhalePost({
+      ...base,
+      title: "Will " + "the committee ".repeat(11) + "decide?",
+      promiseSettled: true,
+    });
+    expect(mid).not.toContain("Result posted");
+    expect(mid).toContain("📊"); // 承诺先丢,佐证还在
+  });
   it("超长标题:先丢承诺行再丢佐证行,标题最后才截", () => {
     const t = composeWhalePost({
       ...base,

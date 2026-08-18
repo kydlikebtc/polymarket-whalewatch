@@ -224,7 +224,7 @@ function fitByTruncatingTitle(
  *
  * 前提:最简变体底座须 ≤278 加权(留 2 给省略号)—— 由各模板的超长标题
  * 测试钉住。每个 build 必须把 title 恰好嵌入一次:嵌两次会少扣预算截不
- * 干净,嵌零次会输出悬空省略号。
+ * 干净,嵌零次则标题无声丢失;底座超限时截断不收敛,输出仍超 280。
  */
 export function fitPost(
   variants: ((title: string) => string)[],
@@ -330,24 +330,24 @@ export function composeWhalePost(i: WhalePostInput): string {
     title: i.title,
   });
   const variant =
-    (withFacts: boolean, withCred: boolean, withPromise: boolean) =>
+    (o: { facts?: boolean; cred?: boolean; promise?: boolean }) =>
     (title: string) => {
       const mid = [
-        ...(withCred ? cred : []),
-        ...(withFacts && facts.length > 0 ? [facts.join(" · ")] : []),
+        ...(o.cred ? cred : []),
+        ...(o.facts && facts.length > 0 ? [facts.join(" · ")] : []),
       ];
       return (
         `${head}\n\n${title}` +
         (mid.length > 0 ? `\n\n${mid.join("\n")}` : "") +
-        (withPromise ? `\n\n${SETTLE_PROMISE_LINE}` : "") +
+        (o.promise ? `\n\n${SETTLE_PROMISE_LINE}` : "") +
         `\n\n${tags}`
       );
     };
   const promise = i.promiseSettled === true;
-  const ladder = [variant(true, true, promise)];
-  if (promise) ladder.push(variant(true, true, false));
-  ladder.push(variant(false, true, false));
-  if (cred.length > 0) ladder.push(variant(false, false, false));
+  const ladder = [variant({ facts: true, cred: true, promise })];
+  if (promise) ladder.push(variant({ facts: true, cred: true }));
+  ladder.push(variant({ cred: true }));
+  if (cred.length > 0) ladder.push(variant({}));
   return fitPost(ladder, sanitizeTitle(i.title));
 }
 
