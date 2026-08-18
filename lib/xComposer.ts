@@ -472,7 +472,9 @@ export function composePregamePost(i: PregamePostInput): string {
     if (s1 && s1.usd > 0) {
       const ratio = s0.usd / s1.usd;
       if (ratio >= 2) {
-        stance = ` — smart money is ${Math.round(ratio)}-to-1 on ${outcomeDisplay(s0.name)}`;
+        // floor 不是 round:2.5 说 3-to-1 是凭空夸大 20%,floor 永不夸大 ——
+        // 「不编数字」是这个账号的品牌立场。
+        stance = ` — smart money is ${Math.floor(ratio)}-to-1 on ${outcomeDisplay(s0.name)}`;
       } else {
         stance = " — smart money is SPLIT on this one";
         leanPrefix = "Slight lean ";
@@ -511,69 +513,102 @@ export interface SettlementPostInput {
   outcome: string;
   /** 原信号的入场价(¢)。缺失/越界时只报结果,不编回报率。 */
   entryCents?: number | null;
-  /**
-   * 原信号方向。**必须传对** —— outcomeStats.settleWon 的 won 对 SELL 的
-   * 语义是「卖出后价格下跌」,套用买入的 `entry → $1.00` 公式会把卖对了
-   * 说成买赢了,数字和方向全错(实测真实数据时踩到)。
-   */
+  /** 原信号方向。**必须传对**(SELL 语义见实现处注释,传错方向全错)。 */
   side?: "BUY" | "SELL";
   won: boolean;
+  /** 原信号类型 → "Consensus signal"/"Whale signal" 标签;缺省退 "Signal"。 */
+  signalKind?: "whale" | "consensus";
+  /**
+   * 原帖发出距今秒数(posted_at → now)。不用 "settled today" ——
+   * alert_outcomes 没有真实结算时刻,backfill 可能滞后;"posted 2d ago"
+   * 从 thread 就能验证,还多给了提前量信息。
+   */
+  postedAgoSec?: number | null;
   category?: string | null;
   subcategory?: string | null;
 }
 
+// 佐证行的 posted-ago 短格式:阈值与 settleShort 同一套(<1h / <48h 小时 /
+// 其余天),读者在同一个账号里看到的时间颗粒度是一致的。
+function agoShort(sec: number): string {
+  const h = sec / 3600;
+  if (h < 1) return "under 1h ago";
+  if (h < 48) return `${Math.round(h)}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
 /**
- * 结算战报 —— 对已发过的信号帖做 self-reply,补上"后来呢"。
+ * 结算战报(v2)—— 对已发过的信号帖做 self-reply,补上"后来呢"。
  *
- *   ✅ SETTLED · CALLED IT
+ *   ✅ CALLED IT · 40¢ → $1.00 (+150%)
  *
  *   Baltimore Orioles vs. Tampa Bay Rays
- *   └ Baltimore Orioles 40¢ → $1.00 · +150%
+ *   └ Consensus signal on Baltimore Orioles, posted 2d ago
  *
  *   #Polymarket #MLB
  *
- * 三点设计立场:
+ * 回报率提进抬头:被 quote 的就是这行,通知预览一行读完输赢与倍数。
+ *
+ * 四点设计立场:
  *
  * 1. **输的也发**。账号简介写着 "No screenshots. Just the record." —— 只挑
  *    赢的发,读者第一次对照原帖就会发现,信任一次性归零。而且一串有输有赢
  *    的记录,比一串全赢可信得多。
- * 2. **只报单笔事实,不报统计**。"40¢ → $1.00 · +150%" 是这一笔的可验证
+ * 2. **只报单笔事实,不报统计**。"40¢ → $1.00 (+150%)" 是这一笔的可验证
  *    算术;"我们胜率 65%" 则是统计声明 —— 后者当前样本量根本撑不住
  *    (见 scripts/edge-audit)。单笔事实现在就能说,统计要等样本。
  * 3. **回报率是名义值**:按信号价买入、持有到结算,不含手续费与滑点。
  *    真实成交要扣 taker 费(见 lib/fees,中间价位约 2.5%)。这里不标注是
  *    因为 280 字符太贵,而"入场价 → 结算价"本身已经把原始事实给全了。
+ * 4. **只有输的帖子带立场行**。赢时自夸+表态是油,输时表态是全场最硬的
+ *    信任证明 —— 不对称是刻意的,别"顺手"把它加到赢帖上。
  */
 export function composeSettlementPost(i: SettlementPostInput): string {
-  const head = i.won ? "✅ SETTLED · CALLED IT" : "❌ SETTLED · MISSED";
   const c = i.entryCents;
   // 边界含 100¢:以 $1.00 成交是合法的(卖方尤其常见),排掉它会让整段价格
   // 信息凭空消失。只排 ≤0 与 >100 这种脏值。
   const priced = c != null && Number.isFinite(c) && c > 0 && c <= 100;
   const isSell = i.side === "SELL";
-  let line = `└ ${outcomeDisplay(i.outcome)}`;
+  let head = i.won ? "✅ CALLED IT" : "❌ MISSED";
   if (priced) {
     const entry = c as number;
     // 二元结算:赢的那边归 $1,输的那边归 $0。
-    // BUY 赢 ⇒ 结算 $1;SELL 赢 ⇒ 价格跌到 $0(卖方不用赔)。
+    // ⚠️ SELL 语义:outcomeStats.settleWon 的 won 对 SELL 是「卖出后价格
+    // 下跌」—— BUY 赢 ⇒ 结算 $1;SELL 赢 ⇒ 价格跌到 $0(卖方不用赔)。
+    // 套用买入的 entry→$1.00 公式会把「卖对了」说成「买赢了」,数字和
+    // 方向全错(实测真实数据时踩到)。
     const settle = i.won === !isSell ? "$1.00" : "$0.00";
     if (isSell) {
       // 卖方是空头,「回报率」的基准(保证金/占用资金)在预测市场里没有
       // 统一口径 —— 与其编一个,不如只给两个可核对的价格。
-      line = `└ Sold ${outcomeDisplay(i.outcome)} at ${entry}¢ → ${settle}`;
+      head += ` · sold ${entry}¢ → ${settle}`;
+    } else if (i.won) {
+      // 买入并持有到结算的名义回报:每份额从 entry¢ 变 $1。
+      const pct = Math.round((100 / entry - 1) * 100);
+      head += ` · ${entry}¢ → $1.00 (+${pct}%)`;
     } else {
-      // 买入并持有到结算的名义回报:赢 = 每份额从 entry¢ 变 $1,输 = 归零。
-      const pct = i.won ? Math.round((100 / entry - 1) * 100) : -100;
-      line += ` ${entry}¢ → ${settle} · ${pct >= 0 ? "+" : ""}${pct}%`;
+      // 输 = 归零,"-100%" 是废话 —— → $0 已经把损失说尽了。
+      head += ` · ${entry}¢ → $0`;
     }
   }
+  const kindLabel =
+    i.signalKind === "consensus"
+      ? "Consensus signal"
+      : i.signalKind === "whale"
+        ? "Whale signal"
+        : "Signal";
+  const ago =
+    i.postedAgoSec != null ? `, posted ${agoShort(i.postedAgoSec)}` : "";
+  const line = `└ ${kindLabel} on ${outcomeDisplay(i.outcome)}${ago}`;
+  // 输帖才带立场行:见设计立场第 4 点。
+  const stance = i.won ? "" : `\n\nWe post every result, wins and losses.`;
   const tags = buildTags({
     category: i.category,
     subcategory: i.subcategory,
     title: i.title,
   });
-  return fitByTruncatingTitle(
-    (title) => `${head}\n\n${title}\n${line}\n\n${tags}`,
+  return fitPost(
+    [(title) => `${head}\n\n${title}\n${line}${stance}\n\n${tags}`],
     sanitizeTitle(i.title),
   );
 }

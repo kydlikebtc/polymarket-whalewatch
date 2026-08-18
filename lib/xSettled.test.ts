@@ -106,10 +106,11 @@ describe("runSettledCycle", () => {
     expect(await runSettledCycle(deps(db, client))).toBe(1);
     // in_reply_to 必须是我们自己发过的那条 —— 这是红线,绝不回复他人。
     expect(client.replies[0].replyTo).toBe("1900000001");
+    // 调用点尚未传 signalKind/postedAgoSec(Task 10)→ └ 行是退化形态。
     expect(client.replies[0].text).toBe(
-      "✅ SETTLED · CALLED IT\n\n" +
+      "✅ CALLED IT · 40¢ → $1.00 (+150%)\n\n" +
         "Baltimore Orioles vs. Tampa Bay Rays\n" +
-        "└ Baltimore Orioles 40¢ → $1.00 · +150%\n\n" +
+        "└ Signal on Baltimore Orioles\n\n" +
         "#Polymarket #MLB",
     );
   });
@@ -119,8 +120,10 @@ describe("runSettledCycle", () => {
     seedSignal(db, { alertKey: "t1", xPostId: "1900000002", won: false });
     const client = fakeClient();
     expect(await runSettledCycle(deps(db, client))).toBe(1);
-    expect(client.replies[0].text).toContain("❌ SETTLED · MISSED");
-    expect(client.replies[0].text).toContain("40¢ → $0.00 · -100%");
+    expect(client.replies[0].text).toContain("❌ MISSED · 40¢ → $0");
+    expect(client.replies[0].text).toContain(
+      "We post every result, wins and losses.",
+    );
   });
 
   it("同一条信号只回一次(台账去重)", async () => {
@@ -190,7 +193,8 @@ describe("runSettledCycle", () => {
     const client = fakeClient();
     await runSettledCycle(deps(db, client));
     // 58¢ → $1 = +72%
-    expect(client.replies[0].text).toContain("YES 58¢ → $1.00 · +72%");
+    expect(client.replies[0].text).toContain("58¢ → $1.00 (+72%)");
+    expect(client.replies[0].text).toContain("└ Signal on YES");
   });
 
   it("预算耗尽时不发,也不落 skipped(配额是全局闸,明天还该补)", async () => {
@@ -248,7 +252,7 @@ describe("卖单方向不被写反", () => {
     });
     const client = fakeClient();
     await runSettledCycle(deps(db, client));
-    expect(client.replies[0].text).toContain("Sold Welsh Fire at 90¢ → $0.00");
+    expect(client.replies[0].text).toContain("sold 90¢ → $0.00");
     expect(client.replies[0].text).not.toContain("%");
   });
 });

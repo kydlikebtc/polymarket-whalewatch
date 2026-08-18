@@ -98,12 +98,16 @@ describe("runPregameCycle", () => {
     db.prepare(
       "INSERT INTO event_category (event_slug, category, subcategory, fetched_at) VALUES ('e', 'Sports', 'NBA', 100)",
     ).run();
-    whaleAlert(db, "a1", "0xc1", 60_000, "Yes", NOW - 3600);
-    whaleAlert(db, "a2", "0xc1", 30_000, "No", NOW - 7200);
+    // 小额边(No)先插:buyUsdByOutcome 是 Map,迭代序=插入序 —— 大额先插
+    // 会让「忘写 sort」的突变存活;小额先插时删掉排序,sides[0] 就是 No,
+    // 下面的 2-to-1 on YES 断言必红。
+    whaleAlert(db, "a1", "0xc1", 30_000, "No", NOW - 7200);
+    whaleAlert(db, "a2", "0xc1", 60_000, "Yes", NOW - 3600);
     const client = fakeClient();
     const d = deps(db, client, { "0xc1": meta("0xc1", 3) });
     expect(await runPregameCycle(d)).toBe(1);
-    // 60K/30K 恰好压在 2.0 比例边界上 → 走 X-to-1(≥2 含边界),不是 SPLIT。
+    // 60K/30K 恰好压在 2.0 比例边界上 → 走 X-to-1(≥2 含边界),不是
+    // SPLIT;比例经 floor(不夸大),2.0 取整仍是 2-to-1。
     expect(client.posts[0]).toBe(
       "⏰ SETTLES IN 3H — smart money is 2-to-1 on YES\n\n" +
         "Market 0xc1\n" +

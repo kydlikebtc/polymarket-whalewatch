@@ -360,11 +360,11 @@ describe("composeSettlementPost(结算战报)", () => {
     subcategory: "MLB",
   };
 
-  it("赢单:标出入场价 → 结算价与名义回报", () => {
+  it("赢单:入场价 → 结算价与名义回报都在抬头", () => {
     expect(composeSettlementPost(base)).toBe(
-      "✅ SETTLED · CALLED IT\n\n" +
+      "✅ CALLED IT · 40¢ → $1.00 (+150%)\n\n" +
         "Baltimore Orioles vs. Tampa Bay Rays\n" +
-        "└ Baltimore Orioles 40¢ → $1.00 · +150%\n\n" +
+        "└ Signal on Baltimore Orioles\n\n" +
         "#Polymarket #MLB",
     );
   });
@@ -374,28 +374,29 @@ describe("composeSettlementPost(结算战报)", () => {
     // record. 只挑赢的发,读者第一次对照就会发现,信任一次性归零。
     const t = composeSettlementPost({ ...base, won: false });
     expect(t).toBe(
-      "❌ SETTLED · MISSED\n\n" +
+      "❌ MISSED · 40¢ → $0\n\n" +
         "Baltimore Orioles vs. Tampa Bay Rays\n" +
-        "└ Baltimore Orioles 40¢ → $0.00 · -100%\n\n" +
+        "└ Signal on Baltimore Orioles\n\n" +
+        "We post every result, wins and losses.\n\n" +
         "#Polymarket #MLB",
     );
   });
 
   it("高价入场的赢单回报小(40¢ 赢 +150%,90¢ 赢只有 +11%)", () => {
     expect(composeSettlementPost({ ...base, entryCents: 90 })).toContain(
-      "90¢ → $1.00 · +11%",
+      "90¢ → $1.00 (+11%)",
     );
   });
 
   it("守住 ≤280 与无 URL 两条硬不变量", () => {
     const t = composeSettlementPost({ ...base, title: "A".repeat(300) });
-    expect([...t].length).toBeLessThanOrEqual(280);
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
     expect(t).not.toContain("http");
   });
 
   it("入场价缺失/越界时不编回报率,只报结果", () => {
     const t = composeSettlementPost({ ...base, entryCents: null });
-    expect(t).toContain("✅ SETTLED · CALLED IT");
+    expect(t).toContain("✅ CALLED IT");
     expect(t).not.toContain("%");
     expect(t).not.toContain("→");
   });
@@ -413,15 +414,15 @@ describe("composeSettlementPost · 卖单方向", () => {
     category: "Sports",
   };
 
-  it("卖对了 = 标的归零,写成 Sold …¢ → $0.00", () => {
+  it("卖对了 = 标的归零,抬头写 sold …¢ → $0.00", () => {
     expect(composeSettlementPost({ ...sell, won: true })).toContain(
-      "└ Sold Welsh Fire at 100¢ → $0.00",
+      "✅ CALLED IT · sold 100¢ → $0.00",
     );
   });
 
   it("卖错了 = 标的结算为 $1", () => {
     expect(composeSettlementPost({ ...sell, won: false })).toContain(
-      "└ Sold Welsh Fire at 100¢ → $1.00",
+      "❌ MISSED · sold 100¢ → $1.00",
     );
   });
 
@@ -435,7 +436,7 @@ describe("composeSettlementPost · 卖单方向", () => {
     // 买方 100¢ 入场则回报恒为 0%,也应照实显示。
     expect(
       composeSettlementPost({ ...sell, side: "BUY", won: true }),
-    ).toContain("100¢ → $1.00 · +0%");
+    ).toContain("100¢ → $1.00 (+0%)");
   });
 
   it("脏价(0 / >100)仍然只报结果", () => {
@@ -808,6 +809,34 @@ describe("composePregamePost v2", () => {
     expect(t).toContain("4-to-1 on YES");
     expect(t).toContain("$200K on YES vs $50K on NO");
   });
+  it("比例向下取整:2.5 说 2-to-1 不说 3-to-1(不编数字是品牌立场)", () => {
+    // round 在 2.5 会说 3-to-1,凭空夸大 20%;floor 永不夸大。
+    const t = composePregamePost({
+      ...base,
+      sides: [
+        { name: "Lakers", usd: 250_000 },
+        { name: "Celtics", usd: 100_000 },
+      ],
+    });
+    expect(t).toContain("smart money is 2-to-1 on Lakers");
+  });
+  it("三向盘(足球主/平/客)传 3 个 sides:只用前两名,第三名不出现", () => {
+    // PregamePostInput.sides 契约是调用方只给前两个,但 composer 收到 3 个
+    // 时不该崩,也不该让第三名混进任何文案。
+    const t = composePregamePost({
+      ...base,
+      title: "Arsenal vs Chelsea",
+      sides: [
+        { name: "Arsenal", usd: 120_000 },
+        { name: "Draw", usd: 50_000 },
+        { name: "Chelsea", usd: 30_000 },
+      ],
+    });
+    expect(t).toContain("$120K on Arsenal vs $50K on Draw");
+    expect(t).not.toContain("$30K");
+    // 标题里本来就有 Chelsea,只需资金行不含它 —— 断言资金行片段而非全文。
+    expect(t).not.toContain("on Chelsea");
+  });
   it("硬不变量:超长标题先丢资金段再截标题,≤280 加权 + 无 URL", () => {
     // 钉住 fitPost 阶梯前提(最简底座 ≤278):标题被截时资金段已让位,
     // 抬头故事(X-to-1)与 └ 行保留 —— 标题是最后才动的。
@@ -821,5 +850,69 @@ describe("composePregamePost v2", () => {
     expect(t).not.toContain("$310K on Lakers"); // 资金段先丢
     expect(t).toContain("7-to-1 on Lakers"); // 抬头故事保留
     expect(t).toContain("…");
+  });
+});
+
+describe("composeSettlementPost v2", () => {
+  const base = {
+    title: "Baltimore Orioles vs. Tampa Bay Rays",
+    outcome: "Baltimore Orioles",
+    entryCents: 40,
+    side: "BUY" as const,
+    won: true,
+    signalKind: "consensus" as const,
+    postedAgoSec: 2 * 86400,
+  };
+  it("赢:回报率提进抬头(被 quote 的就是这行),无立场行", () => {
+    const t = composeSettlementPost(base);
+    expect(t.startsWith("✅ CALLED IT · 40¢ → $1.00 (+150%)")).toBe(true);
+    expect(t).toContain(
+      "└ Consensus signal on Baltimore Orioles, posted 2d ago",
+    );
+    expect(t).not.toContain("every result");
+  });
+  it("输:立场行是全场最硬的信任证明(不对称是刻意的)", () => {
+    const t = composeSettlementPost({
+      ...base,
+      entryCents: 62,
+      won: false,
+      signalKind: "whale",
+    });
+    expect(t.startsWith("❌ MISSED · 62¢ → $0")).toBe(true);
+    expect(t).toContain("└ Whale signal on Baltimore Orioles");
+    expect(t).toContain("We post every result, wins and losses.");
+  });
+  it("SELL 沿用两个可核对价格,不编回报率", () => {
+    const t = composeSettlementPost({
+      ...base,
+      side: "SELL",
+      entryCents: 62,
+      won: true,
+    });
+    expect(t.startsWith("✅ CALLED IT · sold 62¢ → $0.00")).toBe(true);
+  });
+  it("无入场价:裸抬头", () => {
+    const t = composeSettlementPost({ ...base, entryCents: null });
+    expect(t.startsWith("✅ CALLED IT\n")).toBe(true);
+  });
+  it("postedAgoSec <48h 用小时,缺失省略从句", () => {
+    expect(
+      composeSettlementPost({ ...base, postedAgoSec: 14 * 3600 }),
+    ).toContain("posted 14h ago");
+    expect(
+      composeSettlementPost({ ...base, postedAgoSec: null }),
+    ).not.toContain("posted");
+  });
+  it("signalKind 缺失退化为 Signal(旧调用零破坏)", () => {
+    const t = composeSettlementPost({ ...base, signalKind: undefined });
+    expect(t).toContain("└ Signal on Baltimore Orioles");
+  });
+  it("硬不变量:≤280 加权 + 无 URL + 超长标题截断", () => {
+    const t = composeSettlementPost({
+      ...base,
+      title: "X".repeat(400) + " https://leak.example",
+    });
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
+    expect(t).not.toMatch(/https?:\/\//);
   });
 });
