@@ -83,10 +83,22 @@ describe("composeWhalePost", () => {
   });
   it("含标签时仍守住 ≤280 与无 URL 两条硬不变量", () => {
     const t = composeWhalePost({ ...base, title: "A".repeat(300) });
-    expect([...t].length).toBeLessThanOrEqual(280);
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
     expect(t).toContain("…");
     expect(t).toContain("#Polymarket");
     expect(t).not.toContain("http");
+  });
+  it("截断触发时守住的是 X 的加权 280,不是码点 280", () => {
+    // 六个双宽字符(🐳 📊 💧 ⏳ └ …)让"码点 280"实际等于"X 眼里 286"。
+    // 修复前这条必挂:X 返回 403,帖子被标 failed 静默丢弃。
+    const t = composeWhalePost({ ...base, title: "A".repeat(400) });
+    expect(t).toContain("…");
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
+  });
+  it("截断后仍是能塞下的最长标题(不过度砍)", () => {
+    // 二分必须收敛到上界:再多留一个字符就会超限。
+    const t = composeWhalePost({ ...base, title: "A".repeat(400) });
+    expect(weightedLength(t)).toBeGreaterThanOrEqual(279);
   });
   it("剥掉标题里混入的 URL(带链接帖计费 13×)", () => {
     const t = composeWhalePost({
@@ -173,7 +185,7 @@ describe("composeWeeklyPost", () => {
         "Full verified record: https://whalewatch.wired.fund/follow?utm_source=x\n\n" +
         "#Polymarket #PredictionMarkets #SmartMoney",
     );
-    expect([...t].length).toBeLessThanOrEqual(280);
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
   });
   it("负 PnL 与无胜率样本时优雅降级", () => {
     const t = composeWeeklyPost({

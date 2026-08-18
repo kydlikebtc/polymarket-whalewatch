@@ -1,7 +1,8 @@
 // X (Twitter) 帖文模板 —— 全部纯函数,无 I/O。
 //
 // 两条硬不变量(都有测试钉住):
-//  1. ≤280 字符:超长一律截 title 补 "…",绝不让 publisher 吃 API 400。
+//  1. ≤280 **加权**字符(X 的 twitter-text 口径,emoji/制表符号算 2 个):
+//     超长一律截 title 补 "…",绝不让 publisher 吃 API 400。
 //  2. 除 weekly 外输出不得含 URL:X 按量付费对带链接帖收 $0.20/条(无链接
 //     $0.015 的 13 倍),市场标题里混入的链接也要剥掉 —— 成本口子在模板层
 //     就焊死,而不是指望上游数据干净。
@@ -137,15 +138,27 @@ function settlesIn(hoursToEnd: number): string {
 
 // 280 限长的唯一实现:超长部分全部从 title 上截。title 是模板里唯一的
 // 变长自由文本,数字段截断会造成误读,title 截断只损失可读性。
+//
+// 为什么是二分而不是「算出超了几个字符就砍几个」:加权长度对码点数**不是
+// 线性的** —— 砍掉的可能是权重 1 的 ASCII,也可能是权重 2 的 emoji,而补上的
+// "…" 本身又占 2。旧实现按码点做减法,结果恒定截到「码点 280」,在 X 眼里是
+// 286,一律 403。二分只依赖唯一可靠的性质:标题前缀越短,帖子越短。
 function fitByTruncatingTitle(
   build: (title: string) => string,
   title: string,
 ): string {
   const full = build(title);
-  const over = [...full].length - X_POST_MAX_CHARS;
-  if (over <= 0) return full;
-  const keep = Math.max(0, [...title].length - over - 1);
-  return build([...title].slice(0, keep).join("") + "…");
+  if (weightedLength(full) <= X_POST_MAX_CHARS) return full;
+  const chars = [...title];
+  let lo = 0; // 已知能塞下的最长标题前缀长度
+  let hi = chars.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    const candidate = build(chars.slice(0, mid).join("") + "…");
+    if (weightedLength(candidate) <= X_POST_MAX_CHARS) lo = mid;
+    else hi = mid - 1;
+  }
+  return build(chars.slice(0, lo).join("") + "…");
 }
 
 export interface WhalePostInput {
