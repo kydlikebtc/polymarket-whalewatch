@@ -33,6 +33,17 @@ export interface LoopStatus {
   staleAfterSec: number;
   stale: boolean;
   missing?: true;
+  /**
+   * 今日(UTC)完成的循环轮次。additive 字段(2026-08-18,公开状态页 /status)。
+   * 一个只有绿点的状态页说不出「它在干活」和「它刚好还没超时」的区别 ——
+   * 轮次是那个区别。missing 循环恒 0。
+   */
+  cycles: number;
+  /**
+   * 今日(UTC)最长的一次循环间隔(秒)。绿点看当下,这个看这一天里有没有
+   * 卡顿过 —— 恢复了的停顿在 lastTs 上不留痕迹,只在这里。missing 循环恒 0。
+   */
+  maxGapSec: number;
 }
 
 export interface HealthReport {
@@ -41,6 +52,13 @@ export interface HealthReport {
   loops: LoopStatus[];
   staleLoops: string[];
   reason?: string;
+  /**
+   * 本次引擎进程的启动时刻,null = 从未有引擎跑过这个库。
+   * additive 字段(2026-08-18,公开状态页 /status):此前只有运营页能看到
+   * 运行时长(走 ADMIN_TOKEN 的 ops 概览),而「跑了多久」正是状态页第一个
+   * 该回答的问题,不该是运营专属。
+   */
+  startedAt: number | null;
 }
 
 /**
@@ -63,6 +81,7 @@ export function evaluateHealth(
       loops: [],
       staleLoops: [],
       reason: "no heartbeats recorded — engine has never run against this db",
+      startedAt: startedAtSec ?? null,
     };
   }
   const loops: LoopStatus[] = beats.map((b) => {
@@ -75,6 +94,8 @@ export function evaluateHealth(
       ageSec,
       staleAfterSec,
       stale: ageSec > staleAfterSec,
+      cycles: b.cycles,
+      maxGapSec: b.maxGapSec,
     };
   });
   if (startedAtSec != null) {
@@ -93,9 +114,17 @@ export function evaluateHealth(
         // pass yet (consensus starts at 30s, backfill at 90s) is not a fault.
         stale: upSec > staleAfterSec,
         missing: true,
+        cycles: 0,
+        maxGapSec: 0,
       });
     }
   }
   const staleLoops = loops.filter((l) => l.stale).map((l) => l.loop);
-  return { ok: staleLoops.length === 0, nowSec, loops, staleLoops };
+  return {
+    ok: staleLoops.length === 0,
+    nowSec,
+    loops,
+    staleLoops,
+    startedAt: startedAtSec ?? null,
+  };
 }

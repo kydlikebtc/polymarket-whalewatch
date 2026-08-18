@@ -18,6 +18,7 @@ const STATIC_PAGES: { path: string; priority: number }[] = [
   { path: "/discovery", priority: 0.7 },
   { path: "/alerts", priority: 0.6 },
   { path: "/glossary", priority: 0.6 },
+  { path: "/status", priority: 0.3 },
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {

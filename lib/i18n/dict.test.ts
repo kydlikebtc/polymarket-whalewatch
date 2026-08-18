@@ -12,6 +12,7 @@ import { DICT_WALLET } from "./dict/wallet";
 import { DICT_MARKET } from "./dict/market";
 import { DICT_GLOSSARY } from "./dict/glossary";
 import { DICT_MISC } from "./dict/misc";
+import { DICT_STATUS } from "./dict/status";
 
 // 字典卫生:四条规则挡住四类真实事故 ——
 //  1. 空译文 → 英文界面出现空洞;
@@ -37,6 +38,7 @@ const SHARDS: [string, Record<string, string>][] = [
   ["market", DICT_MARKET],
   ["glossary", DICT_GLOSSARY],
   ["misc", DICT_MISC],
+  ["status", DICT_STATUS],
 ];
 
 describe("DICT hygiene", () => {

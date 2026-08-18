@@ -1193,3 +1193,86 @@ tr:hover .copy-btn,
     padding: var(--s-4);
   }
 }
+
+/* =====================================================================
+   公开状态页（/status · app extension）
+   整体横幅 + 状态药丸。刻意只用 up/down/muted 三态：状态页的全部价值在于
+   「一眼看懂」，多一档颜色就多一次「这个黄的到底算不算事」的犹豫。
+   ===================================================================== */
+.status-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-5);
+  border-radius: var(--r-md);
+  border: 1px solid var(--n-150);
+  background: var(--n-0);
+  margin-bottom: var(--s-5);
+}
+.status-banner--up {
+  border-color: var(--up-500);
+  background: var(--up-50);
+}
+.status-banner--down {
+  border-color: var(--down-500);
+  background: var(--down-50);
+}
+.status-banner__title {
+  font-size: var(--t-xl);
+  font-weight: 600;
+  line-height: var(--lh-snug);
+  color: var(--n-900);
+}
+.status-banner__sub {
+  margin-top: var(--s-1);
+  font-size: var(--t-sm);
+  color: var(--n-600);
+  min-height: 1em;
+}
+.status-orb {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-pill);
+  background: var(--n-300);
+}
+.status-orb--up {
+  background: var(--up-500);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--up-500) 22%, transparent);
+}
+.status-orb--down {
+  background: var(--down-500);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--down-500) 22%, transparent);
+}
+
+.status-pill {
+  display: inline-block;
+  padding: 2px var(--s-2);
+  border-radius: var(--r-pill);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.status-pill--up {
+  background: var(--up-50);
+  color: var(--up-700);
+}
+.status-pill--down {
+  background: var(--down-50);
+  color: var(--down-700);
+}
+
+/* 组件行的说明文字要能换行（.ds-table td 默认 nowrap 是给数字列的）。 */
+.status-page .ds-table td {
+  white-space: normal;
+}
+
+@media (max-width: 640px) {
+  .status-banner {
+    padding: var(--s-4);
+  }
+  .status-banner__title {
+    font-size: var(--t-lg);
+  }
+}

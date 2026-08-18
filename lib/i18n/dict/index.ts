@@ -12,6 +12,7 @@ import { DICT_WALLET } from "./wallet";
 import { DICT_MARKET } from "./market";
 import { DICT_GLOSSARY } from "./glossary";
 import { DICT_MISC } from "./misc";
+import { DICT_STATUS } from "./status";
 
 export const DICT: Record<string, string> = {
   ...DICT_COMMON,
@@ -26,4 +27,5 @@ export const DICT: Record<string, string> = {
   ...DICT_MARKET,
   ...DICT_GLOSSARY,
   ...DICT_MISC,
+  ...DICT_STATUS,
 };
