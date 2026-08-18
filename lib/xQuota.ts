@@ -54,6 +54,16 @@ export interface QuotaInput {
   hasLink: boolean;
   budgetUsd: number;
   nowSec: number;
+  /**
+   * 日上限覆盖。省略 = 用 DAILY_CAP 常量(api 通道的预算导向数值)——
+   * 既有调用方零改动。插件通道传 /manage 上可调的那套(防封号导向)。
+   */
+  caps?: Record<string, number>;
+  /**
+   * 本帖的实际成本。省略 = 按 hasLink 走 X 的按量计价。插件通道传 0:
+   * 它用的是浏览器里已登录的会话,不经过按量付费 API。
+   */
+  costUsd?: number;
 }
 
 /**
@@ -64,15 +74,21 @@ export function quotaDecision(
   db: DB,
   i: QuotaInput,
 ): { ok: true } | { ok: false; reason: string } {
-  const cost = costOf(i.hasLink);
-  const spent = spentUsdInUtcMonth(db, i.nowSec);
-  if (spent + cost > i.budgetUsd) {
-    return {
-      ok: false,
-      reason: `monthly budget: spent $${spent.toFixed(3)} + $${cost} > $${i.budgetUsd}`,
-    };
+  const cost = i.costUsd ?? costOf(i.hasLink);
+  // 免费帖跳过月预算熔断。不是优化,是正确性:插件通道的帖 cost=0,但
+  // spentUsdInUtcMonth 里还躺着本月 API 通道的历史花费 —— 一旦那笔超了预算,
+  // `spent + 0 > budget` 会把零成本的帖也一并拒掉,而运营者切到插件通道
+  // **恰恰就是因为预算顶不住了**。花钱的口子才需要熔断,不花钱的不需要。
+  if (cost > 0) {
+    const spent = spentUsdInUtcMonth(db, i.nowSec);
+    if (spent + cost > i.budgetUsd) {
+      return {
+        ok: false,
+        reason: `monthly budget: spent $${spent.toFixed(3)} + $${cost} > $${i.budgetUsd}`,
+      };
+    }
   }
-  const cap = DAILY_CAP[i.kind];
+  const cap = (i.caps ?? DAILY_CAP)[i.kind];
   if (cap != null) {
     const today = postedTodayCount(db, i.kind, i.nowSec);
     if (today >= cap) {

@@ -221,3 +221,70 @@ describe("quotaDecision", () => {
     ).toBe(true);
   });
 });
+
+describe("插件通道(零成本 + 可覆盖日上限)", () => {
+  const NOW = Math.floor(Date.UTC(2026, 7, 18, 12) / 1000);
+
+  function seedPosted(db: DB, kind: string, n: number, cost: number) {
+    for (let i = 0; i < n; i++) {
+      db.prepare(
+        `INSERT INTO x_posts (kind, dedup_key, text, has_link, est_cost_usd, status, created_at)
+         VALUES (?, ?, '', 0, ?, 'posted', ?)`,
+      ).run(kind, `${kind}-${cost}-${i}`, cost, NOW);
+    }
+  }
+
+  it("caps 覆盖生效:常量 20 拒的,覆盖到 100 就放行", () => {
+    const db = openDb(":memory:");
+    seedPosted(db, "whale", 25, 0);
+    expect(
+      quotaDecision(db, {
+        kind: "whale",
+        hasLink: false,
+        budgetUsd: 15,
+        nowSec: NOW,
+      }).ok,
+    ).toBe(false);
+    expect(
+      quotaDecision(db, {
+        kind: "whale",
+        hasLink: false,
+        budgetUsd: 15,
+        nowSec: NOW,
+        caps: { whale: 100, pregame: 6 },
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("覆盖后的上限本身仍然生效(不是把 cap 关掉)", () => {
+    const db = openDb(":memory:");
+    seedPosted(db, "whale", 100, 0);
+    const d = quotaDecision(db, {
+      kind: "whale",
+      hasLink: false,
+      budgetUsd: 15,
+      nowSec: NOW,
+      caps: { whale: 100, pregame: 6 },
+    });
+    expect(d.ok).toBe(false);
+    expect(d.ok === false && d.reason).toContain("daily cap");
+  });
+
+  it("零成本帖不受月预算熔断影响 —— 否则「换插件继续发」整个失效", () => {
+    // 本月 API 通道已把预算花超(0.015 × 1100 = $16.5 > $15)。插件通道的帖
+    // 边际成本为零,却会被 `spent + 0 > budget` 拒掉 —— 那正好废掉切换通道
+    // 的全部意义(用户切过来就是因为预算顶不住了)。
+    const db = openDb(":memory:");
+    seedPosted(db, "consensus", 1100, 0.015);
+    expect(spentUsdInUtcMonth(db, NOW)).toBeGreaterThan(15);
+    const d = quotaDecision(db, {
+      kind: "consensus",
+      hasLink: false,
+      budgetUsd: 15,
+      nowSec: NOW,
+      caps: { whale: 100, pregame: 6 },
+      costUsd: 0,
+    });
+    expect(d.ok).toBe(true);
+  });
+});
