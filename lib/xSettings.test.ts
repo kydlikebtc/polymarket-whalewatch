@@ -1,10 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { openDb, type DB } from "./db";
 import {
+  DEFAULT_X_DAILY_CAPS,
   DEFAULT_X_KINDS,
   X_KINDS,
+  getXDailyCaps,
+  getXDeliveryChannel,
   getXKindSwitches,
   getXPostHistory,
+  setXDailyCaps,
+  setXDeliveryChannel,
   setXKindSwitches,
 } from "./xSettings";
 
@@ -179,5 +184,61 @@ describe("getXPostHistory", () => {
   it("空库不炸", () => {
     const h = getXPostHistory(openDb(":memory:"), NOW);
     expect(h).toEqual({ posts: [], spentThisMonthUsd: 0, counts: {} });
+  });
+});
+
+describe("发帖通道开关", () => {
+  it("默认 api —— 升级不该改变既有部署的行为", () => {
+    expect(getXDeliveryChannel(openDb(":memory:"))).toBe("api");
+  });
+  it("能设成 extension 并读回", () => {
+    const db = openDb(":memory:");
+    setXDeliveryChannel(db, "extension");
+    expect(getXDeliveryChannel(db)).toBe("extension");
+  });
+  it("坏值降级回 api,不静默变哑", () => {
+    const db = openDb(":memory:");
+    db.prepare("INSERT INTO config (key, value) VALUES (?, ?)").run(
+      "x_delivery_channel",
+      "banana",
+    );
+    expect(getXDeliveryChannel(db)).toBe("api");
+  });
+  it("真实变更才写 config_history(与 kinds 同一条审计纪律)", () => {
+    const db = openDb(":memory:");
+    setXDeliveryChannel(db, "extension");
+    setXDeliveryChannel(db, "extension");
+    const n = db
+      .prepare("SELECT COUNT(*) AS n FROM config_history WHERE key = ?")
+      .get("x_delivery_channel") as { n: number };
+    expect(n.n).toBe(1);
+  });
+});
+
+describe("插件通道日上限", () => {
+  it("默认 whale 100 / pregame 6", () => {
+    expect(getXDailyCaps(openDb(":memory:"))).toEqual(DEFAULT_X_DAILY_CAPS);
+    expect(DEFAULT_X_DAILY_CAPS).toEqual({ whale: 100, pregame: 6 });
+  });
+  it("能设并读回", () => {
+    const db = openDb(":memory:");
+    setXDailyCaps(db, { whale: 42, pregame: 9 });
+    expect(getXDailyCaps(db)).toEqual({ whale: 42, pregame: 9 });
+  });
+  it("逐键校验:非正整数回落默认,好键不受坏键连累", () => {
+    const db = openDb(":memory:");
+    db.prepare("INSERT INTO config (key, value) VALUES (?, ?)").run(
+      "x_daily_caps",
+      JSON.stringify({ whale: -3, pregame: 20 }),
+    );
+    expect(getXDailyCaps(db)).toEqual({ whale: 100, pregame: 20 });
+  });
+  it("坏 JSON 整体回落默认", () => {
+    const db = openDb(":memory:");
+    db.prepare("INSERT INTO config (key, value) VALUES (?, ?)").run(
+      "x_daily_caps",
+      "{ not json",
+    );
+    expect(getXDailyCaps(db)).toEqual(DEFAULT_X_DAILY_CAPS);
   });
 });
