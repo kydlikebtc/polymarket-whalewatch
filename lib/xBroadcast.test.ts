@@ -349,7 +349,7 @@ describe("话题标签与共识均价的接线", () => {
     await runXBroadcastCycle(deps(db, client));
     // 均价是读者判断「现在还跟不跟得上」的唯一依据。
     expect(client.posts[0]).toContain(
-      "└ 2 top-PnL wallets → Atlanta Braves @ 58¢ · $18.4K combined",
+      "└ 2 top-PnL wallets → Atlanta Braves @ 58¢ avg · $18.4K combined",
     );
     expect(client.posts[0]).toContain("#Polymarket #MLB");
   });

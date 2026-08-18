@@ -351,44 +351,80 @@ export function composeWhalePost(i: WhalePostInput): string {
   return fitPost(ladder, sanitizeTitle(i.title));
 }
 
+export interface ConsensusWalletReceipt {
+  netUsd: number;
+  avgPriceCents: number;
+  winRate?: number | null; // 0-1
+}
+
 export interface ConsensusPostInput {
   walletCount: number;
   outcome: string;
   title: string;
   totalUsd: number;
-  /**
-   * 聚钱的金额加权买入均价(¢)。缺失则整段省略 —— 老告警行没有这个字段,
-   * 用 0¢ 占位会让读者以为白送。
-   */
+  /** 聚钱的金额加权买入均价(¢)。缺失整段省略(老告警行没有,0¢ 像白送)。 */
   priceCents?: number | null;
+  /** lastTs − firstTs。>60min 不讲(不稀奇就删句,以保诚实)。 */
+  spanSec?: number | null;
+  /** 逐钱包回执,netUsd 降序(payload 里本就有序)。老 payload 缺失 → 无回执。 */
+  wallets?: ConsensusWalletReceipt[];
   category?: string | null;
   subcategory?: string | null;
 }
 
 /**
+ * 品牌抬头保持恒定(识别度即品牌),叙事下沉到 └ 行一句讲完,正文主体是
+ * 逐钱包回执 —— 截图传播的主体,别家给不出:
+ *
  *   🔥 SMART-MONEY CONSENSUS
  *
- *   Fed cut in Sept?
- *   └ 3 top-PnL wallets → YES @ 58¢ · $92K combined
+ *   LoL: Nongshim Red Force vs DN SOOPers - Game 2 Winner
+ *   └ 2 top-PnL wallets → Nongshim Red Force @ 49¢ avg · $33.9K within 14 min
  *
- *   #Polymarket #Economy
+ *   🏆 $12.5K @ 64¢ · 74% win rate
+ *   🏆 $9.6K @ 45¢ · 57% win rate
  *
- * 均价是这条帖子里最实用的一个数:没有它,读者知道"有聪明钱进场"却无从
- * 判断现在还跟不跟得上 —— 而这正是他看完唯一想做的决定。TG 版一直有,
- * X 版此前漏传(2026-08-18 补)。
+ *   #Polymarket #Esports #LeagueOfLegends
+ *
+ * 明确不放:钱包 PnL(装不下,小 PnL 反削弱说服力)、last fill Xm ago
+ * (播报 ≤60s 一轮,发帖时刻≈最后一笔时刻,废字符)。
+ * 降级阶梯:丢金额最小的回执行 → 坍缩成聚合胜率行 → 无凭证块 → 截标题。
  */
 export function composeConsensusPost(i: ConsensusPostInput): string {
+  const at = i.priceCents != null ? ` @ ${i.priceCents}¢ avg` : "";
+  const within =
+    i.spanSec != null && i.spanSec >= 0 && i.spanSec <= 3600
+      ? ` within ${Math.max(1, Math.round(i.spanSec / 60))} min`
+      : "";
+  const money = within
+    ? `${usdCompact(i.totalUsd)}${within}`
+    : `${usdCompact(i.totalUsd)} combined`;
+  const receipts = (i.wallets ?? []).slice(0, 3).map((w) => {
+    const wr =
+      w.winRate != null ? ` · ${Math.round(w.winRate * 100)}% win rate` : "";
+    return `🏆 ${usdCompact(w.netUsd)} @ ${w.avgPriceCents}¢${wr}`;
+  });
+  const rates = (i.wallets ?? [])
+    .map((w) => w.winRate)
+    .filter((r): r is number => r != null)
+    .map((r) => `${Math.round(r * 100)}%`);
   const tags = buildTags({
     category: i.category,
     subcategory: i.subcategory,
     title: i.title,
   });
-  const at = i.priceCents != null ? ` @ ${i.priceCents}¢` : "";
-  return fitByTruncatingTitle(
-    (title) =>
-      `🔥 SMART-MONEY CONSENSUS\n\n${title}\n└ ${i.walletCount} top-PnL wallets → ${outcomeDisplay(i.outcome)}${at} · ${usdCompact(i.totalUsd)} combined\n\n${tags}`,
-    sanitizeTitle(i.title),
-  );
+  const variant = (cred: string[]) => (title: string) =>
+    `🔥 SMART-MONEY CONSENSUS\n\n${title}\n└ ${i.walletCount} top-PnL wallets → ${outcomeDisplay(i.outcome)}${at} · ${money}` +
+    (cred.length > 0 ? `\n\n${cred.join("\n")}` : "") +
+    `\n\n${tags}`;
+  const ladder: ((t: string) => string)[] = [];
+  for (let k = receipts.length; k >= Math.min(2, receipts.length); k--) {
+    if (k > 0) ladder.push(variant(receipts.slice(0, k)));
+  }
+  if (rates.length > 0)
+    ladder.push(variant([`🏆 Win rates: ${rates.join(" · ")}`]));
+  ladder.push(variant([]));
+  return fitPost(ladder, sanitizeTitle(i.title));
 }
 
 export interface PregamePostInput {

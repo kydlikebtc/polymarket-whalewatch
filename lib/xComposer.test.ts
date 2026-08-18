@@ -125,7 +125,7 @@ describe("composeConsensusPost", () => {
     ).toBe(
       "🔥 SMART-MONEY CONSENSUS\n\n" +
         "Fed cut in Sept?\n" +
-        "└ 3 top-PnL wallets → YES @ 58¢ · $92K combined\n\n" +
+        "└ 3 top-PnL wallets → YES @ 58¢ avg · $92K combined\n\n" +
         "#Polymarket #Economy #Fed",
     );
   });
@@ -592,6 +592,83 @@ describe("composeWhalePost v2", () => {
       smart: { winRate: 0.74, netPnl: 1_200_000 },
       promiseSettled: true,
       title: base.title + " https://example.com/x",
+    });
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
+    expect(t).not.toMatch(/https?:\/\//);
+  });
+});
+
+describe("composeConsensusPost v2", () => {
+  const base = {
+    walletCount: 2,
+    outcome: "Nongshim Red Force",
+    title: "LoL: Nongshim Red Force vs DN SOOPers - Game 2 Winner",
+    totalUsd: 33_900,
+    priceCents: 49,
+    spanSec: 14 * 60,
+    wallets: [
+      { netUsd: 12_499, avgPriceCents: 64, winRate: 0.74 },
+      { netUsd: 9_600, avgPriceCents: 45, winRate: 0.57 },
+    ],
+  };
+  it("满配:叙事 └ 行 + 逐钱包回执(截图传播主体)", () => {
+    const t = composeConsensusPost(base);
+    expect(t).toContain(
+      "└ 2 top-PnL wallets → Nongshim Red Force @ 49¢ avg · $33.9K within 14 min",
+    );
+    expect(t).toContain("🏆 $12.5K @ 64¢ · 74% win rate");
+    expect(t).toContain("🏆 $9.6K @ 45¢ · 57% win rate");
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
+  });
+  it("窗口 >60min 不讲集中度(不稀奇就删句),金额落回 combined", () => {
+    const t = composeConsensusPost({ ...base, spanSec: 2 * 3600 });
+    expect(t).not.toContain("within");
+    expect(t).toContain("$33.9K combined");
+  });
+  it("winRate 为 null 的回执省略胜率段", () => {
+    const t = composeConsensusPost({
+      ...base,
+      wallets: [{ netUsd: 12_499, avgPriceCents: 64, winRate: null }],
+    });
+    expect(t).toContain("🏆 $12.5K @ 64¢\n");
+    expect(t).not.toContain("null");
+  });
+  it("老 payload 无 wallets/spanSec → 无回执块,└ 行仍完整", () => {
+    const t = composeConsensusPost({
+      walletCount: 3,
+      outcome: "Yes",
+      title: "Fed cut in Sept?",
+      totalUsd: 92_000,
+      priceCents: 58,
+    });
+    expect(t).toContain("└ 3 top-PnL wallets → YES @ 58¢ avg · $92K combined");
+    expect(t).not.toContain("🏆 $");
+  });
+  it("长标题降级:回执坍缩,标题不截", () => {
+    const longTitle =
+      "Will the Federal Reserve cut interest rates by 50bps or more at the September 2026 FOMC meeting?";
+    const t = composeConsensusPost({
+      ...base,
+      title: longTitle,
+      walletCount: 3,
+      wallets: [
+        { netUsd: 48_000, avgPriceCents: 57, winRate: 0.81 },
+        { netUsd: 27_000, avgPriceCents: 58, winRate: 0.74 },
+        { netUsd: 17_000, avgPriceCents: 60, winRate: 0.57 },
+      ],
+      spanSec: 41 * 60,
+    });
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
+    expect(t).toContain(longTitle); // 标题完整
+    // 3 行回执装不下(实测 296) → 先试 2 行(实测 265,装得下)
+    expect(t).toContain("🏆 $48K @ 57¢ · 81% win rate");
+    expect(t).toContain("🏆 $27K @ 58¢ · 74% win rate");
+    expect(t).not.toContain("$17K");
+  });
+  it("硬不变量:≤280 加权 + 无 URL", () => {
+    const t = composeConsensusPost({
+      ...base,
+      title: base.title + " https://leak.example",
     });
     expect(weightedLength(t)).toBeLessThanOrEqual(280);
     expect(t).not.toMatch(/https?:\/\//);
