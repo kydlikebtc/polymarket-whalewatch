@@ -114,7 +114,7 @@ function toTag(raw: string | null | undefined): string | null {
  * 意味着「宁可不加」。
  *
  * 选词依据是本地告警标题的实际词频 + 该标签在 X 上是否真有活跃话题流:
- *   · 加密币种 —— #Bitcoin 是持续活跃的大话题流,本地标题里也最高频(76)
+ *   · 加密币种 —— $BTC 等 cashtag 流持续活跃,本地标题里也最高频(76)
  *   · 重大赛事 —— World Cup(86) / Wimbledon(42) 等赛期内流量极大
  *   · 电竞项目 —— LoL(37) / Dota(29) 各有稳定社区
  *   · 宏观政治 —— Fed / Trump / Election
@@ -129,12 +129,13 @@ function toTag(raw: string | null | undefined): string | null {
  * 淹没,精准度反而不如不加。电竞项目、币种这类"标的本身"因此排在前面。
  */
 const ENTITY_TAGS: [RegExp, string][] = [
-  // 币种:标的即主体,最具体。
-  [/\bbitcoin\b|\bbtc\b/i, "#Bitcoin"],
-  [/\bethereum\b|\beth\b/i, "#Ethereum"],
-  [/\bsolana\b|\bsol\b/i, "#Solana"],
-  [/\bxrp\b|\bripple\b/i, "#XRP"],
-  [/\bdogecoin\b|\bdoge\b/i, "#Dogecoin"],
+  // 币种:标的即主体,最具体。用 cashtag 而非话题标签 —— cashtag 流是
+  // 交易员真在监控的频道,受众比 #Bitcoin 话题页精准(2026-08-19 拍板)。
+  [/\bbitcoin\b|\bbtc\b/i, "$BTC"],
+  [/\bethereum\b|\beth\b/i, "$ETH"],
+  [/\bsolana\b|\bsol\b/i, "$SOL"],
+  [/\bxrp\b|\bripple\b/i, "$XRP"],
+  [/\bdogecoin\b|\bdoge\b/i, "$DOGE"],
   // 电竞项目:必须排在 world cup 之前(Esports World Cup 是电竞赛事)。
   [/\bcounter-?strike\b|\bcs2\b/i, "#CS2"],
   [/\bleague of legends\b|\blol\b/i, "#LeagueOfLegends"],

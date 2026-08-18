@@ -268,7 +268,7 @@ describe("STRATEGY_EN", () => {
 describe("entityTag(第三个标签)", () => {
   it("按白名单命中主体,大小写不敏感", () => {
     expect(entityTag("Will Bitcoin close above $95,000 in August?")).toBe(
-      "#Bitcoin",
+      "$BTC",
     );
     expect(entityTag("FIFA World Cup: France vs Norway")).toBe("#WorldCup");
     expect(entityTag("Counter-Strike: MIBR vs Astralis (BO1)")).toBe("#CS2");
@@ -290,7 +290,15 @@ describe("entityTag(第三个标签)", () => {
 
   it("顺序即优先级,只取第一个命中", () => {
     // 标题同时含 Bitcoin 与 Election 时取靠前的 Bitcoin。
-    expect(entityTag("Bitcoin price on election day?")).toBe("#Bitcoin");
+    expect(entityTag("Bitcoin price on election day?")).toBe("$BTC");
+  });
+
+  it("加密币种输出 cashtag(交易员真在监控的流)", () => {
+    expect(entityTag("Will Bitcoin dip to $45,000?")).toBe("$BTC");
+    expect(entityTag("Ethereum above $5k?")).toBe("$ETH");
+    expect(buildTags({ category: "Crypto", title: "Bitcoin up?" })).toBe(
+      "#Polymarket #Crypto $BTC",
+    );
   });
 
   it("具体项目压过泛赛事名 —— Esports World Cup 该标 #CS2 不是 #WorldCup", () => {
@@ -316,8 +324,9 @@ describe("buildTags 三标签上限", () => {
       subcategory: "Bitcoin",
       title: "Will Bitcoin close above $95,000?",
     });
-    // 赛道二级已是 #Bitcoin,实体同名 → 去重,不出现两次。
-    expect(tags).toBe("#Polymarket #Bitcoin");
+    // 赛道话题页(#Bitcoin)与实体 cashtag($BTC)是两个不同频道,
+    // 形态不同不触发去重 —— 恰好凑满「平台 + 赛道 + 主体」三个。
+    expect(tags).toBe("#Polymarket #Bitcoin $BTC");
   });
 
   it("赛道与主体不同名时才凑满三个", () => {
