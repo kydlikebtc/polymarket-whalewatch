@@ -1245,3 +1245,29 @@ git commit -m "chore: X 文案 v2 收尾 —— 删旧截断函数 + 注释口�
 
 - /manage 打开 `settled` 开关——否则承诺行永不出现（双闸门设计使然）。
 - 首批发出后，人工在时间线上核对一条 256 字符的共识帖**确实没被折叠**（我们按 280 加权口径实现，X 客户端渲染若有出入，微调 `X_POST_MAX_CHARS` 即可，一处常数改动全局生效）。
+
+---
+
+## 执行记录（2026-08-19）
+
+12 个任务全部完成，每任务一提交（`7849dc9` weightedLength → `ff6cca2` cashtag，收尾另有一笔 chore）。
+最终验收：`npx vitest run` **1401 测试 / 106 文件全绿**，`npx tsc --noEmit` 零错误。
+
+与计划的偏差（均在对应提交里论证过）：
+
+- **战报佐证行用 posted-ago 替代 settled today**（计划头部已声明的偏差）：`alert_outcomes`
+  无真实结算时刻，`posted 2d ago` 可从 thread 直接验证，还多传达提前量。
+- **Task 8 并入 Task 7 提交**（`0b1497b`）：`xPregame` 传 sides 与赛前模板 v2 联动紧密，
+  拆开则中间态测试跑不绿。
+- **赛前比例 round → floor**（`bd1c1db` 搭车）：2.5 说 3-to-1 是凭空夸大 20%，floor 永不
+  夸大 ——「不编数字」是品牌立场。
+- **三标签不去重的语义变化**（Task 11）：赛道话题页（#Bitcoin）与实体 cashtag（$BTC）形态
+  不同不触发去重，恰好凑满「平台 + 赛道 + 主体」三个 —— 计划原文只改五个条目值，实际多出
+  这一层可见行为。
+- **搭车修正若干**：whale 变体参数对象化 + fitPost 契约注释修正（`cf92be1`）；Task 4/5 审查
+  发现随 Task 6 一并修（`d2ea1fb`）。
+- **收尾扩展**（超出计划 Task 12 原文的部分）：删 `fitByTruncatingTitle` 之外又删了同样零调用
+  的 `settlesIn`；`parseCandidate` 拆成 `parseConsensusCandidate` / `parseWhaleCandidate` +
+  模块级 `taxonomyOf` / `walletReceipts`；测试双轨归并（v1/v2 describe 合一，独有用例全保留，
+  `xComposer.test.ts` 927 → 779 行）并把标签系统单测拆到 `lib/xComposer.tags.test.ts`（129 行），
+  两个文件都回到 800 行以内；补 `agoShort` under-1h 档与输帖最重版式超长标题两个测试缺口。

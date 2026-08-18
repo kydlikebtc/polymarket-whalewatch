@@ -66,92 +66,117 @@ interface Candidate {
   usd: number;
 }
 
-// 容错解析一行告警 → 候选。返回 null = 结构不可用(记 skipped,原因进日志)。
-// settledOn:结算战报功能是否开着(承诺行双闸门之一,见 SETTLE_PROMISE_MAX_H)。
-function parseCandidate(
+// 赛道标签的唯一来源:本地 event_category 表(只读,绝不触发上游请求)。
+// 早期版本取 marketCtx.category,但 gamma /markets 的 category 字段实测
+// 恒为空(本地 745 个市场无一有值)—— 于是 buildTags 的「二级优先」设计
+// 从未生效,线上每条帖子都只有 #Polymarket。
+function taxonomyOf(db: DB, slug: unknown) {
+  if (typeof slug !== "string" || !slug) return {};
+  const t = readEventCategories(db, [slug])[slug];
+  return {
+    category: t?.category ?? null,
+    subcategory: t?.subcategory ?? null,
+  };
+}
+
+// 共识回执管道:payload.wallets = 完整 ConsensusGroup 的钱包数组,零新增
+// 查询。容错解析 —— 老告警行没有这个字段,脏项直接滤掉。只取前 3:与模板层
+// 同口径(前 3),模板层作为公开纯函数自带防御性截断。
+function walletReceipts(raw: unknown) {
+  return (Array.isArray(raw) ? raw : [])
+    .filter(
+      (w): w is Record<string, unknown> => typeof w === "object" && w !== null,
+    )
+    .map((w) => ({
+      netUsd: typeof w.netUsd === "number" ? w.netUsd : NaN,
+      avgBuyPrice: typeof w.avgBuyPrice === "number" ? w.avgBuyPrice : NaN,
+      winRate: typeof w.winRate === "number" ? w.winRate : null,
+    }))
+    .filter((w) => Number.isFinite(w.netUsd) && w.avgBuyPrice > 0)
+    .slice(0, 3)
+    .map((w) => ({
+      netUsd: w.netUsd,
+      avgPriceCents: Math.round(w.avgBuyPrice * 100),
+      winRate: w.winRate,
+    }));
+}
+
+// 共识告警 → 候选。payload = 完整 ConsensusGroup;老告警行缺的字段
+// (均价/回执/时间跨度)传 null/空,模板缺哪段就省哪段。
+function parseConsensusCandidate(
   db: DB,
   row: AlertRow,
+  p: Record<string, unknown>,
+): Candidate | null {
+  const walletCount = p.walletCount;
+  const outcome = p.outcome;
+  const title = p.title;
+  const totalUsd = p.totalNetUsd;
+  if (
+    typeof walletCount !== "number" ||
+    typeof outcome !== "string" ||
+    typeof title !== "string" ||
+    typeof totalUsd !== "number"
+  ) {
+    return null;
+  }
+  // 均价:老告警行没有这个字段 → 传 null,模板整段省略而不是显示 0¢。
+  const avg = p.avgBuyPrice;
+  const spanSec =
+    typeof p.firstTs === "number" &&
+    typeof p.lastTs === "number" &&
+    p.lastTs >= p.firstTs
+      ? p.lastTs - p.firstTs
+      : null;
+  return {
+    alertId: row.id,
+    kind: "consensus",
+    usd: totalUsd,
+    text: composeConsensusPost({
+      walletCount,
+      outcome,
+      title,
+      totalUsd,
+      priceCents:
+        typeof avg === "number" && avg > 0 ? Math.round(avg * 100) : null,
+      wallets: walletReceipts(p.wallets),
+      spanSec,
+      ...taxonomyOf(db, p.eventSlug),
+    }),
+  };
+}
+
+// 凭证:仅 type='smart' 查(type='large' 当初就没被判定为聪明钱,此刻回头
+// 查会前后不一致)。getSmartTags 是纯本地 SQLite,零上游请求。🏆 是告警
+// 时刻的事实(type='smart' 本身):payload 缺 proxyWallet(脏行)或钱包已
+// 出池,都只降到「无凭证行」({}),绝不降级成 🐳 匿名大单。
+function smartCredential(
+  db: DB,
+  rowType: string,
+  p: Record<string, unknown>,
+): WhalePostInput["smart"] {
+  if (rowType !== "smart") return null;
+  const w = typeof p.proxyWallet === "string" ? p.proxyWallet : null;
+  const tag = w ? getSmartTags(db, [w])[w.toLowerCase()] : undefined;
+  return tag ? { winRate: tag.winRate, netPnl: tag.netPnl } : {};
+}
+
+// alertEngine 富化进 payload 的市场上下文(可能整个缺失)。
+interface WhaleMarketCtx {
+  impact24h?: number | null;
+  liquidity?: number | null;
+  hoursToEnd?: number | null;
+  category?: string | null;
+}
+
+// 大单/聪明钱告警 → 候选。payload = {...Trade, marketCtx?, params}。
+function parseWhaleCandidate(
+  db: DB,
+  row: AlertRow,
+  p: Record<string, unknown>,
   minTradeUsd: number,
   settledOn: boolean,
 ): Candidate | null | "below_floor" {
-  let p: Record<string, unknown>;
-  try {
-    p = JSON.parse(row.payload) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  // 赛道标签的唯一来源:本地 event_category 表(只读,绝不触发上游请求)。
-  // 早期版本取 marketCtx.category,但 gamma /markets 的 category 字段实测
-  // 恒为空(本地 745 个市场无一有值)—— 于是 buildTags 的「二级优先」设计
-  // 从未生效,线上每条帖子都只有 #Polymarket。
-  const taxonomyOf = (slug: unknown) => {
-    if (typeof slug !== "string" || !slug) return {};
-    const t = readEventCategories(db, [slug])[slug];
-    return {
-      category: t?.category ?? null,
-      subcategory: t?.subcategory ?? null,
-    };
-  };
-
-  if (row.type === "consensus") {
-    const walletCount = p.walletCount;
-    const outcome = p.outcome;
-    const title = p.title;
-    const totalUsd = p.totalNetUsd;
-    if (
-      typeof walletCount !== "number" ||
-      typeof outcome !== "string" ||
-      typeof title !== "string" ||
-      typeof totalUsd !== "number"
-    ) {
-      return null;
-    }
-    // 均价:老告警行没有这个字段 → 传 null,模板整段省略而不是显示 0¢。
-    const avg = p.avgBuyPrice;
-    // 回执与时间跨度:payload = 完整 ConsensusGroup,零新增查询。容错解析 ——
-    // 老告警行没有这些字段,缺哪段模板就省哪段。只取前 3:回执行与聚合胜率行
-    // 都以「前 3 个钱包」为口径(与 TG 版一致),透传端截断让口径只有一处。
-    const receipts = (Array.isArray(p.wallets) ? p.wallets : [])
-      .filter(
-        (w): w is Record<string, unknown> =>
-          typeof w === "object" && w !== null,
-      )
-      .map((w) => ({
-        netUsd: typeof w.netUsd === "number" ? w.netUsd : NaN,
-        avgBuyPrice: typeof w.avgBuyPrice === "number" ? w.avgBuyPrice : NaN,
-        winRate: typeof w.winRate === "number" ? w.winRate : null,
-      }))
-      .filter((w) => Number.isFinite(w.netUsd) && w.avgBuyPrice > 0)
-      .slice(0, 3)
-      .map((w) => ({
-        netUsd: w.netUsd,
-        avgPriceCents: Math.round(w.avgBuyPrice * 100),
-        winRate: w.winRate,
-      }));
-    const spanSec =
-      typeof p.firstTs === "number" &&
-      typeof p.lastTs === "number" &&
-      p.lastTs >= p.firstTs
-        ? p.lastTs - p.firstTs
-        : null;
-    return {
-      alertId: row.id,
-      kind: "consensus",
-      usd: totalUsd,
-      text: composeConsensusPost({
-        walletCount,
-        outcome,
-        title,
-        totalUsd,
-        priceCents:
-          typeof avg === "number" && avg > 0 ? Math.round(avg * 100) : null,
-        wallets: receipts,
-        spanSec,
-        ...taxonomyOf(p.eventSlug),
-      }),
-    };
-  }
-  // large / smart:payload = {...Trade, marketCtx?, params}
   const size = p.size;
   const price = p.price;
   const side = p.side;
@@ -168,22 +193,7 @@ function parseCandidate(
   }
   const usd = notionalUsd({ size, price });
   if (usd < minTradeUsd) return "below_floor";
-  const ctx = (p.marketCtx ?? null) as {
-    impact24h?: number | null;
-    liquidity?: number | null;
-    hoursToEnd?: number | null;
-    category?: string | null;
-  } | null;
-  // 凭证:仅 type='smart' 查(type='large' 当初就没被判定为聪明钱,此刻回头
-  // 查会前后不一致)。getSmartTags 是纯本地 SQLite,零上游请求。🏆 是告警
-  // 时刻的事实(type='smart' 本身):payload 缺 proxyWallet(脏行)或钱包已
-  // 出池,都只降到「无凭证行」({}),绝不降级成 🐳 匿名大单。
-  let smart: WhalePostInput["smart"] = null;
-  if (row.type === "smart") {
-    const w = typeof p.proxyWallet === "string" ? p.proxyWallet : null;
-    const tag = w ? getSmartTags(db, [w])[w.toLowerCase()] : undefined;
-    smart = tag ? { winRate: tag.winRate, netPnl: tag.netPnl } : {};
-  }
+  const ctx = (p.marketCtx ?? null) as WhaleMarketCtx | null;
   const hoursToEnd = ctx?.hoursToEnd ?? null;
   return {
     alertId: row.id,
@@ -199,15 +209,34 @@ function parseCandidate(
       pct24h: ctx?.impact24h != null ? ctx.impact24h * 100 : null,
       liquidityUsd: ctx?.liquidity ?? null,
       hoursToEnd,
-      smart,
+      smart: smartCredential(db, row.type, p),
       // 承诺行双闸门:settled 功能开着 × 结算足够近(否则承诺必然落空)。
       promiseSettled:
         settledOn && hoursToEnd != null && hoursToEnd <= SETTLE_PROMISE_MAX_H,
       // 赛道标签走 event_category(见 taxonomyOf 上方注释);Trade 的
       // eventSlug 缺失时退到 market slug,两者都没有就只出根标签。
-      ...taxonomyOf(p.eventSlug ?? p.slug),
+      ...taxonomyOf(db, p.eventSlug ?? p.slug),
     }),
   };
+}
+
+// 容错解析一行告警 → 候选。返回 null = 结构不可用(记 skipped,原因进日志)。
+// settledOn:结算战报功能是否开着(承诺行双闸门之一,见 SETTLE_PROMISE_MAX_H)。
+function parseCandidate(
+  db: DB,
+  row: AlertRow,
+  minTradeUsd: number,
+  settledOn: boolean,
+): Candidate | null | "below_floor" {
+  let p: Record<string, unknown>;
+  try {
+    p = JSON.parse(row.payload) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  return row.type === "consensus"
+    ? parseConsensusCandidate(db, row, p)
+    : parseWhaleCandidate(db, row, p, minTradeUsd, settledOn);
 }
 
 /**

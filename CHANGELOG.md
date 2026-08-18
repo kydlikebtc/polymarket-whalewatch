@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 341 commits, 2026-06-23 → 2026-08-18. Test suite at the end of that range: 1346 tests across
-105 files (`npm test`).
+Scope: 361 commits, 2026-06-23 → 2026-08-19. Test suite at the end of that range: 1401 tests across
+106 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -35,6 +35,33 @@ Scope: 341 commits, 2026-06-23 → 2026-08-18. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                  |
 
 ## Batches
+
+### 2026-08-19 — X post copy v2: posts measured by X's own ruler, filled to the fold
+
+All five X templates were rewritten against the 280 _weighted_-character fold. Length is now
+measured by `weightedLength` (twitter-text v3 weighting: emoji, `└` and `…` count 2) instead of
+code points, which under-measured every post by 3–5 — exactly the margin that decides whether a
+maxed-out post collapses behind "Show more". Overflow degrades through an explicit `fitPost`
+variant ladder: optional lines (promise, evidence row, receipts) are dropped first, and the market
+title — the reader's only way to judge relevance — is truncated only as a last resort, inverting
+the old truncate-the-title-first behaviour.
+
+The copy moved from category labels to assertions. Whale posts open with a position
+(`🐳 WHALE: $200K says NO @ 80¢`; SELL says `sells` — selling is not a directional call), and a
+trade bigger than the market's entire 24h volume says so in the headline. Consensus posts carry
+per-wallet receipts (`🏆 $12.5K @ 64¢ · 74% win rate`) straight from the alert payload. Pregame
+posts tell one of three stories — X-to-1 (floored, never rounded up), every-signal, or SPLIT —
+with both sides' money. Settlement posts lift the arithmetic into the headline
+(`✅ CALLED IT · 40¢ → $1.00 (+150%)`), and losses — only losses — carry "We post every result,
+wins and losses." Two recoveries shipped alongside: `type='smart'` whales regained their 🏆
+identity plus a locally-queried Track record line (the broadcast loop had been collapsing smart
+and large into identical posts), and crypto entity tags became cashtags (`$BTC`), the stream
+traders actually monitor. A settlement promise line prints only behind a double gate — settled
+loop on × settlement within 144h — so the account never promises a follow-up it cannot deliver.
+
+Commits: `7849dc9`, `2d9ca62`, `221da64`, `cf92be1`, `1c72a3c`, `756b007`, `d2ea1fb`, `0b1497b`,
+`bd1c1db`, `403abea`, `ff6cca2`, plus the wrap-up commit; design and plan under
+`docs/plans/2026-08-19-x-post-copy-density*`
 
 ### 2026-08-18 — Access boundaries: token-gated operator page, public status page
 

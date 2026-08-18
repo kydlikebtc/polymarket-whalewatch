@@ -1,7 +1,9 @@
 // X (Twitter) 帖文模板 —— 全部纯函数,无 I/O。
 //
 // 两条硬不变量(都有测试钉住):
-//  1. ≤280 字符:超长一律截 title 补 "…",绝不让 publisher 吃 API 400。
+//  1. ≤280 加权字符(weightedLength,X 的尺子)= 蓝V时间线的折叠位:蓝V下
+//     超发不吃 400,而是静默折进 "Show more";非蓝V账号(/manage 可切换)
+//     下仍是 API 硬限。降级走 fitPost 变体阶梯:先丢可选行,标题最后才截。
 //  2. 除 weekly 外输出不得含 URL:X 按量付费对带链接帖收 $0.20/条(无链接
 //     $0.015 的 13 倍),市场标题里混入的链接也要剥掉 —— 成本口子在模板层
 //     就焊死,而不是指望上游数据干净。
@@ -107,13 +109,15 @@ function toTag(raw: string | null | undefined): string | null {
 }
 
 /**
- * 实体标签白名单:标题里出现这些主体时,补一个它自己的话题标签。
+ * 实体标签白名单:标题里出现这些主体时,补一个它自己的标签(币种为
+ * cashtag,其余为话题标签)。
  *
  * 为什么用白名单而不是从标题自动抽词:自动抽必然产出 #Will / #June /
  * #Group 这类废标签,而废标签既稀释相关性权重又显得像机器人。名单驱动
  * 意味着「宁可不加」。
  *
- * 选词依据是本地告警标题的实际词频 + 该标签在 X 上是否真有活跃话题流:
+ * 选词依据是本地告警标题的实际词频 + 该标签在 X 上是否真有活跃的流
+ * (话题页或 cashtag 流):
  *   · 加密币种 —— $BTC 等 cashtag 流持续活跃,本地标题里也最高频(76)
  *   · 重大赛事 —— World Cup(86) / Wimbledon(42) 等赛期内流量极大
  *   · 电竞项目 —— LoL(37) / Dota(29) 各有稳定社区
@@ -192,30 +196,11 @@ function sanitizeTitle(title: string): string {
     .trim();
 }
 
-// 紧凑形态,给结构化布局的佐证段用(那里已有 ⏳ 图标点题)。
+// 倒计时短格式,给结构化布局的佐证段用(那里已有 ⏳ 图标点题)。
 function settleShort(hoursToEnd: number): string {
   if (hoursToEnd < 1) return "<1h to settle";
   if (hoursToEnd < 48) return `${Math.round(hoursToEnd)}h to settle`;
   return `${Math.round(hoursToEnd / 24)}d to settle`;
-}
-
-function settlesIn(hoursToEnd: number): string {
-  if (hoursToEnd < 1) return "settles in <1h";
-  if (hoursToEnd < 48) return `settles in ${Math.round(hoursToEnd)}h`;
-  return `settles in ${Math.round(hoursToEnd / 24)}d`;
-}
-
-// 280 限长的唯一实现:超长部分全部从 title 上截。title 是模板里唯一的
-// 变长自由文本,数字段截断会造成误读,title 截断只损失可读性。
-function fitByTruncatingTitle(
-  build: (title: string) => string,
-  title: string,
-): string {
-  const full = build(title);
-  const over = [...full].length - X_POST_MAX_CHARS;
-  if (over <= 0) return full;
-  const keep = Math.max(0, [...title].length - over - 1);
-  return build([...title].slice(0, keep).join("") + "…");
 }
 
 /**
@@ -400,14 +385,15 @@ export function composeConsensusPost(i: ConsensusPostInput): string {
   const money = within
     ? `${usdCompact(i.totalUsd)}${within}`
     : `${usdCompact(i.totalUsd)} combined`;
-  const receipts = (i.wallets ?? []).slice(0, 3).map((w) => {
+  // 回执行与聚合胜率行同源:前 3 个钱包(payload 本就按 netUsd 降序)——
+  // 聚合行是回执的坍缩形态,口径不同则降档瞬间会凭空多出数字。
+  const top3 = (i.wallets ?? []).slice(0, 3);
+  const receipts = top3.map((w) => {
     const wr =
       w.winRate != null ? ` · ${Math.round(w.winRate * 100)}% win rate` : "";
     return `🏆 ${usdCompact(w.netUsd)} @ ${w.avgPriceCents}¢${wr}`;
   });
-  // 聚合行是回执的坍缩形态,口径同为前 3 —— 否则降档瞬间凭空多出数字。
-  const rates = (i.wallets ?? [])
-    .slice(0, 3)
+  const rates = top3
     .map((w) => w.winRate)
     .filter((r): r is number => r != null)
     .map((r) => `${Math.round(r * 100)}%`);
@@ -578,10 +564,11 @@ export function composeSettlementPost(i: SettlementPostInput): string {
     // 下跌」—— BUY 赢 ⇒ 结算 $1;SELL 赢 ⇒ 价格跌到 $0(卖方不用赔)。
     // 套用买入的 entry→$1.00 公式会把「卖对了」说成「买赢了」,数字和
     // 方向全错(实测真实数据时踩到)。
-    const settle = i.won === !isSell ? "$1.00" : "$0.00";
     if (isSell) {
       // 卖方是空头,「回报率」的基准(保证金/占用资金)在预测市场里没有
       // 统一口径 —— 与其编一个,不如只给两个可核对的价格。
+      // 卖了、归零 = 赢。
+      const settle = i.won ? "$0.00" : "$1.00";
       head += ` · sold ${entry}¢ → ${settle}`;
     } else if (i.won) {
       // 买入并持有到结算的名义回报:每份额从 entry¢ 变 $1。

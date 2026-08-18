@@ -104,6 +104,20 @@ function consensusPayload(over: Record<string, unknown> = {}): string {
   });
 }
 
+// 老版本 runConsensusCycle 落库的最小共识 payload(无均价/回执/时间戳)——
+// 优雅降级路径的共用夹具。
+function legacyConsensusPayload(over: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    conditionId: "0xc8",
+    title: "Fed cut in Sept?",
+    outcome: "Yes",
+    walletCount: 3,
+    totalNetUsd: 92_000,
+    params: {},
+    ...over,
+  });
+}
+
 function deps(db: DB, client: XClient, over: Record<string, unknown> = {}) {
   return {
     db,
@@ -171,14 +185,7 @@ describe("runXBroadcastCycle", () => {
       db,
       "consensus",
       "consensus:0xc2:Yes:3",
-      JSON.stringify({
-        conditionId: "0xc2",
-        title: "Fed cut in Sept?",
-        outcome: "Yes",
-        walletCount: 3,
-        totalNetUsd: 92_000,
-        params: {},
-      }),
+      legacyConsensusPayload({ conditionId: "0xc2" }),
       NOW - 30,
     );
     const client = fakeClient();
@@ -277,9 +284,14 @@ describe("runXBroadcastCycle", () => {
 
   it("un-enriched smart payload (no marketCtx, wallet out of pool) still posts the first line", async () => {
     const db = openDb(":memory:");
-    const p = JSON.parse(whalePayload()) as Record<string, unknown>;
-    delete p.marketCtx;
-    recordAlert(db, "smart", "t1", JSON.stringify(p), NOW - 60);
+    // JSON.stringify 丢弃值为 undefined 的键 —— 等价于 delete marketCtx。
+    recordAlert(
+      db,
+      "smart",
+      "t1",
+      whalePayload({ marketCtx: undefined }),
+      NOW - 60,
+    );
     const client = fakeClient();
     expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
     // 未富化 → 无佐证段、无赛道标签;钱包不在池 → 无凭证行。但 type='smart'
@@ -297,14 +309,7 @@ describe("runXBroadcastCycle", () => {
       db,
       "consensus",
       "consensus:0xc2:Yes:3",
-      JSON.stringify({
-        conditionId: "0xc2",
-        title: "Fed cut in Sept?",
-        outcome: "Yes",
-        walletCount: 3,
-        totalNetUsd: 92_000,
-        params: {},
-      }),
+      legacyConsensusPayload({ conditionId: "0xc2" }),
       NOW - 30,
     );
     const client = fakeClient();
@@ -408,14 +413,7 @@ describe("话题标签与共识均价的接线", () => {
       db,
       "consensus",
       "consensus:0xc8:Yes:3",
-      JSON.stringify({
-        conditionId: "0xc8",
-        title: "Fed cut in Sept?",
-        outcome: "Yes",
-        walletCount: 3,
-        totalNetUsd: 92_000,
-        params: {},
-      }),
+      legacyConsensusPayload(),
       NOW - 30,
     );
     const client = fakeClient();
@@ -449,14 +447,7 @@ describe("共识透传:钱包回执与时间跨度", () => {
       db,
       "consensus",
       "consensus:0xc8:Yes:3",
-      JSON.stringify({
-        conditionId: "0xc8",
-        title: "Fed cut in Sept?",
-        outcome: "Yes",
-        walletCount: 3,
-        totalNetUsd: 92_000,
-        params: {},
-      }),
+      legacyConsensusPayload(),
       NOW - 30,
     );
     const client = fakeClient();
@@ -550,9 +541,13 @@ describe("smart/large 凭证行与承诺行双闸门", () => {
   it("type='smart' 但 payload 缺 proxyWallet → 🏆 保留、凭证行省略", async () => {
     // 🏆 是告警时刻的事实(type='smart' 本身),不因 payload 缺字段降级成 🐳。
     const db = openDb(":memory:");
-    const p = JSON.parse(whalePayload()) as Record<string, unknown>;
-    delete p.proxyWallet;
-    recordAlert(db, "smart", "t1", JSON.stringify(p), NOW - 60);
+    recordAlert(
+      db,
+      "smart",
+      "t1",
+      whalePayload({ proxyWallet: undefined }),
+      NOW - 60,
+    );
     const client = fakeClient();
     expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
     expect(client.posts[0]).toMatch(/^🏆 SMART MONEY: /);
@@ -562,9 +557,13 @@ describe("smart/large 凭证行与承诺行双闸门", () => {
   it("payload 无 marketCtx(hoursToEnd null)时,settled 开着也不印承诺行", async () => {
     // 三闸门里的 null 拦截:结算时间不明就不许诺 —— 兑现不了的承诺比不说更糟。
     const db = openDb(":memory:");
-    const p = JSON.parse(whalePayload()) as Record<string, unknown>;
-    delete p.marketCtx;
-    recordAlert(db, "large", "t1", JSON.stringify(p), NOW - 60);
+    recordAlert(
+      db,
+      "large",
+      "t1",
+      whalePayload({ marketCtx: undefined }),
+      NOW - 60,
+    );
     const client = fakeClient();
     await runXBroadcastCycle(
       deps(db, client, {
