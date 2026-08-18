@@ -7,6 +7,7 @@ import AlertRulesSection from "./AlertRulesSection";
 import BusTypesSection from "./BusTypesSection";
 import HealthSection, { type HealthReport } from "./HealthSection";
 import KeysSection from "./KeysSection";
+import TgTargetsSection from "./TgTargetsSection";
 import XAccountsSection from "./XAccountsSection";
 import SignalsSection from "./SignalsSection";
 import StatusStrip from "./StatusStrip";
@@ -28,6 +29,7 @@ const AUTO_REFRESH_MS = 60_000;
 // 跳转按钮只是把长页面卷到某处,信息仍然全部堆在同一屏之下。
 const TABS = [
   { id: "push", label: "📡 推送与提醒" },
+  { id: "tg", label: "📣 TG 推送" },
   { id: "health", label: "🩺 健康度" },
   { id: "access", label: "🔑 接入" },
   { id: "x", label: "𝕏 播报账号" },
@@ -223,6 +225,7 @@ export default function ManagePage() {
         <HealthSection health={health} ops={overview?.ops ?? null} />
       )}
       {tab === "access" && <KeysSection token={token} />}
+      {tab === "tg" && <TgTargetsSection token={token} />}
       {tab === "x" && <XAccountsSection token={token} />}
     </main>
   );

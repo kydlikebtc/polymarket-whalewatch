@@ -4,6 +4,12 @@ import { getLargeTrades, getTradesWindowDeep } from "../lib/polymarket";
 import { maybePruneSeen, seenKeySet } from "../lib/seen";
 import { dedupKey } from "../lib/trades";
 import { sendMessage } from "../lib/telegram";
+import {
+  makeKindSender,
+  markSendResult,
+  resolveTargets,
+  type TgKind,
+} from "../lib/tgTargets";
 import { getWalletAges } from "../lib/walletAge";
 import { getAlertConditions } from "../lib/alertConditions";
 import { runAlertCycle } from "../lib/alertEngine";
@@ -126,19 +132,31 @@ export function startAlertEngine(): void {
   const cfg = parseConfig(process.env);
   const dbPath = process.env.DASH_DB || "data.sqlite";
   const db: DB = openDb(dbPath);
-  const creds = {
+  // TG 投递目标:后台可管理的「bot + 频道」行,库里一行都没有时回退到
+  // env 的 TELEGRAM_BOT_TOKEN/CHANNEL_ID(见 lib/tgTargets.resolveTargets
+  // —— 这条回退是生产安全线,升级不能让现网静默停推)。
+  const tgEnv = {
     botToken: cfg.telegramBotToken,
-    chatId: cfg.telegramChannelId,
+    alertChatId: cfg.telegramChannelId,
+    signalChatId: cfg.telegramSignalChannelId,
+    publicDelayMin: cfg.signalPublicDelayMin,
   };
-  const rawSend = cfg.telegramEnabled
-    ? (html: string) => sendMessage(creds, html)
-    : undefined;
-  // Health-instrumented send, shared by the alert AND consensus loops:
-  // consecutive-failure counters land in the config table (surfaced by
-  // /api/alerts → alerts-page callout) and a rate-limited self-diagnostic
-  // pushes after the threshold — see lib/telegramHealth. Errors rethrow
-  // unchanged, so claim-rollback / poison semantics are untouched.
-  const send = rawSend ? wrapSendWithHealth(db, rawSend) : undefined;
+  // 按类型建 sender:每类只发给勾选了它的目标,一个频道挂了不拖累其他。
+  // 每次调用重新解析,所以后台改完开关下一条消息就生效,无需重启。
+  // undefined = 当前没有目标要这一类 → 调用方整段跳过(沿用既有的
+  // `send?: ...` 可选语义)。
+  const kindSender = (kind: TgKind) => {
+    const raw = makeKindSender(db, tgEnv, kind);
+    // Health-instrumented:连续失败计数落 config 表(/api/alerts →
+    // alerts 页红条),超阈值推一条自诊断。错误原样 rethrow,claim 回滚 /
+    // 毒帖语义不变 —— 见 lib/telegramHealth。
+    return raw ? wrapSendWithHealth(db, raw) : undefined;
+  };
+  // 大单与共识分别走自己的类型:以前两者共用一个 send,后台无法只关其一。
+  const sendLarge = kindSender("large");
+  const sendConsensus = kindSender("consensus");
+  // 运维通知(日报自检 / 断更 / 熔断通报 / 存证摘要 / 启动 ping)。
+  const sendOps = kindSender("ops");
   // Backfill window: resume from the last seen trade (bounded by the cap) so a
   // restart/deploy gap no longer permanently swallows the trades that landed
   // during the downtime. The pre-window backlog is seeded as seen by the first
@@ -222,7 +240,7 @@ export function startAlertEngine(): void {
   // per-loop thresholds to call an expected-but-absent loop stale.
   markEngineStart(db, nowStartSec);
 
-  maybeStartupPing(send, cfg.telegramStartupPing);
+  maybeStartupPing(sendOps, cfg.telegramStartupPing);
 
   async function loop() {
     try {
@@ -273,7 +291,7 @@ export function startAlertEngine(): void {
         getAges,
         getSmart: (wallets) => getSmartTags(db, wallets),
         getMarketMeta: (conditionIds) => getMarketMeta(db, conditionIds),
-        send,
+        send: sendLarge,
         minTimestamp,
         publicUrl: cfg.publicUrl,
       });
@@ -283,7 +301,7 @@ export function startAlertEngine(): void {
       // self-check digest — cheap config read per tick, same pattern as
       // maybeDailySeed above.
       beat(db, "alert");
-      maybeDailySelfCheck(db, send, undefined, {
+      maybeDailySelfCheck(db, sendOps, undefined, {
         publicUrl: cfg.publicUrl,
       }).catch((e) => console.error("[heartbeat] self-check push failed", e));
     } catch (e) {
@@ -317,7 +335,7 @@ export function startAlertEngine(): void {
         db,
         fetchWindow: async () => win,
         getSmart: () => smart,
-        send,
+        send: sendConsensus,
         // Coverage-log denominator: fetchWindow's effectiveSinceSec is
         // measured against this requested window.
         windowSec: CONSENSUS_WINDOW_SEC,
@@ -647,32 +665,36 @@ export function startAlertEngine(): void {
   // 引擎其余六个循环零感知。幂等/失败语义见 lib/signalDelivery.ts 文件头。
   {
     const DELIVERY_INTERVAL_MS = 30_000;
-    const tgChannels: DeliveryChannel[] = [];
-    if (cfg.telegramBotToken && cfg.telegramSignalChannelId) {
-      // 付费频道:实时(minEmitAgeSec=0)。与告警频道分开的独立 chatId。
-      const paidCreds = {
-        botToken: cfg.telegramBotToken,
-        chatId: cfg.telegramSignalChannelId,
-      };
-      tgChannels.push({
-        key: "tg_paid",
-        minEmitAgeSec: 0,
-        send: (html) => sendMessage(paidCreds, html),
-      });
-    }
-    // 公开延迟通道的 send 单独留一份引用:每日存证 digest 也发这里。
-    const publicSend = cfg.telegramEnabled
-      ? (html: string) => sendMessage(creds, html)
-      : undefined;
-    if (publicSend) {
-      // 复用告警频道,晚 signalPublicDelayMin 分钟 —— 免费/付费分层的唯一
-      // 杠杆是延迟,字段不阉割(公开可验证记录必须完整)。
-      tgChannels.push({
-        key: "tg_public",
-        minEmitAgeSec: cfg.signalPublicDelayMin * 60,
-        send: publicSend,
-      });
-    }
+    // 策略信号通道 = 每个勾了 strategy 的投递目标一条。延迟(免费/付费分层
+    // 的唯一杠杆)从全局配置下沉成了目标自己的属性 —— 同一批信号可以既
+    // 实时发 VIP 群、又延迟 15 分钟发公开频道,后台随时改。
+    //
+    // ⚠️ key 取 target.deliveryKey 而不是现编:signal_deliveries 主键含
+    // channel,换键会把历史上投过的信号全部重投一遍。env 回退目标因此
+    // 沿用现网原键(tg_paid / tg_public),详见 lib/tgTargets。
+    const buildTgChannels = (): DeliveryChannel[] =>
+      resolveTargets(db, tgEnv)
+        .filter((t) => t.kinds.strategy)
+        .map((t) => ({
+          key: t.deliveryKey,
+          minEmitAgeSec: t.delayMin * 60,
+          send: async (html: string) => {
+            try {
+              await sendMessage(t.creds, html);
+              if (t.id != null) markSendResult(db, t.id, { ok: true });
+            } catch (e) {
+              if (t.id != null) {
+                markSendResult(db, t.id, {
+                  ok: false,
+                  error: e instanceof Error ? e.message : String(e),
+                });
+              }
+              // 原样抛:signalDelivery 自己有 claim 回滚 / 毒消息语义,
+              // 这里只负责记账,不改变它的失败处理。
+              throw e;
+            }
+          },
+        }));
     // 循环无条件启动:webhook 端点是运行时经 admin API 登记的 DB 行,每轮
     // 重新拉取 —— 新登记的端点 30s 内生效,零重启。TG 通道一个没配且当轮
     // 也无 webhook 时,runDeliveryCycle 对空通道数组是纯 no-op。
@@ -688,13 +710,15 @@ export function startAlertEngine(): void {
               onDisabled: (endpoint, error) => {
                 // 熔断通报走运营者告警频道(best-effort):订户端点死了,
                 // 沉默是最贵的故障形态。
-                send?.(
+                sendOps?.(
                   `⚠️ webhook 端点 #${endpoint.id} 连续失败已熔断停用(${error})\n${endpoint.url}`,
                 ).catch(() => {});
               },
             }),
           );
-        const channels = [...tgChannels, ...webhookChannels];
+        // 每轮重建:后台改了目标/开关/延迟,30s 内自动生效 —— 与
+        // webhook 端点每轮重新拉取同一套即时性承诺。
+        const channels = [...buildTgChannels(), ...webhookChannels];
         if (channels.length > 0) {
           const r = await runDeliveryCycle({
             db,
@@ -720,7 +744,7 @@ export function startAlertEngine(): void {
           }
           // 每日存证 digest 搭投递载波(day-gated,claim-first),发公开频道。
           // fire-and-forget:存证失败绝不扰动投递节奏。
-          maybeDailySignalDigest(db, publicSend)
+          maybeDailySignalDigest(db, sendOps)
             .then((d) => {
               if (d?.sent) {
                 console.log(
@@ -739,14 +763,13 @@ export function startAlertEngine(): void {
     // 45s 首跑:错开 consensus(30s)/evidence(60s),且首轮 followCycle
     // (最早 30s+)落台账前投递本来就无事可做。
     setTimeout(deliveryLoop, 45_000);
+    const bootTg = buildTgChannels();
     console.log(
-      tgChannels.length > 0
-        ? `[delivery] signal delivery loop enabled (${tgChannels
-            .map((c) => c.key)
-            .join(
-              ", ",
-            )} + runtime webhooks, public delay ${cfg.signalPublicDelayMin}min)`
-        : "[delivery] delivery loop running (TG channels unset — webhook-only; set TELEGRAM_SIGNAL_CHANNEL_ID / TELEGRAM_CHANNEL_ID to enable TG)",
+      bootTg.length > 0
+        ? `[delivery] signal delivery loop enabled (${bootTg
+            .map((c) => `${c.key}@${c.minEmitAgeSec / 60}min`)
+            .join(", ")} + runtime webhooks)`
+        : "[delivery] delivery loop running (无 TG 策略信号目标 — 仅 webhook;在 /manage 的「TG 推送」里添加目标并勾选「策略信号」即可启用)",
     );
   }
 
