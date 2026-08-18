@@ -1,0 +1,101 @@
+name: Bug report
+description: Something in the dashboard, the engine, or the feed behaves differently than documented.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: if this is a **security** issue (auth bypass, credential
+        leak, tier escape on `/api/signals`), do not open a public issue — use
+        [private security advisories](https://github.com/kydlikebtc/polymarket-whalewatch/security/advisories/new)
+        instead. See [SECURITY.md](https://github.com/kydlikebtc/polymarket-whalewatch/blob/main/SECURITY.md).
+
+        Redact tokens from anything you paste: `ADMIN_TOKEN`,
+        `SIGNAL_FEED_TOKEN`, issued `wlk_…` API keys, `TELEGRAM_BOT_TOKEN`,
+        and 𝕏 OAuth tokens all appear in logs and error messages.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The observed behaviour. Include the page or route (e.g. `/follow`, `GET /api/signals`) and, where relevant, exact numbers — a wrong count is easier to chase than "the numbers look off".
+      placeholder: |
+        On /alerts the validation column shows a 95% interval of ±0 for a
+        strategy with 40 alerts across 3 markets.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps, starting from a state someone else can reach. If the bug needs specific data in the database, say so — "only reproduces once at least one market has settled" is useful information, not a disqualifier.
+      placeholder: |
+        1. npm run dev
+        2. Wait for the consensus loop (first run ~30s after start)
+        3. Open http://localhost:3000/consensus
+        4. Expand any row
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What you expected instead, and where that expectation comes from (README, `docs/api-access.md`, a glossary entry, a code comment). If the docs and the code disagree, that is itself the bug — say which one you think is right.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running it
+      options:
+        - Docker Compose (docker-compose.yml)
+        - Local — npm run dev
+        - Local — npm start (production build)
+        - Standalone engine — npm run worker
+        - Other / modified deployment
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      description: Output of `node -v`. The project is built and shipped on Node 22 (the Docker image); other versions are untested.
+      placeholder: v22.14.0
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit or image
+      description: Output of `git rev-parse --short HEAD`, or the image tag you deployed.
+      placeholder: 11d0580
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Engine and server logs around the failure. **Redact every token before pasting** — replace `ADMIN_TOKEN`, `SIGNAL_FEED_TOKEN`, `wlk_…` keys, bot tokens, and OAuth tokens with `REDACTED`. `GET /api/health` output is often more useful than a stack trace when a loop has stalled.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checked-logs
+    attributes:
+      label: Before submitting
+      options:
+        - label: "I checked the container/server logs (`docker compose logs -f whalewatch`, or the terminal running `npm run dev`)"
+          required: true
+        - label: "I checked `GET /api/health` — a 503 there means an engine loop stopped beating, which explains most 'no data' reports"
+          required: false
+        - label: "`npm test` passes on my checkout (skip if you are running the published image)"
+          required: false
