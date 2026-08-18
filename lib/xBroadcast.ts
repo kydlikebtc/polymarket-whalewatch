@@ -16,14 +16,23 @@
 import type { DB } from "./db";
 import type { XClient } from "./xPublisher";
 import { isPermanentXError } from "./xPublisher";
-import { composeConsensusPost, composeWhalePost } from "./xComposer";
+import {
+  composeConsensusPost,
+  composeWhalePost,
+  type WhalePostInput,
+} from "./xComposer";
 import { readEventCategories } from "./gamma";
 import { costOf, quotaDecision } from "./xQuota";
 import { notionalUsd } from "./trades";
+import { getSmartTags } from "./smartWallets";
 
 // 新鲜度窗口:宕机重启后不补发陈旧大单(读者视角一条 30 分钟前的大单
 // 已是旧闻,补发只烧预算)—— 与引擎 BACKFILL_CAP_SEC 同一哲学。
 export const X_POST_MAX_AGE_SEC = 1800;
+
+// 承诺行的时效闸门:xSettled 只补发 7 天内的原帖(SETTLED_MAX_AGE_SEC),
+// 留 1 天缓冲 —— 更远的结算写承诺就是可被抓包的空头支票。
+export const SETTLE_PROMISE_MAX_H = 144;
 
 export interface XBroadcastDeps {
   db: DB;
@@ -33,8 +42,12 @@ export interface XBroadcastDeps {
   /**
    * 内容类型开关(/manage 可改)。省略 = 两类都发,保持首版行为 ——
    * 关掉的类型在解析阶段就落 'skipped' 台账行,既不重复扫描也不烧预算。
+   *
+   * settled 在这里**不是发帖开关**(战报由 xSettled 自己消费),而是承诺行
+   * 闸门的输入 —— settled 功能关着时「Result posted at settlement」会落空,
+   * 所以不印。
    */
-  kinds?: { whale?: boolean; consensus?: boolean };
+  kinds?: { whale?: boolean; consensus?: boolean; settled?: boolean };
   nowSec?: number;
 }
 
@@ -54,10 +67,12 @@ interface Candidate {
 }
 
 // 容错解析一行告警 → 候选。返回 null = 结构不可用(记 skipped,原因进日志)。
+// settledOn:结算战报功能是否开着(承诺行双闸门之一,见 SETTLE_PROMISE_MAX_H)。
 function parseCandidate(
   db: DB,
   row: AlertRow,
   minTradeUsd: number,
+  settledOn: boolean,
 ): Candidate | null | "below_floor" {
   let p: Record<string, unknown>;
   try {
@@ -131,6 +146,15 @@ function parseCandidate(
     hoursToEnd?: number | null;
     category?: string | null;
   } | null;
+  // 凭证:仅 type='smart' 查(type='large' 当初就没被判定为聪明钱,此刻回头
+  // 查会前后不一致)。getSmartTags 是纯本地 SQLite,零上游请求。钱包已出池
+  // 时给 {}:🏆 抬头保留(告警时刻的事实),凭证行整行省略。
+  let smart: WhalePostInput["smart"] = null;
+  if (row.type === "smart" && typeof p.proxyWallet === "string") {
+    const tag = getSmartTags(db, [p.proxyWallet])[p.proxyWallet.toLowerCase()];
+    smart = tag ? { winRate: tag.winRate, netPnl: tag.netPnl } : {};
+  }
+  const hoursToEnd = ctx?.hoursToEnd ?? null;
   return {
     alertId: row.id,
     kind: "whale",
@@ -144,7 +168,11 @@ function parseCandidate(
       // impact24h 是比值(tradeUsd/24h量),模板要的是百分数。
       pct24h: ctx?.impact24h != null ? ctx.impact24h * 100 : null,
       liquidityUsd: ctx?.liquidity ?? null,
-      hoursToEnd: ctx?.hoursToEnd ?? null,
+      hoursToEnd,
+      smart,
+      // 承诺行双闸门:settled 功能开着 × 结算足够近(否则承诺必然落空)。
+      promiseSettled:
+        settledOn && hoursToEnd != null && hoursToEnd <= SETTLE_PROMISE_MAX_H,
       // 赛道标签走 event_category(见 taxonomyOf 上方注释);Trade 的
       // eventSlug 缺失时退到 market slug,两者都没有就只出根标签。
       ...taxonomyOf(p.eventSlug ?? p.slug),
@@ -190,7 +218,12 @@ export async function runXBroadcastCycle(d: XBroadcastDeps): Promise<number> {
   const candidates: Candidate[] = [];
   let skipped = 0;
   for (const row of rows) {
-    const c = parseCandidate(d.db, row, d.minTradeUsd);
+    const c = parseCandidate(
+      d.db,
+      row,
+      d.minTradeUsd,
+      d.kinds?.settled === true,
+    );
     const dedup = `alert:${row.id}`;
     if (c === null) {
       skip.run(

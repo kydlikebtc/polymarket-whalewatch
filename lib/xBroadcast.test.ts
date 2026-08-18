@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { openDb, type DB } from "./db";
 import { recordAlert } from "./seen";
 import { runXBroadcastCycle, X_POST_MAX_AGE_SEC } from "./xBroadcast";
+import { SETTLE_PROMISE_LINE } from "./xComposer";
 import type { XClient } from "./xPublisher";
 
 const NOW = Math.floor(Date.UTC(2026, 7, 15, 12) / 1000);
@@ -226,17 +227,18 @@ describe("runXBroadcastCycle", () => {
     expect(statuses.map((r) => r.status).sort()).toEqual(["posted", "skipped"]);
   });
 
-  it("un-enriched whale payload (no marketCtx) still posts the first line", async () => {
+  it("un-enriched smart payload (no marketCtx, wallet out of pool) still posts the first line", async () => {
     const db = openDb(":memory:");
     const p = JSON.parse(whalePayload()) as Record<string, unknown>;
     delete p.marketCtx;
     recordAlert(db, "smart", "t1", JSON.stringify(p), NOW - 60);
     const client = fakeClient();
     expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
-    // 未富化 → 无佐证段、无赛道标签,但结构与根标签仍在。
+    // 未富化 → 无佐证段、无赛道标签;钱包不在池 → 无凭证行。但 type='smart'
+    // 的 🏆 抬头、结构与根标签仍在 —— 双重降级也不丢首行。
     expect(client.posts[0]).toBe(
       // 赛道标签缺失(无 event_category 行),但标题命中实体白名单。
-      "🐳 WHALE: $67K says YES @ 67¢\n\nChiefs win Super Bowl LX?\n\n#Polymarket #SuperBowl",
+      "🏆 SMART MONEY: $67K says YES @ 67¢\n\nChiefs win Super Bowl LX?\n\n#Polymarket #SuperBowl",
     );
   });
 
@@ -372,5 +374,83 @@ describe("话题标签与共识均价的接线", () => {
     await runXBroadcastCycle(deps(db, client));
     expect(client.posts[0]).toContain("→ YES · $92K combined");
     expect(client.posts[0]).not.toContain("0¢");
+  });
+});
+
+describe("smart/large 凭证行与承诺行双闸门", () => {
+  // 背景:parseCandidate 曾把 large(匿名大户)与 smart(白名单聪明钱)合并成
+  // 同一个 kind:'whale',凭证信息全丢 —— 🏆 帖与 🐳 帖长得一模一样。
+  it("type='smart' 且钱包在池 → 🏆 抬头 + Track record 凭证行(地址大小写归一)", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO smart_wallets (address, win_rate, realized_pnl) VALUES ('0xabc', 0.74, 1200000)",
+    ).run();
+    // payload 里的地址故意混大小写 —— 钉住实现按小写归一去查。
+    recordAlert(
+      db,
+      "smart",
+      "t1",
+      whalePayload({ proxyWallet: "0xAbC" }),
+      NOW - 60,
+    );
+    const client = fakeClient();
+    expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
+    expect(client.posts[0]).toMatch(/^🏆 SMART MONEY: /);
+    expect(client.posts[0]).toContain(
+      "Track record: 74% win rate · +$1.2M PnL",
+    );
+  });
+
+  it("type='large' 即便同钱包在池也不回头查 → 🐳 抬头、无凭证行", async () => {
+    // 当初没被判定为聪明钱(可能是入池前的成交),此刻回头查会前后不一致。
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO smart_wallets (address, win_rate, realized_pnl) VALUES ('0xabc', 0.74, 1200000)",
+    ).run();
+    recordAlert(db, "large", "t1", whalePayload(), NOW - 60);
+    const client = fakeClient();
+    expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
+    expect(client.posts[0]).toMatch(/^🐳 WHALE: /);
+    expect(client.posts[0]).not.toContain("Track record");
+  });
+
+  it("type='smart' 但钱包已出池 → 🏆 抬头保留、凭证行省略", async () => {
+    // 「告警时刻是白名单钱包」是既成事实,🏆 不回滚;凭证数字已无来源,不编。
+    const db = openDb(":memory:");
+    recordAlert(db, "smart", "t1", whalePayload(), NOW - 60);
+    const client = fakeClient();
+    expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
+    expect(client.posts[0]).toMatch(/^🏆 SMART MONEY: /);
+    expect(client.posts[0]).not.toContain("Track record");
+  });
+
+  it("承诺行双闸门四象限:仅 settled 开 × 结算 ≤144h 才印", async () => {
+    const quadrants = [
+      { settled: true, hoursToEnd: 30, expectLine: true },
+      { settled: true, hoursToEnd: 200, expectLine: false },
+      { settled: false, hoursToEnd: 30, expectLine: false },
+      { settled: false, hoursToEnd: 200, expectLine: false },
+    ];
+    for (const q of quadrants) {
+      const db = openDb(":memory:");
+      const p = JSON.parse(whalePayload()) as {
+        marketCtx: { hoursToEnd: number };
+      };
+      p.marketCtx.hoursToEnd = q.hoursToEnd;
+      recordAlert(db, "large", "t1", JSON.stringify(p), NOW - 60);
+      const client = fakeClient();
+      await runXBroadcastCycle(
+        deps(db, client, {
+          kinds: { whale: true, consensus: true, settled: q.settled },
+        }),
+      );
+      const label = `settled=${q.settled} hoursToEnd=${q.hoursToEnd}`;
+      expect(client.posts, label).toHaveLength(1);
+      if (q.expectLine) {
+        expect(client.posts[0], label).toContain(SETTLE_PROMISE_LINE);
+      } else {
+        expect(client.posts[0], label).not.toContain(SETTLE_PROMISE_LINE);
+      }
+    }
   });
 });
