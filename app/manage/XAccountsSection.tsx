@@ -44,13 +44,34 @@ interface Payload {
   callbackUrl: string;
 }
 
-// 四类内容的展示元数据(与 lib/xSettings.X_KINDS 同源语义;这里是客户端
+// 各类内容的展示元数据(与 lib/xSettings.X_KINDS 同源语义;这里是客户端
 // 组件,不能 import 那个碰 DB 的模块,故就近镜像一份最小集)。
 const KINDS: { kind: string; label: string; hint: string }[] = [
-  { kind: "whale", label: "🐳 巨鲸大单", hint: "量最大,最容易吃满日配额(上限 20 条/天)" },
-  { kind: "consensus", label: "🔥 聪明钱共识", hint: "稀有且独家,优先级最高,不设日上限" },
-  { kind: "pregame", label: "⏰ 赛前聚合", hint: "结算前 1-6h 热门市场汇总,至多 3 条/天" },
-  { kind: "weekly", label: "📊 周报成绩单", hint: "每周一图卡 + 链接,唯一的 $0.20 帖" },
+  {
+    kind: "whale",
+    label: "🐳 巨鲸大单",
+    hint: "量最大,最容易吃满日配额(上限 20 条/天)",
+  },
+  {
+    kind: "consensus",
+    label: "🔥 聪明钱共识",
+    hint: "稀有且独家,优先级最高,不设日上限",
+  },
+  {
+    kind: "pregame",
+    label: "⏰ 赛前聚合",
+    hint: "结算前 1-6h 热门市场汇总,至多 3 条/天",
+  },
+  {
+    kind: "weekly",
+    label: "📊 周报成绩单",
+    hint: "每周一图卡 + 链接,唯一的 $0.20 帖",
+  },
+  {
+    kind: "settled",
+    label: "✅ 结算战报",
+    hint: "回复自己发过的信号帖,补上结果(赢输都发),至多 5 条/天。默认关",
+  },
 ];
 
 const STATUS_TONE: Record<string, "up" | "down" | "warn" | "default"> = {
@@ -367,8 +388,8 @@ export default function XAccountsSection({ token }: { token: string }) {
               hint="最近 50 条。「已跳过」= 被类型开关/金额阈值/预算熔断拦下，未发出也不计费。"
               aside={
                 <span className="ds-hint mono">
-                  本月已花费 ${data.history.spentThisMonthUsd.toFixed(3)} /{" "}
-                  ${data.budgetUsd}
+                  本月已花费 ${data.history.spentThisMonthUsd.toFixed(3)} / $
+                  {data.budgetUsd}
                   {Object.entries(data.history.counts).length > 0 ? (
                     <span className="muted">
                       {" · "}

@@ -51,6 +51,7 @@ import { projectBusSignals } from "../lib/signalBus";
 import { busTypeAllowed } from "../lib/apiKeys";
 import { runXBroadcastCycle } from "../lib/xBroadcast";
 import { runPregameCycle } from "../lib/xPregame";
+import { runSettledCycle } from "../lib/xSettled";
 import { maybeWeeklyPost } from "../lib/xWeekly";
 
 // Guarded singleton PER PROCESS: instrumentation may call this more than once
@@ -607,9 +608,22 @@ export function startAlertEngine(): void {
               budgetUsd: cfg.xMonthlyBudgetUsd,
             })
           : false;
+        // 结算战报(默认关):给已发过的信号帖 self-reply 补结果。放在
+        // 播报之后 —— 新信号的时效性永远优先于回顾旧信号。
+        const settled = kinds.settled
+          ? await runSettledCycle({
+              db,
+              client: xClient,
+              budgetUsd: cfg.xMonthlyBudgetUsd,
+            })
+          : 0;
         // 账号活跃度打点(/manage 据此显示「最近发帖」)。只对库里的授权
         // 账号打点 —— env 回退模式没有对应的行。
-        if (creds.source === "db" && creds.userId && (posted > 0 || weekly)) {
+        if (
+          creds.source === "db" &&
+          creds.userId &&
+          (posted > 0 || weekly || settled > 0)
+        ) {
           markPosted(db, creds.userId, Math.floor(Date.now() / 1000));
         }
         // 心跳:beat 表示"这轮跑完了"。x_broadcast 不在 health 的期望清单里
@@ -670,16 +684,16 @@ export function startAlertEngine(): void {
           // 投递属于后续批次,那时这里按 sourceType 再分流。
           .filter((ep) => busTypeAllowed(ep.busTypes, "strategy"))
           .map((ep) =>
-          makeWebhookChannel(db, ep, {
-            onDisabled: (endpoint, error) => {
-              // 熔断通报走运营者告警频道(best-effort):订户端点死了,
-              // 沉默是最贵的故障形态。
-              send?.(
-                `⚠️ webhook 端点 #${endpoint.id} 连续失败已熔断停用(${error})\n${endpoint.url}`,
-              ).catch(() => {});
-            },
-          }),
-        );
+            makeWebhookChannel(db, ep, {
+              onDisabled: (endpoint, error) => {
+                // 熔断通报走运营者告警频道(best-effort):订户端点死了,
+                // 沉默是最贵的故障形态。
+                send?.(
+                  `⚠️ webhook 端点 #${endpoint.id} 连续失败已熔断停用(${error})\n${endpoint.url}`,
+                ).catch(() => {});
+              },
+            }),
+          );
         const channels = [...tgChannels, ...webhookChannels];
         if (channels.length > 0) {
           const r = await runDeliveryCycle({

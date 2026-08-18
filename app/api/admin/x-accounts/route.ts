@@ -39,6 +39,7 @@ const Body = z.discriminatedUnion("action", [
       consensus: z.boolean().optional(),
       pregame: z.boolean().optional(),
       weekly: z.boolean().optional(),
+      settled: z.boolean().optional(),
     }),
   }),
 ]);

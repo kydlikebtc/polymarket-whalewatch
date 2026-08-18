@@ -60,6 +60,7 @@ describe("getXKindSwitches", () => {
       consensus: true,
       pregame: false,
       weekly: true,
+      settled: false,
     });
   });
 
@@ -79,6 +80,7 @@ describe("getXKindSwitches", () => {
       consensus: true,
       pregame: true,
       weekly: false,
+      settled: false,
     });
   });
 

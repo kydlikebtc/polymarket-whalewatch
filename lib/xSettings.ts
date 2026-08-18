@@ -8,7 +8,12 @@
 // 预算又是硬上限 $15/月。运营者需要能只留高价值的那几类,而不是改代码。
 import type { DB } from "./db";
 
-export type XPostKind = "whale" | "consensus" | "pregame" | "weekly";
+export type XPostKind =
+  | "whale"
+  | "consensus"
+  | "pregame"
+  | "weekly"
+  | "settled";
 
 export const X_KINDS: { kind: XPostKind; label: string; hint: string }[] = [
   {
@@ -31,16 +36,24 @@ export const X_KINDS: { kind: XPostKind; label: string; hint: string }[] = [
     label: "周报成绩单",
     hint: "每周一图卡 + 站点链接。全家桶里唯一带链接的帖($0.20)",
   },
+  {
+    kind: "settled",
+    label: "结算战报",
+    hint: "对已发过的信号帖回复战果(赢输都发),形成「说了什么 → 后来怎样」的 thread。只回自己的帖",
+  },
 ];
 
 export type XKindSwitches = Record<XPostKind, boolean>;
 
-// 默认全开:首版行为即四类都发,升级到本版本的部署不该因为多了开关而静默变哑。
+// 既有四类默认全开:首版行为即四类都发,升级不该因为多了开关而静默变哑。
+// settled 是后加的新能力,**默认关** —— 新能力不该在运营者不知情时就开始
+// 往时间线上发东西(与信号总线 DEFAULT_BUS_SETTINGS 同一纪律)。
 export const DEFAULT_X_KINDS: XKindSwitches = {
   whale: true,
   consensus: true,
   pregame: true,
   weekly: true,
+  settled: false,
 };
 
 const CONFIG_KEY = "x_broadcast_kinds";

@@ -13,7 +13,13 @@ export const COST_LINK_USD = 0.2;
 // 每日帖数上限,按 kind。无键 = 不限(consensus 天然稀有、weekly 每周一条,
 // 由各自 dedup 约束)。whale 20 给赛前/共识留出席位:$15/月 ≈ 33 帖/天,
 // 大单流最容易把配额打光,cap 在 kind 层比在优先级层实现简单得多。
-export const DAILY_CAP: Record<string, number> = { whale: 20, pregame: 3 };
+export const DAILY_CAP: Record<string, number> = {
+  whale: 20,
+  pregame: 3,
+  // 战报量天然受"发过多少信号"约束,但开关刚打开时会有历史积压,
+  // 加个日 cap 防止一次性刷屏。
+  settled: 5,
+};
 
 export function costOf(hasLink: boolean): number {
   return hasLink ? COST_LINK_USD : COST_TEXT_USD;
