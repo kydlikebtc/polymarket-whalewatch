@@ -404,7 +404,9 @@ export function composeConsensusPost(i: ConsensusPostInput): string {
       w.winRate != null ? ` · ${Math.round(w.winRate * 100)}% win rate` : "";
     return `🏆 ${usdCompact(w.netUsd)} @ ${w.avgPriceCents}¢${wr}`;
   });
+  // 聚合行是回执的坍缩形态,口径同为前 3 —— 否则降档瞬间凭空多出数字。
   const rates = (i.wallets ?? [])
+    .slice(0, 3)
     .map((w) => w.winRate)
     .filter((r): r is number => r != null)
     .map((r) => `${Math.round(r * 100)}%`);
@@ -413,13 +415,21 @@ export function composeConsensusPost(i: ConsensusPostInput): string {
     subcategory: i.subcategory,
     title: i.title,
   });
+  // 恒定部分:抬头 + 标题 + 叙事 └ 行 —— 每个梯级都以它开场。
+  const story = (title: string) =>
+    `🔥 SMART-MONEY CONSENSUS\n\n${title}\n` +
+    `└ ${i.walletCount} top-PnL wallets → ${outcomeDisplay(i.outcome)}${at} · ${money}`;
   const variant = (cred: string[]) => (title: string) =>
-    `🔥 SMART-MONEY CONSENSUS\n\n${title}\n└ ${i.walletCount} top-PnL wallets → ${outcomeDisplay(i.outcome)}${at} · ${money}` +
+    story(title) +
     (cred.length > 0 ? `\n\n${cred.join("\n")}` : "") +
     `\n\n${tags}`;
   const ladder: ((t: string) => string)[] = [];
-  for (let k = receipts.length; k >= Math.min(2, receipts.length); k--) {
-    if (k > 0) ladder.push(variant(receipts.slice(0, k)));
+  if (receipts.length > 0) {
+    // 下界 2:单行回执不成"共识"阵形 —— 两行起才是「多个钱包同向」的画面,
+    // 只剩一行时直接坍缩到聚合行更诚实。N<2 时下界即 N(单钱包组仍给一级)。
+    const floor = Math.min(2, receipts.length);
+    for (let k = receipts.length; k >= floor; k--)
+      ladder.push(variant(receipts.slice(0, k)));
   }
   if (rates.length > 0)
     ladder.push(variant([`🏆 Win rates: ${rates.join(" · ")}`]));

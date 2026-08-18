@@ -1,8 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { openDb, type DB } from "./db";
 import { recordAlert } from "./seen";
-import { runXBroadcastCycle, X_POST_MAX_AGE_SEC } from "./xBroadcast";
+import {
+  runXBroadcastCycle,
+  SETTLE_PROMISE_MAX_H,
+  X_POST_MAX_AGE_SEC,
+} from "./xBroadcast";
 import { SETTLE_PROMISE_LINE } from "./xComposer";
+import { SETTLED_MAX_AGE_SEC } from "./xSettled";
 import type { XClient } from "./xPublisher";
 
 const NOW = Math.floor(Date.UTC(2026, 7, 15, 12) / 1000);
@@ -52,6 +57,49 @@ function whalePayload(over: Record<string, unknown> = {}): string {
       category: "Sports",
     },
     params: { minUsd: 10000 },
+    ...over,
+  });
+}
+
+// consensus payload 与 runConsensusCycle 落库形状一致 —— 完整 ConsensusGroup
+// (lib/consensus.ts):wallets 按 netUsd 降序,每项含 wallet/netUsd/buyCount/
+// avgBuyPrice(0-1)/score/winRate/qualifiedTs;顶层 firstTs/lastTs。
+function consensusPayload(over: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    conditionId: "0xc7",
+    outcome: "Nongshim Red Force",
+    title: "LoL: Nongshim Red Force vs DN SOOPers - Game 2 Winner",
+    slug: "lol-nrf-dns-g2",
+    eventSlug: "lol-nrf-dns",
+    asset: "tok9",
+    outcomeIndex: 0,
+    wallets: [
+      {
+        wallet: "0xw1",
+        netUsd: 12_499,
+        buyCount: 2,
+        avgBuyPrice: 0.64,
+        score: 12,
+        winRate: 0.74,
+        qualifiedTs: 1200,
+      },
+      {
+        wallet: "0xw2",
+        netUsd: 9_600,
+        buyCount: 1,
+        avgBuyPrice: 0.45,
+        score: 8,
+        winRate: 0.57,
+        qualifiedTs: 1840,
+      },
+    ],
+    walletCount: 2,
+    totalNetUsd: 22_099,
+    avgBuyPrice: 0.56,
+    firstTs: 1000,
+    lastTs: 1840,
+    formationTs: 1840,
+    params: {},
     ...over,
   });
 }
@@ -377,6 +425,81 @@ describe("话题标签与共识均价的接线", () => {
   });
 });
 
+describe("共识透传:钱包回执与时间跨度", () => {
+  it("payload 的 wallets/firstTs/lastTs 透传 → 逐钱包回执行 + within 时间跨度", async () => {
+    const db = openDb(":memory:");
+    recordAlert(
+      db,
+      "consensus",
+      "consensus:0xc7:NRF:2",
+      consensusPayload(),
+      NOW - 30,
+    );
+    const client = fakeClient();
+    expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
+    // lastTs − firstTs = 840s = 14 min;回执 = payload.wallets 逐项(0-1 价 → ¢)。
+    expect(client.posts[0]).toContain("within 14 min");
+    expect(client.posts[0]).toContain("🏆 $12.5K @ 64¢ · 74% win rate");
+    expect(client.posts[0]).toContain("🏆 $9.6K @ 45¢ · 57% win rate");
+  });
+
+  it("老共识 payload(无 wallets/firstTs)不崩,text 无回执块", async () => {
+    const db = openDb(":memory:");
+    recordAlert(
+      db,
+      "consensus",
+      "consensus:0xc8:Yes:3",
+      JSON.stringify({
+        conditionId: "0xc8",
+        title: "Fed cut in Sept?",
+        outcome: "Yes",
+        walletCount: 3,
+        totalNetUsd: 92_000,
+        params: {},
+      }),
+      NOW - 30,
+    );
+    const client = fakeClient();
+    expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
+    expect(client.posts[0]).not.toContain("🏆 $");
+    // spanSec 同样缺失 → 金额落回 combined,不出 within。
+    expect(client.posts[0]).not.toContain("within");
+  });
+
+  it("wallets 里的脏项被过滤,只有合法项成回执", async () => {
+    const db = openDb(":memory:");
+    recordAlert(
+      db,
+      "consensus",
+      "consensus:0xc7:NRF:2",
+      consensusPayload({
+        wallets: [
+          null,
+          "junk",
+          { netUsd: "x", avgBuyPrice: 0.5, winRate: 0.6 },
+          { netUsd: 5_000, avgBuyPrice: 0 },
+          {
+            wallet: "0xok",
+            netUsd: 12_499,
+            buyCount: 2,
+            avgBuyPrice: 0.64,
+            score: 1,
+            winRate: 0.74,
+            qualifiedTs: 1200,
+          },
+        ],
+      }),
+      NOW - 30,
+    );
+    const client = fakeClient();
+    expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
+    expect(client.posts[0]).toContain("🏆 $12.5K @ 64¢ · 74% win rate");
+    expect((client.posts[0].match(/🏆 \$/g) ?? []).length).toBe(1);
+    // avgBuyPrice=0 的那项(五千刀)不该漏进回执。
+    expect(client.posts[0]).not.toContain("$5K");
+  });
+});
+
 describe("smart/large 凭证行与承诺行双闸门", () => {
   // 背景:parseCandidate 曾把 large(匿名大户)与 smart(白名单聪明钱)合并成
   // 同一个 kind:'whale',凭证信息全丢 —— 🏆 帖与 🐳 帖长得一模一样。
@@ -424,9 +547,39 @@ describe("smart/large 凭证行与承诺行双闸门", () => {
     expect(client.posts[0]).not.toContain("Track record");
   });
 
+  it("type='smart' 但 payload 缺 proxyWallet → 🏆 保留、凭证行省略", async () => {
+    // 🏆 是告警时刻的事实(type='smart' 本身),不因 payload 缺字段降级成 🐳。
+    const db = openDb(":memory:");
+    const p = JSON.parse(whalePayload()) as Record<string, unknown>;
+    delete p.proxyWallet;
+    recordAlert(db, "smart", "t1", JSON.stringify(p), NOW - 60);
+    const client = fakeClient();
+    expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
+    expect(client.posts[0]).toMatch(/^🏆 SMART MONEY: /);
+    expect(client.posts[0]).not.toContain("Track record");
+  });
+
+  it("payload 无 marketCtx(hoursToEnd null)时,settled 开着也不印承诺行", async () => {
+    // 三闸门里的 null 拦截:结算时间不明就不许诺 —— 兑现不了的承诺比不说更糟。
+    const db = openDb(":memory:");
+    const p = JSON.parse(whalePayload()) as Record<string, unknown>;
+    delete p.marketCtx;
+    recordAlert(db, "large", "t1", JSON.stringify(p), NOW - 60);
+    const client = fakeClient();
+    await runXBroadcastCycle(
+      deps(db, client, {
+        kinds: { whale: true, consensus: true, settled: true },
+      }),
+    );
+    expect(client.posts).toHaveLength(1);
+    expect(client.posts[0]).not.toContain(SETTLE_PROMISE_LINE);
+  });
+
   it("承诺行双闸门四象限:仅 settled 开 × 结算 ≤144h 才印", async () => {
     const quadrants = [
       { settled: true, hoursToEnd: 30, expectLine: true },
+      // 144 = SETTLE_PROMISE_MAX_H 本身:≤ 是含边界的,防 <=→< 回归。
+      { settled: true, hoursToEnd: 144, expectLine: true },
       { settled: true, hoursToEnd: 200, expectLine: false },
       { settled: false, hoursToEnd: 30, expectLine: false },
       { settled: false, hoursToEnd: 200, expectLine: false },
@@ -452,5 +605,15 @@ describe("smart/large 凭证行与承诺行双闸门", () => {
         expect(client.posts[0], label).not.toContain(SETTLE_PROMISE_LINE);
       }
     }
+  });
+});
+
+describe("承诺行与结算补发窗的联动不变量", () => {
+  it("SETTLE_PROMISE_MAX_H ≤ 补发窗 − 24h(承诺必须兑现得了)", () => {
+    // 144 与 xSettled 7 天补发窗的联动此前只靠两处注释互指维系 —— 谁把补发窗
+    // 收窄而不动这里,承诺行就成了可被抓包的空头支票。此断言把联动钉死。
+    expect(SETTLE_PROMISE_MAX_H).toBeLessThanOrEqual(
+      SETTLED_MAX_AGE_SEC / 3600 - 24,
+    );
   });
 });

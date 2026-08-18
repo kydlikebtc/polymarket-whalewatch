@@ -611,6 +611,14 @@ describe("composeConsensusPost v2", () => {
       { netUsd: 9_600, avgPriceCents: 45, winRate: 0.57 },
     ],
   };
+  // 梯级降档系列共用的 96 字符长标题(命中 #Fed)与 3 钱包回执。
+  const longTitle =
+    "Will the Federal Reserve cut interest rates by 50bps or more at the September 2026 FOMC meeting?";
+  const wallets3 = [
+    { netUsd: 48_000, avgPriceCents: 57, winRate: 0.81 },
+    { netUsd: 27_000, avgPriceCents: 58, winRate: 0.74 },
+    { netUsd: 17_000, avgPriceCents: 60, winRate: 0.57 },
+  ];
   it("满配:叙事 └ 行 + 逐钱包回执(截图传播主体)", () => {
     const t = composeConsensusPost(base);
     expect(t).toContain(
@@ -620,10 +628,33 @@ describe("composeConsensusPost v2", () => {
     expect(t).toContain("🏆 $9.6K @ 45¢ · 57% win rate");
     expect(weightedLength(t)).toBeLessThanOrEqual(280);
   });
+  it("满配逐字:设计文档 §3③ 样例,空行布局与三标签全锁定", () => {
+    const t = composeConsensusPost({ ...base, subcategory: "Esports" });
+    expect(t).toBe(
+      "🔥 SMART-MONEY CONSENSUS\n\n" +
+        "LoL: Nongshim Red Force vs DN SOOPers - Game 2 Winner\n" +
+        "└ 2 top-PnL wallets → Nongshim Red Force @ 49¢ avg · $33.9K within 14 min\n\n" +
+        "🏆 $12.5K @ 64¢ · 74% win rate\n" +
+        "🏆 $9.6K @ 45¢ · 57% win rate\n\n" +
+        "#Polymarket #Esports #LeagueOfLegends",
+    );
+    expect(weightedLength(t)).toBe(256);
+  });
   it("窗口 >60min 不讲集中度(不稀奇就删句),金额落回 combined", () => {
     const t = composeConsensusPost({ ...base, spanSec: 2 * 3600 });
     expect(t).not.toContain("within");
     expect(t).toContain("$33.9K combined");
+  });
+  it("spanSec 边界:0 clamp 到 1 min;3600 是最后一档 within;3601 落回 combined", () => {
+    expect(composeConsensusPost({ ...base, spanSec: 0 })).toContain(
+      "within 1 min",
+    );
+    expect(composeConsensusPost({ ...base, spanSec: 3600 })).toContain(
+      "within 60 min",
+    );
+    const t = composeConsensusPost({ ...base, spanSec: 3601 });
+    expect(t).not.toContain("within");
+    expect(t).toContain("combined");
   });
   it("winRate 为 null 的回执省略胜率段", () => {
     const t = composeConsensusPost({
@@ -645,25 +676,66 @@ describe("composeConsensusPost v2", () => {
     expect(t).not.toContain("🏆 $");
   });
   it("长标题降级:回执坍缩,标题不截", () => {
-    const longTitle =
-      "Will the Federal Reserve cut interest rates by 50bps or more at the September 2026 FOMC meeting?";
     const t = composeConsensusPost({
       ...base,
       title: longTitle,
       walletCount: 3,
-      wallets: [
-        { netUsd: 48_000, avgPriceCents: 57, winRate: 0.81 },
-        { netUsd: 27_000, avgPriceCents: 58, winRate: 0.74 },
-        { netUsd: 17_000, avgPriceCents: 60, winRate: 0.57 },
-      ],
+      wallets: wallets3,
       spanSec: 41 * 60,
     });
     expect(weightedLength(t)).toBeLessThanOrEqual(280);
     expect(t).toContain(longTitle); // 标题完整
-    // 3 行回执装不下(实测 296) → 先试 2 行(实测 265,装得下)
+    // 3 行回执装不下(实测 304) → 先试 2 行(实测 275,装得下)
     expect(t).toContain("🏆 $48K @ 57¢ · 81% win rate");
     expect(t).toContain("🏆 $27K @ 58¢ · 74% win rate");
     expect(t).not.toContain("$17K");
+  });
+  it("更长标题:两行回执也装不下时,坍缩成聚合胜率行", () => {
+    // 96 字符基准下 2 行回执变体实测 275;标题 +30 加权后它到 305 超限,
+    // 聚合行变体实测 277 恰好装下 —— 命中「🏆 Win rates」梯级。
+    const t = composeConsensusPost({
+      ...base,
+      title: longTitle + " Or hold rates steady instead?",
+      walletCount: 3,
+      wallets: wallets3,
+      spanSec: 41 * 60,
+    });
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
+    expect(t).toContain("🏆 Win rates: 81% · 74% · 57%");
+    expect(t).not.toContain("🏆 $");
+  });
+  it("再长:聚合行也装不下 → 凭证块全降光,标题仍完整不截", () => {
+    // 标题 +47 加权后聚合行变体实测 294 超限,裸变体 263 装得下 ——
+    // 标题是 fitPost 降级顺序里最后才动的。
+    const title = longTitle + " Or hold steady and revisit the decision later?";
+    const t = composeConsensusPost({
+      ...base,
+      title,
+      walletCount: 3,
+      wallets: wallets3,
+      spanSec: 41 * 60,
+    });
+    expect(weightedLength(t)).toBeLessThanOrEqual(280);
+    expect(t).not.toContain("🏆");
+    expect(t).toContain(title); // 标题完整
+  });
+  it("5 钱包输入:聚合行与回执同口径,只列前 3 个胜率", () => {
+    // 聚合行是回执的坍缩形态 —— 若口径不同(回执前 3、聚合全量),降档瞬间
+    // 会凭空多出两个数字,读者对不上。
+    const t = composeConsensusPost({
+      ...base,
+      title: longTitle + " Or hold rates steady instead?",
+      walletCount: 5,
+      wallets: [
+        ...wallets3,
+        { netUsd: 9_000, avgPriceCents: 61, winRate: 0.9 },
+        { netUsd: 8_000, avgPriceCents: 62, winRate: 0.99 },
+      ],
+      spanSec: 41 * 60,
+    });
+    expect(t).toContain("🏆 Win rates: 81% · 74% · 57%");
+    expect(t).not.toContain("90%");
+    expect(t).not.toContain("99%");
   });
   it("硬不变量:≤280 加权 + 无 URL", () => {
     const t = composeConsensusPost({

@@ -108,6 +108,32 @@ function parseCandidate(
     }
     // 均价:老告警行没有这个字段 → 传 null,模板整段省略而不是显示 0¢。
     const avg = p.avgBuyPrice;
+    // 回执与时间跨度:payload = 完整 ConsensusGroup,零新增查询。容错解析 ——
+    // 老告警行没有这些字段,缺哪段模板就省哪段。只取前 3:回执行与聚合胜率行
+    // 都以「前 3 个钱包」为口径(与 TG 版一致),透传端截断让口径只有一处。
+    const receipts = (Array.isArray(p.wallets) ? p.wallets : [])
+      .filter(
+        (w): w is Record<string, unknown> =>
+          typeof w === "object" && w !== null,
+      )
+      .map((w) => ({
+        netUsd: typeof w.netUsd === "number" ? w.netUsd : NaN,
+        avgBuyPrice: typeof w.avgBuyPrice === "number" ? w.avgBuyPrice : NaN,
+        winRate: typeof w.winRate === "number" ? w.winRate : null,
+      }))
+      .filter((w) => Number.isFinite(w.netUsd) && w.avgBuyPrice > 0)
+      .slice(0, 3)
+      .map((w) => ({
+        netUsd: w.netUsd,
+        avgPriceCents: Math.round(w.avgBuyPrice * 100),
+        winRate: w.winRate,
+      }));
+    const spanSec =
+      typeof p.firstTs === "number" &&
+      typeof p.lastTs === "number" &&
+      p.lastTs >= p.firstTs
+        ? p.lastTs - p.firstTs
+        : null;
     return {
       alertId: row.id,
       kind: "consensus",
@@ -119,6 +145,8 @@ function parseCandidate(
         totalUsd,
         priceCents:
           typeof avg === "number" && avg > 0 ? Math.round(avg * 100) : null,
+        wallets: receipts,
+        spanSec,
         ...taxonomyOf(p.eventSlug),
       }),
     };
@@ -147,11 +175,13 @@ function parseCandidate(
     category?: string | null;
   } | null;
   // 凭证:仅 type='smart' 查(type='large' 当初就没被判定为聪明钱,此刻回头
-  // 查会前后不一致)。getSmartTags 是纯本地 SQLite,零上游请求。钱包已出池
-  // 时给 {}:🏆 抬头保留(告警时刻的事实),凭证行整行省略。
+  // 查会前后不一致)。getSmartTags 是纯本地 SQLite,零上游请求。🏆 是告警
+  // 时刻的事实(type='smart' 本身):payload 缺 proxyWallet(脏行)或钱包已
+  // 出池,都只降到「无凭证行」({}),绝不降级成 🐳 匿名大单。
   let smart: WhalePostInput["smart"] = null;
-  if (row.type === "smart" && typeof p.proxyWallet === "string") {
-    const tag = getSmartTags(db, [p.proxyWallet])[p.proxyWallet.toLowerCase()];
+  if (row.type === "smart") {
+    const w = typeof p.proxyWallet === "string" ? p.proxyWallet : null;
+    const tag = w ? getSmartTags(db, [w])[w.toLowerCase()] : undefined;
     smart = tag ? { winRate: tag.winRate, netPnl: tag.netPnl } : {};
   }
   const hoursToEnd = ctx?.hoursToEnd ?? null;
