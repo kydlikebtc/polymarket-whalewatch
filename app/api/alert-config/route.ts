@@ -14,9 +14,24 @@ export const dynamic = "force-dynamic";
 
 const DB_PATH = process.env.DASH_DB || "data.sqlite";
 
-export async function GET() {
-  // `readonly` tells the panel whether saving needs an admin token — config
-  // VALUES stay public on purpose (they're part of the record's transparency).
+export async function GET(req: Request) {
+  // 2026-08-18:GET 改为与 POST 同一道 ADMIN_TOKEN 闸。
+  //
+  // 原先阈值明文公开,理由写的是「属于战绩透明度的一部分」。这条理由在
+  // /alerts 还带配置面板时成立;条件编辑迁到 /manage(ebc5deb)之后,全站
+  // 唯一的消费方就是运营页自己 —— 于是它实际提供的不是透明度,而是「任何
+  // 人 curl 一下就知道这套监控盯多大的单、什么方向、什么价格区间、冷却多久」。
+  // 这是可被规避的规则集,不是可被核验的战绩;真正的透明度在 /record 与每日
+  // 存证链上,那些是**结果**,公开它们无法被人利用来绕开。
+  //
+  // 复用 checkWriteAccess 而不是另造一个只读闸:它就是这个部署的
+  // 「ADMIN_TOKEN 认不认你」判据,名字里的 write 是历史,语义正是所需。
+  // 本地开发照旧免令牌(isPublicDeployment=false 时恒放行)。
+  const access = checkWriteAccess(req);
+  if (!access.ok) {
+    return Response.json({ error: access.error }, { status: access.status });
+  }
+  // `readonly` tells the panel whether saving needs an admin token.
   const readonly = isPublicDeployment();
   try {
     const db = openDb(DB_PATH);

@@ -1,5 +1,5 @@
 import { openDb } from "../../../lib/db";
-import { buildSignalFeed } from "../../../lib/signalFeed";
+import { buildSignalFeed, HEAVY_MIN_USD } from "../../../lib/signalFeed";
 import { buildStrategyFeed } from "../../../lib/strategyFeed";
 import { checkFeedAccess } from "../../../lib/feedAuth";
 import { getEngineStart, getHeartbeats } from "../../../lib/heartbeat";
@@ -115,10 +115,19 @@ export async function GET(req: Request) {
     console.error("[/api/signals] failed:", message);
     // Degrade to a well-formed empty feed marked unhealthy: a consumer that
     // parses this must never mistake a failure for "no signals today".
+    //
+    // "Well-formed" means the SAME field set as the success path — this
+    // literal is hand-written while the success path is assembled from
+    // buildSignalFeed's spread, so the two drift silently unless kept in
+    // sync (heavyMinUsd and staleLoops were missing here, which forced every
+    // consumer to type them optional). app/api/signals/route.test.ts pins the
+    // two key sets equal; add a field above and that test fails until it is
+    // mirrored here.
     return Response.json(
       {
         updatedAt: Math.floor(Date.now() / 1000),
         windowHours,
+        heavyMinUsd: HEAVY_MIN_USD,
         active: [],
         settled: [],
         record30d: { settled: 0, wins: 0, implied: 0, excess: 0, sd: 0 },
@@ -126,6 +135,7 @@ export async function GET(req: Request) {
         bus: [],
         delayedMin: delaySec / 60,
         healthy: false,
+        staleLoops: [],
         error: message,
       },
       { status: 200 },

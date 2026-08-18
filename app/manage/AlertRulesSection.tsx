@@ -48,8 +48,17 @@ export default function AlertRulesSection({ token }: { token: string }) {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/alert-config");
+      // GET 也要令牌(2026-08-18):阈值不再公开读,读写同一道闸。
+      const res = await fetch("/api/alert-config", {
+        headers: authHeaders(token),
+      });
       const j = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) {
+        setMsg(
+          `加载失败:${typeof j.error === "string" ? j.error : `HTTP ${res.status}`}`,
+        );
+        return;
+      }
       setReadonly(j.readonly === true);
       setForm({
         enabled: j.enabled === true,
@@ -65,7 +74,7 @@ export default function AlertRulesSection({ token }: { token: string }) {
     } catch (e) {
       setMsg(`加载失败:${String(e)}`);
     }
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     void load();

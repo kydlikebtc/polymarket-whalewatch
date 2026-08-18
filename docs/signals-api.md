@@ -2,6 +2,11 @@
 
 供 **mm-mobile 后端** 定时拉取，再由它缓存 + 鉴权后转给 App。
 
+> **两份文档的分工**：本文是**内部契约**（设计取舍、口径修订史、为什么这样折叠），
+> 读者是维护这个接口的人。对外发给订阅方的是 [`docs/api-access.md`](./api-access.md)
+> （站内 `/api-docs`）——那份是**面向使用者**的完整字段表与类型定义，逐字段量纲、
+> 全部端点、webhook 接收端实现要求都在那里。字段语义以那份为准，两份冲突时先改那份。
+
 ## 拓扑（重要）
 
 ```
@@ -209,7 +214,11 @@ GET /api/signals?windowHours=24
 **数据基准时刻**（时移后的），消费方展示"截至 HH:MM"应以它为准。
 `healthy`/`staleLoops` 按**真实当下**评估 —— 引擎死没死不属于可延迟的信息。
 
-### 新增 `strategies` 段（策略中心 13 档的买入触发）
+### 新增 `strategies` 段（策略中心各档的买入触发）
+
+> 档位数随种子演进：v2 写作时 13 档，`follow_seed_v=4`（2026-08-13 的 6 个反向
+> 对照档）后为 19 档。消费方**不应把档位数写死**——`recordByStrategy` 的键就是
+> 当前放开推送的全部档位。
 
 ```jsonc
 "strategies": {
@@ -269,3 +278,30 @@ signal, paper, record, settle, notice}`，zod schema 见 `lib/webhookDelivery.ts
 - `GET /api/record`（公开、限流自保）+ `/record` 页：各档**已发布**信号的 30d 价格调整
   战绩（分母只含发过的信号，与 /follow 的全量纸面履历刻意分开）、近期结算明细、存证链
   状态。
+
+---
+
+## v3 增量（2026-08-17 起，仍为 additive）
+
+### 新增 `bus[]` — 统一信号总线
+
+全站各类原始信号（`large` / `consensus` / `discovery`）投影进一张台账后随 feed 一起返回：
+`{id, sourceType, dedupKey, conditionId, title, payload, emittedAt}`，窗口跟随 `windowHours`，
+最多 200 条。**各类型默认全关**，由运营者在 `/manage` 逐类开启并设阈值；开启后只投影此后
+1 小时内的新事件，不回灌历史。v1/v2 消费方忽略该字段即可，行为零变化。
+
+### key 绑定订阅范围
+
+签发 key 时可勾选类型（`strategy` / `large` / `consensus` / `discovery`）。**过滤在服务端
+执行**：范围外的类型在 `/api/signals` 与 webhook 上都拿不到。未勾 = 不限（既有 key 与
+env token 都是不限，语义不变）。
+
+⚠️ 实现红线：`/api/signals` 的 30s 缓存键**必须**含订阅范围
+（`feed:{窗口}:{tier}:{范围}`）。只按窗口 + tier 分片时，全量 key 的缓存会让受限 key 拿到
+它无权看到的类型——这是越权泄露，不是少给数据。守卫测试见 `lib/feedScope.test.ts`。
+
+### webhook 的范围分流
+
+投递循环目前只搬运**策略信号**，因此只投给订阅范围含 `strategy` 的端点
+（`worker/embeddedEngine.ts` 的 `busTypeAllowed(ep.busTypes, "strategy")`）。bus 类型的
+webhook 投递属于后续批次，那时在同一处按 `sourceType` 再分流。

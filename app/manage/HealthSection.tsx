@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import type { AdminSignalOverview } from "../../lib/adminOverview";
+import { loopMeta } from "../loopMeta";
 import { StatCard } from "../ui";
 import { Dot, SectionHead } from "./bits";
 import { agoText } from "./shared";
@@ -26,13 +28,8 @@ export interface HealthReport {
   error?: string;
 }
 
-const LOOP_LABEL: Record<string, string> = {
-  alert: "告警(4s)",
-  consensus: "共识+跟单(5min)",
-  outcome_backfill: "验证回填(10min)",
-  delivery: "信号投递(30s)",
-};
-
+// 循环名走共享的 app/loopMeta —— 这里和公开状态页 /status 各维护一份时,
+// 引擎新加的循环(delivery 就是后加的)总有一处会漏改成裸 key。
 const CH_LABEL: Record<string, string> = {
   tg_paid: "付费频道(实时)",
   tg_public: "公开频道(延迟)",
@@ -52,7 +49,14 @@ export default function HealthSection({
       style={{ marginBottom: "var(--s-5)", scrollMarginTop: "var(--s-6)" }}
     >
       <SectionHead
-        title="🩺 健康度"
+        title={
+          <>
+            🩺 健康度{" "}
+            <Link href="/status" className="ds-hint">
+              (公开状态页 →)
+            </Link>
+          </>
+        }
         aside={
           health && (
             <Dot tone={health.ok ? "up" : "down"}>
@@ -88,7 +92,11 @@ export default function HealthSection({
                 {health.loops.map((l) => (
                   <tr key={l.loop}>
                     <td style={{ whiteSpace: "nowrap" }}>
-                      {LOOP_LABEL[l.loop] ?? l.loop}
+                      {loopMeta(l.loop).label}
+                      <span className="muted">
+                        {" "}
+                        · {loopMeta(l.loop).cadence}
+                      </span>
                     </td>
                     <td className="num">
                       {l.missing ? (

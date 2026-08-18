@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AdminSignalOverview } from "../../lib/adminOverview";
 import { Segmented, Tag } from "../ui";
@@ -11,22 +12,41 @@ import TgTargetsSection from "./TgTargetsSection";
 import XAccountsSection from "./XAccountsSection";
 import SignalsSection from "./SignalsSection";
 import StatusStrip from "./StatusStrip";
+import {
+  gateMessage,
+  gateState,
+  probeFromResponse,
+  type Probe,
+} from "./authGate";
 import { authHeaders } from "./shared";
 
-// /manage — 运营管理页。刻意**不进 TopNav**(知道路径者可达),但这不是
-// 安全边界:页面本身公开,所有敏感读写都压在服务端 ADMIN_TOKEN 上
-// (/api/admin/* 的 GET/POST 与 /api/alert-config 的 POST 全部要令牌;
-// 无令牌者只能看到公开信息 + 明确的「令牌无效」提示)。令牌与 /alerts
-// 配置面板共用同一份 localStorage("adminToken"),两页输入一次即可。
+// /manage — 运营管理页。
 //
-// 数据刷新模型:页面统一拉 /api/health(公开)+ /api/admin/signals(令牌),
-// 手动刷新按钮 + 60s 自动刷新 —— 运营页通常开着不关,数据不能停在打开那一刻。
+// 2026-08-18:整页改为**令牌门后**才渲染。此前页面结构是公开的,无令牌者
+// 虽然拿不到 /api/admin/* 的数据,却照样看得到引擎心跳表、告警阈值明文,
+// 以及一整套 tab 与 KPI 标签 —— 后者本身就是情报:它把这套系统的运营结构
+// (有哪些循环、哪些投递通道、多少档策略、存证链、备份日、有几个 API key)
+// 白送给任何知道路径的人。服务端那道 ADMIN_TOKEN 闸一直都在、也一直有效,
+// 这次补的是**信息暴露**那一面。
+//
+// 门的判据只有一个:服务端认不认(GET /api/admin/signals 的响应码,见
+// ./authGate.ts)。前端不做任何本地令牌判断,探针失败一律锁死。
+// 本地开发(非公开部署)下 checkWriteAccess 恒放行,探针直接 200,零摩擦。
+//
+// 唯独引擎健康度**不**藏在这道门后:它搬去了公开状态页 /status。
+// 「引擎还活着吗」是每个订阅方都有权随时知道的事实(信号 feed 的 healthy
+// 位、频道沉默、webhook 停投都指向它),藏起来只会让订阅方靠猜;而「哪些
+// 档位放开了推送、TG 连败几次、有几个 key」才是运营内部事。
+//
+// 数据刷新模型:解锁后统一拉 /api/health + /api/admin/signals,手动刷新
+// 按钮 + 60s 自动刷新 —— 运营页通常开着不关,数据不能停在打开那一刻。
 
 const AUTO_REFRESH_MS = 60_000;
+// 令牌输入是逐字符 onChange。不防抖的话,手打一个 40 字符的令牌会打出 40 次
+// /api/admin/signals —— 该路由 perIp 限流 60 次/分钟,而现在整页都吊在这个
+// 探针上:一旦 429,运营者会被自己锁在门外,且提示还是「服务端异常」。
+const TOKEN_DEBOUNCE_MS = 400;
 
-// 分区改为 tab:五个区块平铺时页面很长,而运营者每次进来通常只关心其中
-// 一件事(放开某档推送 / 看循环是否还活着 / 签发一个 key)。原来的锚点
-// 跳转按钮只是把长页面卷到某处,信息仍然全部堆在同一屏之下。
 const TABS = [
   { id: "push", label: "📡 推送与提醒" },
   { id: "tg", label: "📣 TG 推送" },
@@ -50,24 +70,35 @@ const TAB_STORAGE_KEY = "manageTab";
 
 export default function ManagePage() {
   const [token, setToken] = useState("");
+  // 防抖后的令牌 —— 只有它变化才发探针。
+  const [probeToken, setProbeToken] = useState("");
+  const [probe, setProbe] = useState<Probe>({ kind: "pending" });
   const [overview, setOverview] = useState<AdminSignalOverview | null>(null);
-  const [overviewError, setOverviewError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthReport | null>(null);
   const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  // 初次挂载先读 localStorage 再发请求,避免「无令牌请求 → 401 红条 → 令牌
-  // 水合后又变绿」的闪烁。
+  // 初次挂载先读 localStorage 再发请求,避免「无令牌请求 → 锁定 → 令牌
+  // 水合后又解锁」的闪烁。
   const hydrated = useRef(false);
 
   const [tab, setTab] = useState<TabId>("push");
 
   useEffect(() => {
-    setToken(window.localStorage.getItem("adminToken") ?? "");
-    // 运营页常开不关,刷新后回到上次那个 tab 比每次都弹回第一个更顺手。
-    const saved = window.localStorage.getItem(TAB_STORAGE_KEY);
-    if (saved && TABS.some((x) => x.id === saved)) setTab(saved as TabId);
+    const saved = window.localStorage.getItem("adminToken") ?? "";
+    setToken(saved);
+    // 存过的令牌不必再等防抖:它不是刚敲进来的。
+    setProbeToken(saved);
+    const savedTab = window.localStorage.getItem(TAB_STORAGE_KEY);
+    if (savedTab && TABS.some((x) => x.id === savedTab)) {
+      setTab(savedTab as TabId);
+    }
     hydrated.current = true;
   }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setProbeToken(token), TOKEN_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [token]);
 
   const selectTab = (id: TabId) => {
     setTab(id);
@@ -83,38 +114,42 @@ export default function ManagePage() {
     if (!hydrated.current) return;
     setRefreshing(true);
     try {
-      const [healthRes, ovRes] = await Promise.allSettled([
-        fetch("/api/health").then((r) => r.json() as Promise<HealthReport>),
-        fetch("/api/admin/signals", { headers: authHeaders(token) }).then(
-          async (r) => ({ status: r.status, body: await r.json() }),
-        ),
-      ]);
-      if (healthRes.status === "fulfilled") setHealth(healthRes.value);
-      if (ovRes.status === "fulfilled") {
-        const { status, body } = ovRes.value as {
-          status: number;
-          body: AdminSignalOverview & { error?: string };
-        };
-        if (status === 401 || status === 403) {
-          setOverview(null);
-          setOverviewError(
-            token
-              ? "管理令牌无效 —— 请核对服务器 .env 的 ADMIN_TOKEN"
-              : "未填管理令牌 —— 运营数据(推送开关/key/积压)需要令牌",
-          );
-        } else if (body.error) {
-          setOverview(null);
-          setOverviewError(body.error);
-        } else {
-          setOverviewError(null);
-          setOverview(body);
-        }
+      const ovRes = await fetch("/api/admin/signals", {
+        headers: authHeaders(probeToken),
+      }).then(async (r) => ({
+        status: r.status,
+        body: (await r.json()) as AdminSignalOverview & { error?: string },
+      }));
+      const next = probeFromResponse(ovRes.status, ovRes.body);
+      setProbe(next);
+      if (next.kind !== "ok") {
+        // 锁定时清空既有数据:留着上一把有效令牌的运营数据在内存里、
+        // 只是不渲染,是在赌「不渲染」永远不出 bug。
+        setOverview(null);
+        setHealth(null);
+        return;
+      }
+      setOverview(ovRes.body);
+      // 健康度只在解锁后才拉 —— 锁定态一个请求都不该发出去。
+      // 公开状态页 /status 才是这份数据对外的正门。
+      try {
+        setHealth((await (await fetch("/api/health")).json()) as HealthReport);
+      } catch {
+        // 健康度拿不到不该影响已解锁的运营数据。
+        setHealth(null);
       }
       setRefreshedAt(Math.floor(Date.now() / 1000));
+    } catch (e) {
+      setProbe({
+        kind: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
+      setOverview(null);
+      setHealth(null);
     } finally {
       setRefreshing(false);
     }
-  }, [token]);
+  }, [probeToken]);
 
   useEffect(() => {
     void loadAll();
@@ -122,8 +157,66 @@ export default function ManagePage() {
     return () => clearInterval(timer);
   }, [loadAll]);
 
+  const state = gateState(probe);
+  const message = gateMessage(probe, probeToken !== "");
+
   // 状态条上的 chip 点击:切到承载该区块的 tab(切完区块就在首屏,不必再滚动)。
   const jump = (id: string) => selectTab(SECTION_TAB[id] ?? "push");
+
+  const tokenField = (
+    <div style={{ flex: "1 1 320px", maxWidth: 480 }}>
+      <div
+        className="ds-label"
+        style={{
+          marginBottom: "var(--s-2)",
+          display: "flex",
+          gap: "var(--s-2)",
+          alignItems: "center",
+        }}
+      >
+        管理令牌(x-admin-token)
+        {state === "unlocked" && <Tag variant="up">已验证</Tag>}
+        {state === "locked" && <Tag variant="warn">已锁定</Tag>}
+      </div>
+      <input
+        id="manage-token"
+        className="ds-input ds-input--mono"
+        type="password"
+        placeholder="x-admin-token"
+        value={token}
+        onChange={(e) => saveToken(e.target.value)}
+        autoComplete="off"
+        style={{ width: "100%" }}
+      />
+      {message && (
+        <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+          {message}
+        </div>
+      )}
+    </div>
+  );
+
+  // 锁定/验证中:只有标题、令牌框、以及一条去公开状态页的出口。
+  // 没有 tab、没有 KPI、没有区块骨架 —— 这些标签本身就是运营结构的情报。
+  if (state !== "unlocked") {
+    return (
+      <main className="ds-main" style={{ maxWidth: 560 }}>
+        <header style={{ marginBottom: "var(--s-5)" }}>
+          <h1 style={{ fontSize: "var(--t-2xl)", margin: 0 }}>🔒 运营管理</h1>
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            本页需要管理令牌。令牌只存本浏览器,与 /alerts 配置面板共用。
+          </div>
+        </header>
+        <div className="ds-card" style={{ padding: "var(--s-5)" }}>
+          {tokenField}
+        </div>
+        <div className="ds-hint" style={{ marginTop: "var(--s-4)" }}>
+          想确认引擎是否在正常运行？这不需要令牌 ——{" "}
+          <Link href="/status">查看系统状态 →</Link>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="ds-main">
@@ -152,8 +245,7 @@ export default function ManagePage() {
           )}
         </div>
         <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-          无入口页面(不在导航栏)。读写运营数据需管理令牌 —— 令牌只存本浏览器, 与
-          /alerts 配置面板共用。
+          无入口页面(不在导航栏)。令牌只存本浏览器,与 /alerts 配置面板共用。
         </div>
       </header>
 
@@ -163,6 +255,7 @@ export default function ManagePage() {
         className="ds-card"
         style={{
           marginBottom: "var(--s-5)",
+          padding: "var(--s-4)",
           display: "flex",
           gap: "var(--s-4)",
           flexWrap: "wrap",
@@ -170,35 +263,7 @@ export default function ManagePage() {
           justifyContent: "space-between",
         }}
       >
-        <div style={{ flex: "1 1 320px", maxWidth: 480 }}>
-          <div
-            className="ds-label"
-            style={{
-              marginBottom: "var(--s-2)",
-              display: "flex",
-              gap: "var(--s-2)",
-              alignItems: "center",
-            }}
-          >
-            管理令牌(x-admin-token)
-            {overview != null && <Tag variant="up">已验证</Tag>}
-            {overviewError != null && <Tag variant="warn">受限</Tag>}
-          </div>
-          <input
-            id="manage-token"
-            className="ds-input ds-input--mono"
-            type="password"
-            placeholder="x-admin-token"
-            value={token}
-            onChange={(e) => saveToken(e.target.value)}
-            style={{ width: "100%" }}
-          />
-          {overviewError && (
-            <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-              {overviewError}
-            </div>
-          )}
-        </div>
+        {tokenField}
       </div>
 
       <div style={{ marginBottom: "var(--s-5)" }}>

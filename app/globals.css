@@ -1024,3 +1024,255 @@ tr:hover .copy-btn,
     animation: none;
   }
 }
+
+/* =====================================================================
+   接入文档排版（/api-docs · app extension）
+   docs/api-access.md 经 lib/markdownDoc.ts 解析后在这里成形。全站表格是
+   密集数据表（.ds-table td 用 nowrap 防止数字列换行），而文档表格装的是
+   成句的说明文字 —— 同一套类会把「说明」列拉成一条横向滚动的长龙，所以
+   .doc-prose 内对表格单元格显式解除 nowrap。
+   ===================================================================== */
+.doc-layout {
+  display: grid;
+  grid-template-columns: 216px minmax(0, 1fr);
+  gap: var(--s-6);
+  align-items: start;
+}
+.doc-toc {
+  position: sticky;
+  top: var(--s-4);
+  padding: var(--s-4);
+  max-height: calc(100vh - var(--s-8));
+  overflow-y: auto;
+}
+.doc-toc ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.doc-toc a {
+  display: block;
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  color: var(--n-600);
+  font-size: var(--t-sm);
+  line-height: var(--lh-snug);
+  text-decoration: none;
+}
+.doc-toc a:hover {
+  background: var(--n-100);
+  color: var(--n-900);
+}
+
+.doc-prose {
+  padding: var(--s-6);
+  color: var(--n-700);
+  font-size: var(--t-md);
+  line-height: 1.75;
+  min-width: 0;
+}
+.doc-prose > *:first-child {
+  margin-top: 0;
+}
+.doc-prose h1 {
+  font-size: var(--t-2xl);
+  line-height: var(--lh-tight);
+  color: var(--n-900);
+  margin: 0 0 var(--s-4);
+}
+.doc-prose h2 {
+  font-size: var(--t-xl);
+  line-height: var(--lh-snug);
+  color: var(--n-900);
+  margin: var(--s-10) 0 var(--s-3);
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--n-150);
+  /* 锚点跳转时不被 52px 顶栏盖住标题。 */
+  scroll-margin-top: 68px;
+}
+.doc-prose h3 {
+  font-size: var(--t-lg);
+  color: var(--n-900);
+  margin: var(--s-6) 0 var(--s-2);
+  scroll-margin-top: 68px;
+}
+.doc-prose h4 {
+  font-size: var(--t-md);
+  color: var(--n-800);
+  margin: var(--s-5) 0 var(--s-2);
+  scroll-margin-top: 68px;
+}
+.doc-prose p {
+  margin: 0 0 var(--s-3);
+}
+.doc-prose ul,
+.doc-prose ol {
+  margin: 0 0 var(--s-3);
+  padding-left: var(--s-6);
+}
+.doc-prose li {
+  margin-bottom: var(--s-1);
+}
+.doc-prose strong {
+  color: var(--n-900);
+  font-weight: 600;
+}
+.doc-prose a {
+  color: var(--brand-600);
+}
+.doc-prose hr {
+  border: 0;
+  border-top: 1px solid var(--n-150);
+  margin: var(--s-8) 0;
+}
+
+/* 行内代码：与全站 .mono 同族，加浅底以便在长句中一眼可辨。 */
+.doc-code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  padding: 1px 5px;
+  border-radius: var(--r-sm);
+  background: var(--n-100);
+  color: var(--n-900);
+  word-break: break-word;
+}
+/* 代码块：深底，与页面白卡拉开层次；长行横向滚动而不撑破布局。 */
+.doc-pre {
+  margin: 0 0 var(--s-4);
+  padding: var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--n-1000);
+  color: var(--n-100);
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  line-height: var(--lh-normal);
+  overflow-x: auto;
+  white-space: pre;
+}
+.doc-pre-lang {
+  display: block;
+  margin-bottom: var(--s-2);
+  font-size: var(--t-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--n-500);
+}
+
+.doc-prose .ds-table-wrap {
+  margin: 0 0 var(--s-4);
+}
+/* 说明文字要能换行 —— 见本节顶部注释。 */
+.doc-prose .ds-table td {
+  white-space: normal;
+  line-height: var(--lh-normal);
+}
+.doc-prose .ds-table th {
+  white-space: normal;
+}
+.doc-prose blockquote {
+  margin: 0 0 var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  border-left: 3px solid var(--brand-400);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: var(--brand-50);
+  color: var(--n-700);
+}
+
+@media (max-width: 900px) {
+  .doc-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .doc-toc {
+    position: static;
+    max-height: none;
+  }
+  .doc-prose {
+    padding: var(--s-4);
+  }
+}
+
+/* =====================================================================
+   公开状态页（/status · app extension）
+   整体横幅 + 状态药丸。刻意只用 up/down/muted 三态：状态页的全部价值在于
+   「一眼看懂」，多一档颜色就多一次「这个黄的到底算不算事」的犹豫。
+   ===================================================================== */
+.status-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-5);
+  border-radius: var(--r-md);
+  border: 1px solid var(--n-150);
+  background: var(--n-0);
+  margin-bottom: var(--s-5);
+}
+.status-banner--up {
+  border-color: var(--up-500);
+  background: var(--up-50);
+}
+.status-banner--down {
+  border-color: var(--down-500);
+  background: var(--down-50);
+}
+.status-banner__title {
+  font-size: var(--t-xl);
+  font-weight: 600;
+  line-height: var(--lh-snug);
+  color: var(--n-900);
+}
+.status-banner__sub {
+  margin-top: var(--s-1);
+  font-size: var(--t-sm);
+  color: var(--n-600);
+  min-height: 1em;
+}
+.status-orb {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-pill);
+  background: var(--n-300);
+}
+.status-orb--up {
+  background: var(--up-500);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--up-500) 22%, transparent);
+}
+.status-orb--down {
+  background: var(--down-500);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--down-500) 22%, transparent);
+}
+
+.status-pill {
+  display: inline-block;
+  padding: 2px var(--s-2);
+  border-radius: var(--r-pill);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.status-pill--up {
+  background: var(--up-50);
+  color: var(--up-700);
+}
+.status-pill--down {
+  background: var(--down-50);
+  color: var(--down-700);
+}
+
+/* 组件行的说明文字要能换行（.ds-table td 默认 nowrap 是给数字列的）。 */
+.status-page .ds-table td {
+  white-space: normal;
+}
+
+@media (max-width: 640px) {
+  .status-banner {
+    padding: var(--s-4);
+  }
+  .status-banner__title {
+    font-size: var(--t-lg);
+  }
+}
