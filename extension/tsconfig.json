@@ -8,6 +8,10 @@
     "strict": true,
     "noUncheckedIndexedAccess": false,
     "noEmit": true,
+    // vite.config.ts 显式 import "./manifest.config.ts"(带扩展名)——
+    // 不带扩展名会触发 Vite 的 native configLoader 警告。noEmit 下开这个是安全的:
+    // 我们从不用 tsc 产出 JS,产物全由 Vite 打。
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
