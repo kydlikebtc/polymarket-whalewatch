@@ -218,6 +218,40 @@ The worker can mirror its best signals to an X (Twitter) account in English — 
 
 Pricing facts (2026 pay-per-use): $0.015 per text post, $0.20 per link post — only the weekly report card carries a link. Budget math: $15/mo ≈ 28 posts/day. Set the same cap in the X developer dashboard as a platform-side backstop. Daily caps: whale 20, pregame 3; consensus is naturally rare and uncapped.
 
+### Browser-extension channel (zero marginal cost)
+
+The $15/mo pay-per-use budget caps the account at ≈28 posts/day, which makes **cost**, not signal supply, the growth bottleneck. So there is a second delivery channel: a Chrome extension that posts through **your own logged-in x.com session** — no API, no per-post fee.
+
+Both channels are always available and you switch between them in `/manage` → **𝕏 播报账号** → 发帖通道. They share the same `x_posts` ledger, so switching never re-posts and never drops a signal.
+
+```
+worker (server)                     extension (your Chrome)          x.com
+──────────────                      ───────────────────────          ─────
+runXBroadcastCycle
+  → quota check → row status='queued'
+                              ◀── GET /api/x-queue     (alarms, 60s)
+                                   background tab → fill → click Post
+                                   MAIN-world CreateTweet capture   ──▶
+                              ──▶ POST /api/x-queue/ack
+  → settle('posted' / 'failed' / 'posted_unconfirmed')
+```
+
+Setup: build and load the extension (see [`extension/README.md`](extension/README.md)), issue an API key in `/manage` → 🔑 接入 with the **𝕏 发帖队列** capability ticked, then paste it into 发帖通道 → 推送配置到插件 (the server URL rides along — nothing to copy by hand).
+
+```bash
+# in .env — both optional, both only affect the extension channel:
+#   X_QUEUE_TTL_SEC=7200   # unclaimed queue entries expire after this (default 2h)
+#   X_LEASE_TTL_SEC=300    # leased-but-unacked entries return to the queue (default 5m)
+```
+
+Operational notes:
+
+- **Requires a running browser.** The queue is the buffer; anything unclaimed for `X_QUEUE_TTL_SEC` is voided rather than posted as stale news.
+- **Channel-level failures are separated from per-post ones.** An x.com logout makes _every_ post fail to find the composer; the extension reports `channel_error`, the post returns to the queue, and a Telegram alert fires — instead of burning the whole queue into `failed`.
+- **`posted_unconfirmed`** means the Post button was clicked but no `CreateTweet` response was captured. It is deliberately neither success nor failure (re-posting risks a duplicate tweet), and `/manage` highlights it for a manual look.
+- **Backlog alarm.** If the queue stays above 20 entries for 15 minutes, the worker pushes a Telegram warning — that's the only symptom when the extension dies silently.
+- **Escape hatch.** If X changes its DOM, switch the channel back to API in `/manage`; broadcasting resumes within 60s while you fix the extension.
+
 ---
 
 ## 🧠 How it works
