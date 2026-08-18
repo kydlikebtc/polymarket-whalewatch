@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
+import { builtinModules } from "node:module";
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 
@@ -31,17 +32,24 @@ const nextConfig = {
   // explicitly for server builds. No effect on the default Turbopack runtime.
   webpack: (config, { isServer }) => {
     if (isServer) {
-      // Node builtins (fs/path/crypto — used by lib/dbBackup and lib/apiGuard)
-      // hit the same instrumentation-bundle gap as better-sqlite3: webpack
-      // refuses both the "node:" scheme (UnhandledSchemeError) and the bare
-      // names (module-not-found) there. Externalizing maps them back to
-      // runtime require(), which is exactly right for a server bundle.
+      // Node builtins hit the same instrumentation-bundle gap as
+      // better-sqlite3: webpack refuses both the "node:" scheme
+      // (UnhandledSchemeError) and the bare names (module-not-found) there.
+      // Externalizing maps them back to runtime require(), which is exactly
+      // right for a server bundle.
+      //
+      // Externalize the WHOLE builtin list rather than the handful this repo
+      // imports directly. The hand-maintained list (fs/path/crypto) silently
+      // rotted the moment a dependency reached for a builtin we don't import
+      // ourselves — twitter-api-v2 imports `https`, so `next dev --webpack`
+      // (the documented worktree fallback) failed to compile at all. A
+      // dependency's builtin usage is not something this list can track by
+      // hand; enumerate them all and the class of failure is gone.
       config.externals = [
         ...config.externals,
         "better-sqlite3",
-        "fs",
-        "path",
-        "crypto",
+        ...builtinModules,
+        ...builtinModules.map((m) => `node:${m}`),
       ];
     }
     return config;
