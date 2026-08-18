@@ -20,6 +20,9 @@ const IssueBody = z.object({
   tier: z.enum(["realtime", "delayed"]).default("delayed"),
   // 订阅范围:该 key 能拿到哪些信号类型。省略/空 = 不限(既有行为)。
   busTypes: z.array(z.string().min(1)).optional(),
+  // 𝕏 发帖队列能力(写权限)。默认 false —— 与 busTypes 的「不限」相反,
+  // 因为这把 key 要长期躺在浏览器扩展里,写权限只能默认拒绝。
+  canXQueue: z.boolean().optional(),
 });
 
 const LIMITS = { perIp: 30, global: 60 };
@@ -53,6 +56,7 @@ export async function POST(req: Request) {
       label: body.label,
       tier: body.tier,
       busTypes: body.busTypes?.length ? body.busTypes : null,
+      canXQueue: !!body.canXQueue,
       notice: "明文 key 只显示这一次,库中仅存哈希 — 请立即保存",
     });
   } finally {

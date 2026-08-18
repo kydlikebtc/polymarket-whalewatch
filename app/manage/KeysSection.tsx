@@ -15,6 +15,8 @@ interface KeyRow {
   label: string;
   tier: string;
   busTypes?: string[] | null;
+  /** 唯一的写能力:能领取 𝕏 待发帖并回报结果(给浏览器插件用)。 */
+  canXQueue?: boolean;
   createdAt: number;
   revokedAt: number | null;
   lastUsedAt: number | null;
@@ -57,6 +59,7 @@ export default function KeysSection({ token }: { token: string }) {
   const [label, setLabel] = useState("");
   const [tier, setTier] = useState<"realtime" | "delayed">("delayed");
   const [subs, setSubs] = useState<string[]>([]);
+  const [canXQueue, setCanXQueue] = useState(false);
   const [whKeyId, setWhKeyId] = useState("");
   const [whUrl, setWhUrl] = useState("");
   const [whSecret, setWhSecret] = useState("");
@@ -102,7 +105,12 @@ export default function KeysSection({ token }: { token: string }) {
       const res = await fetch("/api/admin/keys", {
         method: "POST",
         headers: { "content-type": "application/json", ...authHeaders(token) },
-        body: JSON.stringify({ label: label.trim(), tier, busTypes: subs }),
+        body: JSON.stringify({
+          label: label.trim(),
+          tier,
+          busTypes: subs,
+          canXQueue,
+        }),
       });
       const j = (await res.json()) as {
         id?: number;
@@ -213,8 +221,9 @@ export default function KeysSection({ token }: { token: string }) {
         }
         hint={
           <>
-            key 用于 /api/signals 拉取(realtime=实时全量,delayed=延迟视图);webhook
-            只可挂在 realtime key 上。库中只存哈希,明文仅签发时显示一次。
+            key 用于 /api/signals
+            拉取(realtime=实时全量,delayed=延迟视图);webhook 只可挂在 realtime
+            key 上。库中只存哈希,明文仅签发时显示一次。
             {" 订阅方接入文档:"}
             <a href="/api-docs" target="_blank" rel="noreferrer">
               /api-docs
@@ -327,6 +336,30 @@ export default function KeysSection({ token }: { token: string }) {
             上都拿不到，不需要订阅方自己筛。
           </div>
         </div>
+        <div style={{ flexBasis: "100%" }}>
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            写权限
+          </div>
+          <label
+            style={{
+              display: "inline-flex",
+              gap: 6,
+              alignItems: "center",
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={canXQueue}
+              onChange={(e) => setCanXQueue(e.target.checked)}
+            />
+            <span>𝕏 发帖队列（给浏览器插件用）</span>
+          </label>
+          <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
+            这是<b>唯一一个写能力</b>：勾了之后该 key
+            能领取待发帖并回报结果。只给装在自己电脑上的插件用；其余订阅方一律别勾。
+          </div>
+        </div>
         <button
           className="ds-btn ds-btn--primary"
           disabled={busy}
@@ -382,6 +415,12 @@ export default function KeysSection({ token }: { token: string }) {
                     ) : (
                       <span className="muted">不限</span>
                     )}
+                    {/* 写能力单独标出来 —— 一眼看清哪把 key 能替账号发推。 */}
+                    {k.canXQueue ? (
+                      <span style={{ marginLeft: 4 }}>
+                        <Tag variant="brand">𝕏 发帖</Tag>
+                      </span>
+                    ) : null}
                   </td>
                   <td className="ds-hint mono">{timeText(k.createdAt)}</td>
                   <td className="ds-hint">{agoText(k.lastUsedAt)}</td>

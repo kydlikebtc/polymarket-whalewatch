@@ -11,12 +11,17 @@ import {
 import { startAuth } from "../../../../lib/xOauth";
 import {
   DEFAULT_X_KINDS,
+  getXDailyCaps,
+  getXDeliveryChannel,
   getXKindSwitches,
   getXPostHistory,
+  setXDailyCaps,
+  setXDeliveryChannel,
   setXKindSwitches,
   type XKindSwitches,
   type XPostKind,
 } from "../../../../lib/xSettings";
+import { queueDepth } from "../../../../lib/xQueue";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,6 +36,17 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("start") }),
   z.object({ action: z.literal("activate"), id: z.number().int().positive() }),
   z.object({ action: z.literal("delete"), id: z.number().int().positive() }),
+  z.object({
+    action: z.literal("channel"),
+    channel: z.enum(["api", "extension"]),
+  }),
+  z.object({
+    action: z.literal("caps"),
+    caps: z.object({
+      whale: z.number().int().positive(),
+      pregame: z.number().int().positive(),
+    }),
+  }),
   z.object({
     action: z.literal("kinds"),
     // 逐键可选:UI 只提交被改动的那个开关,不必回传整份配置。
@@ -63,6 +79,11 @@ export async function GET(req: Request) {
       kinds: getXKindSwitches(db),
       history,
       budgetUsd: cfg.xMonthlyBudgetUsd,
+      // 投递通道与插件通道的运行态。queueDepth 让运营者一眼看出「切过去之后
+      // 插件到底有没有在消费」—— 积压不降就是插件那头出问题了。
+      channel: getXDeliveryChannel(db),
+      dailyCaps: getXDailyCaps(db),
+      queueDepth: queueDepth(db),
       // App 未配置时前端直接提示去 .env 补,而不是让人点了授权才报错。
       appConfigured: cfg.xAppConfigured,
       // env 单账号回退是否在用(库里没有账号时才生效)。
@@ -126,6 +147,29 @@ export async function POST(req: Request) {
           { status: 502 },
         );
       }
+    }
+    if (body.action === "channel") {
+      // 切回 api 时把插件队列里的待发就地作废:切换往往正因为插件那条路
+      // 出了问题,用付费 API 把积压的旧闻补发出去是双输(烧钱 + 发旧闻)。
+      // 前端在按钮上已提示「将作废 N 条待发」。
+      let voided = 0;
+      if (body.channel === "api") {
+        voided = db
+          .prepare(
+            `UPDATE x_posts SET status = 'expired'
+              WHERE channel = 'extension' AND status IN ('queued','leased')`,
+          )
+          .run().changes;
+      }
+      setXDeliveryChannel(db, body.channel);
+      console.log(
+        `[manage] X 发帖通道切换为 '${body.channel}'${voided > 0 ? `,作废 ${voided} 条待发` : ""}`,
+      );
+      return Response.json({ ok: true, channel: body.channel, voided });
+    }
+    if (body.action === "caps") {
+      setXDailyCaps(db, body.caps);
+      return Response.json({ ok: true, dailyCaps: body.caps });
     }
     if (body.action === "kinds") {
       const next: XKindSwitches = { ...getXKindSwitches(db) };

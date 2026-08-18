@@ -179,6 +179,8 @@ export interface XPostRow {
   xPostId: string | null;
   costUsd: number;
   createdAt: number;
+  /** 'api' | 'extension' —— 这条是走哪条通道发的(通道级归因)。 */
+  channel: string;
 }
 
 export interface XPostHistory {
@@ -199,7 +201,7 @@ export function getXPostHistory(
   const posts = (
     db
       .prepare(
-        `SELECT id, kind, text, status, x_post_id, est_cost_usd, created_at
+        `SELECT id, kind, text, status, x_post_id, est_cost_usd, created_at, channel
            FROM x_posts ORDER BY created_at DESC, id DESC LIMIT ?`,
       )
       .all(limit) as {
@@ -210,6 +212,7 @@ export function getXPostHistory(
       x_post_id: string | null;
       est_cost_usd: number;
       created_at: number;
+      channel: string;
     }[]
   ).map((r) => ({
     id: r.id,
@@ -219,6 +222,7 @@ export function getXPostHistory(
     xPostId: r.x_post_id,
     costUsd: r.est_cost_usd,
     createdAt: r.created_at,
+    channel: r.channel,
   }));
 
   const d = new Date(nowSec * 1000);

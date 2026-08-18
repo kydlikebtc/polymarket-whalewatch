@@ -28,6 +28,7 @@ interface XPostRow {
   xPostId: string | null;
   costUsd: number;
   createdAt: number;
+  channel: string;
 }
 
 interface Payload {
@@ -42,15 +43,48 @@ interface Payload {
   appConfigured: boolean;
   envFallback: boolean;
   callbackUrl: string;
+  /** 当前投递通道 —— 决定本区块里那些日上限/计费提示该说哪一套。 */
+  channel: "api" | "extension";
 }
 
 // 四类内容的展示元数据(与 lib/xSettings.X_KINDS 同源语义;这里是客户端
 // 组件,不能 import 那个碰 DB 的模块,故就近镜像一份最小集)。
-const KINDS: { kind: string; label: string; hint: string }[] = [
-  { kind: "whale", label: "🐳 巨鲸大单", hint: "量最大,最容易吃满日配额(上限 20 条/天)" },
-  { kind: "consensus", label: "🔥 聪明钱共识", hint: "稀有且独家,优先级最高,不设日上限" },
-  { kind: "pregame", label: "⏰ 赛前聚合", hint: "结算前 1-6h 热门市场汇总,至多 3 条/天" },
-  { kind: "weekly", label: "📊 周报成绩单", hint: "每周一图卡 + 链接,唯一的 $0.20 帖" },
+//
+// 提示文案按通道分:日上限与计费口径两条通道完全不同(API 是预算导向的
+// 20/3 条与 $0.20 带链接帖;插件通道零成本、上限在「𝕏 发帖通道」里自定义)。
+// 写死一套的话,切过去之后满屏都是错数字。
+const kindsMeta = (
+  channel: "api" | "extension",
+): { kind: string; label: string; hint: string }[] => [
+  {
+    kind: "whale",
+    label: "🐳 巨鲸大单",
+    hint:
+      channel === "extension"
+        ? "量最大;日上限在上方「𝕏 发帖通道」里调"
+        : "量最大,最容易吃满日配额(上限 20 条/天)",
+  },
+  {
+    kind: "consensus",
+    label: "🔥 聪明钱共识",
+    hint: "稀有且独家,优先级最高,不设日上限",
+  },
+  {
+    kind: "pregame",
+    label: "⏰ 赛前聚合",
+    hint:
+      channel === "extension"
+        ? "结算前 1-6h 热门市场汇总;日上限在上方调"
+        : "结算前 1-6h 热门市场汇总,至多 3 条/天",
+  },
+  {
+    kind: "weekly",
+    label: "📊 周报成绩单",
+    hint:
+      channel === "extension"
+        ? "每周一图卡 + 链接;插件通道下带链接不额外计费"
+        : "每周一图卡 + 链接,唯一的 $0.20 帖",
+  },
 ];
 
 const STATUS_TONE: Record<string, "up" | "down" | "warn" | "default"> = {
@@ -58,6 +92,13 @@ const STATUS_TONE: Record<string, "up" | "down" | "warn" | "default"> = {
   failed: "down",
   claimed: "warn",
   skipped: "default",
+  // 插件通道新增的四个状态。posted_unconfirmed 用 warn 而不是 up:它是
+  // 「点了发送但没抓到回执」的**不确定态**,需要人工去 X 上核对一眼,
+  // 混进"已发布"的绿色里就等于把它藏起来了。
+  queued: "warn",
+  leased: "warn",
+  posted_unconfirmed: "warn",
+  expired: "default",
 };
 
 const STATUS_TEXT: Record<string, string> = {
@@ -65,6 +106,10 @@ const STATUS_TEXT: Record<string, string> = {
   failed: "失败",
   claimed: "发送中",
   skipped: "已跳过",
+  queued: "待插件领取",
+  leased: "插件发送中",
+  posted_unconfirmed: "⚠️ 待人工核对",
+  expired: "已过期作废",
 };
 
 // 回调结果经 URL query 带回(见 app/api/x-callback),读完即从地址栏抹掉,
@@ -321,7 +366,7 @@ export default function XAccountsSection({ token }: { token: string }) {
                 gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
               }}
             >
-              {KINDS.map((k) => {
+              {kindsMeta(data.channel).map((k) => {
                 const on = data.kinds[k.kind] !== false;
                 return (
                   <label
@@ -367,8 +412,8 @@ export default function XAccountsSection({ token }: { token: string }) {
               hint="最近 50 条。「已跳过」= 被类型开关/金额阈值/预算熔断拦下，未发出也不计费。"
               aside={
                 <span className="ds-hint mono">
-                  本月已花费 ${data.history.spentThisMonthUsd.toFixed(3)} /{" "}
-                  ${data.budgetUsd}
+                  本月已花费 ${data.history.spentThisMonthUsd.toFixed(3)} / $
+                  {data.budgetUsd}
                   {Object.entries(data.history.counts).length > 0 ? (
                     <span className="muted">
                       {" · "}
@@ -390,6 +435,7 @@ export default function XAccountsSection({ token }: { token: string }) {
                   <tr>
                     <th>时间</th>
                     <th>类型</th>
+                    <th>通道</th>
                     <th>状态</th>
                     <th>内容</th>
                     <th className="is-right">成本</th>
@@ -403,8 +449,14 @@ export default function XAccountsSection({ token }: { token: string }) {
                         {timeText(pst.createdAt)}
                       </td>
                       <td data-label="类型">
-                        {KINDS.find((k) => k.kind === pst.kind)?.label ??
+                        {kindsMeta(data.channel).find((k) => k.kind === pst.kind)
+                          ?.label ??
                           pst.kind}
+                      </td>
+                      {/* 通道级归因:切换过通道之后,「这批是哪条路发的、
+                          哪条失败率更高」只能靠这一列回答。 */}
+                      <td data-label="通道">
+                        {pst.channel === "extension" ? "🧩 插件" : "☁️ API"}
                       </td>
                       <td data-label="状态">
                         <Tag variant={STATUS_TONE[pst.status] ?? "default"}>

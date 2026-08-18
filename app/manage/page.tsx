@@ -8,6 +8,7 @@ import BusTypesSection from "./BusTypesSection";
 import HealthSection, { type HealthReport } from "./HealthSection";
 import KeysSection from "./KeysSection";
 import XAccountsSection from "./XAccountsSection";
+import XChannelSection from "./XChannelSection";
 import SignalsSection from "./SignalsSection";
 import StatusStrip from "./StatusStrip";
 import { authHeaders } from "./shared";
@@ -223,7 +224,14 @@ export default function ManagePage() {
         <HealthSection health={health} ops={overview?.ops ?? null} />
       )}
       {tab === "access" && <KeysSection token={token} />}
-      {tab === "x" && <XAccountsSection token={token} />}
+      {tab === "x" && (
+        <>
+          {/* 通道在账号之前:先决定「用哪条路发」,再管「用哪个号发」——
+              而且切到插件通道后,下面那些 X App/OAuth 的配置全都用不上了。 */}
+          <XChannelSection token={token} />
+          <XAccountsSection token={token} />
+        </>
+      )}
     </main>
   );
 }
