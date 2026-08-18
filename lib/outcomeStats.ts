@@ -80,12 +80,57 @@ export function wilsonInterval(
   return { lo: Math.max(0, center - half), hi: Math.min(1, center + half) };
 }
 
+/**
+ * Wilson interval on the EFFECTIVE sample size — the number of independent
+ * markets behind a hit-rate, not the number of alert rows.
+ *
+ * Why this exists: every alert fired on one market shares that market's single
+ * settlement. They are N copies of ONE random draw, not N observations. Live
+ * measurement on this project's own history: 3852 settled alerts landed on
+ * just 669 markets, with up to 201 rows on a single market (the big fills on
+ * one World-Cup match). Treating rows as independent understated the interval
+ * by ~1.9× — and flipped the SIGN of several per-bucket conclusions, because
+ * the few heavily-alerted markets dominated the naive average.
+ *
+ * For the settled win-rate the within-market correlation is exactly 1 (same
+ * market ⇒ same verdict), so the design effect equals the mean cluster size
+ * and the effective n collapses cleanly to the cluster COUNT. For the 1h/24h
+ * direction marks the correlation is high but not 1, so using the cluster
+ * count there is conservative — deliberately: a too-wide interval understates
+ * confidence, a too-narrow one manufactures it.
+ *
+ * The POINT estimate stays hits/total. "We fired 3852 alerts and 2176 were
+ * right" is a true and useful sentence; only the uncertainty around it needs
+ * the correction.
+ */
+export function clusteredInterval(
+  hits: number,
+  total: number,
+  clusters: number,
+  z = 1.96,
+): { lo: number; hi: number } {
+  if (total <= 0) return { lo: 0, hi: 1 };
+  // Clamp: 0/absent means "not clustered" and a count above the row count is
+  // impossible. Either way fall back to the row count — never let a bad
+  // cluster number buy a NARROWER interval than the honest naive one.
+  const eff = clusters > 0 && clusters < total ? clusters : total;
+  const p = hits / total;
+  // wilsonInterval derives p from hits/total, so a fractional numerator is
+  // fine here: it carries the observed rate onto the effective denominator.
+  return wilsonInterval(p * eff, eff, z);
+}
+
 export interface OutcomeTally {
   hits: number;
   total: number;
 }
 
 export interface OutcomeStat extends OutcomeTally {
+  /**
+   * Distinct markets behind `total` — the effective sample size for
+   * clusteredInterval. Equals `total` when rows carry no clusterKey.
+   */
+  clusters: number;
   byType: Record<string, OutcomeTally>;
 }
 
@@ -111,6 +156,14 @@ export interface SummaryAlert {
   foldKey?: string | null;
   /** Fold tiebreaker: the EARLIEST row survives (the actionable one). */
   createdAt?: number;
+  /**
+   * Clustering key for the effective sample size — the market (conditionId).
+   * Deliberately NOT per-outcome or per-side: in a binary market buying Yes
+   * and buying No settle in exact opposition, so counting them as two
+   * independent observations would double the effective n out of thin air.
+   * Absent/null = the row stands alone (pre-upgrade API keeps today's math).
+   */
+  clusterKey?: string | null;
 }
 
 export interface SummaryOutcome {
@@ -172,7 +225,12 @@ export function summarizeOutcomes(
   alerts: SummaryAlert[],
   outcomes: Record<number, SummaryOutcome>,
 ): OutcomeSummary {
-  const empty = (): OutcomeStat => ({ hits: 0, total: 0, byType: {} });
+  const empty = (): OutcomeStat => ({
+    hits: 0,
+    total: 0,
+    clusters: 0,
+    byType: {},
+  });
   const summary: OutcomeSummary = {
     dir1h: empty(),
     dir24h: empty(),
@@ -194,6 +252,11 @@ export function summarizeOutcomes(
     stat: OutcomeStat,
     graded: { a: SummaryAlert; hit: boolean }[],
   ) => {
+    // Cluster AFTER folding, and per stat: the fold removes re-alerts of one
+    // signal, the cluster then merges distinct signals that share a market's
+    // single settlement. Counted per stat because the three marks backfill
+    // independently — a market present in `settled` may have no 1h price yet.
+    const markets = new Set<string>();
     for (const g of foldAlertEscalations(
       graded.map((g) => ({
         ...g,
@@ -202,7 +265,11 @@ export function summarizeOutcomes(
       })),
     )) {
       bump(stat, g.a.type, g.hit);
+      // No clusterKey ⇒ the row is its own cluster, keyed by id so two
+      // unkeyed rows can never collide into one.
+      markets.add(g.a.clusterKey || `#${g.a.id}`);
     }
+    stat.clusters = markets.size;
   };
   const dirGraded = (pick: (o: SummaryOutcome) => number | null) => {
     const out: { a: SummaryAlert; hit: boolean }[] = [];

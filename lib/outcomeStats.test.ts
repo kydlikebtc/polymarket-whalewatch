@@ -5,6 +5,7 @@ import {
   directionVerdict,
   settleWon,
   wilsonInterval,
+  clusteredInterval,
   summarizeOutcomes,
 } from "./outcomeStats";
 
@@ -149,9 +150,11 @@ describe("summarizeOutcomes", () => {
 
   it("groups by type, tallies 1h separately, and drops pushes from both sides", () => {
     const s = summarizeOutcomes(alerts, outcomes);
+    // clusters 等于 total:这批夹具没带 clusterKey,每行自成一簇。
     expect(s.dir1h).toEqual({
       hits: 1,
       total: 2,
+      clusters: 2,
       byType: {
         large: { hits: 1, total: 1 },
         smart: { hits: 0, total: 1 },
@@ -160,6 +163,7 @@ describe("summarizeOutcomes", () => {
     expect(s.dir24h).toEqual({
       hits: 2,
       total: 2,
+      clusters: 2,
       byType: {
         large: { hits: 1, total: 1 },
         consensus: { hits: 1, total: 1 },
@@ -168,6 +172,7 @@ describe("summarizeOutcomes", () => {
     expect(s.settled).toEqual({
       hits: 1,
       total: 2,
+      clusters: 2,
       byType: {
         large: { hits: 1, total: 1 },
         smart: { hits: 0, total: 1 },
@@ -248,6 +253,7 @@ describe("summarizeOutcomes", () => {
     expect(s.settled).toEqual({
       hits: 1,
       total: 1,
+      clusters: 1,
       byType: { consensus: { hits: 1, total: 1 } },
     });
     // 1h 维度:只有升级行有价 → 仍应计 1 次,而不是整组消失。
@@ -279,5 +285,138 @@ describe("summarizeOutcomes", () => {
     const won = { resolved: true, won: true, price1h: null, price24h: null };
     const s = summarizeOutcomes(fills, { 20: won, 21: won });
     expect(s.settled.total).toBe(2);
+  });
+});
+
+describe("市场聚类有效样本量", () => {
+  // 同一市场的多条告警共享同一个结算结果 —— 它们是 1 个随机事件的 N 份
+  // 副本,不是 N 个独立观测。实测本项目历史库:3852 条已结算告警只落在
+  // 669 个市场上,单个市场最多 201 条(世界杯期间一场球的大额单)。按告警
+  // 数算 Wilson 区间会把误差低估约 1.9 倍,而且分组结论经常与聚类口径
+  // 符号相反。点估计(发了多少条、对了多少条)保持按告警,只有【区间】必须
+  // 用有效样本量。
+  const won = { resolved: true, won: true, price1h: null, price24h: null };
+  const lost = { resolved: true, won: false, price1h: null, price24h: null };
+
+  it("同一市场的多条告警只贡献一个有效样本", () => {
+    const alerts = [
+      { id: 1, type: "large", side: "BUY", price: 0.5, clusterKey: "mktA" },
+      { id: 2, type: "large", side: "BUY", price: 0.5, clusterKey: "mktA" },
+      { id: 3, type: "large", side: "BUY", price: 0.5, clusterKey: "mktA" },
+      { id: 4, type: "large", side: "BUY", price: 0.5, clusterKey: "mktB" },
+    ];
+    const s = summarizeOutcomes(alerts, {
+      1: won,
+      2: won,
+      3: won,
+      4: lost,
+    });
+    // 点估计不变:确实发了 4 条,对了 3 条。
+    expect(s.settled.total).toBe(4);
+    expect(s.settled.hits).toBe(3);
+    // 但只有 2 个市场 —— 真实的独立观测数。
+    expect(s.settled.clusters).toBe(2);
+  });
+
+  it("二元市场的正反两面同属一簇（Yes 赢则 No 必输,绝不独立）", () => {
+    // clusterKey 取 conditionId 而不含 outcome/side:同一市场买 Yes 与买 No
+    // 的输赢完全互补,把它们当两个独立观测会凭空翻倍有效样本量。
+    const alerts = [
+      { id: 1, type: "large", side: "BUY", price: 0.6, clusterKey: "mktA" },
+      { id: 2, type: "large", side: "SELL", price: 0.6, clusterKey: "mktA" },
+    ];
+    const s = summarizeOutcomes(alerts, { 1: won, 2: lost });
+    expect(s.settled.total).toBe(2);
+    expect(s.settled.clusters).toBe(1);
+  });
+
+  it("缺 clusterKey 时每行自成一簇（老 API / 未接线时行为不变）", () => {
+    const alerts = [
+      { id: 1, type: "large", side: "BUY", price: 0.5 },
+      { id: 2, type: "large", side: "BUY", price: 0.5 },
+    ];
+    const s = summarizeOutcomes(alerts, { 1: won, 2: won });
+    expect(s.settled.total).toBe(2);
+    expect(s.settled.clusters).toBe(2);
+  });
+
+  it("三个统计各自计簇 —— 回填进度不同不该串味", () => {
+    const alerts = [
+      { id: 1, type: "large", side: "BUY", price: 0.5, clusterKey: "mktA" },
+      { id: 2, type: "large", side: "BUY", price: 0.5, clusterKey: "mktB" },
+    ];
+    const s = summarizeOutcomes(alerts, {
+      // 只有 1 号回填了 1h 价,两者都已结算。
+      1: { price1h: 0.6, price24h: null, resolved: true, won: true },
+      2: { price1h: null, price24h: null, resolved: true, won: true },
+    });
+    expect(s.dir1h.clusters).toBe(1);
+    expect(s.settled.clusters).toBe(2);
+    expect(s.dir24h.clusters).toBe(0);
+  });
+
+  it("共识折叠与市场聚类叠加:先折升级行,再按市场并簇", () => {
+    // 同一市场的 Yes 共识升级了两次(2→3 人),另有该市场 No 侧的一条共识。
+    // 折叠吃掉升级重报(3 行 → 2 行),聚类再把同市场的正反两面并成 1 簇。
+    const alerts = [
+      {
+        id: 1,
+        type: "consensus",
+        side: "BUY",
+        price: 0.4,
+        foldKey: "c|Yes",
+        createdAt: 100,
+        clusterKey: "mktA",
+      },
+      {
+        id: 2,
+        type: "consensus",
+        side: "BUY",
+        price: 0.5,
+        foldKey: "c|Yes",
+        createdAt: 200,
+        clusterKey: "mktA",
+      },
+      {
+        id: 3,
+        type: "consensus",
+        side: "BUY",
+        price: 0.3,
+        foldKey: "c|No",
+        createdAt: 150,
+        clusterKey: "mktA",
+      },
+    ];
+    const s = summarizeOutcomes(alerts, { 1: won, 2: won, 3: lost });
+    expect(s.settled.total).toBe(2); // 折叠后 2 行
+    expect(s.settled.clusters).toBe(1); // 但只有 1 个市场
+  });
+});
+
+describe("clusteredInterval", () => {
+  it("有效样本量小于告警数时,区间比按告警算的更宽", () => {
+    const naive = wilsonInterval(60, 100);
+    const clustered = clusteredInterval(60, 100, 10);
+    expect(clustered.hi - clustered.lo).toBeGreaterThan(naive.hi - naive.lo);
+  });
+
+  it("点估计不被区间校正改动（中心仍围绕 hits/total）", () => {
+    const { lo, hi } = clusteredInterval(60, 100, 10);
+    expect(lo).toBeLessThan(0.6);
+    expect(hi).toBeGreaterThan(0.6);
+  });
+
+  it("每条告警各自成簇时与 wilsonInterval 完全一致", () => {
+    expect(clusteredInterval(60, 100, 100)).toEqual(wilsonInterval(60, 100));
+  });
+
+  it("簇数异常（0 / 超过告警数）时退回按告警计,绝不虚报精度", () => {
+    expect(clusteredInterval(60, 100, 0)).toEqual(wilsonInterval(60, 100));
+    // 簇数不可能多于告警数;真出现了也不能拿它换更窄的区间。
+    expect(clusteredInterval(60, 100, 999)).toEqual(wilsonInterval(60, 100));
+  });
+
+  it("空样本退化为平凡区间", () => {
+    expect(clusteredInterval(0, 0, 0)).toEqual({ lo: 0, hi: 1 });
   });
 });

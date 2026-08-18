@@ -87,7 +87,7 @@ export const ICONS: IconEntry[] = [
     name: "信号验证",
     tip: "信号验证：告警发出后 1h/24h 价格走势与结算回填",
     detail:
-      "验证闭环：每条告警（含 🔥 共识，按成员加权买入均价与最后一笔成交时间跟踪）自动回填信号发出后 1 小时 / 24 小时的市场价格变化（按方向着色，±0.5¢ 死区内记平推）与最终结算结果。页面顶部按信号类型（💰大单 / 🏆聪明钱 / 🔥共识）分组汇总 1h/24h 方向命中率和已结算胜率，样本 ≥10 时附 Wilson 95% 区间，样本不足时置灰提示——让工具为自己的信号打分。数据按需查询公开历史价格，不依赖归档。",
+      "验证闭环：每条告警（含 🔥 共识，按成员加权买入均价与最后一笔成交时间跟踪）自动回填信号发出后 1 小时 / 24 小时的市场价格变化（按方向着色，±0.5¢ 死区内记平推）与最终结算结果。页面顶部按信号类型（💰大单 / 🏆聪明钱 / 🔥共识）分组汇总 1h/24h 方向命中率和已结算胜率，并附 Wilson 95% 区间——区间与'样本不足'的判定都按【市场数】而非告警条数（见「有效样本量（市场聚类）」），扎堆在同一市场的几十条告警只算一个独立观测。让工具为自己的信号打分。数据按需查询公开历史价格，不依赖归档。",
   },
   {
     symbol: "↗",
@@ -201,7 +201,12 @@ export const TERMS: TermEntry[] = [
   {
     term: "剔除运气后至少 X%（Wilson 下界）/ 样本不足",
     detail:
-      "Telegram 推送里的『剔除运气后至少 X%』= 命中率的 Wilson 95% 置信下界：小样本下表面命中率极不可靠——3/3 显示 100%，剔除运气后其实只能保证约 44%；同样 65% 的表面命中率，26 个样本只能保证 46%，260 个样本能保证 59%。样本越多、下界越接近表面值。宁可把话说小：展示的是有 95% 把握守得住的下限，不是最好看的点估计。样本 <10 时看板汇总条置灰标'样本不足'（推送 <5 时同理），因为那时连下界都没有统计意义。",
+      "Telegram 推送里的『剔除运气后至少 X%』= 命中率的 Wilson 95% 置信下界：小样本下表面命中率极不可靠——3/3 显示 100%，剔除运气后其实只能保证约 44%；同样 65% 的表面命中率，26 个样本只能保证 46%，260 个样本能保证 59%。样本越多、下界越接近表面值。宁可把话说小：展示的是有 95% 把握守得住的下限，不是最好看的点估计。看板汇总条的样本量按【市场数】计（见「有效样本量（市场聚类）」），<10 个市场时置灰标'样本不足'（推送按条数 <5 时同理）——40 条告警若全落在 3 个市场上，那就是 3 个样本的估计，不该显示一条紧致的区间。",
+  },
+  {
+    term: "有效样本量（市场聚类）",
+    detail:
+      "命中率的 95% 区间按【市场数】而非【告警条数】计算：同一市场的每条告警共享该市场唯一的结算结果，它们是一次随机事件的 N 份副本，不是 N 个独立观测。本项目历史库实测：3852 条已结算告警只落在 669 个市场上，单个市场最多 201 条（一场球赛的大额单），按条数算会把误差低估约 1.9 倍，且多个分组结论的正负号会被少数扎堆市场直接带反。点估计（发了多少条 · 对了多少条）仍按告警计——那是一句真话；只有区间需要校正。聚类键取市场（conditionId）而不含结果方向：二元市场买 Yes 与买 No 的输赢完全互补，当成两个独立观测会凭空翻倍样本量。结算维度上组内相关性恰为 1，有效样本量正好等于市场数；1h/24h 方向维度相关性略低于 1，沿用市场数是刻意保守——区间偏宽只是低估信心，偏窄则是伪造信心。",
   },
   {
     term: "内幕猎杀组合",
@@ -423,3 +428,28 @@ const tipMap = new Map(ICONS.map((e) => [e.symbol, e.tip]));
 
 // Hover text for a symbol; empty string when the symbol has no entry.
 export const iconTip = (symbol: string): string => tipMap.get(symbol) ?? "";
+
+const termMap = new Map(TERMS.map((e) => [e.term, e.detail]));
+
+/**
+ * A TERM's full explanation — the same string the /glossary page renders, so
+ * a tooltip built from it can never drift from the docs.
+ * Empty string when the term has no entry.
+ */
+export const termDetail = (term: string): string => termMap.get(term) ?? "";
+
+/**
+ * First sentence of a detail, for use as hover text.
+ *
+ * Callers must TRANSLATE FIRST and truncate second — `t(termDetail(x))` then
+ * this — because the dictionary is keyed by the FULL detail string. Truncating
+ * up front yields a fragment that matches no key, and the lookup silently
+ * degrades to Chinese in the English UI (verified live).
+ *
+ * Handles both scripts: Chinese 。／：, and an English `.`/`:` (the period only
+ * when followed by whitespace, so "95%" and "0.5¢" don't split a sentence).
+ */
+export function firstSentence(s: string): string {
+  const m = s.match(/[。：:]|\.\s/);
+  return m?.index == null ? s : s.slice(0, m.index + 1);
+}

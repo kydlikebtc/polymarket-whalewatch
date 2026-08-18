@@ -18,6 +18,7 @@ type AlertRow = {
 
 type TradePayload = {
   proxyWallet?: string;
+  conditionId?: string;
   side?: string;
   size?: number;
   price?: number;
@@ -47,6 +48,12 @@ type AlertView = {
   // stable per-(market, outcome) identity — no payload re-parse needed. The
   // validation strip folds on it so one consensus counts once.
   foldKey: string | null;
+  // Effective-sample-size cluster key = the market (conditionId). Every alert
+  // on one market shares that market's single settlement, so they are copies
+  // of ONE random draw; the strip's Wilson interval divides by the market
+  // count, not the row count (see lib/outcomeStats.clusteredInterval).
+  // NOT per-outcome: Yes and No settle in exact opposition, never independent.
+  clusterKey: string | null;
 };
 
 const DB_PATH = process.env.DASH_DB ?? "data.sqlite";
@@ -94,6 +101,7 @@ export async function GET() {
             txHash: "",
             createdAt: row.created_at ?? 0,
             foldKey: consensusFoldKey(row.dedup_key),
+            clusterKey: p.conditionId ?? null,
           };
         }
         const size = typeof p.size === "number" ? p.size : 0;
@@ -112,6 +120,11 @@ export async function GET() {
           createdAt: row.created_at ?? 0,
           // Single fills are independent decisions — never folded.
           foldKey: null,
+          // ...but they are NOT independent OBSERVATIONS when they land on the
+          // same market: one settlement grades them all. Folding would delete
+          // real signals from the count; clustering keeps the count honest and
+          // only widens the interval.
+          clusterKey: p.conditionId ?? null,
         };
       });
 

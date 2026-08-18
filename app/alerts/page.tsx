@@ -9,7 +9,7 @@ import {
   SoundToggle,
   WalletLink,
 } from "../ui";
-import { iconTip } from "../glossary";
+import { iconTip, termDetail, firstSentence } from "../glossary";
 import { useLang } from "../i18n";
 import { playBubble } from "../sound";
 import { useSoundToggle } from "../useSound";
@@ -21,7 +21,7 @@ import {
 import {
   directionVerdict,
   summarizeOutcomes,
-  wilsonInterval,
+  clusteredInterval,
   type OutcomeStat,
 } from "../../lib/outcomeStats";
 
@@ -42,6 +42,12 @@ type AlertView = {
   // here (not just server-side) so a refactor can't silently drop it and
   // quietly restore the double-count.
   foldKey: string | null;
+  // Market id — the validation strip's effective sample size. Alerts sharing a
+  // market share its one settlement, so the Wilson interval divides by markets
+  // rather than rows (lib/outcomeStats.clusteredInterval). Declared here for
+  // the same reason as foldKey: a refactor must not silently drop it and
+  // quietly restore the over-confident interval.
+  clusterKey: string | null;
 };
 
 // Push-channel health from /api/alerts (engine-written counters in the config
@@ -165,12 +171,20 @@ function FollowBadge({
 // when the sample can support one (n ≥ 10; a lone 2/3 = "67%" is really
 // ~21%–94%), and the per-type breakdown so 💰 large and 🏆 smart never hide
 // behind a mixed-pool average.
+//
+// The interval is computed on the MARKET count, not the alert count: alerts on
+// one market share its single settlement, so rows over-count independence. The
+// small-sample gate follows the same measure — 40 alerts spread over 3 markets
+// is a 3-sample estimate and must say so rather than flash a tight range.
 function StatLine({ label, stat }: { label: string; stat: OutcomeStat }) {
   const { t } = useLang();
   if (stat.total === 0) return null;
   const pct = Math.round((stat.hits / stat.total) * 100);
-  const small = stat.total < 10;
-  const { lo, hi } = wilsonInterval(stat.hits, stat.total);
+  const small = stat.clusters < 10;
+  const { lo, hi } = clusteredInterval(stat.hits, stat.total, stat.clusters);
+  // Only worth showing when it differs from the row count — otherwise it is
+  // noise on a strip that is already dense.
+  const clustered = stat.clusters > 0 && stat.clusters < stat.total;
   const parts = Object.entries(stat.byType).map(
     ([type, v]) => `${t(TYPE_LABEL[type] ?? type)} ${v.hits}/${v.total}`,
   );
@@ -195,6 +209,16 @@ function StatLine({ label, stat }: { label: string; stat: OutcomeStat }) {
           })}
         </span>
       )}
+      {clustered ? (
+        <span
+          className="muted mono"
+          style={{ fontSize: "var(--t-sm)" }}
+          title={firstSentence(t(termDetail("有效样本量（市场聚类）")))}
+        >
+          {" "}
+          · {t("{n} 个市场", { n: stat.clusters })}
+        </span>
+      ) : null}
       {parts.length > 1 ? (
         <span className="muted" style={{ fontSize: "var(--t-sm)" }}>
           {" "}
@@ -399,7 +423,6 @@ export default function Page() {
         </div>
         <SoundToggle on={soundOn} onToggle={toggle} />
       </header>
-
 
       {/* Push-channel health callout — "no messages" must be tellable apart
           from "no large trades". Gated on `failing` (streak ≥ threshold), so

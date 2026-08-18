@@ -64,6 +64,8 @@ export const DICT_ALERTS: Record<string, string> = {
   已结算胜率: "Settled win rate",
   样本不足: "small sample",
   "95%区间 {lo}–{hi}%": "95% CI {lo}–{hi}%",
+  // 有效样本量:同一市场的多条告警共享一个结算,只算一个独立观测。
+  "{n} 个市场": "{n} markets",
   "💰大单": "💰 Large",
   "🏆聪明钱": "🏆 Smart",
   "🔥共识": "🔥 Consensus",
