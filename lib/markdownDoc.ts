@@ -16,7 +16,12 @@
 export type Inline =
   | { kind: "text"; text: string }
   | { kind: "code"; text: string }
-  | { kind: "strong"; text: string }
+  /**
+   * 粗体持有**子节点**而非纯文本:接口文档里 `**`recordByStrategy` 的键**`
+   * 这种「粗体裹代码」是常态(全文 29 处)。若粗体只存字符串,交替匹配会让
+   * 粗体整段吃掉内部的反引号,页面上就出现裸的 ` 字符。
+   */
+  | { kind: "strong"; children: Inline[] }
   | { kind: "link"; text: string; href: string };
 
 export type DocBlock =
@@ -64,8 +69,11 @@ export function parseInline(raw: string): Inline[] {
     const at = m.index ?? 0;
     if (at > last) out.push({ kind: "text", text: raw.slice(last, at) });
     if (m[1] !== undefined) out.push({ kind: "code", text: m[1] });
-    else if (m[2] !== undefined) out.push({ kind: "strong", text: m[2] });
-    else out.push({ kind: "link", text: m[3], href: m[4] });
+    else if (m[2] !== undefined) {
+      // 递归解析粗体内部。终止性:内层文本按 `[^*]+?` 捕获,必然不含 `**`,
+      // 所以下一层不会再进入这个分支 —— 最多递归一层。
+      out.push({ kind: "strong", children: parseInline(m[2]) });
+    } else out.push({ kind: "link", text: m[3], href: m[4] });
     last = at + m[0].length;
   }
   if (last < raw.length) out.push({ kind: "text", text: raw.slice(last) });

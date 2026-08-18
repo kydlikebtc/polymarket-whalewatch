@@ -37,7 +37,11 @@ const MISSING_DOC =
   "请确认镜像构建包含 docs 目录（Dockerfile 的 COPY docs）。";
 
 function renderInline(raw: string, keyPrefix: string) {
-  return parseInline(raw).map((piece: Inline, idx: number) => {
+  return renderPieces(parseInline(raw), keyPrefix);
+}
+
+function renderPieces(pieces: Inline[], keyPrefix: string) {
+  return pieces.map((piece: Inline, idx: number) => {
     const key = `${keyPrefix}-${idx}`;
     switch (piece.kind) {
       case "code":
@@ -47,7 +51,8 @@ function renderInline(raw: string, keyPrefix: string) {
           </code>
         );
       case "strong":
-        return <strong key={key}>{piece.text}</strong>;
+        // 粗体可裹代码/链接,故渲染子节点而非纯文本。
+        return <strong key={key}>{renderPieces(piece.children, key)}</strong>;
       case "link":
         return (
           <a

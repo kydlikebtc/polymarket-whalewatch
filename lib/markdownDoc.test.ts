@@ -46,7 +46,7 @@ describe("parseInline", () => {
       { kind: "text", text: "看 " },
       { kind: "code", text: "x-feed-token" },
       { kind: "text", text: " 与 " },
-      { kind: "strong", text: "必读" },
+      { kind: "strong", children: [{ kind: "text", text: "必读" }] },
       { kind: "text", text: " 和 " },
       { kind: "link", text: "站点", href: "https://a.b" },
     ]);
@@ -54,6 +54,29 @@ describe("parseInline", () => {
 
   it("反引号里的星号不被当成粗体(代码是原样区)", () => {
     expect(parseInline("`a ** b`")).toEqual([{ kind: "code", text: "a ** b" }]);
+  });
+
+  it("粗体裹代码要继续解析内部(全文 29 处,不递归就会露出裸反引号)", () => {
+    expect(parseInline("**恒为空数组 `[]`**")).toEqual([
+      {
+        kind: "strong",
+        children: [
+          { kind: "text", text: "恒为空数组 " },
+          { kind: "code", text: "[]" },
+        ],
+      },
+    ]);
+  });
+
+  it("粗体以代码开头也解析(`**`bus[]` 现在拿不到数据。**`)", () => {
+    const [strong] = parseInline("**`bus[]` 现在拿不到任何数据。**");
+    expect(strong).toEqual({
+      kind: "strong",
+      children: [
+        { kind: "code", text: "bus[]" },
+        { kind: "text", text: " 现在拿不到任何数据。" },
+      ],
+    });
   });
 
   it("无标记时原样单段返回", () => {
