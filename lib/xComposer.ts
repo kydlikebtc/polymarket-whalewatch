@@ -12,6 +12,8 @@ export const X_POST_MAX_CHARS = 280;
 // X 的加权计数(twitter-text v3 口径):下列码点区间计 1,其余(emoji、└、…、
 // ⏱ 等)计 2。旧实现用 [...s].length 数码点,每帖比 X 的算法少算 3~5 —— 填满
 // 280 额度后这个差值就是折叠事故,必须按 X 的尺子量。
+// 已知偏差:复合 emoji(VS16/旗帜/ZWJ 序列)按码点累加会比 X 实际多算,但
+// 方向安全 —— 只会提前降档,不会折叠;当前模板 emoji 全是单码点,与 X 一致。
 const WEIGHT_1_RANGES: [number, number][] = [
   [0, 4351], // 拉丁/西里尔/希腊等基本区
   [8192, 8205], // 常用空白与零宽
@@ -213,6 +215,35 @@ function fitByTruncatingTitle(
   if (over <= 0) return full;
   const keep = Math.max(0, [...title].length - over - 1);
   return build([...title].slice(0, keep).join("") + "…");
+}
+
+/**
+ * 变体阶梯限长:variants 从最富到最简排列(每个 build 把 title 恰好嵌入一次),
+ * 取第一个 ≤280 加权的;全超才截标题 —— 降级顺序从「砍标题」反转成「先丢可选
+ * 事实行」:市场标题是读者判断"这事关不关我"的唯一依据,最后才动。
+ */
+export function fitPost(
+  variants: ((title: string) => string)[],
+  title: string,
+): string {
+  for (const build of variants) {
+    const full = build(title);
+    if (weightedLength(full) <= X_POST_MAX_CHARS) return full;
+  }
+  // 全部梯级超限:用最简梯级截标题。预算 = 280 − 模板底座 − 2("…"权 2);
+  // 按字符逐个累权装入,一次收敛无过冲(加权下"超 N 砍 N 码点"会砍错量)。
+  const lean = variants[variants.length - 1];
+  const budget = X_POST_MAX_CHARS - weightedLength(lean("")) - 2;
+  let used = 0;
+  let keep = 0;
+  const chars = [...title];
+  for (const ch of chars) {
+    const cw = weightedLength(ch);
+    if (used + cw > budget) break;
+    used += cw;
+    keep++;
+  }
+  return lean(chars.slice(0, keep).join("") + "…");
 }
 
 export interface WhalePostInput {

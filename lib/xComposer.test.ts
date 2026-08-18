@@ -11,6 +11,7 @@ import {
   strategyEn,
   STRATEGY_EN,
   weightedLength,
+  fitPost,
 } from "./xComposer";
 
 describe("usdCompact", () => {
@@ -454,6 +455,8 @@ describe("weightedLength", () => {
     expect(weightedLength("¢")).toBe(1); // U+00A2 在拉丁补充区
     expect(weightedLength("·")).toBe(1); // U+00B7
     expect(weightedLength("—")).toBe(1); // U+2014 em dash 在 [8208,8223]
+    expect(weightedLength("\u2009")).toBe(1); // thin space 在 [8192,8205]
+    expect(weightedLength("′")).toBe(1); // U+2032 prime 在 [8242,8247]
   });
   it("emoji 与制表符号计 2", () => {
     expect(weightedLength("🐳")).toBe(2);
@@ -462,7 +465,37 @@ describe("weightedLength", () => {
     expect(weightedLength("⏳")).toBe(2);
   });
   it("混排:真实抬头行", () => {
-    // 🐳(2) + 空格(1)*5 + "WHALE:"(6) + "$200K"(5) + "says"(4) + "NO"(2) + "@"(1) + "80¢"(3)
+    // 🐳(2) + 空格(1)*6 + "WHALE:"(6) + "$200K"(5) + "says"(4) + "NO"(2) + "@"(1) + "80¢"(3)
     expect(weightedLength("🐳 WHALE: $200K says NO @ 80¢")).toBe(29);
+  });
+});
+
+describe("fitPost", () => {
+  const tags = "\n\n#Polymarket";
+  it("取第一个 ≤280 加权的变体", () => {
+    const rich = (t: string) => `HEAD\n\n${t}\n\nEXTRA LINE${tags}`;
+    const lean = (t: string) => `HEAD\n\n${t}${tags}`;
+    const title = "short title";
+    expect(fitPost([rich, lean], title)).toBe(rich(title));
+  });
+  it("富变体超限时降到简变体,标题不动", () => {
+    const pad = "x".repeat(270); // 富变体必超
+    const rich = (t: string) => `${pad}\n\n${t}${tags}`;
+    const lean = (t: string) => `HEAD\n\n${t}${tags}`;
+    const title = "short title";
+    expect(fitPost([rich, lean], title)).toBe(lean(title));
+  });
+  it("全部变体超限才截标题(按加权预算装入 + 省略号)", () => {
+    const lean = (t: string) => `HEAD\n\n${t}${tags}`;
+    const title = "T".repeat(400);
+    const out = fitPost([lean], title);
+    expect(weightedLength(out)).toBeLessThanOrEqual(280);
+    expect(out).toContain("…");
+    expect(out.startsWith("HEAD")).toBe(true);
+  });
+  it("emoji 标题截断不超限(权 2 字符正确扣预算)", () => {
+    const lean = (t: string) => `HEAD\n\n${t}${tags}`;
+    const title = "🐳".repeat(300);
+    expect(weightedLength(fitPost([lean], title))).toBeLessThanOrEqual(280);
   });
 });

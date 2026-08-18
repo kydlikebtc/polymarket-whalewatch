@@ -50,7 +50,7 @@ describe("weightedLength", () => {
     expect(weightedLength("⏳")).toBe(2);
   });
   it("混排：真实抬头行", () => {
-    // 🐳(2) + 空格(1)*5 + "WHALE:"(6) + "$200K"(5) + "says"(4) + "NO"(2) + "@"(1) + "80¢"(3)
+    // 🐳(2) + 空格(1)*6 + "WHALE:"(6) + "$200K"(5) + "says"(4) + "NO"(2) + "@"(1) + "80¢"(3)
     expect(weightedLength("🐳 WHALE: $200K says NO @ 80¢")).toBe(29);
   });
 });
