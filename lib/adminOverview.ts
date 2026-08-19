@@ -154,6 +154,65 @@ export function buildSmartLedger(db: DB, limit = 20): SmartLedgerRow[] {
 }
 
 /**
+ * ① 原始事件线的统一台账行:大额/共识来自 alerts(源表),发现来自
+ * bus_signals(它的唯一落库形态)。三类合并按时间倒序 —— 运营者要的是
+ * 「这条线最近发生了什么、去了哪」一张表,不是按存储表各看一张。
+ */
+export interface EventLedgerRow extends SmartLedgerRow {}
+
+export function buildEventLedger(db: DB, limit = 20): EventLedgerRow[] {
+  const base = buildSmartLedger(db, limit);
+  const discovery = (
+    db
+      .prepare(
+        `SELECT b.id, b.payload, b.emitted_at FROM bus_signals b
+         WHERE b.source_type = 'discovery'
+         ORDER BY b.emitted_at DESC, b.id DESC LIMIT ?`,
+      )
+      .all(limit) as { id: number; payload: string; emitted_at: number }[]
+  ).map((r): EventLedgerRow => {
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = JSON.parse(r.payload) as Record<string, unknown>;
+    } catch {
+      // 坏载荷:摘要留空。
+    }
+    const addr = typeof payload.address === "string" ? payload.address : null;
+    const score =
+      typeof payload.score === "number" && Number.isFinite(payload.score)
+        ? payload.score
+        : null;
+    return {
+      // 发现事件与 alerts 的 id 是两个命名空间,取负避免 React key 撞车
+      // (仅展示用,不是稳定引用)。
+      id: -r.id,
+      type: "discovery",
+      title: null,
+      outcome: null,
+      emittedAt: r.emitted_at,
+      summary: [
+        addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : null,
+        score != null ? `score ${score}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      xStatus: null, // 发现事件不接 𝕏
+      bus: {
+        projected: true,
+        channels: db
+          .prepare(
+            "SELECT channel, status FROM bus_deliveries WHERE bus_signal_id = ? ORDER BY channel",
+          )
+          .all(r.id) as { channel: string; status: string }[],
+      },
+    };
+  });
+  return [...base, ...discovery]
+    .sort((a, b) => b.emittedAt - a.emittedAt)
+    .slice(0, limit);
+}
+
+/**
  * 总线台账单行(运营视角):一条 bus 事件 + 它的逐通道投递状态。
  * 与 RecentSignalRow 的分工:那边是**策略**信号台账(strategy_signals ×
  * signal_deliveries),这边是**总线**台账(bus_signals × bus_deliveries)——

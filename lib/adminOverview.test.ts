@@ -5,6 +5,7 @@ import { DIGEST_DAY_KEY, DIGEST_PREV_KEY } from "./signalDigest";
 import {
   buildAdminSignalOverview,
   buildBusLedger,
+  buildEventLedger,
   buildSmartLedger,
   setStrategyPush,
 } from "./adminOverview";
@@ -352,5 +353,68 @@ describe("buildSmartLedger —— ① 聪明钱动向台账", () => {
     const [row] = buildSmartLedger(db);
     expect(row.xStatus).toBeNull();
     expect(row.bus).toEqual({ projected: false, channels: [] });
+  });
+});
+
+describe("buildEventLedger —— ① 原始事件线的统一台账", () => {
+  const NOW = 1_790_000_000;
+
+  it("合并三类事件按时间倒序;发现事件带总线投递、不接 𝕏", () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES ('consensus','k1',?, ?)",
+    ).run(JSON.stringify({ title: "A", walletCount: 2 }), NOW - 30);
+    db.prepare(
+      "INSERT INTO bus_signals (source_type, dedup_key, condition_id, title, payload, emitted_at) VALUES ('discovery','wallet:0xabc', NULL, NULL, ?, ?)",
+    ).run(
+      JSON.stringify({
+        address: "0x1234567890abcdef1234567890abcdef12345678",
+        score: 91,
+      }),
+      NOW - 10,
+    );
+    const rows = buildEventLedger(db);
+    expect(rows.map((r) => r.type)).toEqual(["discovery", "consensus"]);
+    expect(rows[0].summary).toBe("0x1234…5678 · score 91");
+    expect(rows[0].xStatus).toBeNull();
+    expect(rows[0].bus.projected).toBe(true);
+  });
+
+  it("发现事件的逐通道状态来自 bus_deliveries", () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO bus_signals (source_type, dedup_key, condition_id, title, payload, emitted_at) VALUES ('discovery','wallet:0xd', NULL, NULL, '{}', ?)",
+    ).run(NOW);
+    const bid = Number(
+      (
+        db
+          .prepare("SELECT id FROM bus_signals WHERE dedup_key = 'wallet:0xd'")
+          .get() as { id: number }
+      ).id,
+    );
+    db.prepare(
+      "INSERT INTO bus_deliveries (bus_signal_id, channel, status, created_at) VALUES (?, 'webhook:2', 'sent', ?)",
+    ).run(bid, NOW);
+    const [row] = buildEventLedger(db);
+    expect(row.bus.channels).toEqual([
+      { channel: "webhook:2", status: "sent" },
+    ]);
+  });
+
+  it("总量仍限 20 条(合并后裁剪)", () => {
+    const db = openDb(":memory:");
+    for (let i = 0; i < 15; i++) {
+      db.prepare(
+        "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES ('smart',?, '{}', ?)",
+      ).run(`s${i}`, NOW - 100 + i);
+      db.prepare(
+        "INSERT INTO bus_signals (source_type, dedup_key, condition_id, title, payload, emitted_at) VALUES ('discovery',?, NULL, NULL, '{}', ?)",
+      ).run(`w${i}`, NOW - 200 + i);
+    }
+    const rows = buildEventLedger(db);
+    expect(rows).toHaveLength(20);
+    // 最新的 15 条 smart 全在,剩 5 个名额给最新的 discovery
+    expect(rows.filter((r) => r.type === "smart")).toHaveLength(15);
+    expect(rows.filter((r) => r.type === "discovery")).toHaveLength(5);
   });
 });

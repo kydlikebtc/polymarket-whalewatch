@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   buildAdminSignalOverview,
   buildBusLedger,
+  buildEventLedger,
   buildSmartLedger,
   setStrategyPush,
 } from "../../../../lib/adminOverview";
@@ -124,7 +125,9 @@ export async function GET(req: Request) {
       busTypes: BUS_TYPES,
       busSettings: getBusSettings(db),
       busCounts24h: busCounts,
-      // ① 聪明钱动向台账(consensus/smart 告警 × 去向)。
+      // ① 原始事件线统一台账(大额/共识来自 alerts + 发现来自 bus)× 去向。
+      eventLedger: buildEventLedger(db),
+      // 兼容旧键(2026-08-19 当日的 UI 中间态用过;下轮可删)。
       smartLedger: buildSmartLedger(db),
       // 路由矩阵的真实开关态(线 × 管线,每格都指回属主开关,不造第二套配置)。
       routing: buildRouting(db),

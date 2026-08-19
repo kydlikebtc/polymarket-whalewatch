@@ -5,8 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AdminSignalOverview } from "../../lib/adminOverview";
 import { Segmented, Tag } from "../ui";
 import AlertRulesSection from "./AlertRulesSection";
-import SmartMovesSection from "./SmartMovesSection";
-import BusTypesSection from "./BusTypesSection";
+import EventsSection from "./EventsSection";
+import ViewsSection from "./ViewsSection";
 import HealthSection, { type HealthReport } from "./HealthSection";
 import KeysSection from "./KeysSection";
 import TgTargetsSection from "./TgTargetsSection";
@@ -59,7 +59,7 @@ const TOKEN_DEBOUNCE_MS = 400;
 // 把两层揉在一起,策略开关/总线开关/TG 告警条件同住一个 tab,而 TG 目标、
 // API key、𝕏 又各占一个 —— 没有一张图回答「这条信号最终到谁手里」。
 const TABS = [
-  { id: "lines", label: "🧭 信号 · 三条线" },
+  { id: "lines", label: "🧭 信号(事件+视图)" },
   { id: "pipes", label: "🚚 下游管线" },
   { id: "health", label: "🩺 健康度" },
 ] as const;
@@ -68,10 +68,13 @@ type TabId = (typeof TABS)[number]["id"];
 // StatusStrip 发出的是**区块** id(它不该知道 tab 怎么分组),这里把它映射
 // 到承载该区块的 tab —— 契约不变,StatusStrip 零改动。
 const SECTION_TAB: Record<string, TabId> = {
-  moves: "lines",
+  events: "lines",
   signals: "lines",
+  views: "lines",
+  // 旧区块 id 的兼容映射(StatusStrip 仍发 "signals" 等)。
   bus: "lines",
-  // rules(告警触发条件)已归位到 🅐 Telegram 子模块。
+  moves: "lines",
+  // rules(告警触发条件)住在 🅐 Telegram 子模块。
   rules: "pipes",
   tg: "pipes",
   keys: "pipes",
@@ -81,10 +84,12 @@ const SECTION_TAB: Record<string, TabId> = {
 
 // 两个大 tab 内部各一层子 tab:每次只挂载一个子模块(此前三个区块纵向罗列,
 // 一页三张大表,找东西靠滚)。总览表留在子 tab 之上当地图 —— 点行即切子 tab。
+// 信号线只有两条(事件才是信号);「视图」是事件的折叠层,非信号、无管线,
+// 单独一个子 tab 讲清楚 —— 2026-08-19 概念重排,见 EventsSection 文件头。
 const LINE_SUBS = [
-  { id: "moves", label: "① 聪明钱动向" },
+  { id: "events", label: "① 原始事件信号" },
   { id: "signals", label: "② 策略信号" },
-  { id: "bus", label: "③ 信号总线" },
+  { id: "views", label: "👁 视图(非信号)" },
 ] as const;
 const PIPE_SUBS = [
   { id: "tg", label: "🅐 Telegram" },
@@ -117,7 +122,7 @@ export default function ManagePage() {
   const hydrated = useRef(false);
 
   const [tab, setTab] = useState<TabId>("lines");
-  const [lineSub, setLineSub] = useState<LineSub>("moves");
+  const [lineSub, setLineSub] = useState<LineSub>("events");
   const [pipeSub, setPipeSub] = useState<PipeSub>("tg");
 
   useEffect(() => {
@@ -248,6 +253,7 @@ export default function ManagePage() {
     if (LINE_SUBS.some((x) => x.id === id)) selectLineSub(id as LineSub);
     if (PIPE_SUBS.some((x) => x.id === id)) selectPipeSub(id as PipeSub);
     if (id === "rules") selectPipeSub("tg"); // 告警条件住在 🅐 里
+    if (id === "bus" || id === "moves") selectLineSub("events"); // 旧 id 兼容
   };
 
   const tokenField = (
@@ -387,7 +393,7 @@ export default function ManagePage() {
               className="ds-segmented--wrap"
             />
           </div>
-          {lineSub === "moves" && <SmartMovesSection token={token} />}
+          {lineSub === "events" && <EventsSection token={token} />}
           {lineSub === "signals" && (
             <SignalsSection
               token={token}
@@ -395,7 +401,7 @@ export default function ManagePage() {
               reload={loadAll}
             />
           )}
-          {lineSub === "bus" && <BusTypesSection token={token} />}
+          {lineSub === "views" && <ViewsSection />}
         </>
       )}
       {tab === "pipes" && (

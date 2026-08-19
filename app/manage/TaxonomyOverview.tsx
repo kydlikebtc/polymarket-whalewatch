@@ -34,18 +34,18 @@ export function SignalLinesOverview({
   const lines = [
     {
       no: "①",
-      name: "聪明钱动向",
-      // 定义与接入文档 §6.4 逐字对齐:三种 kind,规则固定。
-      what: "共识(≥2 白名单同向) · 分歧(两侧都有) · 单笔大额(白名单单笔 ≥$50k),按市场×方向折叠",
-      manage: "判据固定,无开关;台账与去向见子 tab。进料条件在 🅐",
-      dest: "TG 告警频道 · API 拉取(active/settled) · 𝕏 大单/共识帖 · webhook 经 ③",
-      status: "规则常量,不随配置漂移",
-      jump: "moves",
+      name: "原始事件信号",
+      what: "大额成交 / 聪明钱共识 / 钱包发现(+待接入:分歧/拆单/赛前)",
+      manage: "总线逐类型开关+阈值;大额/共识的进料闸在 🅐 告警条件",
+      dest: "TG 告警 · 𝕏 大单/共识帖 · webhook · API bus[]",
+      status: "事件:触发即发出,不可变,有稳定 id",
+      jump: "events",
+      isView: false,
     },
     {
       no: "②",
-      name: "策略买入信号",
-      what: "19 档纸面策略的买入触发(strategy_signals 台账)",
+      name: "策略信号",
+      what: "19 档纸面策略的买入/结算事件(strategy_signals 台账)",
       manage: "逐档推送开关(默认全关,按战绩放开)",
       dest: "TG 信号频道(付费+公开延迟) · API strategies 段 · webhook · 𝕏 战报",
       status:
@@ -53,22 +53,24 @@ export function SignalLinesOverview({
           ? `推送中 ${pushed} / ${total} 档`
           : "…",
       jump: "signals",
+      isView: false,
     },
     {
-      no: "③",
-      name: "原始信号总线",
-      what: "全站原始事件的流水(bus_signals 台账)",
-      manage: "逐类型开关 + 阈值(默认全关)",
-      dest: "API bus[] · webhook(端点勾选类型)",
-      status: "默认全关;开关与近 24h 产出见子 tab",
-      jump: "bus",
+      no: "👁",
+      name: "视图(非信号)",
+      what: "active[]/settled[](① 的折叠) · record30d · strategies 段",
+      manage: "无 —— 折叠规则是固定常量,数据请求时现算",
+      dest: "不适用:视图无管线,想被推送订阅 ① 或 ②",
+      status: "状态:回答「现在该看什么」",
+      jump: "views",
+      isView: true,
     },
   ];
   return (
     <section className="ds-card" style={{ marginBottom: "var(--s-5)" }}>
       <SectionHead
-        title="🧭 三条信号线"
-        hint="与接入文档 §6.1 同一套分类。本表是地图:点行切换下方子 tab;「可达管线」的接线管理在「下游管线」tab。"
+        title="🧭 信号 = 事件（两条线）+ 视图"
+        hint="信号=事件(触发后发出,管线只挂在事件上);视图=事件的折叠,非信号。点行切换下方子 tab;接线管理在「下游管线」tab。"
       />
       <div className="ds-table-wrap">
         <table className="ds-table ds-table--compact">
@@ -97,10 +99,18 @@ export function SignalLinesOverview({
                   if (e.key === "Enter" || e.key === " ") onJump(l.jump);
                 }}
               >
-                <td style={{ whiteSpace: "nowrap", fontWeight: 500 }}>
+                <td
+                  style={{
+                    whiteSpace: "nowrap",
+                    fontWeight: 500,
+                    opacity: l.isView ? 0.75 : undefined,
+                  }}
+                >
                   {l.no} {l.name}
                 </td>
-                <td>{l.what}</td>
+                <td style={{ opacity: l.isView ? 0.75 : undefined }}>
+                  {l.what}
+                </td>
                 <td>{l.manage}</td>
                 <td className="ds-hint">{l.dest}</td>
                 <td className="ds-hint" style={{ whiteSpace: "nowrap" }}>
@@ -112,11 +122,10 @@ export function SignalLinesOverview({
         </table>
       </div>
       <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-        ① 与 ③ 的区别 = <b>状态 vs 事件</b>:①回答「现在该看什么」(折叠
-        快照,共识升级原地更新,给页面渲染);③回答「刚刚发生了什么」(逐条
-        不可变、有稳定 id,因此可推送 —— 触发语义只有 ③ 承担)。同一批
-        alerts 的两种形态,不会矛盾也不会双写;坑只有重复计数:同一共识组
-        每次升级在 ③ 里是新事件,数个数要按市场×方向归并或直接用 ①。
+        判据一句话:<b>触发后发出的才是信号</b>。事件不可变、有稳定 id,
+        管线(TG/𝕏/webhook/API)只挂在事件上;视图是事件的折叠,同一共识组
+        升级时原地更新 —— 把每条升级事件当独立信号计数是唯一的坑,视图已
+        替你折叠好(事件做触发、视图做渲染)。
       </div>
     </section>
   );
@@ -256,21 +265,45 @@ export function RoutingMatrix({
     cells: { text: string; jump: string | null }[];
   }[] = [
     {
-      line: "① 聪明钱动向",
+      line: "① 大额成交",
       cells: [
         {
-          text: `告警频道 ${on(routing.alertPush)} · 目标 大额${tgt("large")}/共识${tgt("consensus")}`,
+          text: `告警 ${on(routing.alertPush)} · 目标 ${tgt("large")}`,
           jump: "rules",
         },
-        { text: "恒开(active/settled)", jump: "keys" },
+        { text: `bus[] ${on(busOn("large"))}`, jump: "events" },
         {
-          text: `经 ③:共识${on(busOn("consensus"))} 大额${on(busOn("large"))} · 端点 ${wh("consensus")}/${wh("large")}`,
-          jump: "bus",
+          text: `总线${on(busOn("large"))} · 端点 ${wh("large")}`,
+          jump: "events",
+        },
+        { text: `大单帖 ${on(routing.xKinds.whale === true)}`, jump: "x" },
+      ],
+    },
+    {
+      line: "① 聪明钱共识",
+      cells: [
+        { text: `频道即发 · 目标 ${tgt("consensus")}`, jump: "tg" },
+        { text: `bus[] ${on(busOn("consensus"))}`, jump: "events" },
+        {
+          text: `总线${on(busOn("consensus"))} · 端点 ${wh("consensus")}`,
+          jump: "events",
         },
         {
-          text: `大单 ${on(routing.xKinds.whale === true)} · 共识 ${on(routing.xKinds.consensus === true)}`,
+          text: `共识帖 ${on(routing.xKinds.consensus === true)}`,
           jump: "x",
         },
+      ],
+    },
+    {
+      line: "① 钱包发现",
+      cells: [
+        { text: "不接 TG(设计如此)", jump: null },
+        { text: `bus[] ${on(busOn("discovery"))}`, jump: "events" },
+        {
+          text: `总线${on(busOn("discovery"))} · 端点 ${wh("discovery")}`,
+          jump: "events",
+        },
+        { text: "不接 𝕏(设计如此)", jump: null },
       ],
     },
     {
@@ -282,32 +315,14 @@ export function RoutingMatrix({
         },
         { text: "恒开(strategies,按 key 范围)", jump: "keys" },
         { text: `端点 ${wh("strategy")} 个勾选`, jump: "keys" },
-        {
-          text: `战报 ${on(routing.xKinds.settled === true)}`,
-          jump: "x",
-        },
-      ],
-    },
-    {
-      line: "③ 原始总线",
-      cells: [
-        { text: "不接 TG(设计如此)", jump: null },
-        {
-          text: `bus[]:大额${on(busOn("large"))} 共识${on(busOn("consensus"))} 发现${on(busOn("discovery"))}`,
-          jump: "bus",
-        },
-        {
-          text: `端点 大额${wh("large")}/共识${wh("consensus")}/发现${wh("discovery")}`,
-          jump: "keys",
-        },
-        { text: "不接 𝕏(设计如此)", jump: null },
+        { text: `战报 ${on(routing.xKinds.settled === true)}`, jump: "x" },
       ],
     },
   ];
   return (
     <section className="ds-card" style={{ marginBottom: "var(--s-5)" }}>
       <SectionHead
-        title="🗺 路由矩阵(线 × 管线)"
+        title="🗺 路由矩阵(事件类型 × 管线)"
         hint="每格显示当前开关态,点击直达属主开关。矩阵不另存配置 —— 每个开关只有一个属主,这里只是拼图。"
       />
       <div className="ds-table-wrap">
