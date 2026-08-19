@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 365 commits, 2026-06-23 → 2026-08-19. Test suite at the end of that range: 1436 tests across
-108 files (`npm test`).
+Scope: 378 commits, 2026-06-23 → 2026-08-19. Test suite at the end of that range: 1505 tests across
+112 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -35,6 +35,63 @@ Scope: 365 commits, 2026-06-23 → 2026-08-19. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                  |
 
 ## Batches
+
+### 2026-08-19 — `bus[]` reaches parity with `active[]`
+
+`bus[]` used to be six top-level fields plus a `payload: Record<string, unknown>` whose shape
+changed with `sourceType`. The same question — how much money is this — was `usd` on a `large`
+event and `totalNetUsd` on a `consensus` one, so every consumer had to branch on the type before it
+knew which key to read. Category and subcategory were absent entirely, which made filtering bus
+events by track impossible even though `active[]` had carried both for months.
+
+The normalised fields now sit at the top level under the same names `active[]` uses: market
+identity (`slug`, `eventSlug`, `category`, `subcategory`), direction (`outcome`, `outcomeIndex`,
+`asset`) and money (`netUsd`, `avgPrice`, `walletCount` — 1 for a `large` fill, because one fill is
+one wallet and consumers shouldn't special-case it). One parser now reads both feeds. `payload` is
+untouched, so anything already reading `payload.usd` keeps working; `outcomeIndex` and `asset` are
+new to the projected payload and read `null` on events booked before this change, which the 48h
+window flushes within a day. Category comes from the same `categoriesFor` lookup `active[]` uses —
+lifted out of `signalFeed` into `lib/eventCategory.ts`, because two implementations of the same
+lookup means one event can be classified two ways and nobody finds out.
+
+"Push and pull are the same fact by two routes" had been a comment above two hand-copied field
+lists — `BusSignalRow` as an interface, `BusEventV1Schema` as a zod object, and `buildBusEvent`
+enumerating the fields a third time. Adding a field meant editing three places and silently
+diverging if you missed one. The zod schema is now the single definition, the type derives from it,
+the webhook embeds it, and a regression test computes the expected field set from real data rather
+than hardcoding a list.
+
+### 2026-08-19 — /manage: what it says is what's true now, and the switches are within reach
+
+Three defects, each found by running the page rather than reading it.
+
+The routing matrix was reading a config that had been retired. Its "bus[]/总线 on/off" columns came
+from the legacy `config.bus_signal_settings`, but the source of truth since the taxonomy rework is
+`bus_defs` — and the new UI's `defAction` create/update/delete paths never write back to the legacy
+key. Enabling a definition through the UI left the matrix reading `false` forever. Confirmed live:
+`busDefs.large.enabled` went true while the legacy blob still said false. The predicate now reads
+`bus_defs` with the exact expression `EventsSection` uses, and the legacy key has no reader left in
+the frontend.
+
+The token gate had two verdicts. `authGate` says only the server decides, but `EventsSection`,
+`TgTargetsSection` and `XAccountsSection` each tested a local `!token` string — so on a deployment
+with no `ADMIN_TOKEN` (local development included) the header read 已验证 while those three blocks
+read 填入管理令牌后加载 and issued no request at all. The replacement predicate has no `token`
+parameter; a block cannot consult the token because it isn't given one. Its ready branch carries the
+data, which also retired a row of `data!` assertions.
+
+Telegram's last error was cut at 60 characters, which landed inside the prefix: the real failure
+read `…downgrade: telegram sendMessage failed permanently (status 401): {"ok":false,…}` and the
+operator saw it end at `telegr`. Now 160 characters inline with the full text in the title.
+
+Layout followed. The two concept tables fold away by default — showing a live status line while
+collapsed, since folding a dashboard is not the same as folding a lesson — the routing matrix stays
+open but can be collapsed, and the verified token field collapses into a chip in the header. First
+actionable control: 1082 → 762px on 🧭 信号, 1164 → 908px on 🚚 下游管线 (696px with the matrix
+collapsed), against a 900px viewport. `KeysSection` at 795 lines, up against the 800-line ceiling in
+CLAUDE.md, split into 375 + 480 with endpoint registration and operations moving out; the data is
+still fetched once by the parent, since two components fetching separately would double the request
+count against a 30/min per-IP limit.
 
 ### 2026-08-19 — Webhook endpoints: test before you trust, restore without relapse
 

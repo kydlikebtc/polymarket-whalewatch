@@ -1,5 +1,6 @@
 import type { DB } from "./db";
 import { gradeRows, type SignalRecord } from "./signalRecord";
+import { categoriesFor } from "./eventCategory";
 
 // Signal feed for external consumers (the mobile 信号 tab). The dashboard and
 // the Telegram channel both consume alerts as a STREAM — one row per fill,
@@ -181,37 +182,6 @@ function selectAlerts(db: DB, types: string[], sinceSec: number): AlertRow[] {
        ORDER BY created_at ASC`,
     )
     .all(...types, sinceSec) as AlertRow[];
-}
-
-function categoriesFor(
-  db: DB,
-  slugs: string[],
-): Record<string, { category: string | null; subcategory: string | null }> {
-  const out: Record<
-    string,
-    { category: string | null; subcategory: string | null }
-  > = {};
-  const uniq = [...new Set(slugs.filter(Boolean))];
-  if (uniq.length === 0) return out;
-  const placeholders = uniq.map(() => "?").join(",");
-  const rows = db
-    .prepare(
-      `SELECT event_slug, category, subcategory FROM event_category WHERE event_slug IN (${placeholders})`,
-    )
-    .all(...uniq) as {
-    event_slug: string;
-    category: string | null;
-    subcategory: string | null;
-  }[];
-  // category 保留历史行为(原样透传,'' 哨兵极少见且已发布);subcategory 是
-  // 新字段,'' known-none 直接归一成 null,对外永远只有「有值/无」两态。
-  for (const r of rows) {
-    out[r.event_slug] = {
-      category: r.category,
-      subcategory: r.subcategory || null,
-    };
-  }
-  return out;
 }
 
 /** Consensus alerts fold to the LATEST state per (market, outcome). */

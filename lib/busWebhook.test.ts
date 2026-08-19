@@ -4,9 +4,11 @@ import { issueApiKey } from "./apiKeys";
 import { registerWebhook, WEBHOOK_DISABLE_AFTER } from "./webhookDelivery";
 import {
   BUS_MAX_SENDS_PER_CYCLE,
+  buildBusEvent,
   BusEventV1Schema,
   runBusWebhookCycle,
 } from "./busWebhook";
+import { getBusSignals } from "./signalBus";
 
 const NOW = 1_790_000_000;
 
@@ -431,5 +433,36 @@ describe("runBusWebhookCycle · 信号定义级订阅(def:<id>)", () => {
     insertBus(db, { payload: { usd: 900_000 } });
     const r = await runBusWebhookCycle(db, { nowSec: NOW, fetchFn: okFetch() });
     expect(r.sent).toBe(0);
+  });
+});
+
+// --- 推拉同形(2026-08-19)----------------------------------------------------
+
+describe("webhook 的 bus 事件与拉取 API 的 bus[] 同形", () => {
+  it("字段集完全一致 —— 期望值从真实数据现算,不硬编码清单", () => {
+    const db = openDb(":memory:");
+    insertBus(db, {
+      sourceType: "large",
+      payload: {
+        usd: 120_000,
+        side: "BUY",
+        outcome: "Yes",
+        price: 0.62,
+        slug: "chiefs",
+        eventSlug: "sb",
+      },
+    });
+    const row = getBusSignals(db, { nowSec: NOW })[0];
+    const ev = buildBusEvent(row);
+
+    // 以后给 bus[] 加字段却忘了让 webhook 那条路跟上,这条立刻红 ——
+    // 「推与拉是同一份事实的两条到达路径」此前只是一句注释。
+    expect(Object.keys(ev.bus).sort()).toEqual(Object.keys(row).sort());
+    expect(() => BusEventV1Schema.parse(ev)).not.toThrow();
+    // 归一后的字段确实流到了 webhook 这条路上,不只是拉取 API 有。
+    expect(ev.bus.netUsd).toBe(120_000);
+    expect(ev.bus.avgPrice).toBe(0.62);
+    expect(ev.bus.slug).toBe("chiefs");
+    db.close();
   });
 });

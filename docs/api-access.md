@@ -201,18 +201,45 @@ interface BusSignal {
   id: number; // 幂等键的一半（配合 event="bus"）
   sourceType: "large" | "consensus" | "discovery";
   dedupKey: string;
-  conditionId: string | null; // discovery 恒 null
-  title: string | null; // discovery 恒 null
-  payload: Record<string, unknown>; // 形状随 sourceType，见下
+
+  // ——— 市场身份（discovery 无市场，一律 null）———
+  conditionId: string | null;
+  title: string | null;
+  slug: string | null; // 单市场页；eventSlug 只能落到事件页
+  eventSlug: string | null;
+  category: string | null; // 如 "Sports"
+  subcategory: string | null; // 如 "NBA"；无/未知 = null
+
+  // ——— 方向 ———
+  outcome: string | null; // 如 "Yes"
+  outcomeIndex: number | null;
+  asset: string | null; // CLOB token id
+
+  // ——— 金额（跨类型同名同义）———
+  netUsd: number | null; // large=名义额，consensus=总净买
+  avgPrice: number | null; // large=成交价
+  walletCount: number | null; // large 恒 1（一笔成交=一个钱包）
+
+  payload: Record<string, unknown>; // 原始载荷，形状随 sourceType，见下
   emittedAt: number;
 }
 ```
 
-| `sourceType` | 事件含义                           | `payload` 字段（中文名）                                                                                                        |
-| ------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `large`      | 单笔大额成交（含白名单与非白名单） | `usd` 名义额 · `side` 买卖向（`"BUY"\|"SELL"\|null`）· `outcome` 结果方向 · `price` 成交价 · `wallet` 钱包 · `slug`/`eventSlug` |
-| `consensus`  | ≥N 个白名单钱包同向共识            | `outcome` 方向 · `walletCount` 钱包数 · `totalNetUsd` 总净买 · `slug`/`eventSlug`                                               |
-| `discovery`  | 新钱包通过准入进白名单池           | `address` 地址 · `score` 评分(0-100) · `source` 发现渠道                                                                        |
+**这些顶层字段与 `active[]` 的 `Signal`（§9）同名同义** —— 同一套解析器可以
+同时吃 `bus[]` 和 `active[]`，不必先 `switch (sourceType)` 再决定读哪个键。
+
+`payload` 保留原始载荷，字段一个没少（**additive**，既有消费方零改动）：
+
+| `sourceType` | 事件含义                           | `payload` 字段（中文名）                                                                                                                               |
+| ------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `large`      | 单笔大额成交（含白名单与非白名单） | `usd` 名义额 · `side` 买卖向（`"BUY"\|"SELL"\|null`）· `outcome` 方向 · `outcomeIndex` · `asset` · `price` 成交价 · `wallet` 钱包 · `slug`/`eventSlug` |
+| `consensus`  | ≥N 个白名单钱包同向共识            | `outcome` 方向 · `outcomeIndex` · `asset` · `walletCount` 钱包数 · `totalNetUsd` 总净买 · `slug`/`eventSlug`                                           |
+| `discovery`  | 新钱包通过准入进白名单池           | `address` 地址 · `score` 评分(0-100) · `source` 发现渠道                                                                                               |
+
+> `payload.usd`（large）与 `payload.totalNetUsd`（consensus）是同一语义的两个
+> 历史名字，顶层的 `netUsd` 已统一。新接入请读顶层字段。
+> `outcomeIndex`/`asset` 自 2026-08-19 起写入载荷，此前入账的事件为 `null`；
+> `bus[]` 窗口最长 48h，一天之后全量数据都齐。
 
 要点：
 
@@ -470,6 +497,10 @@ interface BusEventV1 {
   notice: string;
 }
 ```
+
+「完全同形」不是承诺而是事实：推拉两条路径嵌的是**同一份** zod schema
+（`lib/signalBus.ts` 的 `BusSignalSchema`），并有一条从真实数据现算字段集的
+回归测试钉着 —— 给 `bus[]` 加字段而漏掉 webhook 这条路，测试会先红。
 
 幂等去重键 `(id, event)`——两类事件 id 来自不同表，但 `event` 不同，
 二元组永不碰撞。

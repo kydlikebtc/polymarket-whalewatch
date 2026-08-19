@@ -323,10 +323,23 @@ signal, paper, record, settle, notice}`，zod schema 见 `lib/webhookDelivery.ts
 
 ### 新增 `bus[]` — 统一信号总线
 
-全站各类原始信号（`large` / `consensus` / `discovery`）投影进一张台账后随 feed 一起返回：
-`{id, sourceType, dedupKey, conditionId, title, payload, emittedAt}`，窗口跟随 `windowHours`，
-最多 200 条。**各类型默认全关**，由运营者在 `/manage` 逐类开启并设阈值；开启后只投影此后
-1 小时内的新事件，不回灌历史。v1/v2 消费方忽略该字段即可，行为零变化。
+全站各类原始信号（`large` / `consensus` / `discovery`）投影进一张台账后随 feed 一起返回，
+窗口跟随 `windowHours`，最多 200 条。**各类型默认全关**，由运营者在 `/manage` 逐类开启并设
+阈值；开启后只投影此后 1 小时内的新事件，不回灌历史。v1/v2 消费方忽略该字段即可，行为零变化。
+
+单条形状 = `lib/signalBus.ts` 的 `BusSignalSchema`（**唯一定义**，webhook 的 `BusEventV1.bus`
+直接嵌它，有回归测试钉住两条路径同形）：
+
+- 身份：`id` / `sourceType` / `dedupKey` / `conditionId` / `title` / `slug` / `eventSlug` /
+  `category` / `subcategory`
+- 方向：`outcome` / `outcomeIndex` / `asset`
+- 金额：`netUsd` / `avgPrice` / `walletCount`
+- `payload`：原始载荷原样保留 + `emittedAt`
+
+2026-08-19 起顶层字段与 `active[]` 的 `Signal` **同名同义**（此前只有 6 个顶层字段 + 一个
+形状随 `sourceType` 变的 `payload`：同一个「这笔多少钱」在 large 里叫 `usd`、consensus 里叫
+`totalNetUsd`，消费方必须先分支才知道读哪个键；分类字段则完全没有）。归一是 additive ——
+`payload` 一字未改，既有消费方零改动。
 
 ### key 绑定订阅范围
 

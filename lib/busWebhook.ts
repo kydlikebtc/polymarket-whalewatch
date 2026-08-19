@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { DB } from "./db";
-import { getBusSignals, type BusSignalRow } from "./signalBus";
+import {
+  BusSignalSchema,
+  getBusSignals,
+  type BusSignalRow,
+} from "./signalBus";
 import { SIGNAL_DISCLAIMER } from "./signalPush";
 import { listBusDefs, matchedDefs } from "./busDefs";
 import {
@@ -43,16 +47,12 @@ export const BusEventV1Schema = z.object({
   event: z.literal("bus"),
   /** bus_signals.id —— 与 event 组成消费方幂等去重键。 */
   id: z.number(),
-  /** 与拉取 API `bus[]` 单条完全同形 —— 推与拉是同一份事实的两条到达路径。 */
-  bus: z.object({
-    id: z.number(),
-    sourceType: z.string(),
-    dedupKey: z.string(),
-    conditionId: z.string().nullable(),
-    title: z.string().nullable(),
-    payload: z.record(z.string(), z.unknown()),
-    emittedAt: z.number(),
-  }),
+  /**
+   * 与拉取 API `bus[]` 单条完全同形 —— 推与拉是同一份事实的两条到达路径。
+   * 直接嵌 signalBus 的 BusSignalSchema,不再手抄一份字段表:抄的那份漏一个
+   * 字段就是静默分叉,而两条路径的差异恰恰是消费方最难自查的一类问题。
+   */
+  bus: BusSignalSchema,
   notice: z.string(),
 });
 export type BusEventV1 = z.infer<typeof BusEventV1Schema>;
@@ -62,15 +62,8 @@ export function buildBusEvent(row: BusSignalRow): BusEventV1 {
     v: 1,
     event: "bus",
     id: row.id,
-    bus: {
-      id: row.id,
-      sourceType: row.sourceType,
-      dedupKey: row.dedupKey,
-      conditionId: row.conditionId,
-      title: row.title,
-      payload: row.payload,
-      emittedAt: row.emittedAt,
-    },
+    // 整条透传:逐字段列举等于第三份字段表,加字段时又是一处要记得改。
+    bus: row,
     notice: SIGNAL_DISCLAIMER,
   };
 }

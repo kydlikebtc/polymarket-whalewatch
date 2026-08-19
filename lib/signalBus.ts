@@ -9,7 +9,9 @@
 //  · **关掉的类型不写入**(而非写了再过滤):省表,也省投递配额。
 //  · 与 strategy_signals 并存而非合并:后者 strategy_id NOT NULL,塞入
 //    "不属于任何档位"的信号会让既有战绩查询全都得加过滤,是把两件事搅一起。
+import { z } from "zod";
 import type { DB } from "./db";
+import { categoriesFor } from "./eventCategory";
 import { listBusDefs, projectionFloor } from "./busDefs";
 import { notionalUsd } from "./trades";
 
@@ -140,22 +142,58 @@ export function setBusSettings(db: DB, s: BusSettings): void {
   );
 }
 
-export interface BusSignalRow {
-  id: number;
-  sourceType: string;
-  dedupKey: string;
-  conditionId: string | null;
-  title: string | null;
-  payload: Record<string, unknown>;
-  emittedAt: number;
-}
+/**
+ * `bus[]` 单条的**唯一定义** —— 拉取 API 与 webhook 推送共用这一份
+ * (lib/busWebhook.ts 直接嵌它)。此前两处各手抄一份字段表,「推拉同形」
+ * 只靠注释和记性维持:加个字段要改三处,漏一处就静默分叉。
+ *
+ * 2026-08-19 起字段与 `active[]` 的 Signal 同名同义(见 lib/signalFeed.ts):
+ *   - 归一命名:同一个「这笔多少钱」不再 large 叫 usd、consensus 叫
+ *     totalNetUsd —— 一律 netUsd。消费方不必先 switch(sourceType);
+ *   - 补齐身份:slug/eventSlug/category/subcategory/outcomeIndex/asset,
+ *     其中分类此前完全没有,按赛道过滤事件根本做不到;
+ *   - `payload` **原样保留**:additive,读 payload.usd 的老消费方零改动。
+ *
+ * discovery 没有市场,市场类字段一律 null —— 结构统一,消费方一套解析走到底。
+ */
+export const BusSignalSchema = z.object({
+  id: z.number(),
+  sourceType: z.string(),
+  dedupKey: z.string(),
+  conditionId: z.string().nullable(),
+  title: z.string().nullable(),
+  /** 单市场 slug —— 拼「这一个市场」的页面用(eventSlug 只能落到事件页)。 */
+  slug: z.string().nullable(),
+  eventSlug: z.string().nullable(),
+  category: z.string().nullable(),
+  subcategory: z.string().nullable(),
+  outcome: z.string().nullable(),
+  outcomeIndex: z.number().nullable(),
+  asset: z.string().nullable(),
+  /** 名义额(large)/ 总净买(consensus);discovery 无。 */
+  netUsd: z.number().nullable(),
+  /** 成交价(large)。 */
+  avgPrice: z.number().nullable(),
+  /** 参与钱包数;large 恒 1(一笔成交就是一个钱包)。 */
+  walletCount: z.number().nullable(),
+  /** 原始载荷,形状随 sourceType —— 保留以兼容既有消费方。 */
+  payload: z.record(z.string(), z.unknown()),
+  emittedAt: z.number(),
+});
+
+export type BusSignalRow = z.infer<typeof BusSignalSchema>;
+
+// 载荷是引擎多条路径写出来的,字段随时间增减 —— 取值一律先验类型,拿不到
+// 就是 null(不是 undefined:对外契约里「没有」只有一种写法)。
+const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
 
 export function getBusSignals(
   db: DB,
   opts: { nowSec: number; windowSec?: number; limit?: number },
 ): BusSignalRow[] {
   const windowSec = opts.windowSec ?? 24 * 3600;
-  return (
+  const rows = (
     db
       .prepare(
         `SELECT id, source_type, dedup_key, condition_id, title, payload, emitted_at
@@ -178,12 +216,43 @@ export function getBusSignals(
     } catch {
       // 坏载荷不该让整个 feed 崩,留空对象并保留其余字段。
     }
+    return { row: r, payload };
+  });
+
+  // 分类要按 eventSlug 批量补 —— 一次 IN 查询,不是每行点查一次。
+  // 与 active[] 走同一个 categoriesFor:两份实现意味着同一个事件在两处
+  // 可能给出不同分类,那种不一致最难被发现。
+  const cats = categoriesFor(
+    db,
+    rows.map(({ payload }) => str(payload.eventSlug)),
+  );
+
+  return rows.map(({ row: r, payload }) => {
+    const eventSlug = str(payload.eventSlug);
+    const cat = (eventSlug ? cats[eventSlug] : null) ?? {
+      category: null,
+      subcategory: null,
+    };
     return {
       id: r.id,
       sourceType: r.source_type,
       dedupKey: r.dedup_key,
       conditionId: r.condition_id,
       title: r.title,
+      slug: str(payload.slug),
+      eventSlug,
+      category: cat.category,
+      subcategory: cat.subcategory,
+      outcome: str(payload.outcome),
+      outcomeIndex: num(payload.outcomeIndex),
+      asset: str(payload.asset),
+      // 归一命名:large 写 usd、consensus 写 totalNetUsd,同一个语义两个名字
+      // 逼着消费方先 switch(sourceType) 才知道读哪个键。
+      netUsd: num(payload.usd) ?? num(payload.totalNetUsd),
+      avgPrice: num(payload.price),
+      // 一笔成交就是一个钱包 —— 给 1 而不是 null,消费方不必为 large 写特例。
+      walletCount:
+        num(payload.walletCount) ?? (r.source_type === "large" ? 1 : null),
       payload,
       emittedAt: r.emitted_at,
     };
@@ -273,6 +342,11 @@ export function projectBusSignals(
           title,
           {
             outcome: p.outcome ?? null,
+            // 投影时就把身份字段带上 —— 读取侧的归一只能提升已有的东西,
+            // 载荷里没有就永远补不出来。老事件保持 null(bus[] 窗口 24h,
+            // 一天之后全量数据都齐了)。
+            outcomeIndex: p.outcomeIndex ?? null,
+            asset: p.asset ?? null,
             walletCount,
             totalNetUsd: p.totalNetUsd ?? null,
             slug: p.slug ?? null,
@@ -295,6 +369,8 @@ export function projectBusSignals(
             usd,
             side: p.side ?? null,
             outcome: p.outcome ?? null,
+            outcomeIndex: p.outcomeIndex ?? null,
+            asset: p.asset ?? null,
             price,
             wallet: p.proxyWallet ?? null,
             slug: p.slug ?? null,
