@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 361 commits, 2026-06-23 → 2026-08-19. Test suite at the end of that range: 1401 tests across
-106 files (`npm test`).
+Scope: 365 commits, 2026-06-23 → 2026-08-19. Test suite at the end of that range: 1436 tests across
+108 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -35,6 +35,45 @@ Scope: 361 commits, 2026-06-23 → 2026-08-19. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                  |
 
 ## Batches
+
+### 2026-08-19 — Webhook endpoints: test before you trust, restore without relapse
+
+A burnt-out webhook endpoint used to be a dead end. The row showed `已停用 10(transient)` and the
+only control was a `停用` button it had already outlived — restoring meant registering a second
+endpoint, and the operator had no way to tell whether the subscriber's server was fixed except to
+register one and watch. The row now carries the same three controls the TG targets table has had
+all along: 测试 / 停用↔恢复 / 删除.
+
+**Test** posts a real `SignalEventV1` through the real delivery path — same `buildDeliveryHeaders`,
+same HMAC — because a probe that takes a side road can pass while live delivery keeps failing. The
+payload is shaped like a signal and empty like nothing: `id` and `strategy.id` are `0` (real ids
+autoincrement from 1), every price, size and wallet count is `null`, `notice` says outright that
+this is not a signal and must not be followed, and an extra `X-Signal-Test: 1` header gives
+subscribers a second way to drop it. Shaping it as a valid `SignalEventV1` is deliberate: a minimal
+`{event:"ping"}` would fail the subscriber's own schema check, return 4xx, and report a healthy
+channel as broken. The probe is read-only — it never touches `consecutive_failures` or `active`,
+so a manual test cannot nudge an endpoint toward the breaker.
+
+**Restore** clears `consecutive_failures` and `last_error` along with setting `active = 1`. The
+breaker fires on `>= WEBHOOK_DISABLE_AFTER`, not `==`, so the counter parks on the threshold: flip
+only the flag and the next single failure reads as 11 and trips it again — the button would have
+done nothing. Endpoints hanging off a revoked or non-realtime key are refused server-side, not
+merely greyed out in the UI, because the delivery query filters them anyway and a restored one
+would sit there reading 活跃 while delivering nothing.
+
+**Delete** is a hard delete, secret and all, behind a confirm that says so; 停用 stays for the
+reversible case. All of it rides the existing `POST /api/admin/webhooks` with an **optional**
+`action` field — omitting it still means register, so the contract published in `docs/signals-api.md`
+and any operator `curl` script keeps working.
+
+One diagnosis fix fell out of testing it live. undici packs every network failure into
+`TypeError: fetch failed` with the real reason in `cause` — and for the most common case, a closed
+port, that cause is an `AggregateError` whose own `message` is empty and whose sub-errors carry the
+`ECONNREFUSED ::1:PORT / 127.0.0.1:PORT` text. Reading `cause.message` alone yielded an empty
+string, leaving the operator with a bare "fetch failed"; the failure detail now falls through
+`cause.message` → sub-errors → `cause.code`.
+
+Commits: `9ee7419`, plus the wrap-up commit.
 
 ### 2026-08-19 — X post copy v2: posts measured by X's own ruler, filled to the fold
 
