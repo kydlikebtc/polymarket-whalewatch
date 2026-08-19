@@ -2,6 +2,11 @@ import type { Metadata } from "next";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  buildApiDocsStatus,
+  type ApiDocsStatus,
+} from "../../lib/apiDocsStatus";
+import { openDb } from "../../lib/db";
+import {
   parseInline,
   parseMarkdownDoc,
   tocOf,
@@ -19,6 +24,12 @@ import {
 // 得自己在脑子里对齐列 —— 一份"讲清楚数据类型和数据格式"的文档,排版失败
 // 就是内容失败。渲染全程只构造 React 元素(React 默认转义文本),不走任何
 // 原始 HTML 注入路径,所以解析器再怎么改都开不出 XSS 面。
+//
+// 「当前开放状态」是**渲染时查库生成**的,不写在 markdown 里:哪些档位放开了
+// 推送、哪些总线类型开着,运营者在 /manage 随时可改。手写快照(原文里那张
+// 「截至 2026-08-19…」的表)在开关一拨之后就开始骗人,而没有任何机制会提醒
+// 谁去改它。markdown 因此只保留**系统能力的全集**(永不过期),此刻开着什么
+// 由 lib/apiDocsStatus 回答(永不撒谎)。文档里用 ```status 围栏块占位。
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -72,7 +83,141 @@ function renderPieces(pieces: Inline[], keyPrefix: string) {
   });
 }
 
-function Block({ block, id }: { block: DocBlock; id: string }) {
+function Pill({ on, children }: { on: boolean; children: React.ReactNode }) {
+  return (
+    <span className={`status-pill status-pill--${on ? "up" : "down"}`}>
+      {children}
+    </span>
+  );
+}
+
+/** 文档里 ```status 围栏块的替身:按当前开关实时渲染。 */
+function LiveStatus({ status }: { status: ApiDocsStatus | null }) {
+  if (!status) {
+    return (
+      <div className="ds-callout ds-callout--warn">
+        当前开放状态暂时读不到（数据库不可用）。本文其余部分描述的是系统能力的
+        全集，具体哪些已对外开放请联系运营者确认。
+      </div>
+    );
+  }
+  const { strategies, busTypes, digestDay } = status;
+  return (
+    <div className="ds-table-wrap">
+      <table className="ds-table">
+        <thead>
+          <tr>
+            <th>能力</th>
+            <th>当前状态</th>
+            <th>你会看到</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <code className="doc-code">active</code> /{" "}
+              <code className="doc-code">settled</code> /{" "}
+              <code className="doc-code">record30d</code>
+            </td>
+            <td>
+              <Pill on>运行中</Pill>
+            </td>
+            <td>正常数据，任何有效 key 都能拿到</td>
+          </tr>
+          <tr>
+            <td>
+              <code className="doc-code">strategies</code>
+            </td>
+            <td>
+              <Pill on={strategies.length > 0}>
+                {strategies.length > 0
+                  ? `${strategies.length} 档对外发布`
+                  : "无档位对外发布"}
+              </Pill>
+            </td>
+            <td>
+              {strategies.length > 0 ? (
+                <>
+                  {strategies.map((s, i) => (
+                    <span key={s.id}>
+                      {i > 0 && "、"}
+                      {s.name}
+                      <span className="muted">（id={s.id}）</span>
+                    </span>
+                  ))}
+                  <span className="muted"> 的信号与战绩</span>
+                </>
+              ) : (
+                <>
+                  <code className="doc-code">strategies</code>{" "}
+                  为空结构（形状仍完整）
+                </>
+              )}
+            </td>
+          </tr>
+          {busTypes.map((b) => (
+            <tr key={b.type}>
+              <td>
+                <code className="doc-code">bus[]</code>
+                <span className="muted"> · {b.label}</span>
+              </td>
+              <td>
+                <Pill on={b.enabled}>{b.enabled ? "已开启" : "未开启"}</Pill>
+              </td>
+              <td>
+                {b.enabled ? (
+                  <>
+                    <code className="doc-code">
+                      sourceType: &quot;{b.type}&quot;
+                    </code>{" "}
+                    的条目
+                  </>
+                ) : (
+                  <>
+                    该类型不出现在 <code className="doc-code">bus[]</code> 里
+                  </>
+                )}
+              </td>
+            </tr>
+          ))}
+          <tr>
+            <td>存证链</td>
+            <td>
+              <Pill on={digestDay != null}>
+                {digestDay != null ? "运行中" : "尚未生成"}
+              </Pill>
+            </td>
+            <td>
+              {digestDay != null ? (
+                <>
+                  最近一条 <span className="mono">{digestDay}</span>，见{" "}
+                  <code className="doc-code">/api/record</code> 的{" "}
+                  <code className="doc-code">digest</code>
+                </>
+              ) : (
+                <>需已发布信号 + 公开频道配置</>
+              )}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Block({
+  block,
+  id,
+  status,
+}: {
+  block: DocBlock;
+  id: string;
+  status: ApiDocsStatus | null;
+}) {
+  // ```status 是占位符,不是代码 —— 换成实时表格。
+  if (block.kind === "code" && block.lang === "status") {
+    return <LiveStatus status={status} />;
+  }
   switch (block.kind) {
     case "heading": {
       const inner = renderInline(block.text, id);
@@ -143,6 +288,20 @@ export default function ApiDocsPage() {
   const blocks = parseMarkdownDoc(md);
   const toc = tocOf(blocks);
 
+  // 实时开放状态。查库失败不该让整份文档打不开 —— 文档的主体(字段契约)
+  // 与库无关,降级成一条「状态读不到」的提示即可。
+  let status: ApiDocsStatus | null = null;
+  try {
+    const db = openDb(process.env.DASH_DB ?? "data.sqlite");
+    try {
+      status = buildApiDocsStatus(db);
+    } finally {
+      db.close();
+    }
+  } catch (e) {
+    console.error("[/api-docs] 读取开放状态失败:", e);
+  }
+
   return (
     <main className="ds-main">
       <header style={{ marginBottom: "var(--s-4)" }}>
@@ -168,7 +327,7 @@ export default function ApiDocsPage() {
         </nav>
         <article className="ds-card doc-prose">
           {blocks.map((block, n) => (
-            <Block block={block} id={`b${n}`} key={`b${n}`} />
+            <Block block={block} id={`b${n}`} key={`b${n}`} status={status} />
           ))}
         </article>
       </div>
