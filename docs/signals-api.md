@@ -72,6 +72,7 @@ GET /api/signals?windowHours=24
   "kind": "consensus", // consensus | split | heavy
   "conditionId": "0xabc…",
   "title": "US announces halt in Iran offensive operations?",
+  "slug": "us-announces-halt-market…", // 单市场 slug(2026-08-19 起,additive)
   "eventSlug": "us-announces-halt…",
   "category": "Politics", // 可能为 null
   // 二级分类(2026-08-13 起,additive —— 老客户端可安全忽略):体育联盟
@@ -128,18 +129,45 @@ GET /api/signals?windowHours=24
 
 ### `settled[]` — 已结算（认账区）
 
+2026-08-19 起**与 `active[]` 同构**：身份与仓位字段同名同义、取值逐字段相等
+（有测试直接钉死这条不变量），消费方可用 `key` 把认账记录和自己缓存里的
+active 条目对上号，也可复用同一个卡片渲染。差别只在末尾三项。
+
 ```jsonc
 {
-  "title": "…",
-  "outcome": "Yes",
+  // ↓ 与 active[] 完全同名同义（12 项，2026-08-19 补齐，全部 additive）
+  "key": "0xabc…|Yes",
   "kind": "consensus",
-  "entryPrice": 0.73,
+  "conditionId": "0xabc…",
+  "title": "…",
+  "slug": "…",
+  "eventSlug": "…",
+  "category": "Sports",
+  "subcategory": "NBA",
+  "formationTs": 1785190000, // 信号**形成**时刻，不是结算时刻
+  "outcome": "Yes",
+  "outcomeIndex": 0,
+  "asset": "7201…",
+  "walletCount": 3,
+  "netUsd": 169830,
+  "wallets": [{ "wallet": "0x…", "netUsd": 121400, "avgPrice": 0.6 }],
+
+  // ↓ 认账区独有
+  "entryPrice": 0.73, // == active 的 avgPrice（同一个数，不放第二份）
   "won": true,
   "settledAt": 1785200000,
 }
 ```
 
 近 3 天，同一市场 × 方向只取最新一条，最多 20 条。
+
+仓位口径按 kind 分流、与 `foldConsensus`/`foldHeavy` **逐字对齐**：两边算出
+不同的金额，消费方对上号时就会看到「同一条信号金额变了」——`lib/signalFeed.test.ts`
+里那条逐字段比对的测试守的就是这个。
+
+> 同一条信号**可以同时出现在 `active` 与 `settled` 里**：前者按 `windowHours`
+> 取窗口、不问是否结算，后者按结算时刻回看 3 天。同 `key` 时是同一笔仓位的
+> 两个阶段，不是两条信号。
 
 ### `record30d` — 30 天价格调整战绩
 
