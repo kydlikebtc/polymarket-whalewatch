@@ -264,6 +264,16 @@ GET /api/signals?windowHours=24
 
 - 登记：`POST /api/admin/webhooks {"apiKeyId":N,"url":"https://…","secret":"≥16字符"}`（`x-admin-token`）；
   列表 `GET`（secret 不回显）；停用 `DELETE ?id=N`。仅 realtime tier 且未吊销的 key 可挂端点。
+- 端点运维（同一 `POST`，带 `action` 字段；不带 `action` 即上面的登记，老契约不变）：
+  - `{"action":"test","id":N}` —— 向端点投一条**连通性测试事件**：形状是合法 `SignalEventV1`
+    （订户按真信号 schema 解析不会 4xx），但 `id` 与 `strategy.id` 为 `0`（真信号 id 自增从 1 起）、
+    价格/金额/钱包数全为 `null`、`notice` 写明这不是信号请勿跟单，并额外带头 `X-Signal-Test: 1`。
+    **订户侧建议按 `X-Signal-Test` 头或 `id===0` 直接丢弃。** 响应 `{ok,status,ms,detail}`
+    恒为 HTTP 200（`ok` 才是结论）。测试是只读探针，不计入 `consecutive_failures`、不改 `active`。
+  - `{"action":"enable","id":N}` —— 恢复投递，**一并清零 `consecutive_failures` 与 `last_error`**
+    （熔断判定是 `>= 10`，不清零则下次失败立刻二次熔断）。key 已吊销或非 realtime 时拒绝（400）。
+  - `{"action":"disable","id":N}` —— 停用，保留连败计数做投递史（等价于 `DELETE ?id=N`）。
+  - `{"action":"delete","id":N}` —— **硬删**，secret 一并销毁不可恢复。
 - 投递：每条信号一个 `SignalEventV1` JSON（`{v:1, id, event:"entry"|"settle", strategy, market,
 signal, paper, record, settle, notice}`，zod schema 见 `lib/webhookDelivery.ts`），头部
   `X-Signature: sha256=<hex hmac-sha256(secret, body)>` + `X-Signal-Id` + `X-Signal-Event`。

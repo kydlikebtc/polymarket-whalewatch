@@ -51,6 +51,7 @@ export default function KeysSection({ token }: { token: string }) {
   const [keys, setKeys] = useState<KeyRow[] | null>(null);
   const [webhooks, setWebhooks] = useState<WebhookRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [issued, setIssued] = useState<{ id: number; key: string } | null>(
     null,
   );
@@ -173,22 +174,85 @@ export default function KeysSection({ token }: { token: string }) {
     }
   };
 
-  const disableWh = async (id: number, url: string) => {
-    if (
-      !window.confirm(`停用 webhook #${id}?\n${url}\n重新启用需再登记一条。`)
-    ) {
-      return;
-    }
+  // 端点运维动作(停用/恢复/删除)的公共通道。测试不走这里 —— 它的失败是
+  // 「HTTP 200 但 ok:false」,套进这套 error 判定会被静默当成功。
+  const actWh = async (body: Record<string, unknown>, okMsg: string) => {
     setBusy(true);
+    setError(null);
+    setNotice(null);
     try {
-      await fetch(`/api/admin/webhooks?id=${id}`, {
-        method: "DELETE",
-        headers: authHeaders(token),
+      const res = await fetch("/api/admin/webhooks", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify(body),
       });
+      const j = (await res.json()) as { error?: string };
+      if (!res.ok || j.error) {
+        setError(j.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      setNotice(okMsg);
       await load();
+    } catch (e) {
+      setError(String(e));
     } finally {
       setBusy(false);
     }
+  };
+
+  const testWh = async (id: number) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/admin/webhooks", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders(token) },
+        body: JSON.stringify({ action: "test", id }),
+      });
+      const j = (await res.json()) as {
+        ok?: boolean;
+        status?: number | null;
+        ms?: number;
+        detail?: string;
+        error?: string;
+      };
+      if (!res.ok || j.error) {
+        setError(j.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      const head = `端点 #${id} ${j.ok ? "测试通过" : "测试未通过"}(${j.ms}ms)`;
+      // 探针不写库,列表没有任何变化 —— 不必 reload。
+      if (j.ok) setNotice(`✅ ${head}:${j.detail}`);
+      else setError(`❌ ${head}:${j.detail}`);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disableWh = (id: number, url: string) => {
+    if (
+      !window.confirm(
+        `停用 webhook #${id}?\n${url}\n停止投递但保留端点与投递史,随时可点「恢复」重新启用。`,
+      )
+    ) {
+      return;
+    }
+    void actWh({ action: "disable", id }, `端点 #${id} 已停用`);
+  };
+
+  const deleteWh = (id: number, url: string) => {
+    // 硬删不可逆:secret 一并消失,恢复只能让订户重新配一遍。
+    if (
+      !window.confirm(
+        `删除 webhook #${id}?\n${url}\n端点连同 HMAC secret 一并销毁,不可恢复 —— 只是想临时停推请用「停用」。`,
+      )
+    ) {
+      return;
+    }
+    void actWh({ action: "delete", id }, `端点 #${id} 已删除`);
   };
 
   const realtimeKeys = (keys ?? []).filter(
@@ -213,8 +277,9 @@ export default function KeysSection({ token }: { token: string }) {
         }
         hint={
           <>
-            key 用于 /api/signals 拉取(realtime=实时全量,delayed=延迟视图);webhook
-            只可挂在 realtime key 上。库中只存哈希,明文仅签发时显示一次。
+            key 用于 /api/signals
+            拉取(realtime=实时全量,delayed=延迟视图);webhook 只可挂在 realtime
+            key 上。库中只存哈希,明文仅签发时显示一次。
             {" 订阅方接入文档:"}
             <a href="/api-docs" target="_blank" rel="noreferrer">
               /api-docs
@@ -223,6 +288,11 @@ export default function KeysSection({ token }: { token: string }) {
           </>
         }
       />
+      {notice && (
+        <div className="ds-callout" style={{ marginBottom: "var(--s-3)" }}>
+          {notice}
+        </div>
+      )}
       {error && (
         <div
           className="ds-callout ds-callout--error"
@@ -411,7 +481,8 @@ export default function KeysSection({ token }: { token: string }) {
       )}
 
       <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-        webhook 端点(realtime key 专属,连续失败 10 次自动熔断)
+        webhook 端点(realtime key 专属,连续失败 10
+        次自动熔断;熔断后先「测试」确认端点修好,再「恢复」)
       </div>
       <div
         style={{
@@ -480,7 +551,7 @@ export default function KeysSection({ token }: { token: string }) {
                 <th>URL</th>
                 <th className="is-right">连败</th>
                 <th>状态</th>
-                <th></th>
+                <th className="is-right">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -524,16 +595,59 @@ export default function KeysSection({ token }: { token: string }) {
                       <Tag>已停用</Tag>
                     )}
                   </td>
-                  <td>
-                    {w.active === 1 && (
+                  <td
+                    className="is-right"
+                    data-label="操作"
+                    style={{ whiteSpace: "nowrap" }}
+                  >
+                    <button
+                      className="ds-btn ds-btn--sm"
+                      disabled={busy}
+                      title="向该端点投一条测试事件(id=0、带 X-Signal-Test 头),走真实投递路径但不计入连败"
+                      onClick={() => void testWh(w.id)}
+                    >
+                      测试
+                    </button>{" "}
+                    {w.active === 1 ? (
                       <button
-                        className="ds-btn ds-btn--sm ds-btn--danger"
+                        className="ds-btn ds-btn--sm"
                         disabled={busy}
                         onClick={() => disableWh(w.id, w.url)}
                       >
                         停用
                       </button>
-                    )}
+                    ) : (
+                      <button
+                        className="ds-btn ds-btn--sm"
+                        disabled={
+                          busy ||
+                          w.key_revoked_at != null ||
+                          w.key_tier !== "realtime"
+                        }
+                        title={
+                          w.key_revoked_at != null
+                            ? "该端点挂在已吊销的 key 上,恢复了也不会投递 —— 需先签发新 realtime key 再登记端点"
+                            : w.key_tier !== "realtime"
+                              ? `该端点挂的 key 是 ${w.key_tier} tier,webhook 只服务 realtime`
+                              : "恢复投递,并把连败计数清零(否则下一次失败会立刻二次熔断)"
+                        }
+                        onClick={() =>
+                          void actWh(
+                            { action: "enable", id: w.id },
+                            `端点 #${w.id} 已恢复投递(连败计数已清零)`,
+                          )
+                        }
+                      >
+                        恢复
+                      </button>
+                    )}{" "}
+                    <button
+                      className="ds-btn ds-btn--sm ds-btn--danger"
+                      disabled={busy}
+                      onClick={() => deleteWh(w.id, w.url)}
+                    >
+                      删除
+                    </button>
                   </td>
                 </tr>
               ))}

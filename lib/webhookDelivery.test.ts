@@ -5,15 +5,20 @@ import { issueApiKey, revokeApiKey } from "./apiKeys";
 import type { PushSignalRow } from "./signalPush";
 import {
   buildSignalEvent,
+  buildTestEvent,
+  deleteWebhook,
   listActiveWebhooks,
   makeWebhookChannel,
   postSignalEvent,
+  postTestEvent,
   recordWebhookResult,
   registerWebhook,
+  setWebhookActive,
   signPayload,
   SignalEventV1Schema,
   WEBHOOK_DISABLE_AFTER,
 } from "./webhookDelivery";
+import { SIGNAL_DISCLAIMER } from "./signalPush";
 import { isPermanentSendError } from "./telegram";
 
 // 对外信号批次 3:webhook 通道。HMAC 签名防伪造、5s 超时、4xx=permanent、
@@ -236,5 +241,228 @@ describe("registerWebhook / listActiveWebhooks / 熔断", () => {
     }
     expect(isPermanentSendError(caught)).toBe(true);
     db.close();
+  });
+});
+
+// --- 端点运维:停用 / 恢复 / 删除 -------------------------------------------
+
+function seedEndpoint() {
+  const db = openDb(":memory:");
+  const rt = issueApiKey(db, { label: "rt", tier: "realtime" }, 1000);
+  const id = registerWebhook(db, {
+    apiKeyId: rt.id,
+    url: "https://a.com/h",
+    secret: "x".repeat(16),
+  });
+  return { db, keyId: rt.id, id };
+}
+
+function endpointRow(db: ReturnType<typeof openDb>, id: number) {
+  return db
+    .prepare(
+      "SELECT active, consecutive_failures, last_error FROM webhook_endpoints WHERE id=?",
+    )
+    .get(id) as {
+    active: number;
+    consecutive_failures: number;
+    last_error: string | null;
+  };
+}
+
+describe("setWebhookActive / deleteWebhook", () => {
+  it("恢复启用清零连败计数与 last_error —— 恢复后再失败一次不该立刻二次熔断", () => {
+    const { db, id } = seedEndpoint();
+    for (let i = 0; i < WEBHOOK_DISABLE_AFTER; i++) {
+      recordWebhookResult(db, id, false, { error: "timeout" });
+    }
+    expect(listActiveWebhooks(db)).toHaveLength(0);
+
+    expect(setWebhookActive(db, id, true)).toBe(true);
+    const row = endpointRow(db, id);
+    expect(row.active).toBe(1);
+    expect(row.consecutive_failures).toBe(0);
+    expect(row.last_error).toBe(null);
+    expect(listActiveWebhooks(db)).toHaveLength(1);
+
+    // 真正要钉死的是**行为后果**:熔断判定是 >= 阈值而非 ==,不清零的话
+    // 计数停在 10,恢复后第一次失败就是 11 → 秒回停用,按钮形同虚设。
+    const again = recordWebhookResult(db, id, false, { error: "502" });
+    expect(again.disabled).toBe(false);
+    expect(listActiveWebhooks(db)).toHaveLength(1);
+    db.close();
+  });
+
+  it("停用保留连败计数(投递史可审计);id 不存在返回 false", () => {
+    const { db, id } = seedEndpoint();
+    recordWebhookResult(db, id, false, { error: "502" });
+    expect(setWebhookActive(db, id, false)).toBe(true);
+    const row = endpointRow(db, id);
+    expect(row.active).toBe(0);
+    expect(row.consecutive_failures).toBe(1);
+    expect(row.last_error).toBe("502");
+    expect(setWebhookActive(db, 9999, false)).toBe(false);
+    expect(setWebhookActive(db, 9999, true)).toBe(false);
+    db.close();
+  });
+
+  it("删除是真删:行连同 secret 一并消失,重复删返回 false", () => {
+    const { db, id } = seedEndpoint();
+    expect(deleteWebhook(db, id)).toBe(true);
+    const left = db
+      .prepare("SELECT COUNT(*) AS c FROM webhook_endpoints")
+      .get() as { c: number };
+    expect(left.c).toBe(0);
+    expect(listActiveWebhooks(db)).toHaveLength(0);
+    expect(deleteWebhook(db, id)).toBe(false);
+    db.close();
+  });
+});
+
+// --- 连通性测试 -------------------------------------------------------------
+
+describe("buildTestEvent / postTestEvent", () => {
+  const ep = {
+    id: 7,
+    apiKeyId: 1,
+    url: "https://x.test/hook",
+    secret: "s".repeat(20),
+    active: 1,
+    consecutiveFailures: 0,
+    busTypes: null,
+  };
+
+  it("测试事件通过 SignalEventV1 校验 —— 订户按真信号 schema 解析不会 4xx 误报", () => {
+    const ev = buildTestEvent(1_700_000_000);
+    expect(() => SignalEventV1Schema.parse(ev)).not.toThrow();
+  });
+
+  it("id=0 作哨兵(真信号 AUTOINCREMENT 从 1 起),notice 自证是测试而非信号", () => {
+    const ev = buildTestEvent(1_700_000_000);
+    expect(ev.id).toBe(0);
+    expect(ev.strategy.id).toBe(0);
+    // 免责尾行不适用:这条压根不是信号,不能让订户当成「一条模拟信号」。
+    expect(ev.notice).not.toBe(SIGNAL_DISCLAIMER);
+    expect(ev.notice).toContain("测试");
+    expect(ev.notice).toContain("跟单");
+  });
+
+  it("走真实投递路径:同一套 HMAC 签名 + 额外 X-Signal-Test 头", async () => {
+    let init: RequestInit | undefined;
+    const res = await postTestEvent(ep, {
+      fetchFn: async (_u, i) => {
+        init = i;
+        return new Response("", { status: 200 });
+      },
+    });
+    const headers = init!.headers as Record<string, string>;
+    expect(headers["x-signal-test"]).toBe("1");
+    expect(headers["x-signal-id"]).toBe("0");
+    expect(headers["content-type"]).toBe("application/json");
+    // 消费方复算得到同一签名 —— 测试没绕开签名这道防线。
+    expect(headers["x-signature"]).toBe(
+      `sha256=${signPayload(ep.secret, String(init!.body))}`,
+    );
+    expect(res.ok).toBe(true);
+    expect(res.status).toBe(200);
+    expect(typeof res.ms).toBe("number");
+  });
+
+  it("2xx 全段算通过(订户返 204 也是收下了)", async () => {
+    const res = await postTestEvent(ep, {
+      fetchFn: async () => new Response(null, { status: 204 }),
+    });
+    expect(res.ok).toBe(true);
+    expect(res.status).toBe(204);
+  });
+
+  it("4xx 诊断点明「真信号也会被永久拒收」,不是含糊的失败", async () => {
+    const res = await postTestEvent(ep, {
+      fetchFn: async () => new Response("", { status: 404 }),
+    });
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(404);
+    expect(res.detail).toContain("404");
+    expect(res.detail).toContain("拒收");
+    expect(res.detail).toContain("不再重试");
+  });
+
+  it("5xx 诊断说明会自动重试(与 4xx 的处置截然不同)", async () => {
+    const res = await postTestEvent(ep, {
+      fetchFn: async () => new Response("", { status: 502 }),
+    });
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(502);
+    expect(res.detail).toContain("502");
+    expect(res.detail).toContain("重试");
+  });
+
+  it("超时与连不上给出各自的排查方向,而非同一句「失败」", async () => {
+    const timeout = await postTestEvent(ep, {
+      fetchFn: async () => {
+        const e = new Error("The operation was aborted due to timeout");
+        e.name = "TimeoutError";
+        throw e;
+      },
+    });
+    expect(timeout.ok).toBe(false);
+    expect(timeout.status).toBe(null);
+    expect(timeout.detail).toContain("超时");
+
+    const refused = await postTestEvent(ep, {
+      fetchFn: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+    });
+    expect(refused.ok).toBe(false);
+    expect(refused.status).toBe(null);
+    expect(refused.detail).toContain("ECONNREFUSED");
+    expect(refused.detail).not.toContain("超时");
+  });
+
+  it("undici 把网络错包成 `fetch failed`,真实原因埋在 cause 里 —— 必须带出来", async () => {
+    // 实测:端口不通时运营者只看到一句「fetch failed」,等于没有诊断。
+    const res = await postTestEvent(ep, {
+      fetchFn: async () => {
+        const e: Error & { cause?: unknown } = new TypeError("fetch failed");
+        e.cause = new Error("connect ECONNREFUSED 127.0.0.1:9");
+        throw e;
+      },
+    });
+    expect(res.ok).toBe(false);
+    expect(res.detail).toContain("ECONNREFUSED 127.0.0.1:9");
+  });
+
+  it("最常见的那种 cause 是 message 为空的 AggregateError —— 要摊到子错误", async () => {
+    // 端口不通时 undici 的真实形状(实测):
+    //   TypeError: fetch failed
+    //     └ cause: AggregateError(message="", code=ECONNREFUSED)
+    //         └ errors: [connect ECONNREFUSED ::1:59999,
+    //                    connect ECONNREFUSED 127.0.0.1:59999]
+    // 只读 cause.message 会拿到空串 → 运营者看到的还是光秃秃一句 fetch failed。
+    const res = await postTestEvent(ep, {
+      fetchFn: async () => {
+        const e: Error & { cause?: unknown } = new TypeError("fetch failed");
+        e.cause = new AggregateError([
+          new Error("connect ECONNREFUSED ::1:59999"),
+          new Error("connect ECONNREFUSED 127.0.0.1:59999"),
+        ]);
+        throw e;
+      },
+    });
+    expect(res.ok).toBe(false);
+    expect(res.detail).toContain("ECONNREFUSED 127.0.0.1:59999");
+  });
+
+  it("子错误也没 message 时退回 cause.code,不能只剩一句 fetch failed", async () => {
+    const res = await postTestEvent(ep, {
+      fetchFn: async () => {
+        const e: Error & { cause?: unknown } = new TypeError("fetch failed");
+        const agg: Error & { code?: string } = new AggregateError([]);
+        agg.code = "ENOTFOUND";
+        e.cause = agg;
+        throw e;
+      },
+    });
+    expect(res.detail).toContain("ENOTFOUND");
   });
 });

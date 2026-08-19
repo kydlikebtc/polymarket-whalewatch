@@ -86,6 +86,25 @@ export function signPayload(secret: string, body: string): string {
   return createHmac("sha256", secret).update(body).digest("hex");
 }
 
+/**
+ * 投递请求头。真实投递与「连通性测试」共用这一份 —— 分成两套组头逻辑的话,
+ * 测试通过却与真信号走不同的路,那种测试比没有更糟。
+ */
+function buildDeliveryHeaders(
+  secret: string,
+  body: string,
+  opts: { signalId: number; event: "entry" | "settle"; test?: boolean },
+): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    "x-signature": `sha256=${signPayload(secret, body)}`,
+    "x-signal-id": String(opts.signalId),
+    "x-signal-event": opts.event,
+    // 只在测试事件上出现:订户可据此丢弃,不必污染自己的信号台账。
+    ...(opts.test ? { "x-signal-test": "1" } : {}),
+  };
+}
+
 export interface EventBuildCtx {
   strategyName: string;
   source: string;
@@ -150,6 +169,160 @@ export function buildSignalEvent(
   };
 }
 
+/**
+ * 连通性测试事件。形状是真的 SignalEventV1(订户按真信号 schema 解析不会 4xx
+ * 误报),内容是空的:
+ *   - id = 0 作哨兵 —— 真信号 id 来自 AUTOINCREMENT,从 1 起,不可能撞上;
+ *   - 价格/金额/钱包数全为 null —— 订户即使漏看 X-Signal-Test 头与 id,
+ *     这条也没有任何可执行内容,跟不了单;
+ *   - notice 覆盖掉免责尾行:那句话是给「模拟信号」用的,这条压根不是信号。
+ */
+export function buildTestEvent(
+  nowSec: number = Math.floor(Date.now() / 1000),
+): SignalEventV1 {
+  const ev = buildSignalEvent(
+    {
+      id: 0,
+      strategy_id: 0,
+      condition_id: `0x${"0".repeat(64)}`,
+      outcome: "Yes",
+      outcome_index: null,
+      asset: null,
+      title: "WhaleWatch webhook 连通性测试",
+      slug: "whalewatch-webhook-test",
+      event_slug: "whalewatch-webhook-test",
+      formation_ts: nowSec,
+      reference_price: null,
+      wallet_count: null,
+      total_net_usd: null,
+      entry_price: null,
+      size_usd: null,
+      emitted_at: nowSec,
+      settled: 0,
+      settled_ts: null,
+      exit_price: null,
+      won: null,
+      realized_pnl: null,
+    },
+    "entry",
+    { strategyName: "连通性测试", source: "test", record: null },
+  );
+  return {
+    ...ev,
+    notice:
+      "这是 WhaleWatch 的 webhook 连通性测试事件(id=0),由运营者在后台手动触发 —— 不是交易信号,请勿跟单,也不必写入信号台账。收到它说明你的端点能正常接收真信号。",
+  };
+}
+
+/**
+ * 摊开网络错的真实原因。undici 把一切网络失败都包成 `TypeError: fetch failed`,
+ * 原因埋在 cause 里 —— 而最常见的那种(端口不通)cause 是一个 **message 为空**
+ * 的 AggregateError,每个地址族一条子错误:
+ *
+ *   TypeError: fetch failed
+ *     └ cause: AggregateError(message="", code="ECONNREFUSED")
+ *         └ errors: [connect ECONNREFUSED ::1:59999,
+ *                    connect ECONNREFUSED 127.0.0.1:59999]
+ *
+ * 只读 cause.message 会拿到空串,运营者面对的还是光秃秃一句「fetch failed」。
+ * 所以三级取值:cause.message → 子错误 → cause.code。
+ */
+function describeCause(err: unknown): string | null {
+  const cause = err instanceof Error ? err.cause : null;
+  if (!(cause instanceof Error)) return null;
+  if (cause.message) return cause.message;
+  const inner = (cause as AggregateError).errors;
+  if (Array.isArray(inner)) {
+    const msgs = [
+      ...new Set(
+        inner
+          .map((x) => (x instanceof Error ? x.message : String(x)))
+          .filter(Boolean),
+      ),
+    ];
+    if (msgs.length > 0) return msgs.join(" / ");
+  }
+  const code = (cause as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
+}
+
+export interface WebhookTestResult {
+  ok: boolean;
+  /** 拿到 HTTP 响应才有;连不上或超时是 null。 */
+  status: number | null;
+  ms: number;
+  /** 给运营者看的人话诊断 —— 不同失败因的处置完全不同,不能糊成一句「失败」。 */
+  detail: string;
+}
+
+/**
+ * 向端点投一条测试事件。**只读探针**:不接 db,因此不可能改写
+ * consecutive_failures/active —— 那本账是自动投递的健康度,手点的测试
+ * 不该往里掺沙子(清零是「恢复启用」的职责)。
+ */
+export async function postTestEvent(
+  endpoint: Pick<WebhookEndpoint, "url" | "secret">,
+  deps: { fetchFn?: typeof fetch; nowSec?: number } = {},
+): Promise<WebhookTestResult> {
+  const fetchFn = deps.fetchFn ?? fetch;
+  const body = JSON.stringify(buildTestEvent(deps.nowSec));
+  const startedAt = Date.now();
+  try {
+    const res = await fetchFn(endpoint.url, {
+      method: "POST",
+      headers: buildDeliveryHeaders(endpoint.secret, body, {
+        signalId: 0,
+        event: "entry",
+        test: true,
+      }),
+      body,
+      signal: AbortSignal.timeout(POST_TIMEOUT_MS),
+    });
+    const ms = Date.now() - startedAt;
+    if (res.ok) {
+      return {
+        ok: true,
+        status: res.status,
+        ms,
+        detail: `端点返回 HTTP ${res.status} —— 签名与 body 都被收下了,真信号走同一条路。`,
+      };
+    }
+    if (res.status >= 400 && res.status < 500) {
+      return {
+        ok: false,
+        status: res.status,
+        ms,
+        detail: `端点拒收(HTTP ${res.status})—— 真信号也会被判为永久失败、不再重试。常见原因:路径写错 / 鉴权把我们拦了 / 订户侧字段必填校验挡下了这条空值测试事件。`,
+      };
+    }
+    return {
+      ok: false,
+      status: res.status,
+      ms,
+      detail: `端点内部错误(HTTP ${res.status})—— 自动投递会按 30s 节奏重试,连续失败 ${WEBHOOK_DISABLE_AFTER} 次熔断停用。`,
+    };
+  } catch (e) {
+    const ms = Date.now() - startedAt;
+    const name = e instanceof Error ? e.name : "";
+    if (name === "TimeoutError" || name === "AbortError") {
+      return {
+        ok: false,
+        status: null,
+        ms,
+        detail: `${POST_TIMEOUT_MS / 1000}s 内没有响应(超时)—— 端点多半在同步处理完才回包。建议先返回 2xx 再异步处理,否则真信号也会被判为投递失败。`,
+      };
+    }
+    const msg = e instanceof Error ? e.message : String(e);
+    const cause = describeCause(e);
+    return {
+      ok: false,
+      status: null,
+      ms,
+      detail: `连不上端点:${cause ? `${msg} —— ${cause}` : msg}(常见原因:DNS 解析不到 / 端口未开 / TLS 证书无效 / 防火墙拦截)`,
+    };
+  }
+}
+
 export interface WebhookEndpoint {
   id: number;
   apiKeyId: number;
@@ -172,6 +345,35 @@ export function registerWebhook(
     )
     .run(opts.apiKeyId, opts.url, opts.secret, nowSec);
   return Number(res.lastInsertRowid);
+}
+
+/**
+ * 停用(false)/ 恢复启用(true)。返回是否命中一行。
+ *
+ * 恢复时必须一并清零 consecutive_failures 与 last_error:熔断判定是
+ * `>= WEBHOOK_DISABLE_AFTER` 而不是 `==`,计数熔断后停在阈值上,只置 active=1
+ * 的话下一次失败就是「阈值+1」→ 立刻二次熔断,按钮等于没做事。
+ * 停用则保留计数 —— 那是投递史,要能审计出「它当初是怎么坏的」。
+ */
+export function setWebhookActive(db: DB, id: number, active: boolean): boolean {
+  const res = active
+    ? db
+        .prepare(
+          "UPDATE webhook_endpoints SET active = 1, consecutive_failures = 0, last_error = NULL WHERE id = ?",
+        )
+        .run(id)
+    : db
+        .prepare("UPDATE webhook_endpoints SET active = 0 WHERE id = ?")
+        .run(id);
+  return res.changes === 1;
+}
+
+/** 硬删:secret 一并销毁,不可恢复(要留投递史请用停用)。 */
+export function deleteWebhook(db: DB, id: number): boolean {
+  return (
+    db.prepare("DELETE FROM webhook_endpoints WHERE id = ?").run(id).changes ===
+    1
+  );
 }
 
 /** 可投递端点:active=1 ∧ api_key 未吊销 ∧ tier=realtime。 */
@@ -217,12 +419,10 @@ export async function postSignalEvent(
   try {
     const res = await fetchFn(endpoint.url, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-signature": `sha256=${signPayload(endpoint.secret, body)}`,
-        "x-signal-id": String(event.id),
-        "x-signal-event": event.event,
-      },
+      headers: buildDeliveryHeaders(endpoint.secret, body, {
+        signalId: event.id,
+        event: event.event,
+      }),
       body,
       signal: AbortSignal.timeout(POST_TIMEOUT_MS),
     });

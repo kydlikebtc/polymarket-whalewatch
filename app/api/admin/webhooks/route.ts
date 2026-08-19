@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { checkWriteAccess, guardExpensive } from "../../../../lib/apiGuard";
 import { openDb } from "../../../../lib/db";
-import { registerWebhook } from "../../../../lib/webhookDelivery";
+import {
+  deleteWebhook,
+  postTestEvent,
+  registerWebhook,
+  setWebhookActive,
+} from "../../../../lib/webhookDelivery";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,8 +14,12 @@ export const dynamic = "force-dynamic";
 // 对外信号批次 3:webhook 端点管理。端点由运营者登记(ADMIN_TOKEN),不是
 // 订户自助 —— SSRF/滥用面收窄到信任边界内。挂在 realtime tier 的 api_key 上,
 // key 吊销即端点整体失效(listActiveWebhooks 的 join 保证)。
+//
+// POST 一个入口承接五个动作。action 是**可选**的:不传即 register ——
+// docs/signals-api.md 已发布的登记契约照旧,运营者手边的 curl 脚本不用改。
 
 const RegisterBody = z.object({
+  action: z.literal("register").optional(),
   apiKeyId: z.number().int().positive(),
   url: z
     .string()
@@ -22,10 +31,97 @@ const RegisterBody = z.object({
   secret: z.string().min(16).max(128),
 });
 
+// 端点运维:测试(只读探针)/ 停用↔恢复 / 硬删。
+const ActionBody = z.object({
+  action: z.enum(["test", "enable", "disable", "delete"]),
+  id: z.number().int().positive(),
+});
+
 const LIMITS = { perIp: 30, global: 60 };
 
 function openDash() {
   return openDb(process.env.DASH_DB ?? "data.sqlite");
+}
+
+interface EndpointRow {
+  id: number;
+  url: string;
+  secret: string;
+  active: number;
+  key_label: string;
+  key_tier: string;
+  key_revoked_at: number | null;
+}
+
+/** 端点运维动作。一律先确认端点存在(404),再执行。 */
+async function handleAction(
+  cmd: z.infer<typeof ActionBody>,
+): Promise<Response> {
+  const db = openDash();
+  try {
+    const ep = db
+      .prepare(
+        `SELECT w.id, w.url, w.secret, w.active, k.label AS key_label,
+                k.tier AS key_tier, k.revoked_at AS key_revoked_at
+         FROM webhook_endpoints w JOIN api_keys k ON k.id = w.api_key_id
+         WHERE w.id = ?`,
+      )
+      .get(cmd.id) as EndpointRow | undefined;
+    if (!ep) {
+      return Response.json(
+        { error: `端点 #${cmd.id} 不存在` },
+        { status: 404 },
+      );
+    }
+
+    if (cmd.action === "test") {
+      // secret 从库里取,不经前端往返(与 tg-targets 的 bot_token 同一纪律)。
+      const result = await postTestEvent({ url: ep.url, secret: ep.secret });
+      console.log(
+        `[admin/webhooks] test #${ep.id} ${ep.url} → ok=${result.ok} status=${result.status ?? "-"} ${result.ms}ms`,
+      );
+      // HTTP 仍是 200 —— 探测本身成功了(哪怕探到的是个坏端点),ok 才是结论。
+      return Response.json(result);
+    }
+
+    if (cmd.action === "enable") {
+      // 这两道拒绝必须在这里,不能只靠前端置灰:恢复一个投递查询根本不会
+      // 选中的端点,只会在后台留下「活跃」的假象,比停用更难排查。
+      if (ep.key_revoked_at != null) {
+        return Response.json(
+          {
+            error: `端点挂在已吊销的 key(${ep.key_label})上,恢复了也不会投递 —— 投递查询会过滤掉它。请先为该订户签发新的 realtime key 并重新登记端点。`,
+          },
+          { status: 400 },
+        );
+      }
+      if (ep.key_tier !== "realtime") {
+        return Response.json(
+          {
+            error: `端点挂的 key 是 ${ep.key_tier} tier,webhook 只服务 realtime tier(延迟数据请用拉取 API)`,
+          },
+          { status: 400 },
+        );
+      }
+      setWebhookActive(db, ep.id, true);
+      console.log(
+        `[admin/webhooks] enable #${ep.id} ${ep.url}(连败计数与 last_error 已清零)`,
+      );
+      return Response.json({ ok: true });
+    }
+
+    if (cmd.action === "disable") {
+      setWebhookActive(db, ep.id, false);
+      console.log(`[admin/webhooks] disable #${ep.id} ${ep.url}`);
+      return Response.json({ ok: true });
+    }
+
+    deleteWebhook(db, ep.id);
+    console.log(`[admin/webhooks] delete #${ep.id} ${ep.url}(secret 一并销毁)`);
+    return Response.json({ ok: true });
+  } finally {
+    db.close();
+  }
 }
 
 export async function POST(req: Request) {
@@ -35,9 +131,36 @@ export async function POST(req: Request) {
   }
   const limited = guardExpensive(req, "admin-webhooks", LIMITS, {});
   if (limited) return limited;
+
+  // 先按 action 分流再校验(而不是 z.union):union 失败时的报错会把两条分支的
+  // issue 糊在一起,运营者看不懂自己到底哪个字段写错了。
+  let raw: unknown;
+  try {
+    raw = await req.json();
+  } catch {
+    return Response.json({ error: "请求体不是合法 JSON" }, { status: 400 });
+  }
+  const action =
+    typeof (raw as { action?: unknown })?.action === "string"
+      ? (raw as { action: string }).action
+      : "register";
+
+  if (action !== "register") {
+    let cmd: z.infer<typeof ActionBody>;
+    try {
+      cmd = ActionBody.parse(raw);
+    } catch (e) {
+      return Response.json(
+        { error: `请求体不合法:${e instanceof Error ? e.message : String(e)}` },
+        { status: 400 },
+      );
+    }
+    return handleAction(cmd);
+  }
+
   let body: z.infer<typeof RegisterBody>;
   try {
-    body = RegisterBody.parse(await req.json());
+    body = RegisterBody.parse(raw);
   } catch (e) {
     return Response.json(
       { error: `请求体不合法:${e instanceof Error ? e.message : String(e)}` },
