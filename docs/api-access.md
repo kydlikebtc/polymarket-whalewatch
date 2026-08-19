@@ -332,7 +332,8 @@ interface SignalsResponse {
 | `kind`         | `SignalKind`           | 信号种类 | `consensus` / `split` / `heavy`，见上表                                     |
 | `conditionId`  | string                 | 市场 ID  | Polymarket 的 `0x…` 市场标识                                                |
 | `title`        | string                 | 市场问题 | 原文（英文），如 `Chiefs win Super Bowl LX?`                                |
-| `eventSlug`    | string                 | 事件短名 | 拼 Polymarket 事件页 URL 用                                                 |
+| `slug`         | string                 | 市场短名 | 拼**这一个市场**的页面 URL 用；载荷缺失时为空串 `""`                        |
+| `eventSlug`    | string                 | 事件短名 | 拼**事件**页 URL 用。一个事件下可挂几十个市场，别拿它当市场链接             |
 | `category`     | string \| null         | 一级分类 | 如 `Politics` / `Sports` / `Crypto`；未知为 `null`                          |
 | `subcategory`  | string \| null         | 二级分类 | 体育联盟或加密资产，如 `NBA` / `Bitcoin`；无或未知为 `null`                 |
 | `formationTs`  | number                 | 形成时刻 | 共识：第 N 个合格钱包到位那一刻；heavy：那一笔成交的时间                    |
@@ -372,6 +373,7 @@ interface Signal {
   kind: SignalKind;
   conditionId: string;
   title: string;
+  slug: string;
   eventSlug: string;
   category: string | null;
   subcategory: string | null;
@@ -1054,6 +1056,7 @@ webhook 端点同时失效。
 
 | 日期       | 变更                                                                                                                                                                                                                       |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-19 | `active[]` 新增 `slug`（单市场短名，additive）—— 此前只有 `eventSlug`，一个事件下挂几十个市场时链接落不到信号说的那一个                                                                                                    |
 | 2026-08-19 | 新增 §4.1「当前开放状态」——**由页面渲染时读取当前开关实时生成**，不再是手写快照（运营者一拨开关文档就撒谎）。markdown 只保留系统能力全集，「此刻开着什么」由 `lib/apiDocsStatus` 查库回答                                  |
 | 2026-08-18 | 字段级详解：每个对象补「字段／类型／中文名／含义」表；新增 §6.1 信号体系总览、§6.7.1 六个检测器族、§6.7.2 19 档名录、白名单准入闸与 `score` 构成、`bus` 三类 payload 逐字段说明。§6 内部小节重编号（原 6.1–6.6 → 6.3–6.8） |
 | 2026-08-18 | 失败响应补齐 `heavyMinUsd` 与 `staleLoops`，字段集合与成功响应完全一致（此前缺这两个字段，§6.3 的类型现在对两条路径都成立）                                                                                                |

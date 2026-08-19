@@ -330,3 +330,60 @@ describe("buildSignalFeed · record30d 口径（对外契约）", () => {
     expect(r.implied).toBeCloseTo(0.4); // 保留形成时刻那条
   });
 });
+
+// slug(单市场)与 eventSlug(事件)的区别是致命的:一个事件下可挂几十个
+// 市场,只有 eventSlug 时客户端的「去看看」落不到信号说的那一个市场。
+// 载荷两侧一直都有(consensus 显式写、large/smart 展开 Trade),2026-08-19
+// 才透出到 active[]。
+describe("buildSignalFeed · active[] 的市场 slug", () => {
+  it("共识卡带上载荷里的市场 slug,且与 eventSlug 并存", () => {
+    const db = openDb(":memory:");
+    insert(
+      db,
+      "consensus",
+      consensus({ slug: "market-a-yes", eventSlug: "evt-a" }),
+      NOW - 1 * H,
+    );
+    const [s] = buildSignalFeed(db, { nowSec: NOW }).active;
+    expect(s.slug).toBe("market-a-yes");
+    expect(s.eventSlug).toBe("evt-a");
+  });
+
+  it("heavy 卡同样带 slug(载荷是展开的 Trade)", () => {
+    const db = openDb(":memory:");
+    insert(db, "smart", smart({ slug: "mlb-orioles" }), NOW - 1 * H);
+    const [s] = buildSignalFeed(db, { nowSec: NOW }).active;
+    expect(s.kind).toBe("heavy");
+    expect(s.slug).toBe("mlb-orioles");
+  });
+
+  it("split 卡取主导边的 slug —— 两侧本就是同一个市场", () => {
+    const db = openDb(":memory:");
+    insert(
+      db,
+      "consensus",
+      consensus({ outcome: "A", totalNetUsd: 94400, slug: "wta-match" }),
+      NOW - 2 * H,
+    );
+    insert(
+      db,
+      "consensus",
+      consensus({ outcome: "B", totalNetUsd: 10918, slug: "wta-match" }),
+      NOW - 1 * H,
+    );
+    const [s] = buildSignalFeed(db, { nowSec: NOW }).active;
+    expect(s.kind).toBe("split");
+    expect(s.slug).toBe("wta-match");
+  });
+
+  it("载荷缺 slug 时降级成空串,不是 undefined —— 字段恒在,形状不变", () => {
+    const db = openDb(":memory:");
+    // 老告警行(本字段透出之前写入的)没有 slug。
+    const p = consensus();
+    delete (p as Record<string, unknown>).slug;
+    insert(db, "consensus", p, NOW - 1 * H);
+    const [s] = buildSignalFeed(db, { nowSec: NOW }).active;
+    expect(s.slug).toBe("");
+    expect("slug" in s).toBe(true);
+  });
+});

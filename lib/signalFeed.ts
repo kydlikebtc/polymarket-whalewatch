@@ -57,6 +57,13 @@ export interface Signal {
   kind: SignalKind;
   conditionId: string;
   title: string;
+  /**
+   * 单市场 slug —— 拼「这一个市场」的页面用。additive 字段(2026-08-19)。
+   * 与 eventSlug 的区别是致命的:一个事件(如某轮赛程)下可挂几十个市场,
+   * 只有 eventSlug 时客户端的「去看看」只能落到事件页,用户还得自己在
+   * 一堆市场里找回信号说的那一个。载荷里一直有,只是此前没透出来。
+   */
+  slug: string;
   eventSlug: string;
   category: string | null;
   /**
@@ -109,6 +116,13 @@ interface AlertRow {
 interface RawPayload {
   conditionId?: string;
   title?: string;
+  /**
+   * 单市场 slug。两类告警都带:consensus 显式写 `slug: g.slug`
+   * (lib/consensus.ts),large/smart 展开整个 Trade(lib/alertEngine.ts,
+   * Trade.slug 见 lib/types.ts)。此前这里没读它,于是 active[] 只能拼到
+   * 事件页 —— 一个事件下挂着几十个市场时,那个链接落不到用户看的那一个。
+   */
+  slug?: string;
   eventSlug?: string;
   outcome?: string;
   outcomeIndex?: number;
@@ -190,6 +204,7 @@ function foldConsensus(rows: AlertRow[]): Map<string, Signal> {
       kind: "consensus",
       conditionId: p.conditionId,
       title: p.title ?? "",
+      slug: p.slug ?? "",
       eventSlug: p.eventSlug ?? "",
       category: null,
       subcategory: null,
@@ -244,6 +259,7 @@ function collapseSplits(byKey: Map<string, Signal>): Signal[] {
       kind: "split",
       conditionId,
       title: lead.title,
+      slug: lead.slug,
       eventSlug: lead.eventSlug,
       category: null,
       subcategory: null,
@@ -281,6 +297,7 @@ function foldHeavy(rows: AlertRow[], covered: Set<string>): Signal[] {
       kind: "heavy",
       conditionId: p.conditionId,
       title: p.title ?? "",
+      slug: p.slug ?? "",
       eventSlug: p.eventSlug ?? "",
       category: null,
       subcategory: null,
