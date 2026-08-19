@@ -2,12 +2,19 @@ import { z } from "zod";
 import {
   buildAdminSignalOverview,
   buildBusLedger,
+  buildSmartLedger,
   setStrategyPush,
 } from "../../../../lib/adminOverview";
+import { getAlertConditions } from "../../../../lib/alertConditions";
+import { getXKindSwitches } from "../../../../lib/xSettings";
+import { listTargets, type TgKind } from "../../../../lib/tgTargets";
+import {
+  listActiveWebhooks,
+  webhookWantsType,
+} from "../../../../lib/webhookDelivery";
 import { checkWriteAccess, guardExpensive } from "../../../../lib/apiGuard";
 import { parseConfig } from "../../../../lib/config";
 import { openDb, type DB } from "../../../../lib/db";
-import { listActiveWebhooks } from "../../../../lib/webhookDelivery";
 import {
   BUS_TYPES,
   DEFAULT_BUS_SETTINGS,
@@ -63,6 +70,35 @@ function deliveryChannels(db: DB): { key: string; minEmitAgeSec: number }[] {
   return out;
 }
 
+/** 路由矩阵数据:各(信号线 × 管线)格的当前状态,全部取自属主开关。 */
+function buildRouting(db: ReturnType<typeof openDash>) {
+  const tgKindCount: Record<string, number> = {};
+  for (const t of listTargets(db)) {
+    if (t.paused) continue;
+    for (const k of Object.keys(t.kinds) as TgKind[]) {
+      if (t.kinds[k]) tgKindCount[k] = (tgKindCount[k] ?? 0) + 1;
+    }
+  }
+  const webhookTypeCount: Record<string, number> = {};
+  for (const ep of listActiveWebhooks(db)) {
+    for (const ty of ["strategy", "large", "consensus", "discovery"]) {
+      if (webhookWantsType(ep, ty)) {
+        webhookTypeCount[ty] = (webhookTypeCount[ty] ?? 0) + 1;
+      }
+    }
+  }
+  return {
+    /** ①→TG 告警频道的总开关(alert-config.enabled)。 */
+    alertPush: getAlertConditions(db).enabled,
+    /** 𝕏 各内容类型开关(whale/consensus/pregame/weekly/settled)。 */
+    xKinds: getXKindSwitches(db),
+    /** 未暂停 tg_targets 里勾了各 kind 的目标数。 */
+    tgTargetKinds: tgKindCount,
+    /** 活跃 webhook 端点里想要各类型的端点数(key 授权 ∧ 端点勾选)。 */
+    webhookTypes: webhookTypeCount,
+  };
+}
+
 export async function GET(req: Request) {
   const access = checkWriteAccess(req);
   if (!access.ok) {
@@ -73,7 +109,11 @@ export async function GET(req: Request) {
   const db = openDash();
   try {
     const nowSec = Math.floor(Date.now() / 1000);
-    const recent = getBusSignals(db, { nowSec, windowSec: 86_400, limit: 1000 });
+    const recent = getBusSignals(db, {
+      nowSec,
+      windowSec: 86_400,
+      limit: 1000,
+    });
     const busCounts: Record<string, number> = {};
     for (const r of recent) {
       busCounts[r.sourceType] = (busCounts[r.sourceType] ?? 0) + 1;
@@ -84,6 +124,10 @@ export async function GET(req: Request) {
       busTypes: BUS_TYPES,
       busSettings: getBusSettings(db),
       busCounts24h: busCounts,
+      // ① 聪明钱动向台账(consensus/smart 告警 × 去向)。
+      smartLedger: buildSmartLedger(db),
+      // 路由矩阵的真实开关态(线 × 管线,每格都指回属主开关,不造第二套配置)。
+      routing: buildRouting(db),
       // 总线台账最近 20 条 + 逐通道投递状态(bus_deliveries)—— 与策略台账
       // (recent × signal_deliveries)同一套「发了没有」的运营视图。
       busLedger: buildBusLedger(db),
@@ -122,7 +166,9 @@ export async function POST(req: Request) {
       if (bus.data.enabled === true && meta && !meta.available) {
         // 未落库的类型开了也不会有数据,不如直接拒绝并说明原因。
         return Response.json(
-          { error: `「${meta.label}」尚未接入总线(该类信号目前仅在页面实时计算)` },
+          {
+            error: `「${meta.label}」尚未接入总线(该类信号目前仅在页面实时计算)`,
+          },
           { status: 400 },
         );
       }

@@ -35,11 +35,12 @@ export function SignalLinesOverview({
     {
       no: "①",
       name: "聪明钱动向",
-      what: "白名单钱包的真实成交(大额/共识/分歧)",
-      manage: "告警引擎的触发条件(金额/方向/价格区间…)",
-      dest: "TG 告警频道 · API 拉取(active/settled) · 𝕏 大单/共识帖",
-      status: "条件达标即产出,无总开关",
-      jump: "rules",
+      // 定义与接入文档 §6.4 逐字对齐:三种 kind,规则固定。
+      what: "共识(≥2 白名单同向) · 分歧(两侧都有) · 单笔大额(白名单单笔 ≥$50k),按市场×方向折叠",
+      manage: "判据固定,无开关;台账与去向见子 tab。进料条件在 🅐",
+      dest: "TG 告警频道 · API 拉取(active/settled) · 𝕏 大单/共识帖 · webhook 经 ③",
+      status: "规则常量,不随配置漂移",
+      jump: "moves",
     },
     {
       no: "②",
@@ -109,6 +110,12 @@ export function SignalLinesOverview({
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+        ① 与 ③ 的区别:①是<b>折叠后的判断层</b>(固定规则、白名单口径、带
+        30d 战绩,同一仓位只出一条);③是<b>逐事件的原始流水</b>(运营阈值、
+        含非白名单大额与钱包发现、不可变台账因此可推送)。两者对 consensus/
+        大额取自同一批 alerts —— 同一事实的两种形态,不是两套信号。
       </div>
     </section>
   );
@@ -199,6 +206,141 @@ export function PipelinesOverview({
                 <td className="ds-hint" style={{ whiteSpace: "nowrap" }}>
                   {p.status}
                 </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+/** /api/admin/signals GET 附带的路由开关态(见 route 的 buildRouting)。 */
+export interface RoutingState {
+  alertPush: boolean;
+  xKinds: Record<string, boolean>;
+  tgTargetKinds: Record<string, number>;
+  webhookTypes: Record<string, number>;
+}
+
+/**
+ * 路由矩阵:信号线 × 管线,每格显示当前状态并点击直达**属主开关**所在的
+ * 子模块。刻意不造第二套路由配置存储 —— 每个开关只有一个属主(告警总开关
+ * 在 alert-config、𝕏 在 x_broadcast_kinds、总线在 bus_signal_settings、
+ * webhook 在端点勾选),矩阵只是把它们拼成一张可导航的图。造第二套意味着
+ * 两处状态互相追赶,那正是本次重排要消灭的「乱糟糟」。
+ */
+export function RoutingMatrix({
+  routing,
+  busSettings,
+  channels,
+  onJump,
+}: {
+  routing: RoutingState | null;
+  busSettings: Record<string, { enabled: boolean }> | null;
+  /** ops.channels(已配置的投递通道键:tg_paid/tg_public/webhook:N)。 */
+  channels: { key: string }[] | null;
+  onJump: (section: string) => void;
+}) {
+  if (!routing) return null;
+  const on = (b: boolean) => (b ? "开" : "关");
+  const tgSignal =
+    channels?.some((c) => c.key === "tg_paid" || c.key === "tg_public") ??
+    false;
+  const busOn = (t: string) => busSettings?.[t]?.enabled === true;
+  const wh = (t: string) => routing.webhookTypes[t] ?? 0;
+  const tgt = (k: string) => routing.tgTargetKinds[k] ?? 0;
+  const rows: {
+    line: string;
+    cells: { text: string; jump: string | null }[];
+  }[] = [
+    {
+      line: "① 聪明钱动向",
+      cells: [
+        {
+          text: `告警频道 ${on(routing.alertPush)} · 目标 大额${tgt("large")}/共识${tgt("consensus")}`,
+          jump: "rules",
+        },
+        { text: "恒开(active/settled)", jump: "keys" },
+        {
+          text: `经 ③:共识${on(busOn("consensus"))} 大额${on(busOn("large"))} · 端点 ${wh("consensus")}/${wh("large")}`,
+          jump: "bus",
+        },
+        {
+          text: `大单 ${on(routing.xKinds.whale === true)} · 共识 ${on(routing.xKinds.consensus === true)}`,
+          jump: "x",
+        },
+      ],
+    },
+    {
+      line: "② 策略信号",
+      cells: [
+        {
+          text: `信号频道 ${tgSignal ? "已配" : "未配"} · 目标 ${tgt("strategy")}`,
+          jump: "tg",
+        },
+        { text: "恒开(strategies,按 key 范围)", jump: "keys" },
+        { text: `端点 ${wh("strategy")} 个勾选`, jump: "keys" },
+        {
+          text: `战报 ${on(routing.xKinds.settled === true)}`,
+          jump: "x",
+        },
+      ],
+    },
+    {
+      line: "③ 原始总线",
+      cells: [
+        { text: "不接 TG(设计如此)", jump: null },
+        {
+          text: `bus[]:大额${on(busOn("large"))} 共识${on(busOn("consensus"))} 发现${on(busOn("discovery"))}`,
+          jump: "bus",
+        },
+        {
+          text: `端点 大额${wh("large")}/共识${wh("consensus")}/发现${wh("discovery")}`,
+          jump: "keys",
+        },
+        { text: "不接 𝕏(设计如此)", jump: null },
+      ],
+    },
+  ];
+  return (
+    <section className="ds-card" style={{ marginBottom: "var(--s-5)" }}>
+      <SectionHead
+        title="🗺 路由矩阵(线 × 管线)"
+        hint="每格显示当前开关态,点击直达属主开关。矩阵不另存配置 —— 每个开关只有一个属主,这里只是拼图。"
+      />
+      <div className="ds-table-wrap">
+        <table className="ds-table ds-table--compact">
+          <thead>
+            <tr>
+              <th>信号线</th>
+              <th>🅐 Telegram</th>
+              <th>🅑 API 拉取</th>
+              <th>🅑 webhook</th>
+              <th>🅒 𝕏</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.line}>
+                <td style={{ whiteSpace: "nowrap", fontWeight: 500 }}>
+                  {r.line}
+                </td>
+                {r.cells.map((c, i) => (
+                  <td key={i} style={{ whiteSpace: "nowrap" }}>
+                    {c.jump ? (
+                      <button
+                        className="ds-btn ds-btn--subtle ds-btn--sm"
+                        onClick={() => onJump(c.jump!)}
+                        title="打开属主开关所在的子模块"
+                      >
+                        {c.text}
+                      </button>
+                    ) : (
+                      <span className="muted">{c.text}</span>
+                    )}
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>

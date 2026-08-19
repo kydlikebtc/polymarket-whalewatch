@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AdminSignalOverview } from "../../lib/adminOverview";
 import { Segmented, Tag } from "../ui";
 import AlertRulesSection from "./AlertRulesSection";
+import SmartMovesSection from "./SmartMovesSection";
 import BusTypesSection from "./BusTypesSection";
 import HealthSection, { type HealthReport } from "./HealthSection";
 import KeysSection from "./KeysSection";
@@ -12,7 +13,12 @@ import TgTargetsSection from "./TgTargetsSection";
 import XAccountsSection from "./XAccountsSection";
 import SignalsSection from "./SignalsSection";
 import StatusStrip from "./StatusStrip";
-import { PipelinesOverview, SignalLinesOverview } from "./TaxonomyOverview";
+import {
+  PipelinesOverview,
+  RoutingMatrix,
+  SignalLinesOverview,
+  type RoutingState,
+} from "./TaxonomyOverview";
 import {
   gateMessage,
   gateState,
@@ -62,9 +68,11 @@ type TabId = (typeof TABS)[number]["id"];
 // StatusStrip 发出的是**区块** id(它不该知道 tab 怎么分组),这里把它映射
 // 到承载该区块的 tab —— 契约不变,StatusStrip 零改动。
 const SECTION_TAB: Record<string, TabId> = {
-  rules: "lines",
+  moves: "lines",
   signals: "lines",
   bus: "lines",
+  // rules(告警触发条件)已归位到 🅐 Telegram 子模块。
+  rules: "pipes",
   tg: "pipes",
   keys: "pipes",
   x: "pipes",
@@ -74,7 +82,7 @@ const SECTION_TAB: Record<string, TabId> = {
 // 两个大 tab 内部各一层子 tab:每次只挂载一个子模块(此前三个区块纵向罗列,
 // 一页三张大表,找东西靠滚)。总览表留在子 tab 之上当地图 —— 点行即切子 tab。
 const LINE_SUBS = [
-  { id: "rules", label: "① 聪明钱动向" },
+  { id: "moves", label: "① 聪明钱动向" },
   { id: "signals", label: "② 策略信号" },
   { id: "bus", label: "③ 信号总线" },
 ] as const;
@@ -95,6 +103,12 @@ export default function ManagePage() {
   const [probeToken, setProbeToken] = useState("");
   const [probe, setProbe] = useState<Probe>({ kind: "pending" });
   const [overview, setOverview] = useState<AdminSignalOverview | null>(null);
+  // 路由矩阵数据(与 overview 同一次 GET,只是额外键)。
+  const [routing, setRouting] = useState<RoutingState | null>(null);
+  const [busSettings, setBusSettings] = useState<Record<
+    string,
+    { enabled: boolean }
+  > | null>(null);
   const [health, setHealth] = useState<HealthReport | null>(null);
   const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -103,7 +117,7 @@ export default function ManagePage() {
   const hydrated = useRef(false);
 
   const [tab, setTab] = useState<TabId>("lines");
-  const [lineSub, setLineSub] = useState<LineSub>("rules");
+  const [lineSub, setLineSub] = useState<LineSub>("moves");
   const [pipeSub, setPipeSub] = useState<PipeSub>("tg");
 
   useEffect(() => {
@@ -155,7 +169,11 @@ export default function ManagePage() {
         headers: authHeaders(probeToken),
       }).then(async (r) => ({
         status: r.status,
-        body: (await r.json()) as AdminSignalOverview & { error?: string },
+        body: (await r.json()) as AdminSignalOverview & {
+          error?: string;
+          routing?: RoutingState;
+          busSettings?: Record<string, { enabled: boolean }>;
+        },
       }));
       const next = probeFromResponse(ovRes.status, ovRes.body);
       setProbe(next);
@@ -163,10 +181,14 @@ export default function ManagePage() {
         // 锁定时清空既有数据:留着上一把有效令牌的运营数据在内存里、
         // 只是不渲染,是在赌「不渲染」永远不出 bug。
         setOverview(null);
+        setRouting(null);
+        setBusSettings(null);
         setHealth(null);
         return;
       }
       setOverview(ovRes.body);
+      setRouting(ovRes.body.routing ?? null);
+      setBusSettings(ovRes.body.busSettings ?? null);
       // 健康度只在解锁后才拉 —— 锁定态一个请求都不该发出去。
       // 公开状态页 /status 才是这份数据对外的正门。
       try {
@@ -225,6 +247,7 @@ export default function ManagePage() {
     selectTab(SECTION_TAB[id] ?? "lines");
     if (LINE_SUBS.some((x) => x.id === id)) selectLineSub(id as LineSub);
     if (PIPE_SUBS.some((x) => x.id === id)) selectPipeSub(id as PipeSub);
+    if (id === "rules") selectPipeSub("tg"); // 告警条件住在 🅐 里
   };
 
   const tokenField = (
@@ -364,7 +387,7 @@ export default function ManagePage() {
               className="ds-segmented--wrap"
             />
           </div>
-          {lineSub === "rules" && <AlertRulesSection token={token} />}
+          {lineSub === "moves" && <SmartMovesSection token={token} />}
           {lineSub === "signals" && (
             <SignalsSection
               token={token}
@@ -382,6 +405,12 @@ export default function ManagePage() {
             onJump={jump}
             active={pipeSub}
           />
+          <RoutingMatrix
+            routing={routing}
+            busSettings={busSettings}
+            channels={overview?.ops.channels ?? null}
+            onJump={jump}
+          />
           <div style={{ marginBottom: "var(--s-4)" }}>
             <Segmented
               options={PIPE_SUBS.map((x) => ({ value: x.id, label: x.label }))}
@@ -391,7 +420,16 @@ export default function ManagePage() {
               className="ds-segmented--wrap"
             />
           </div>
-          {pipeSub === "tg" && <TgTargetsSection token={token} />}
+          {pipeSub === "tg" && (
+            <>
+              <TgTargetsSection token={token} />
+              {/* 告警频道的触发条件归位于 TG 管线(2026-08-19):这套表单管的
+                  是「哪些成交进 alerts 台账并推 TG 告警」—— 它是 ① 的进料闸,
+                  但旋钮语义(推送总开关/冷却)是 TG 频道的,放在 ① 里会让人
+                  误以为在改 ① 的判据(那是固定规则)。 */}
+              <AlertRulesSection token={token} />
+            </>
+          )}
           {pipeSub === "keys" && <KeysSection token={token} />}
           {pipeSub === "x" && <XAccountsSection token={token} />}
         </>

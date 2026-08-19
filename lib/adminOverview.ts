@@ -51,6 +51,109 @@ export interface ChannelBacklog {
 }
 
 /**
+ * ① 聪明钱动向的台账单行:一条 consensus/smart 告警 + 它的去向。
+ *
+ * 「去向」三列的可得性刻意不同,如实呈现而不是假装同质:
+ *   - 𝕏:有逐行记录(x_posts.alert_id + status);
+ *   - 总线→webhook:有逐行记录(bus_signals dedup=alert:<id> × bus_deliveries);
+ *   - TG:**没有**逐行记录 —— alertEngine 是先发后记(transient 失败连
+ *     alerts 行都不落,permanent 失败保留行照记),行的存在只证明「已入库」。
+ *     UI 对 TG 只标配置态,不伪造逐行状态。
+ */
+export interface SmartLedgerRow {
+  id: number;
+  /** 'consensus' | 'smart'(= feed 里的 heavy 原料)。 */
+  type: string;
+  title: string | null;
+  outcome: string | null;
+  emittedAt: number;
+  summary: string;
+  /** x_posts 命中(kind whale/consensus):status,未发为 null。 */
+  xStatus: string | null;
+  /** 总线投影:是否已投影 + 逐通道投递状态。 */
+  bus: { projected: boolean; channels: { channel: string; status: string }[] };
+}
+
+function smartSummary(
+  type: string,
+  payload: Record<string, unknown>,
+): string {
+  const num = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  if (type === "consensus") {
+    const n = num(payload.walletCount);
+    const usd = num(payload.totalNetUsd);
+    return [
+      n != null ? `${n} 钱包` : null,
+      usd != null ? `$${Math.round(usd).toLocaleString()}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  const size = num(payload.size);
+  const price = num(payload.price);
+  const usd = size != null && price != null ? size * price : null;
+  const side = typeof payload.side === "string" ? payload.side : null;
+  return [
+    usd != null ? `$${Math.round(usd).toLocaleString()}` : null,
+    side,
+    price != null ? `@${price}` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** ① 台账最近 N 条(consensus/smart 告警)+ 去向。 */
+export function buildSmartLedger(db: DB, limit = 20): SmartLedgerRow[] {
+  const rows = db
+    .prepare(
+      `SELECT id, type, payload, created_at FROM alerts
+       WHERE type IN ('consensus','smart')
+       ORDER BY created_at DESC, id DESC LIMIT ?`,
+    )
+    .all(limit) as {
+    id: number;
+    type: string;
+    payload: string;
+    created_at: number;
+  }[];
+  const xStmt = db.prepare(
+    "SELECT status FROM x_posts WHERE alert_id = ? ORDER BY id DESC LIMIT 1",
+  );
+  const busStmt = db.prepare(
+    "SELECT id FROM bus_signals WHERE dedup_key = ?",
+  );
+  const chStmt = db.prepare(
+    "SELECT channel, status FROM bus_deliveries WHERE bus_signal_id = ? ORDER BY channel",
+  );
+  return rows.map((r) => {
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = JSON.parse(r.payload) as Record<string, unknown>;
+    } catch {
+      // 坏载荷:摘要留空,行仍完整。
+    }
+    const busRow = busStmt.get(`alert:${r.id}`) as { id: number } | undefined;
+    return {
+      id: r.id,
+      type: r.type,
+      title: typeof payload.title === "string" ? payload.title : null,
+      outcome: typeof payload.outcome === "string" ? payload.outcome : null,
+      emittedAt: r.created_at,
+      summary: smartSummary(r.type, payload),
+      xStatus:
+        (xStmt.get(r.id) as { status: string } | undefined)?.status ?? null,
+      bus: {
+        projected: busRow != null,
+        channels: busRow
+          ? (chStmt.all(busRow.id) as { channel: string; status: string }[])
+          : [],
+      },
+    };
+  });
+}
+
+/**
  * 总线台账单行(运营视角):一条 bus 事件 + 它的逐通道投递状态。
  * 与 RecentSignalRow 的分工:那边是**策略**信号台账(strategy_signals ×
  * signal_deliveries),这边是**总线**台账(bus_signals × bus_deliveries)——

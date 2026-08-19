@@ -5,6 +5,7 @@ import { DIGEST_DAY_KEY, DIGEST_PREV_KEY } from "./signalDigest";
 import {
   buildAdminSignalOverview,
   buildBusLedger,
+  buildSmartLedger,
   setStrategyPush,
 } from "./adminOverview";
 
@@ -294,5 +295,62 @@ describe("buildBusLedger —— 总线台账的运营视图", () => {
     const rows = buildBusLedger(db);
     expect(rows).toHaveLength(20);
     expect(rows[0].emittedAt).toBe(NOW - 100 + 24);
+  });
+});
+
+describe("buildSmartLedger —— ① 聪明钱动向台账", () => {
+  const NOW = 1_790_000_000;
+  function seedAlert(
+    db: DB,
+    type: string,
+    payload: unknown,
+    createdAt = NOW,
+  ): number {
+    const r = db
+      .prepare(
+        "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(type, `k${Math.random()}`, JSON.stringify(payload), createdAt);
+    return Number(r.lastInsertRowid);
+  }
+
+  it("consensus 与 smart 各按类型出摘要;large 类型不入本账", () => {
+    const db = openDb(":memory:");
+    seedAlert(db, "consensus", { title: "A", outcome: "Yes", walletCount: 3, totalNetUsd: 92000 }, NOW - 2);
+    seedAlert(db, "smart", { title: "B", outcome: "No", size: 200000, price: 0.4, side: "BUY" }, NOW - 1);
+    seedAlert(db, "large", { title: "C", size: 999999, price: 0.5 }, NOW);
+    const rows = buildSmartLedger(db);
+    expect(rows.map((r) => r.type)).toEqual(["smart", "consensus"]);
+    expect(rows[0].summary).toBe("$80,000 BUY @0.4");
+    expect(rows[1].summary).toBe("3 钱包 · $92,000");
+  });
+
+  it("去向:x_posts 命中给 status,总线投影给逐通道状态", () => {
+    const db = openDb(":memory:");
+    const id = seedAlert(db, "smart", { title: "B", size: 1, price: 1 });
+    db.prepare(
+      "INSERT INTO x_posts (kind, dedup_key, alert_id, text, has_link, est_cost_usd, status, created_at) VALUES ('whale','d',?, 't',0,0,'posted',?)",
+    ).run(id, NOW);
+    db.prepare(
+      "INSERT INTO bus_signals (source_type, dedup_key, condition_id, title, payload, emitted_at) VALUES ('large', ?, NULL, NULL, '{}', ?)",
+    ).run(`alert:${id}`, NOW);
+    const busId = Number(
+      (db.prepare("SELECT id FROM bus_signals WHERE dedup_key = ?").get(`alert:${id}`) as { id: number }).id,
+    );
+    db.prepare(
+      "INSERT INTO bus_deliveries (bus_signal_id, channel, status, created_at) VALUES (?, 'webhook:3', 'sent', ?)",
+    ).run(busId, NOW);
+    const [row] = buildSmartLedger(db);
+    expect(row.xStatus).toBe("posted");
+    expect(row.bus.projected).toBe(true);
+    expect(row.bus.channels).toEqual([{ channel: "webhook:3", status: "sent" }]);
+  });
+
+  it("未发未投影时:xStatus null、projected false —— 不伪造去向", () => {
+    const db = openDb(":memory:");
+    seedAlert(db, "consensus", { walletCount: 2 });
+    const [row] = buildSmartLedger(db);
+    expect(row.xStatus).toBeNull();
+    expect(row.bus).toEqual({ projected: false, channels: [] });
   });
 });

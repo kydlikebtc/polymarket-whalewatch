@@ -142,11 +142,12 @@ export default function AlertRulesSection({ token }: { token: string }) {
       style={{ marginBottom: "var(--s-5)", scrollMarginTop: "var(--s-6)" }}
     >
       <SectionHead
-        title="① 聪明钱动向 · 告警触发条件"
+        title="TG 告警频道 · 触发条件（alerts 进料闸）"
         hint={
           <>
-            这条线没有总开关:条件达标即产出(进 TG 告警频道 / API 的 active[] / 𝕏
-            大单帖)。与 /alerts 页配置面板同一份规则;保存
+            这套条件决定「哪些成交进 alerts 台账并推 TG 告警」—— 它同时是
+            信号线 ① 与总线 large 的共同进料闸(总开关/冷却只影响 TG 推送,
+            不影响入库)。与 /alerts 页配置面板同一份规则;保存
             {readonly ? "需要上方管理令牌" : "(本地部署免令牌)"}。
           </>
         }
