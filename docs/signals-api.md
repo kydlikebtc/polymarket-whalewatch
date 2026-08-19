@@ -338,8 +338,22 @@ env token 都是不限，语义不变）。
 （`feed:{窗口}:{tier}:{范围}`）。只按窗口 + tier 分片时，全量 key 的缓存会让受限 key 拿到
 它无权看到的类型——这是越权泄露，不是少给数据。守卫测试见 `lib/feedScope.test.ts`。
 
-### webhook 的范围分流
+### webhook 的范围分流（2026-08-19 已实现 bus 分流）
 
-投递循环目前只搬运**策略信号**，因此只投给订阅范围含 `strategy` 的端点
-（`worker/embeddedEngine.ts` 的 `busTypeAllowed(ep.busTypes, "strategy")`）。bus 类型的
-webhook 投递属于后续批次，那时在同一处按 `sourceType` 再分流。
+端点登记时逐端点勾选推送类型（`webhook_endpoints.bus_types`，NULL = 仅策略
+信号的历史默认——与 api_keys 的「NULL = 全部」刻意相反，理由见 lib/db.ts 该列
+迁移注释：存量端点突然收到陌生事件类型，消费方 4xx 会累计连败直至熔断）。
+生效判定是 `webhookWantsType` = key 授权 ∧ 端点勾选（交集，登记时校验 + 运行时
+兜底）。
+
+两条投递轨并行于同一个 delivery 循环（30s）：
+
+- **策略信号**：既有 `runDeliveryCycle`，端点过滤改为
+  `webhookWantsType(ep, "strategy")`；
+- **bus 事件**：`lib/busWebhook.ts` 的 `runBusWebhookCycle`，台账
+  `bus_deliveries`（(bus_signal_id, channel) 主键，claim-then-send 照抄
+  signal_deliveries）。三处刻意不同：不回灌（只投端点登记后的事件）、1h
+  新鲜窗（对齐总线投影窗）、每端点每轮上限 10 条 + transient 即中断本端点
+  本轮（端点不可达时不逐行吃 5s 超时）。事件体 `BusEventV1`
+  （`event:"bus"`，`bus` 字段与拉取 API `bus[]` 单条同形），消费方幂等键
+  仍是 `(id, event)`。熔断计数与策略投递共用。

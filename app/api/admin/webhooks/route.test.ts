@@ -246,3 +246,56 @@ describe("action=delete", () => {
     expect(again.res.status).toBe(404);
   });
 });
+
+describe("登记时勾选推送类型(2026-08-19)", () => {
+  it("busTypes 持久化并回显;省略 = NULL(仅策略的历史默认)", async () => {
+    const db0 = openDb(process.env.DASH_DB!);
+    const key = issueApiKey(db0, { label: "订户B", tier: "realtime" }, 1000);
+    db0.close();
+    const { res, body } = await post({
+      apiKeyId: key.id,
+      url: "https://b.test/hook",
+      secret: "s".repeat(20),
+      busTypes: ["strategy", "large"],
+    });
+    expect(res.status).toBe(200);
+    expect(body.busTypes).toEqual(["strategy", "large"]);
+    const db = openDb(process.env.DASH_DB!);
+    const r = db
+      .prepare("SELECT bus_types FROM webhook_endpoints WHERE id = ?")
+      .get(body.id) as { bus_types: string | null };
+    db.close();
+    expect(JSON.parse(r.bus_types!)).toEqual(["strategy", "large"]);
+  });
+
+  it("勾了 key 授权范围之外的类型 → 400,点名是哪个", async () => {
+    const db0 = openDb(process.env.DASH_DB!);
+    const key = issueApiKey(
+      db0,
+      { label: "只订策略", tier: "realtime", busTypes: ["strategy"] },
+      1000,
+    );
+    db0.close();
+    const { res, body } = await post({
+      apiKeyId: key.id,
+      url: "https://c.test/hook",
+      secret: "s".repeat(20),
+      busTypes: ["strategy", "large"],
+    });
+    expect(res.status).toBe(400);
+    expect(String(body.error)).toContain("large");
+  });
+
+  it("未知类型名被枚举挡住(400),不静默入库", async () => {
+    const db0 = openDb(process.env.DASH_DB!);
+    const key = issueApiKey(db0, { label: "订户C", tier: "realtime" }, 1000);
+    db0.close();
+    const { res } = await post({
+      apiKeyId: key.id,
+      url: "https://d.test/hook",
+      secret: "s".repeat(20),
+      busTypes: ["larg"],
+    });
+    expect(res.status).toBe(400);
+  });
+});

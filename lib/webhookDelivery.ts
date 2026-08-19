@@ -5,7 +5,7 @@ import type { DB } from "./db";
 import type { PushSignalRow } from "./signalPush";
 import { SIGNAL_DISCLAIMER } from "./signalPush";
 import type { SignalRecord } from "./signalRecord";
-import { parseBusTypes } from "./apiKeys";
+import { busTypeAllowed, parseBusTypes } from "./apiKeys";
 
 // 对外信号批次 3:webhook 通道(结构化 SignalEvent 直投订户后端)。
 // 安全模型:
@@ -90,10 +90,12 @@ export function signPayload(secret: string, body: string): string {
  * 投递请求头。真实投递与「连通性测试」共用这一份 —— 分成两套组头逻辑的话,
  * 测试通过却与真信号走不同的路,那种测试比没有更糟。
  */
-function buildDeliveryHeaders(
+export function buildDeliveryHeaders(
   secret: string,
   body: string,
-  opts: { signalId: number; event: "entry" | "settle"; test?: boolean },
+  // event 放宽为 string:bus 分流(lib/busWebhook.ts)复用同一份组头逻辑,
+  // 事件名是 "bus" —— 头的组装纪律必须唯一,见上方注释。
+  opts: { signalId: number; event: string; test?: boolean },
 ): Record<string, string> {
   return {
     "content-type": "application/json",
@@ -330,20 +332,55 @@ export interface WebhookEndpoint {
   secret: string;
   active: number;
   consecutiveFailures: number;
-  /** 该端点所属 key 的订阅范围;null = 不限。 */
+  /** 该端点所属 key 的订阅范围;null = 不限。这是**授权**边界。 */
   busTypes: string[] | null;
+  /**
+   * 端点自己勾选的推送类型(2026-08-19);null = 仅策略信号(历史默认)。
+   * 这是**路由**偏好 —— 与 key 范围的关系是交集:勾了 key 无权的类型也
+   * 不会投(登记时校验拒绝,运行时再兜一层)。null 的语义与 key 的
+   * 「null = 全部」刻意相反,理由见 lib/db.ts 该列的迁移注释。
+   */
+  selectedTypes: string[] | null;
+  /** 登记时刻 —— bus 分流的不回灌基准:早于它的事件不投。 */
+  createdAt: number;
+}
+
+/**
+ * 该端点想不想要某类型:key 授权 ∧ 端点勾选。
+ * 勾选 null → 仅 "strategy"(存量端点的既有行为原样保留)。
+ */
+export function webhookWantsType(
+  ep: Pick<WebhookEndpoint, "busTypes" | "selectedTypes">,
+  type: string,
+): boolean {
+  if (!busTypeAllowed(ep.busTypes, type)) return false;
+  return ep.selectedTypes == null
+    ? type === "strategy"
+    : ep.selectedTypes.includes(type);
 }
 
 export function registerWebhook(
   db: DB,
-  opts: { apiKeyId: number; url: string; secret: string },
+  opts: {
+    apiKeyId: number;
+    url: string;
+    secret: string;
+    /** 端点勾选的推送类型;省略/null = 仅策略信号(历史默认)。 */
+    busTypes?: string[] | null;
+  },
   nowSec: number = Math.floor(Date.now() / 1000),
 ): number {
   const res = db
     .prepare(
-      "INSERT INTO webhook_endpoints (api_key_id, url, secret, created_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO webhook_endpoints (api_key_id, url, secret, created_at, bus_types) VALUES (?, ?, ?, ?, ?)",
     )
-    .run(opts.apiKeyId, opts.url, opts.secret, nowSec);
+    .run(
+      opts.apiKeyId,
+      opts.url,
+      opts.secret,
+      nowSec,
+      opts.busTypes?.length ? JSON.stringify(opts.busTypes) : null,
+    );
   return Number(res.lastInsertRowid);
 }
 
@@ -381,7 +418,8 @@ export function listActiveWebhooks(db: DB): WebhookEndpoint[] {
   return (
     db
       .prepare(
-        `SELECT w.id, w.api_key_id, w.url, w.secret, w.active, w.consecutive_failures, k.bus_types
+        `SELECT w.id, w.api_key_id, w.url, w.secret, w.active, w.consecutive_failures,
+                w.bus_types AS ep_bus_types, w.created_at, k.bus_types
          FROM webhook_endpoints w
          JOIN api_keys k ON k.id = w.api_key_id
          WHERE w.active = 1 AND k.revoked_at IS NULL AND k.tier = 'realtime'
@@ -394,6 +432,8 @@ export function listActiveWebhooks(db: DB): WebhookEndpoint[] {
       secret: string;
       active: number;
       consecutive_failures: number;
+      ep_bus_types: string | null;
+      created_at: number;
       bus_types: string | null;
     }[]
   ).map((r) => ({
@@ -404,25 +444,28 @@ export function listActiveWebhooks(db: DB): WebhookEndpoint[] {
     active: r.active,
     consecutiveFailures: r.consecutive_failures,
     busTypes: parseBusTypes(r.bus_types),
+    selectedTypes: parseBusTypes(r.ep_bus_types),
+    createdAt: r.created_at,
   }));
 }
 
 export type PostResult = "ok" | "transient" | "permanent";
 
-export async function postSignalEvent(
-  endpoint: WebhookEndpoint,
-  event: SignalEventV1,
+/**
+ * 投一份已编码的 body 并按失败模型分类。策略事件与 bus 事件
+ * (lib/busWebhook.ts)共用这一份 —— 超时/4xx/网络错的语义只能有一处实现。
+ */
+export async function postWebhookBody(
+  endpoint: Pick<WebhookEndpoint, "url" | "secret">,
+  body: string,
+  head: { signalId: number; event: string },
   deps: { fetchFn?: typeof fetch } = {},
 ): Promise<PostResult> {
   const fetchFn = deps.fetchFn ?? fetch;
-  const body = JSON.stringify(event);
   try {
     const res = await fetchFn(endpoint.url, {
       method: "POST",
-      headers: buildDeliveryHeaders(endpoint.secret, body, {
-        signalId: event.id,
-        event: event.event,
-      }),
+      headers: buildDeliveryHeaders(endpoint.secret, body, head),
       body,
       signal: AbortSignal.timeout(POST_TIMEOUT_MS),
     });
@@ -433,6 +476,19 @@ export async function postSignalEvent(
     // 网络错/超时:transient(下一轮投递循环即重试)。
     return "transient";
   }
+}
+
+export async function postSignalEvent(
+  endpoint: WebhookEndpoint,
+  event: SignalEventV1,
+  deps: { fetchFn?: typeof fetch } = {},
+): Promise<PostResult> {
+  return postWebhookBody(
+    endpoint,
+    JSON.stringify(event),
+    { signalId: event.id, event: event.event },
+    deps,
+  );
 }
 
 /** 成功清零计数;失败 +1,达阈值熔断 active=0(返回 disabled 供调用方通报)。 */

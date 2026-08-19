@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { checkWriteAccess, guardExpensive } from "../../../../lib/apiGuard";
+import { busTypeAllowed, parseBusTypes } from "../../../../lib/apiKeys";
 import { openDb } from "../../../../lib/db";
 import {
   deleteWebhook,
@@ -29,6 +30,13 @@ const RegisterBody = z.object({
     }),
   // HMAC 密钥:太短的 secret 让签名防线形同虚设。
   secret: z.string().min(16).max(128),
+  // 端点推送类型(2026-08-19)。刻意用枚举而非自由字符串(keys 路由是后者):
+  // 打错的类型名不会报错,只会让该端点永远收不到那类事件 —— 对运营者配置,
+  // 当场拒绝比静默空转仁慈。省略 = 仅策略信号(历史默认)。
+  busTypes: z
+    .array(z.enum(["strategy", "large", "consensus", "discovery"]))
+    .nonempty()
+    .optional(),
 });
 
 // 端点运维:测试(只读探针)/ 停用↔恢复 / 硬删。
@@ -170,9 +178,17 @@ export async function POST(req: Request) {
   const db = openDash();
   try {
     const key = db
-      .prepare("SELECT id, tier, revoked_at FROM api_keys WHERE id = ?")
+      .prepare(
+        "SELECT id, tier, revoked_at, bus_types FROM api_keys WHERE id = ?",
+      )
       .get(body.apiKeyId) as
-      { id: number; tier: string; revoked_at: number | null } | undefined;
+      | {
+          id: number;
+          tier: string;
+          revoked_at: number | null;
+          bus_types: string | null;
+        }
+      | undefined;
     if (!key || key.revoked_at != null) {
       return Response.json(
         { error: "apiKeyId 不存在或已吊销" },
@@ -185,8 +201,26 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
+    // 勾选必须落在 key 的授权范围内。放进去也不会投(运行时按交集兜底),
+    // 但「登记成功、永远不投」是最难排查的配置错误 —— 当场拒绝。
+    const keyScope = parseBusTypes(key.bus_types);
+    const outOfScope = (body.busTypes ?? []).filter(
+      (t) => !busTypeAllowed(keyScope, t),
+    );
+    if (outOfScope.length > 0) {
+      return Response.json(
+        {
+          error: `key #${key.id} 的订阅范围不含:${outOfScope.join("、")} —— 先重新签发范围更大的 key,或去掉这些勾选`,
+        },
+        { status: 400 },
+      );
+    }
     const id = registerWebhook(db, body);
-    return Response.json({ id, url: body.url });
+    return Response.json({
+      id,
+      url: body.url,
+      busTypes: body.busTypes ?? null,
+    });
   } finally {
     db.close();
   }
@@ -206,7 +240,7 @@ export async function GET(req: Request) {
     const rows = db
       .prepare(
         `SELECT w.id, w.api_key_id, w.url, w.active, w.consecutive_failures,
-                w.last_error, w.created_at, k.label AS key_label, k.tier AS key_tier,
+                w.last_error, w.created_at, w.bus_types, k.label AS key_label, k.tier AS key_tier,
                 k.revoked_at AS key_revoked_at
          FROM webhook_endpoints w JOIN api_keys k ON k.id = w.api_key_id
          ORDER BY w.id`,

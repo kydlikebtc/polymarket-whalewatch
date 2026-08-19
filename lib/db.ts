@@ -28,7 +28,8 @@ export function openDb(path = "data.sqlite") {
     CREATE INDEX IF NOT EXISTS idx_strategy_signals_emitted ON strategy_signals(emitted_at);
     CREATE TABLE IF NOT EXISTS signal_deliveries (signal_id INTEGER NOT NULL, event TEXT NOT NULL, channel TEXT NOT NULL, delivered_at INTEGER, status TEXT NOT NULL, PRIMARY KEY (signal_id, event, channel));
     CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, key_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL, tier TEXT NOT NULL DEFAULT 'delayed', created_at INTEGER NOT NULL, revoked_at INTEGER, last_used_at INTEGER, bus_types TEXT);
-    CREATE TABLE IF NOT EXISTS webhook_endpoints (id INTEGER PRIMARY KEY AUTOINCREMENT, api_key_id INTEGER NOT NULL, url TEXT NOT NULL, secret TEXT NOT NULL, active INTEGER DEFAULT 1, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS webhook_endpoints (id INTEGER PRIMARY KEY AUTOINCREMENT, api_key_id INTEGER NOT NULL, url TEXT NOT NULL, secret TEXT NOT NULL, active INTEGER DEFAULT 1, consecutive_failures INTEGER DEFAULT 0, last_error TEXT, created_at INTEGER NOT NULL, bus_types TEXT);
+    CREATE TABLE IF NOT EXISTS bus_deliveries (bus_signal_id INTEGER NOT NULL, channel TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (bus_signal_id, channel));
     CREATE TABLE IF NOT EXISTS market_tilt_history (condition_id TEXT NOT NULL, ts INTEGER NOT NULL, lead_outcome TEXT, minor_outcome TEXT, minor_net_usd REAL, tilt_pct REAL, PRIMARY KEY (condition_id, ts));
     CREATE TABLE IF NOT EXISTS x_posts (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, dedup_key TEXT NOT NULL, alert_id INTEGER, text TEXT NOT NULL, has_link INTEGER NOT NULL DEFAULT 0, est_cost_usd REAL NOT NULL DEFAULT 0, x_post_id TEXT, status TEXT NOT NULL, created_at INTEGER NOT NULL);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_x_posts_kind_dedup ON x_posts(kind, dedup_key);
@@ -61,6 +62,15 @@ export function openDb(path = "data.sqlite") {
   // NULL = 全部(既有 key 的语义不变,升级不会让任何订阅方突然收不到数据)。
   try {
     db.prepare("ALTER TABLE api_keys ADD COLUMN bus_types TEXT").run();
+  } catch {
+    // column already present
+  }
+  // webhook_endpoints 增逐端点推送类型(bus_types,2026-08-19):JSON 数组。
+  // NULL = **仅策略信号** —— 与 api_keys 的「NULL = 全部」刻意相反:存量端点
+  // 若在总线开启的瞬间突然收到陌生事件类型,消费方 4xx 会累计连败直至熔断,
+  // 反而砸掉它本来正常的策略投递。新类型必须显式勾选。
+  try {
+    db.prepare("ALTER TABLE webhook_endpoints ADD COLUMN bus_types TEXT").run();
   } catch {
     // column already present
   }

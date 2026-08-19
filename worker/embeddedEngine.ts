@@ -47,14 +47,18 @@ import { createBackupState, maybeDailyBackup } from "../lib/dbBackup";
 import { evaluateHealth } from "../lib/health";
 import { runDeliveryCycle, type DeliveryChannel } from "../lib/signalDelivery";
 import { maybeDailySignalDigest } from "../lib/signalDigest";
-import { listActiveWebhooks, makeWebhookChannel } from "../lib/webhookDelivery";
+import {
+  listActiveWebhooks,
+  makeWebhookChannel,
+  webhookWantsType,
+} from "../lib/webhookDelivery";
+import { runBusWebhookCycle } from "../lib/busWebhook";
 import { runBotCycle, type BotUpdate } from "../lib/botCommands";
 import { buildMarketCard, resolveMarketInput } from "../lib/marketCard";
 import { createXClient } from "../lib/xPublisher";
 import { markPosted, resolveXCreds } from "../lib/xAccounts";
 import { getXKindSwitches } from "../lib/xSettings";
 import { projectBusSignals } from "../lib/signalBus";
-import { busTypeAllowed } from "../lib/apiKeys";
 import { runXBroadcastCycle } from "../lib/xBroadcast";
 import { runPregameCycle } from "../lib/xPregame";
 import { runSettledCycle } from "../lib/xSettled";
@@ -700,20 +704,31 @@ export function startAlertEngine(): void {
     // 也无 webhook 时,runDeliveryCycle 对空通道数组是纯 no-op。
     async function deliveryLoop() {
       try {
+        // 熔断通报走运营者告警频道(best-effort):订户端点死了,沉默是
+        // 最贵的故障形态。策略投递与 bus 分流共用这一个通报口。
+        const notifyDisabled = (
+          endpoint: { id: number; url: string },
+          error: string,
+        ) => {
+          sendOps?.(
+            `⚠️ webhook 端点 #${endpoint.id} 连续失败已熔断停用(${error})\n${endpoint.url}`,
+          ).catch(() => {});
+        };
+        const checkHealth = () => ({
+          ok: evaluateHealth(
+            getHeartbeats(db),
+            Math.floor(Date.now() / 1000),
+            getEngineStart(db),
+          ).ok,
+        });
         const webhookChannels = listActiveWebhooks(db)
-          // 投递总线目前搬运的是**策略信号**;订阅范围里没勾 strategy 的
-          // 端点不该收到它们(过滤放在服务端才是边界)。bus 类型的 webhook
-          // 投递属于后续批次,那时这里按 sourceType 再分流。
-          .filter((ep) => busTypeAllowed(ep.busTypes, "strategy"))
+          // 策略投递只给「想要 strategy」的端点:key 授权 ∧ 端点勾选
+          // (存量端点勾选为 NULL = 仅策略,行为不变)。bus 类型走下方
+          // runBusWebhookCycle 按 sourceType 分流 —— 2026-08-19 起两条轨并行。
+          .filter((ep) => webhookWantsType(ep, "strategy"))
           .map((ep) =>
             makeWebhookChannel(db, ep, {
-              onDisabled: (endpoint, error) => {
-                // 熔断通报走运营者告警频道(best-effort):订户端点死了,
-                // 沉默是最贵的故障形态。
-                sendOps?.(
-                  `⚠️ webhook 端点 #${endpoint.id} 连续失败已熔断停用(${error})\n${endpoint.url}`,
-                ).catch(() => {});
-              },
+              onDisabled: notifyDisabled,
             }),
           );
         // 每轮重建:后台改了目标/开关/延迟,30s 内自动生效 —— 与
@@ -726,13 +741,7 @@ export function startAlertEngine(): void {
             publicUrl: cfg.publicUrl,
             // 引擎停跳时冻结投递(宁静默不误导)。delivery 自己的 beat 在
             // 循环末尾无条件打点,冻结轮也算活着 —— 停跳判定只由其余循环触发。
-            checkHealth: () => ({
-              ok: evaluateHealth(
-                getHeartbeats(db),
-                Math.floor(Date.now() / 1000),
-                getEngineStart(db),
-              ).ok,
-            }),
+            checkHealth,
           });
           if (r.sent > 0) {
             console.log(`[delivery] pushed ${r.sent} message(s)`);
@@ -753,6 +762,15 @@ export function startAlertEngine(): void {
               }
             })
             .catch((e) => console.error("[digest] 存证推送失败", e));
+        }
+        // bus 类型的 webhook 分流(独立于 TG/策略通道,勾了类型才投;
+        // 冻结纪律同上,内部自吞失败,永不抛)。
+        const busR = await runBusWebhookCycle(db, {
+          checkHealth,
+          onDisabled: notifyDisabled,
+        });
+        if (busR.sent > 0) {
+          console.log(`[delivery] webhook bus pushed ${busR.sent} event(s)`);
         }
         beat(db, "delivery");
       } catch (e) {

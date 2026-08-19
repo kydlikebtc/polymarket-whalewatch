@@ -114,12 +114,12 @@ key 形如 `wlk_` + 32 字符 base64url。
 签发 key 时可以限定**订阅范围**。范围之外的类型，你在 `/api/signals` 与
 webhook 上都拿不到——**过滤在服务端执行**，不需要你自己筛。
 
-| 类型        | 出现在响应的哪里                     |
-| ----------- | ------------------------------------ |
-| `strategy`  | `strategies` 段 + webhook 推送       |
-| `large`     | `bus[]` 中 `sourceType: "large"`     |
-| `consensus` | `bus[]` 中 `sourceType: "consensus"` |
-| `discovery` | `bus[]` 中 `sourceType: "discovery"` |
+| 类型        | 出现在响应的哪里                                       |
+| ----------- | ------------------------------------------------------ |
+| `strategy`  | `strategies` 段 + webhook 推送                         |
+| `large`     | `bus[]` 中 `sourceType: "large"` + webhook（勾选）     |
+| `consensus` | `bus[]` 中 `sourceType: "consensus"` + webhook（勾选） |
+| `discovery` | `bus[]` 中 `sourceType: "discovery"` + webhook（勾选） |
 
 - 未限定范围的 key = **不限**，拿全部类型。
 - 若你的 key 不含 `strategy`，`strategies` 段会是**空结构**
@@ -894,10 +894,19 @@ WhaleWatch  ──1 次/分钟──▶  你的后端（缓存 + 你自己的鉴
 ## 10. Webhook 推送（`realtime` tier 专属）
 
 由运营者代为登记你的接收端点（不是订户自助，以收窄 SSRF 面）。你需要提供：
-接收 URL（http/https）+ 一个 ≥16 字符的 HMAC secret。
+接收 URL（http/https）+ 一个 ≥16 字符的 HMAC secret + **勾选的推送类型**。
 
-当前 webhook **只推送策略信号**（`strategy` 类型）；`bus` 类型仅在拉取 API
-提供。
+登记时可勾选的类型与订阅范围（§4）同一套：`strategy`（策略信号）与三个
+总线类型 `large` / `consensus` / `discovery`。三条规则：
+
+- **不勾 = 仅策略信号**（历史默认）。存量端点不受本次能力扩展影响——新
+  事件类型必须显式勾选，不会突然出现在你的端点上；
+- **勾选必须落在 key 的订阅范围内**，越界的登记会被当场拒绝；
+- 总线类型的**全局开关（§4.1）仍是产出前提**：类型勾了但全局未开启，就
+  没有事件可投——这与拉取 API 的 `bus[]` 是同一个闸门。
+
+策略信号推 `SignalEventV1`（`event: "entry" | "settle"`），总线事件推
+`BusEventV1`（`event: "bus"`），两者共用同一套签名、超时与失败语义。
 
 ### 请求
 
@@ -953,6 +962,34 @@ interface SignalEventV1 {
 }
 ```
 
+### 事件体 `BusEventV1`（总线类型）
+
+```typescript
+interface BusEventV1 {
+  v: 1;
+  event: "bus";
+  id: number; // bus_signals.id —— 与 event 组成幂等去重键
+  /** 与拉取 API `bus[]` 单条完全同形（§6.8）—— 推与拉是同一份事实。 */
+  bus: {
+    id: number;
+    sourceType: "large" | "consensus" | "discovery";
+    dedupKey: string;
+    conditionId: string | null;
+    title: string | null;
+    payload: Record<string, unknown>; // 形状随 sourceType 而定，见 §6.8
+    emittedAt: number;
+  };
+  notice: string;
+}
+```
+
+请求头同 `SignalEventV1`：`x-signature` 同一套 HMAC，`x-signal-event: bus`，
+`x-signal-id` = `bus_signals.id`。
+
+**幂等去重键是 `(id, event)`**——`event` 的值域现在是
+`entry` / `settle` / `bus`。策略信号与总线事件的 `id` 来自两张不同的表，
+但因 `event` 不同，二元组永不碰撞，你的去重逻辑不需要区分来源。
+
 ### 验签（Node.js）
 
 ```javascript
@@ -982,6 +1019,16 @@ function verify(rawBody, header, secret) {
 | 引擎停跳   | 投递整体冻结，一条不发（宁静默不误导）                                  |
 
 接收端请**先返回 2xx 再做重活**：处理超过 5 秒会被判为瞬态失败并重发。
+
+总线事件（`event: "bus"`）在上表之外的三处差异：
+
+| 事项     | 行为                                                      |
+| -------- | --------------------------------------------------------- |
+| 不回灌   | 只投端点**登记之后**产生的事件——新登记不会收到存量积压    |
+| 新鲜窗   | 事件超过 1 小时未投出即放弃（与总线投影窗对齐）           |
+| 每轮上限 | 每端点每轮（30 秒）最多 10 条，超出顺延下轮，不折叠不丢失 |
+
+熔断计数与策略投递**共用**——它量的是你端点的健康，不分事件类型。
 
 ---
 
@@ -1093,6 +1140,7 @@ webhook 端点同时失效。
 
 | 日期       | 变更                                                                                                                                                                                                                                                                                   |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-19 | webhook 支持总线类型：登记时逐端点勾选推送类型（`strategy`/`large`/`consensus`/`discovery`），总线事件以 `BusEventV1`（`event: "bus"`）投递，与拉取 API `bus[]` 同形；不勾 = 仅策略信号（存量端点行为不变）                                                                            |
 | 2026-08-19 | `settled[]` 补齐与 `active[]` 同名同义的身份/仓位字段（`key`/`conditionId`/`slug`/`eventSlug`/`category`/`subcategory`/`formationTs`/`outcomeIndex`/`asset`/`walletCount`/`netUsd`/`wallets`，全部 additive）—— 此前只有 6 项，连 `conditionId` 都没有，认账记录既拼不出链接也对不上号 |
 | 2026-08-19 | `active[]` 新增 `slug`（单市场短名，additive）—— 此前只有 `eventSlug`，一个事件下挂几十个市场时链接落不到信号说的那一个                                                                                                                                                                |
 | 2026-08-19 | 新增 §4.1「当前开放状态」——**由页面渲染时读取当前开关实时生成**，不再是手写快照（运营者一拨开关文档就撒谎）。markdown 只保留系统能力全集，「此刻开着什么」由 `lib/apiDocsStatus` 查库回答                                                                                              |

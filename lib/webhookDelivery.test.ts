@@ -17,6 +17,7 @@ import {
   signPayload,
   SignalEventV1Schema,
   WEBHOOK_DISABLE_AFTER,
+  webhookWantsType,
 } from "./webhookDelivery";
 import { SIGNAL_DISCLAIMER } from "./signalPush";
 import { isPermanentSendError } from "./telegram";
@@ -104,6 +105,8 @@ describe("postSignalEvent — 状态分类", () => {
     active: 1,
     consecutiveFailures: 0,
     busTypes: null,
+    selectedTypes: null,
+    createdAt: 0,
   };
   const ev = buildSignalEvent(row(), "entry", {
     strategyName: "巨鲸",
@@ -329,6 +332,8 @@ describe("buildTestEvent / postTestEvent", () => {
     active: 1,
     consecutiveFailures: 0,
     busTypes: null,
+    selectedTypes: null,
+    createdAt: 0,
   };
 
   it("测试事件通过 SignalEventV1 校验 —— 订户按真信号 schema 解析不会 4xx 误报", () => {
@@ -464,5 +469,41 @@ describe("buildTestEvent / postTestEvent", () => {
       },
     });
     expect(res.detail).toContain("ENOTFOUND");
+  });
+});
+
+describe("端点推送类型(2026-08-19)", () => {
+  it("registerWebhook 持久化勾选,listActiveWebhooks 原样返回(含 createdAt)", () => {
+    const db = openDb(":memory:");
+    const key = issueApiKey(db, { label: "订户", tier: "realtime" }, 1000);
+    registerWebhook(
+      db,
+      { apiKeyId: key.id, url: "https://a/h", secret: "s".repeat(16), busTypes: ["strategy", "large"] },
+      1234,
+    );
+    const [ep] = listActiveWebhooks(db);
+    expect(ep.selectedTypes).toEqual(["strategy", "large"]);
+    expect(ep.createdAt).toBe(1234);
+  });
+
+  it("省略勾选 → 存 NULL(仅策略信号的历史默认)", () => {
+    const db = openDb(":memory:");
+    const key = issueApiKey(db, { label: "订户", tier: "realtime" }, 1000);
+    registerWebhook(db, { apiKeyId: key.id, url: "https://a/h", secret: "s".repeat(16) }, 1234);
+    const [ep] = listActiveWebhooks(db);
+    expect(ep.selectedTypes).toBeNull();
+  });
+
+  it("webhookWantsType:勾选 null → 仅 strategy;显式勾选按列表;key 范围是上限", () => {
+    const base = { busTypes: null, selectedTypes: null };
+    expect(webhookWantsType(base, "strategy")).toBe(true);
+    expect(webhookWantsType(base, "large")).toBe(false);
+    const picked = { busTypes: null, selectedTypes: ["large"] };
+    expect(webhookWantsType(picked, "large")).toBe(true);
+    expect(webhookWantsType(picked, "strategy")).toBe(false);
+    // key 只授权 strategy —— 勾了 large 也不放行(交集)
+    const capped = { busTypes: ["strategy"], selectedTypes: ["strategy", "large"] };
+    expect(webhookWantsType(capped, "large")).toBe(false);
+    expect(webhookWantsType(capped, "strategy")).toBe(true);
   });
 });

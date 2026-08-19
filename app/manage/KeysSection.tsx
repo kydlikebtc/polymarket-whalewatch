@@ -25,6 +25,7 @@ interface WebhookRow {
   api_key_id: number;
   url: string;
   active: number;
+  bus_types: string | null;
   consecutive_failures: number;
   last_error: string | null;
   key_label: string;
@@ -61,6 +62,8 @@ export default function KeysSection({ token }: { token: string }) {
   const [whKeyId, setWhKeyId] = useState("");
   const [whUrl, setWhUrl] = useState("");
   const [whSecret, setWhSecret] = useState("");
+  // 端点推送类型,默认仅策略信号(与存量端点的历史行为一致)。
+  const [whSubs, setWhSubs] = useState<string[]>(["strategy"]);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -157,6 +160,7 @@ export default function KeysSection({ token }: { token: string }) {
           apiKeyId: Number(whKeyId),
           url: whUrl.trim(),
           secret: whSecret,
+          busTypes: whSubs,
         }),
       });
       const j = (await res.json()) as { error?: string };
@@ -165,6 +169,7 @@ export default function KeysSection({ token }: { token: string }) {
       } else {
         setWhUrl("");
         setWhSecret("");
+        setWhSubs(["strategy"]);
         await load();
       }
     } catch (e) {
@@ -533,9 +538,46 @@ export default function KeysSection({ token }: { token: string }) {
             onChange={(e) => setWhSecret(e.target.value)}
           />
         </div>
+        <div>
+          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+            推送类型(勾选须在 key 订阅范围内)
+          </div>
+          <div style={{ display: "flex", gap: "var(--s-3)", flexWrap: "wrap" }}>
+            {SUBSCRIBABLE.map((o) => (
+              <label
+                key={o.type}
+                style={{
+                  display: "inline-flex",
+                  gap: 6,
+                  alignItems: "center",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={whSubs.includes(o.type)}
+                  onChange={(e) =>
+                    setWhSubs((prev) =>
+                      e.target.checked
+                        ? [...prev, o.type]
+                        : prev.filter((x) => x !== o.type),
+                    )
+                  }
+                />
+                <span>{o.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
         <button
           className="ds-btn ds-btn--primary"
-          disabled={busy || !whKeyId || !whUrl || whSecret.length < 16}
+          disabled={
+            busy ||
+            !whKeyId ||
+            !whUrl ||
+            whSecret.length < 16 ||
+            whSubs.length === 0
+          }
           onClick={registerWh}
         >
           登记端点
@@ -549,6 +591,7 @@ export default function KeysSection({ token }: { token: string }) {
                 <th className="is-right">#</th>
                 <th>key</th>
                 <th>URL</th>
+                <th>推送类型</th>
                 <th className="is-right">连败</th>
                 <th>状态</th>
                 <th className="is-right">操作</th>
@@ -579,6 +622,27 @@ export default function KeysSection({ token }: { token: string }) {
                     title={w.url}
                   >
                     {w.url}
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    {(() => {
+                      // null/坏 JSON = 仅策略信号(历史默认);一行脏数据
+                      // 不该白屏整张表。
+                      let picked: string[] | null = null;
+                      try {
+                        if (w.bus_types) {
+                          const v: unknown = JSON.parse(w.bus_types);
+                          if (Array.isArray(v)) picked = v as string[];
+                        }
+                      } catch {
+                        picked = null;
+                      }
+                      if (!picked) return <Tag>策略(默认)</Tag>;
+                      return picked.map((t) => (
+                        <Tag key={t}>
+                          {SUBSCRIBABLE.find((o) => o.type === t)?.label ?? t}
+                        </Tag>
+                      ));
+                    })()}
                   </td>
                   <td className="is-right num">
                     {w.consecutive_failures}
