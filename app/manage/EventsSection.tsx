@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Tag } from "../ui";
 import { SectionHead } from "./bits";
 import { authHeaders, timeText } from "./shared";
+import { sectionView } from "./sectionGate";
 
 // 区块:① 原始事件信号 —— 大额成交 / 聪明钱共识 / 钱包发现(+待接入)。
 //
@@ -133,7 +134,9 @@ export default function EventsSection({ token }: { token: string }) {
   const [draft, setDraft] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
-    if (!token) return;
+    // 不看本地 token 就直接发 —— 能不能读由服务端说了算(见 ./sectionGate)。
+    // 未配 ADMIN_TOKEN 的部署上 checkWriteAccess 恒放行,这里若按 token 空
+    // 就 return,整页解锁了这个区块却永远空着。
     setError(null);
     try {
       const res = await fetch("/api/admin/signals", {
@@ -164,6 +167,11 @@ export default function EventsSection({ token }: { token: string }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 两块数据各自的门:类型开关来自 busTypes,台账来自 eventLedger,同一次
+  // 请求但可以一个到手另一个为空。
+  const typesView = sectionView(types, error);
+  const ledgerView = sectionView(ledger, error);
 
   const post = async (body: Record<string, unknown>, key: string) => {
     setBusy(key);
@@ -209,13 +217,19 @@ export default function EventsSection({ token }: { token: string }) {
         </div>
       ) : null}
 
-      {!token ? (
-        <div className="ds-empty">填入管理令牌后可管理事件类型</div>
-      ) : !types ? (
+      {typesView.kind === "error" ? (
+        <div className="ds-empty">{typesView.message}</div>
+      ) : typesView.kind === "loading" ? (
         <div className="ds-empty">加载中…</div>
       ) : (
-        <div style={{ display: "grid", gap: "var(--s-4)", marginBottom: "var(--s-5)" }}>
-          {types.map((t) => {
+        <div
+          style={{
+            display: "grid",
+            gap: "var(--s-4)",
+            marginBottom: "var(--s-5)",
+          }}
+        >
+          {typesView.data.map((t) => {
             const typeDefs = defs.filter((d) => d.sourceType === t.type);
             const anyOn = typeDefs.some((d) => d.enabled);
             return (
@@ -462,11 +476,11 @@ export default function EventsSection({ token }: { token: string }) {
           与总线→webhook 有逐行记录）
         </span>
       </div>
-      {!token ? (
-        <div className="ds-empty">填入管理令牌后加载</div>
-      ) : ledger == null ? (
+      {ledgerView.kind === "error" ? (
+        <div className="ds-empty">{ledgerView.message}</div>
+      ) : ledgerView.kind === "loading" ? (
         <div className="ds-empty">加载中…</div>
-      ) : ledger.length === 0 ? (
+      ) : ledgerView.data.length === 0 ? (
         <div className="ds-empty">
           台账暂无事件（进料条件未命中,或引擎尚未运行）。
         </div>
@@ -485,7 +499,7 @@ export default function EventsSection({ token }: { token: string }) {
               </tr>
             </thead>
             <tbody>
-              {ledger.map((r) => (
+              {ledgerView.data.map((r) => (
                 <tr key={`${r.type}:${r.id}`}>
                   <td className="ds-hint mono" style={{ whiteSpace: "nowrap" }}>
                     {timeText(r.emittedAt)}

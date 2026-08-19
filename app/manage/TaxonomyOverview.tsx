@@ -1,7 +1,8 @@
 "use client";
 
 import type { AdminSignalOverview } from "../../lib/adminOverview";
-import { SectionHead } from "./bits";
+import { Foldable } from "./bits";
+import { busTypeEnabled, type BusDefLike } from "./routing";
 
 // /manage 的两块「地图」面板 —— 信息架构重排(2026-08-19)的骨架:
 //
@@ -67,11 +68,14 @@ export function SignalLinesOverview({
     },
   ];
   return (
-    <section className="ds-card" style={{ marginBottom: "var(--s-5)" }}>
-      <SectionHead
-        title="🧭 信号 = 事件（两条线）+ 视图"
-        hint="信号=事件(触发后发出,管线只挂在事件上);视图=事件的折叠,非信号。点行切换下方子 tab;接线管理在「下游管线」tab。"
-      />
+    <Foldable
+      storageKey="manageGuideLines"
+      title="🧭 信号 = 事件（两条线）+ 视图"
+      hint="信号=事件(触发后发出,管线只挂在事件上);视图=事件的折叠,非信号。点行切换下方子 tab;接线管理在「下游管线」tab。"
+      summary={`① 原始事件(大额/共识/发现)　·　② 策略 ${
+        pushed != null && total != null ? `推送中 ${pushed}/${total} 档` : "…"
+      }　·　👁 视图(非信号)`}
+    >
       <div className="ds-table-wrap">
         <table className="ds-table ds-table--compact">
           <thead>
@@ -127,7 +131,7 @@ export function SignalLinesOverview({
         升级时原地更新 —— 把每条升级事件当独立信号计数是唯一的坑,视图已
         替你折叠好(事件做触发、视图做渲染)。
       </div>
-    </section>
+    </Foldable>
   );
 }
 
@@ -177,11 +181,18 @@ export function PipelinesOverview({
     },
   ];
   return (
-    <section className="ds-card" style={{ marginBottom: "var(--s-5)" }}>
-      <SectionHead
-        title="🚚 下游管线"
-        hint="信号线(上一个 tab)产出后经这三条管线到达消费者。点行切换下方子 tab。「承载」列是当前真实接线的转述 —— 引擎改了接线,这里要跟着改。"
-      />
+    <Foldable
+      storageKey="manageGuidePipes"
+      title="🚚 下游管线"
+      hint="信号线(上一个 tab)产出后经这三条管线到达消费者。点行切换下方子 tab。「承载」列是当前真实接线的转述 —— 引擎改了接线,这里要跟着改。"
+      summary={`🅐 Telegram ${
+        tgOk == null
+          ? "无发送记录"
+          : tgOk.failing
+            ? `连败 ${tgOk.consecutiveSendFailures}`
+            : "正常"
+      }　·　🅑 有效 key ${keys ?? "…"}　·　🅒 𝕏 播报`}
+    >
       <div className="ds-table-wrap">
         <table className="ds-table ds-table--compact">
           <thead>
@@ -221,7 +232,7 @@ export function PipelinesOverview({
           </tbody>
         </table>
       </div>
-    </section>
+    </Foldable>
   );
 }
 
@@ -242,12 +253,17 @@ export interface RoutingState {
  */
 export function RoutingMatrix({
   routing,
-  busSettings,
+  busDefs,
   channels,
   onJump,
 }: {
   routing: RoutingState | null;
-  busSettings: Record<string, { enabled: boolean }> | null;
+  /**
+   * 信号定义 —— **唯一真相**。这里曾经收的是 legacy 的 busSettings,而那份
+   * 配置早已「不再参与任何判定」,新 UI 的 defAction 也不回写它:启用了一档,
+   * 矩阵却照旧显示「关」。见 ./routing.ts。
+   */
+  busDefs: BusDefLike[] | null;
   /** ops.channels(已配置的投递通道键:tg_paid/tg_public/webhook:N)。 */
   channels: { key: string }[] | null;
   onJump: (section: string) => void;
@@ -257,7 +273,7 @@ export function RoutingMatrix({
   const tgSignal =
     channels?.some((c) => c.key === "tg_paid" || c.key === "tg_public") ??
     false;
-  const busOn = (t: string) => busSettings?.[t]?.enabled === true;
+  const busOn = (t: string) => busTypeEnabled(busDefs, t);
   const wh = (t: string) => routing.webhookTypes[t] ?? 0;
   const tgt = (k: string) => routing.tgTargetKinds[k] ?? 0;
   const rows: {
@@ -320,11 +336,14 @@ export function RoutingMatrix({
     },
   ];
   return (
-    <section className="ds-card" style={{ marginBottom: "var(--s-5)" }}>
-      <SectionHead
-        title="🗺 路由矩阵(事件类型 × 管线)"
-        hint="每格显示当前开关态,点击直达属主开关。矩阵不另存配置 —— 每个开关只有一个属主,这里只是拼图。"
-      />
+    <Foldable
+      storageKey="manageGuideMatrix"
+      title="🗺 路由矩阵(事件类型 × 管线)"
+      hint="每格显示当前开关态,点击直达属主开关。矩阵不另存配置 —— 每个开关只有一个属主,这里只是拼图。"
+      summary="信号线 × 管线的当前接线一览"
+      // 它是状态仪表盘不是教学,默认展开;熟了的运营者可以自己收起来。
+      defaultOpen
+    >
       <div className="ds-table-wrap">
         <table className="ds-table ds-table--compact">
           <thead>
@@ -362,6 +381,6 @@ export function RoutingMatrix({
           </tbody>
         </table>
       </div>
-    </section>
+    </Foldable>
   );
 }

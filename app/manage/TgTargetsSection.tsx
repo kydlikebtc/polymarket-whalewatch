@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Tag } from "../ui";
 import { SectionHead } from "./bits";
 import { agoText, authHeaders, timeText } from "./shared";
+import { clipError, sectionView } from "./sectionGate";
 
 // 区块:📣 TG 推送目标(bot + 频道 的可管理组合)。
 //
@@ -94,8 +95,11 @@ export default function TgTargetsSection({ token }: { token: string }) {
   }, [token]);
 
   useEffect(() => {
-    if (token) void load();
-  }, [token, load]);
+    // 不按本地 token 拦 —— 能不能读由服务端说了算(见 ./sectionGate)。
+    void load();
+  }, [load]);
+
+  const view = sectionView(data, error);
 
   const post = async (body: Record<string, unknown>, okMsg?: string) => {
     setBusy(true);
@@ -291,11 +295,11 @@ export default function TgTargetsSection({ token }: { token: string }) {
         </div>
       ) : null}
 
-      {!token ? (
-        <div className="ds-empty">填入管理令牌后可查看与管理推送目标</div>
-      ) : !data ? (
+      {view.kind === "error" ? (
+        <div className="ds-empty">{view.message}</div>
+      ) : view.kind === "loading" ? (
         <div className="ds-empty">加载中…</div>
-      ) : data.targets.length === 0 ? (
+      ) : data!.targets.length === 0 ? (
         <div className="ds-empty">
           尚无目标 —— 点右上角「新增目标」。在此之前使用 .env 里的 TG 配置。
         </div>
@@ -311,7 +315,7 @@ export default function TgTargetsSection({ token }: { token: string }) {
             </tr>
           </thead>
           <tbody>
-            {data.targets.map((t) => (
+            {view.data.targets.map((t) => (
               <tr key={t.id} style={t.paused ? { opacity: 0.55 } : undefined}>
                 <td data-label="目标">
                   <div>{t.label}</div>
@@ -378,9 +382,9 @@ export default function TgTargetsSection({ token }: { token: string }) {
                         color: "var(--down)",
                         marginTop: 2,
                       }}
-                      title={`${timeText(t.lastErrorAt ?? 0)}`}
+                      title={`${timeText(t.lastErrorAt ?? 0)}\n${t.lastError}`}
                     >
-                      {t.lastError.slice(0, 60)}
+                      {clipError(t.lastError)}
                     </div>
                   ) : null}
                 </td>
@@ -413,7 +417,7 @@ export default function TgTargetsSection({ token }: { token: string }) {
                     onClick={() => {
                       // 删掉最后一个目标会回退到 .env（可能是完全不同的频道），
                       // 与全站危险操作一致地二次确认。
-                      const last = data.targets.length === 1;
+                      const last = view.data.targets.length === 1;
                       const msg = last
                         ? `这是最后一个目标，删除后将回退到 .env 里的 TG 配置（若未配置则完全停推）。确认删除「${t.label}」？`
                         : `确认删除「${t.label}」（${t.chatId}）？`;

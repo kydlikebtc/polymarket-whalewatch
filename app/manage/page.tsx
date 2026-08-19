@@ -26,6 +26,7 @@ import {
   type Probe,
 } from "./authGate";
 import { authHeaders } from "./shared";
+import type { BusDefLike } from "./routing";
 
 // /manage — 运营管理页。
 //
@@ -110,10 +111,9 @@ export default function ManagePage() {
   const [overview, setOverview] = useState<AdminSignalOverview | null>(null);
   // 路由矩阵数据(与 overview 同一次 GET,只是额外键)。
   const [routing, setRouting] = useState<RoutingState | null>(null);
-  const [busSettings, setBusSettings] = useState<Record<
-    string,
-    { enabled: boolean }
-  > | null>(null);
+  // 信号定义 = 事件类型开关的唯一真相(路由矩阵据此判「通不通」)。
+  // 曾经这里存的是 legacy busSettings,而它已不参与任何判定 —— 见 ./routing.ts。
+  const [busDefs, setBusDefs] = useState<BusDefLike[] | null>(null);
   const [health, setHealth] = useState<HealthReport | null>(null);
   const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -124,6 +124,9 @@ export default function ManagePage() {
   const [tab, setTab] = useState<TabId>("lines");
   const [lineSub, setLineSub] = useState<LineSub>("events");
   const [pipeSub, setPipeSub] = useState<PipeSub>("tg");
+  // 解锁后令牌框收起 —— 此时它唯一的用途是「换令牌」,却占着首屏一整张卡。
+  // 锁定态不受这个开关影响(那时它是页面主角)。
+  const [tokenOpen, setTokenOpen] = useState(false);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("adminToken") ?? "";
@@ -177,7 +180,7 @@ export default function ManagePage() {
         body: (await r.json()) as AdminSignalOverview & {
           error?: string;
           routing?: RoutingState;
-          busSettings?: Record<string, { enabled: boolean }>;
+          busDefs?: BusDefLike[];
         },
       }));
       const next = probeFromResponse(ovRes.status, ovRes.body);
@@ -187,13 +190,13 @@ export default function ManagePage() {
         // 只是不渲染,是在赌「不渲染」永远不出 bug。
         setOverview(null);
         setRouting(null);
-        setBusSettings(null);
+        setBusDefs(null);
         setHealth(null);
         return;
       }
       setOverview(ovRes.body);
       setRouting(ovRes.body.routing ?? null);
-      setBusSettings(ovRes.body.busSettings ?? null);
+      setBusDefs(ovRes.body.busDefs ?? null);
       // 健康度只在解锁后才拉 —— 锁定态一个请求都不该发出去。
       // 公开状态页 /status 才是这份数据对外的正门。
       try {
@@ -336,6 +339,16 @@ export default function ManagePage() {
               <span className="muted"> · 每分钟自动</span>
             </span>
           )}
+          {/* 令牌已验证时只留一枚可点的 Tag —— 要换令牌再展开那张卡。 */}
+          <button
+            type="button"
+            className="ds-btn ds-btn--subtle ds-btn--sm"
+            aria-expanded={tokenOpen}
+            title="令牌已验证。需要更换时点开"
+            onClick={() => setTokenOpen((v) => !v)}
+          >
+            🔑 令牌已验证 {tokenOpen ? "▾" : "▸"}
+          </button>
         </div>
         {/* /status 不在全站导航里,/manage 是它唯一的常规入口 —— 所以这条
             链接放在页头而不是只放在健康度区块内:运维在别的 tab 上发现数字
@@ -349,20 +362,22 @@ export default function ManagePage() {
 
       <StatusStrip health={health} overview={overview} onJump={jump} />
 
-      <div
-        className="ds-card"
-        style={{
-          marginBottom: "var(--s-5)",
-          padding: "var(--s-4)",
-          display: "flex",
-          gap: "var(--s-4)",
-          flexWrap: "wrap",
-          alignItems: "flex-end",
-          justifyContent: "space-between",
-        }}
-      >
-        {tokenField}
-      </div>
+      {tokenOpen && (
+        <div
+          className="ds-card"
+          style={{
+            marginBottom: "var(--s-5)",
+            padding: "var(--s-4)",
+            display: "flex",
+            gap: "var(--s-4)",
+            flexWrap: "wrap",
+            alignItems: "flex-end",
+            justifyContent: "space-between",
+          }}
+        >
+          {tokenField}
+        </div>
+      )}
 
       <div style={{ marginBottom: "var(--s-5)" }}>
         <Segmented
@@ -413,7 +428,7 @@ export default function ManagePage() {
           />
           <RoutingMatrix
             routing={routing}
-            busSettings={busSettings}
+            busDefs={busDefs}
             channels={overview?.ops.channels ?? null}
             onJump={jump}
           />

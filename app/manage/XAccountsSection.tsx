@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Tag } from "../ui";
 import { SectionHead } from "./bits";
 import { agoText, authHeaders, timeText } from "./shared";
+import { sectionView } from "./sectionGate";
 
 // 区块:𝕏 播报账号(3-legged OAuth 授权 + 主/备切换)。
 //
@@ -129,8 +130,11 @@ export default function XAccountsSection({ token }: { token: string }) {
   }, [token]);
 
   useEffect(() => {
-    if (token) void load();
-  }, [token, load]);
+    // 不按本地 token 拦 —— 能不能读由服务端说了算(见 ./sectionGate)。
+    void load();
+  }, [load]);
+
+  const view = sectionView(data, error);
 
   // 授权回调带回的结果提示(一次性)。
   useEffect(() => {
@@ -243,11 +247,11 @@ export default function XAccountsSection({ token }: { token: string }) {
         </div>
       ) : null}
 
-      {!token ? (
-        <div className="ds-empty">填入管理令牌后可查看与管理授权账号</div>
-      ) : !data ? (
+      {view.kind === "error" ? (
+        <div className="ds-empty">{view.message}</div>
+      ) : view.kind === "loading" ? (
         <div className="ds-empty">加载中…</div>
-      ) : data.accounts.length === 0 ? (
+      ) : data!.accounts.length === 0 ? (
         <div className="ds-empty">
           尚无授权账号 —— 点右上角「授权新账号」，用要发帖的那个 X
           账号登录并同意
@@ -264,7 +268,7 @@ export default function XAccountsSection({ token }: { token: string }) {
             </tr>
           </thead>
           <tbody>
-            {data.accounts.map((a) => (
+            {view.data.accounts.map((a) => (
               <tr
                 key={a.id}
                 style={a.isActive ? { background: "var(--up-50)" } : undefined}
