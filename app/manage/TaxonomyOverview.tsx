@@ -21,9 +21,12 @@ import { SectionHead } from "./bits";
 export function SignalLinesOverview({
   overview,
   onJump,
+  active,
 }: {
   overview: AdminSignalOverview | null;
   onJump: (section: string) => void;
+  /** 当前展开的子 tab —— 表里高亮对应行,让地图和视口互相咬合。 */
+  active?: string;
 }) {
   const pushed =
     overview?.strategies.filter((s) => s.pushEnabled).length ?? null;
@@ -56,7 +59,7 @@ export function SignalLinesOverview({
       what: "全站原始事件的流水(bus_signals 台账)",
       manage: "逐类型开关 + 阈值(默认全关)",
       dest: "API bus[] · webhook(端点勾选类型)",
-      status: "开关与近 24h 产出见 ③",
+      status: "默认全关;开关与近 24h 产出见子 tab",
       jump: "bus",
     },
   ];
@@ -64,7 +67,7 @@ export function SignalLinesOverview({
     <section className="ds-card" style={{ marginBottom: "var(--s-5)" }}>
       <SectionHead
         title="🧭 三条信号线"
-        hint="与接入文档 §6.1 同一套分类。本表只是地图:管理控件在下方各区块,「可达管线」的接线管理在「下游管线」tab。"
+        hint="与接入文档 §6.1 同一套分类。本表是地图:点行切换下方子 tab;「可达管线」的接线管理在「下游管线」tab。"
       />
       <div className="ds-table-wrap">
         <table className="ds-table ds-table--compact">
@@ -83,8 +86,11 @@ export function SignalLinesOverview({
                 key={l.no}
                 role="button"
                 tabIndex={0}
-                style={{ cursor: "pointer" }}
-                title="跳到对应区块"
+                style={{
+                  cursor: "pointer",
+                  background: active === l.jump ? "var(--brand-50)" : undefined,
+                }}
+                title="切换到该子模块"
                 onClick={() => onJump(l.jump)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") onJump(l.jump);
@@ -111,9 +117,11 @@ export function SignalLinesOverview({
 export function PipelinesOverview({
   overview,
   onJump,
+  active,
 }: {
   overview: AdminSignalOverview | null;
   onJump: (section: string) => void;
+  active?: string;
 }) {
   const keys = overview?.ops.activeKeys ?? null;
   const tgOk = overview?.ops.tg;
@@ -155,7 +163,7 @@ export function PipelinesOverview({
     <section className="ds-card" style={{ marginBottom: "var(--s-5)" }}>
       <SectionHead
         title="🚚 下游管线"
-        hint="信号线(上一个 tab)产出后经这三条管线到达消费者。「承载」列是当前真实接线的转述 —— 引擎改了接线,这里要跟着改。"
+        hint="信号线(上一个 tab)产出后经这三条管线到达消费者。点行切换下方子 tab。「承载」列是当前真实接线的转述 —— 引擎改了接线,这里要跟着改。"
       />
       <div className="ds-table-wrap">
         <table className="ds-table ds-table--compact">
@@ -173,8 +181,11 @@ export function PipelinesOverview({
                 key={p.no}
                 role="button"
                 tabIndex={0}
-                style={{ cursor: "pointer" }}
-                title="跳到对应区块"
+                style={{
+                  cursor: "pointer",
+                  background: active === p.jump ? "var(--brand-50)" : undefined,
+                }}
+                title="切换到该子模块"
                 onClick={() => onJump(p.jump)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") onJump(p.jump);

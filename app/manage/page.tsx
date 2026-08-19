@@ -71,6 +71,22 @@ const SECTION_TAB: Record<string, TabId> = {
   health: "health",
 };
 
+// 两个大 tab 内部各一层子 tab:每次只挂载一个子模块(此前三个区块纵向罗列,
+// 一页三张大表,找东西靠滚)。总览表留在子 tab 之上当地图 —— 点行即切子 tab。
+const LINE_SUBS = [
+  { id: "rules", label: "① 聪明钱动向" },
+  { id: "signals", label: "② 策略信号" },
+  { id: "bus", label: "③ 信号总线" },
+] as const;
+const PIPE_SUBS = [
+  { id: "tg", label: "🅐 Telegram" },
+  { id: "keys", label: "🅑 API key + webhook" },
+  { id: "x", label: "🅒 𝕏 播报" },
+] as const;
+type LineSub = (typeof LINE_SUBS)[number]["id"];
+type PipeSub = (typeof PIPE_SUBS)[number]["id"];
+const SUB_STORAGE_KEY = "manageSubTabs";
+
 const TAB_STORAGE_KEY = "manageTab";
 
 export default function ManagePage() {
@@ -87,6 +103,8 @@ export default function ManagePage() {
   const hydrated = useRef(false);
 
   const [tab, setTab] = useState<TabId>("lines");
+  const [lineSub, setLineSub] = useState<LineSub>("rules");
+  const [pipeSub, setPipeSub] = useState<PipeSub>("tg");
 
   useEffect(() => {
     const saved = window.localStorage.getItem("adminToken") ?? "";
@@ -96,6 +114,20 @@ export default function ManagePage() {
     const savedTab = window.localStorage.getItem(TAB_STORAGE_KEY);
     if (savedTab && TABS.some((x) => x.id === savedTab)) {
       setTab(savedTab as TabId);
+    }
+    // 子 tab 同样跨刷新记忆(运营页常开不关,回到上次看的子模块)。
+    try {
+      const subs = JSON.parse(
+        window.localStorage.getItem(SUB_STORAGE_KEY) ?? "{}",
+      ) as { line?: string; pipe?: string };
+      if (LINE_SUBS.some((x) => x.id === subs.line)) {
+        setLineSub(subs.line as LineSub);
+      }
+      if (PIPE_SUBS.some((x) => x.id === subs.pipe)) {
+        setPipeSub(subs.pipe as PipeSub);
+      }
+    } catch {
+      // 坏存储:保持默认,不抛。
     }
     hydrated.current = true;
   }, []);
@@ -166,14 +198,33 @@ export default function ManagePage() {
   const message = gateMessage(probe, probeToken !== "");
 
   // 状态条上的 chip 点击:切到承载该区块的 tab(切完区块就在首屏,不必再滚动)。
-  // 同 tab 内有多个区块,只切 tab 不滚动等于没跳 —— 切完等目标挂载再滚锚点。
+  const persistSubs = (next: { line?: LineSub; pipe?: PipeSub }) => {
+    try {
+      const cur = JSON.parse(
+        window.localStorage.getItem(SUB_STORAGE_KEY) ?? "{}",
+      ) as Record<string, string>;
+      window.localStorage.setItem(
+        SUB_STORAGE_KEY,
+        JSON.stringify({ ...cur, ...next }),
+      );
+    } catch {
+      window.localStorage.setItem(SUB_STORAGE_KEY, JSON.stringify(next));
+    }
+  };
+  const selectLineSub = (id: LineSub) => {
+    setLineSub(id);
+    persistSubs({ line: id });
+  };
+  const selectPipeSub = (id: PipeSub) => {
+    setPipeSub(id);
+    persistSubs({ pipe: id });
+  };
+
+  // 区块 id → 大 tab + 子 tab。每次只挂载一个子模块,切完即在首屏,无需滚动。
   const jump = (id: string) => {
     selectTab(SECTION_TAB[id] ?? "lines");
-    window.setTimeout(() => {
-      document
-        .getElementById(`sec-${id}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 60);
+    if (LINE_SUBS.some((x) => x.id === id)) selectLineSub(id as LineSub);
+    if (PIPE_SUBS.some((x) => x.id === id)) selectPipeSub(id as PipeSub);
   };
 
   const tokenField = (
@@ -299,34 +350,50 @@ export default function ManagePage() {
           顺带成了「切 tab 即刷新」。 */}
       {tab === "lines" && (
         <>
-          <SignalLinesOverview overview={overview} onJump={jump} />
-          <div id="sec-rules" style={{ scrollMarginTop: "var(--s-6)" }}>
-            <AlertRulesSection token={token} />
+          <SignalLinesOverview
+            overview={overview}
+            onJump={jump}
+            active={lineSub}
+          />
+          <div style={{ marginBottom: "var(--s-4)" }}>
+            <Segmented
+              options={LINE_SUBS.map((x) => ({ value: x.id, label: x.label }))}
+              value={lineSub}
+              onChange={(v) => selectLineSub(v)}
+              ariaLabel="信号线子模块"
+              className="ds-segmented--wrap"
+            />
           </div>
-          <div id="sec-signals" style={{ scrollMarginTop: "var(--s-6)" }}>
+          {lineSub === "rules" && <AlertRulesSection token={token} />}
+          {lineSub === "signals" && (
             <SignalsSection
               token={token}
               overview={overview}
               reload={loadAll}
             />
-          </div>
-          <div id="sec-bus" style={{ scrollMarginTop: "var(--s-6)" }}>
-            <BusTypesSection token={token} />
-          </div>
+          )}
+          {lineSub === "bus" && <BusTypesSection token={token} />}
         </>
       )}
       {tab === "pipes" && (
         <>
-          <PipelinesOverview overview={overview} onJump={jump} />
-          <div id="sec-tg" style={{ scrollMarginTop: "var(--s-6)" }}>
-            <TgTargetsSection token={token} />
+          <PipelinesOverview
+            overview={overview}
+            onJump={jump}
+            active={pipeSub}
+          />
+          <div style={{ marginBottom: "var(--s-4)" }}>
+            <Segmented
+              options={PIPE_SUBS.map((x) => ({ value: x.id, label: x.label }))}
+              value={pipeSub}
+              onChange={(v) => selectPipeSub(v)}
+              ariaLabel="下游管线子模块"
+              className="ds-segmented--wrap"
+            />
           </div>
-          <div id="sec-keys" style={{ scrollMarginTop: "var(--s-6)" }}>
-            <KeysSection token={token} />
-          </div>
-          <div id="sec-x" style={{ scrollMarginTop: "var(--s-6)" }}>
-            <XAccountsSection token={token} />
-          </div>
+          {pipeSub === "tg" && <TgTargetsSection token={token} />}
+          {pipeSub === "keys" && <KeysSection token={token} />}
+          {pipeSub === "x" && <XAccountsSection token={token} />}
         </>
       )}
       {tab === "health" && (
