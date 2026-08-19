@@ -11,7 +11,7 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 378 commits, 2026-06-23 → 2026-08-19. Test suite at the end of that range: 1505 tests across
+Scope: 379 commits, 2026-06-23 → 2026-08-19. Test suite at the end of that range: 1505 tests across
 112 files (`npm test`).
 
 ## Corrections that changed reported numbers
@@ -61,6 +61,8 @@ diverging if you missed one. The zod schema is now the single definition, the ty
 the webhook embeds it, and a regression test computes the expected field set from real data rather
 than hardcoding a list.
 
+Commits: `c088be2`, plus the wrap-up commit.
+
 ### 2026-08-19 — /manage: what it says is what's true now, and the switches are within reach
 
 Three defects, each found by running the page rather than reading it.
@@ -92,6 +94,8 @@ collapsed), against a 900px viewport. `KeysSection` at 795 lines, up against the
 CLAUDE.md, split into 375 + 480 with endpoint registration and operations moving out; the data is
 still fetched once by the parent, since two components fetching separately would double the request
 count against a 30/min per-IP limit.
+
+Commits: `9600b64`.
 
 ### 2026-08-19 — Webhook endpoints: test before you trust, restore without relapse
 
