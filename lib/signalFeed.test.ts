@@ -387,3 +387,96 @@ describe("buildSignalFeed · active[] 的市场 slug", () => {
     expect("slug" in s).toBe(true);
   });
 });
+
+// 2026-08-19:settled[] 补齐与 active[] 同名同义的身份/仓位字段。此前认账
+// 记录只有六项、连 conditionId 都没有,客户端既拼不出市场链接也没法跟自己
+// 那份 active 缓存对上号。
+describe("buildSignalFeed · settled[] 与 active[] 同构", () => {
+  it("同一条信号在两边给出**同一组数字** —— 对上号时不该看到金额变了", () => {
+    const db = openDb(":memory:");
+    const p = consensus({ slug: "mkt-a", eventSlug: "evt-a" });
+    // 一条在窗口内(进 active),一条已结算(进 settled),同市场同方向。
+    insert(db, "consensus", p, NOW - 1 * H);
+    insert(db, "consensus", p, NOW - 20 * H, { won: 1, checkedAt: NOW - 5 * H });
+    const feed = buildSignalFeed(db, { nowSec: NOW });
+    const a = feed.active[0];
+    const s = feed.settled[0];
+    for (const f of [
+      "key",
+      "kind",
+      "conditionId",
+      "title",
+      "slug",
+      "eventSlug",
+      "outcome",
+      "outcomeIndex",
+      "asset",
+      "walletCount",
+      "netUsd",
+    ] as const) {
+      expect(s[f], `字段 ${f} 两边不一致`).toEqual(a[f]);
+    }
+    // entryPrice 就是 active 的 avgPrice —— 同一个数,只是认账区换了个名字。
+    expect(s.entryPrice).toBe(a.avgPrice);
+  });
+
+  it("key 与 active 同构,可直接对上号", () => {
+    const db = openDb(":memory:");
+    insert(db, "consensus", consensus(), NOW - 20 * H, { won: 1 });
+    const [s] = buildSignalFeed(db, { nowSec: NOW }).settled;
+    expect(s.key).toBe(`${s.conditionId}|${s.outcome}`);
+  });
+
+  it("formationTs 是信号**形成**时刻,不是结算时刻", () => {
+    const db = openDb(":memory:");
+    insert(
+      db,
+      "consensus",
+      consensus({ firstTs: NOW - 30 * H }),
+      NOW - 25 * H,
+      { won: 1, checkedAt: NOW - 5 * H },
+    );
+    const [s] = buildSignalFeed(db, { nowSec: NOW }).settled;
+    expect(s.formationTs).toBe(NOW - 30 * H);
+    expect(s.settledAt).toBe(NOW - 5 * H);
+  });
+
+  it("heavy 认账记录的仓位口径与 foldHeavy 一致(单钱包/名义额)", () => {
+    const db = openDb(":memory:");
+    // size 200000 × price 0.4 = 名义额 $80k
+    insert(db, "smart", smart({ slug: "mlb-x" }), NOW - 20 * H, { won: 0 });
+    const [s] = buildSignalFeed(db, { nowSec: NOW }).settled;
+    expect(s.kind).toBe("heavy");
+    expect(s.walletCount).toBe(1);
+    expect(s.netUsd).toBeCloseTo(80_000);
+    expect(s.wallets).toHaveLength(1);
+    expect(s.wallets[0].wallet).toBe("0xheavy"); // 小写化,与 active 同
+    expect(s.slug).toBe("mlb-x");
+  });
+
+  it("consensus 认账记录带钱包明细", () => {
+    const db = openDb(":memory:");
+    insert(db, "consensus", consensus(), NOW - 20 * H, { won: 1 });
+    const [s] = buildSignalFeed(db, { nowSec: NOW }).settled;
+    expect(s.walletCount).toBe(3);
+    expect(s.netUsd).toBe(169830);
+    expect(s.wallets.map((w) => w.wallet)).toEqual(["0xW1", "0xW2"]);
+  });
+
+  it("分类与 active 同一次查询回填,认账区也有 category/subcategory", () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO event_category (event_slug, category, subcategory) VALUES (?,?,?)",
+    ).run("evt-a", "Sports", "NBA");
+    insert(
+      db,
+      "consensus",
+      consensus({ eventSlug: "evt-a" }),
+      NOW - 20 * H,
+      { won: 1 },
+    );
+    const [s] = buildSignalFeed(db, { nowSec: NOW }).settled;
+    expect(s.category).toBe("Sports");
+    expect(s.subcategory).toBe("NBA");
+  });
+});

@@ -86,10 +86,36 @@ export interface Signal {
   sides?: SignalSide[];
 }
 
+/**
+ * 已结算信号(认账区)。2026-08-19 起补齐了与 Signal 同名同义的身份/仓位
+ * 字段:此前这里只有 title/outcome/kind/entryPrice/won/settledAt 六项,
+ * 连 conditionId 都没有 —— 客户端拿一条认账记录既拼不出市场链接、也没法
+ * 跟自己那份 active 缓存对上号,只能当纯文本渲染。载荷里这些字段一直都在
+ * (settled 与 active 解析的是**同一份告警载荷**),纯属没读。
+ *
+ * 唯一没有对应物的是 `avgPrice`:settled 的 `entryPrice` 就是它 —— 同一个
+ * 数、同一处表达式算出来的。不重复放两份,一个对象里两个名字指同一个数,
+ * 读者迟早要问「它们什么时候不一样」,而答案是永远一样。
+ */
 export interface SettledSignal {
-  title: string;
-  outcome: string;
+  /** 与 active 同构的去重键 `<conditionId>|<outcome>`,可直接对上号。 */
+  key: string;
   kind: SignalKind;
+  conditionId: string;
+  title: string;
+  slug: string;
+  eventSlug: string;
+  category: string | null;
+  subcategory: string | null;
+  /** 信号当初形成的时刻(非结算时刻)。结算时刻是 settledAt。 */
+  formationTs: number;
+  outcome: string;
+  outcomeIndex: number | null;
+  asset: string | null;
+  walletCount: number;
+  netUsd: number;
+  wallets: SignalWallet[];
+  /** 进场价 = active 的 avgPrice(成本基准),见上方接口注释。 */
   entryPrice: number;
   won: boolean;
   settledAt: number;
@@ -323,7 +349,9 @@ function foldHeavy(rows: AlertRow[], covered: Set<string>): Signal[] {
 function settledList(db: DB, sinceSec: number): SettledSignal[] {
   const rows = db
     .prepare(
-      `SELECT a.type, a.payload, ao.won, ao.checked_at
+      // created_at 是 heavy 的形成时刻(那一笔成交的时间);consensus 用
+      // 载荷里的 firstTs,与 active 的口径一致。
+      `SELECT a.type, a.payload, a.created_at, ao.won, ao.checked_at
        FROM alerts a JOIN alert_outcomes ao ON ao.alert_id = a.id
        WHERE a.type IN ('consensus','smart') AND ao.won IS NOT NULL
          AND ao.checked_at >= ?
@@ -332,6 +360,7 @@ function settledList(db: DB, sinceSec: number): SettledSignal[] {
     .all(sinceSec) as {
     type: string;
     payload: string;
+    created_at: number;
     won: number;
     checked_at: number;
   }[];
@@ -345,10 +374,41 @@ function settledList(db: DB, sinceSec: number): SettledSignal[] {
     seen.add(key);
     const entry = p.price ?? p.avgBuyPrice;
     if (typeof entry !== "number") continue;
+    const isConsensus = r.type === "consensus";
+    // 仓位口径按 kind 分流,与 foldConsensus / foldHeavy 逐字对齐 ——
+    // 同一条信号在 active 与 settled 里必须是同一组数字,否则客户端把两边
+    // 对上号时会看到「金额变了」。
+    const notional = (p.size ?? 0) * (p.price ?? 0);
     out.push({
+      key,
+      kind: isConsensus ? "consensus" : "heavy",
+      conditionId: p.conditionId,
       title: p.title ?? "",
+      slug: p.slug ?? "",
+      eventSlug: p.eventSlug ?? "",
+      // category/subcategory 由 buildSignalFeed 统一回填(与 active 共用
+      // 同一次 event_category 查询,不为认账区多打一次库)。
+      category: null,
+      subcategory: null,
+      formationTs: isConsensus ? (p.firstTs ?? r.created_at) : r.created_at,
       outcome: p.outcome,
-      kind: r.type === "consensus" ? "consensus" : "heavy",
+      outcomeIndex: p.outcomeIndex ?? null,
+      asset: p.asset ?? null,
+      walletCount: isConsensus ? (p.walletCount ?? p.wallets?.length ?? 0) : 1,
+      netUsd: isConsensus ? (p.totalNetUsd ?? 0) : notional,
+      wallets: isConsensus
+        ? (p.wallets ?? []).map((w) => ({
+            wallet: w.wallet ?? "",
+            netUsd: w.netUsd ?? 0,
+            avgPrice: w.avgBuyPrice ?? 0,
+          }))
+        : [
+            {
+              wallet: (p.proxyWallet ?? "").toLowerCase(),
+              netUsd: notional,
+              avgPrice: p.price ?? 0,
+            },
+          ],
       entryPrice: entry,
       won: r.won === 1,
       settledAt: r.checked_at,
@@ -411,11 +471,15 @@ export function buildSignalFeed(
     ...foldHeavy(selectAlerts(db, ["smart"], activeSince), covered),
   ];
 
-  const cats = categoriesFor(
-    db,
-    active.map((s) => s.eventSlug),
-  );
-  for (const s of active) {
+  const settled = settledList(db, nowSec - SETTLED_DAYS * 86_400);
+
+  // 一次查询覆盖两个列表:认账区补分类是 2026-08-19 加的,不该为此多打一次
+  // 库 —— categoriesFor 内部已按 slug 去重,两边合并传入即可。
+  const cats = categoriesFor(db, [
+    ...active.map((s) => s.eventSlug),
+    ...settled.map((s) => s.eventSlug),
+  ]);
+  for (const s of [...active, ...settled]) {
     s.category = cats[s.eventSlug]?.category ?? null;
     s.subcategory = cats[s.eventSlug]?.subcategory ?? null;
   }
@@ -430,7 +494,7 @@ export function buildSignalFeed(
     windowHours,
     heavyMinUsd: HEAVY_MIN_USD,
     active,
-    settled: settledList(db, nowSec - SETTLED_DAYS * 86_400),
+    settled,
     record30d: feedRecord(db, nowSec - RECORD_DAYS * 86_400),
   };
 }

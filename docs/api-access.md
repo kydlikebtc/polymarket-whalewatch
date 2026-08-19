@@ -408,25 +408,62 @@ interface SignalSide {
 
 近 **3 天**，同一市场 × 方向只取最新一条，**最多 20 条**。
 
-| 字段         | 类型         | 中文名   | 含义                                                            |
-| ------------ | ------------ | -------- | --------------------------------------------------------------- |
-| `title`      | string       | 市场问题 | —                                                               |
-| `outcome`    | string       | 方向     | 当初看好的那个结果                                              |
-| `kind`       | `SignalKind` | 信号种类 | 这里只会是 `consensus` 或 `heavy`（`split` 无方向，无从判对错） |
-| `entryPrice` | number       | 进场价   | 当初的成交价或共识加权均价（`0`–`1`）                           |
-| `won`        | boolean      | 是否命中 | 该方向最终是否成真                                              |
-| `settledAt`  | number       | 结算时刻 | unix 秒                                                         |
+**与 `active[]` 同构**：身份与仓位字段同名同义、取值相同，所以一条认账记录
+可以直接用 `key` 跟你缓存里的 active 条目对上号，也可以复用同一个卡片组件
+渲染。差别只在末尾三项（`entryPrice` / `won` / `settledAt`）。
+
+| 字段           | 类型             | 中文名   | 含义                                                        |
+| -------------- | ---------------- | -------- | ----------------------------------------------------------- |
+| `key`          | string           | 去重键   | `<conditionId>\|<outcome>`，与 `active[].key` 同构          |
+| `kind`         | `SignalKind`     | 信号种类 | 只会是 `consensus` 或 `heavy`（`split` 无方向，无从判对错） |
+| `conditionId`  | string           | 市场 ID  | —                                                           |
+| `title`        | string           | 市场问题 | 原文（英文）                                                |
+| `slug`         | string           | 市场短名 | 拼**这一个市场**的页面 URL 用                               |
+| `eventSlug`    | string           | 事件短名 | 拼**事件**页 URL 用                                         |
+| `category`     | string \| null   | 一级分类 | 如 `Politics` / `Sports`；未知为 `null`                     |
+| `subcategory`  | string \| null   | 二级分类 | 如 `NBA` / `Bitcoin`；无或未知为 `null`                     |
+| `formationTs`  | number           | 形成时刻 | 信号当初**成立**的时刻。**不是**结算时刻                    |
+| `outcome`      | string           | 方向     | 当初看好的那个结果                                          |
+| `outcomeIndex` | number \| null   | 方向序号 | —                                                           |
+| `asset`        | string \| null   | 代币 ID  | CLOB token id                                               |
+| `walletCount`  | number           | 钱包数   | `heavy` 恒为 `1`                                            |
+| `netUsd`       | number           | 净买入额 | USD。口径与 `active[].netUsd` 完全一致                      |
+| `wallets`      | `SignalWallet[]` | 钱包明细 | 结构同 `active[].wallets`                                   |
+| `entryPrice`   | number           | 进场价   | **等同于 `active[].avgPrice`**（成本基准），见下            |
+| `won`          | boolean          | 是否命中 | 该方向最终是否成真                                          |
+| `settledAt`    | number           | 结算时刻 | unix 秒                                                     |
+
+> **为什么没有 `avgPrice`？** `entryPrice` 就是它——同一个数、同一处表达式
+> 算出来的。一个对象里放两个名字指同一个数，读者迟早要问「它们什么时候不
+> 一样」，而答案是永远一样。复用 active 的卡片组件时把 `entryPrice` 映射到
+> `avgPrice` 即可。
 
 ```typescript
 interface SettledSignal {
-  title: string;
-  outcome: string;
+  key: string;
   kind: SignalKind;
+  conditionId: string;
+  title: string;
+  slug: string;
+  eventSlug: string;
+  category: string | null;
+  subcategory: string | null;
+  formationTs: number;
+  outcome: string;
+  outcomeIndex: number | null;
+  asset: string | null;
+  walletCount: number;
+  netUsd: number;
+  wallets: SignalWallet[];
   entryPrice: number;
   won: boolean;
   settledAt: number;
 }
 ```
+
+> 一条信号**可以同时出现在 `active[]` 与 `settled[]` 里**：前者的窗口按
+> `windowHours` 算、不问结算与否，后者按结算时刻回看 3 天。同一 `key` 在两
+> 边都出现时，它们描述的是同一笔仓位的两个阶段，不是两条信号。
 
 ### 6.6 `record30d` — 30 天价格调整战绩
 
@@ -1054,13 +1091,14 @@ webhook 端点同时失效。
 
 ## 13. 变更记录
 
-| 日期       | 变更                                                                                                                                                                                                                       |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-19 | `active[]` 新增 `slug`（单市场短名，additive）—— 此前只有 `eventSlug`，一个事件下挂几十个市场时链接落不到信号说的那一个                                                                                                    |
-| 2026-08-19 | 新增 §4.1「当前开放状态」——**由页面渲染时读取当前开关实时生成**，不再是手写快照（运营者一拨开关文档就撒谎）。markdown 只保留系统能力全集，「此刻开着什么」由 `lib/apiDocsStatus` 查库回答                                  |
-| 2026-08-18 | 字段级详解：每个对象补「字段／类型／中文名／含义」表；新增 §6.1 信号体系总览、§6.7.1 六个检测器族、§6.7.2 19 档名录、白名单准入闸与 `score` 构成、`bus` 三类 payload 逐字段说明。§6 内部小节重编号（原 6.1–6.6 → 6.3–6.8） |
-| 2026-08-18 | 失败响应补齐 `heavyMinUsd` 与 `staleLoops`，字段集合与成功响应完全一致（此前缺这两个字段，§6.3 的类型现在对两条路径都成立）                                                                                                |
-| 2026-08-18 | 校准至当前实现：补 `bus[]` / webhook / 公开端点章节；修正 `record30d` 量纲（条数而非比率）与 `recordByStrategy` 键（strategy id 而非档名）；补齐全部字段的 TypeScript 类型与单位约定                                       |
-| 2026-08-13 | 新增 `bus[]`（统一信号总线）与 key 的订阅范围过滤                                                                                                                                                                          |
-| 2026-08-13 | 新增 webhook 推送、`/api/record` 公开战绩与每日存证链                                                                                                                                                                      |
-| 2026-08-13 | 新增 `strategies` 段与 `delayed` tier；`api_keys` 多租户鉴权                                                                                                                                                               |
+| 日期       | 变更                                                                                                                                                                                                                                                                                   |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-19 | `settled[]` 补齐与 `active[]` 同名同义的身份/仓位字段（`key`/`conditionId`/`slug`/`eventSlug`/`category`/`subcategory`/`formationTs`/`outcomeIndex`/`asset`/`walletCount`/`netUsd`/`wallets`，全部 additive）—— 此前只有 6 项，连 `conditionId` 都没有，认账记录既拼不出链接也对不上号 |
+| 2026-08-19 | `active[]` 新增 `slug`（单市场短名，additive）—— 此前只有 `eventSlug`，一个事件下挂几十个市场时链接落不到信号说的那一个                                                                                                                                                                |
+| 2026-08-19 | 新增 §4.1「当前开放状态」——**由页面渲染时读取当前开关实时生成**，不再是手写快照（运营者一拨开关文档就撒谎）。markdown 只保留系统能力全集，「此刻开着什么」由 `lib/apiDocsStatus` 查库回答                                                                                              |
+| 2026-08-18 | 字段级详解：每个对象补「字段／类型／中文名／含义」表；新增 §6.1 信号体系总览、§6.7.1 六个检测器族、§6.7.2 19 档名录、白名单准入闸与 `score` 构成、`bus` 三类 payload 逐字段说明。§6 内部小节重编号（原 6.1–6.6 → 6.3–6.8）                                                             |
+| 2026-08-18 | 失败响应补齐 `heavyMinUsd` 与 `staleLoops`，字段集合与成功响应完全一致（此前缺这两个字段，§6.3 的类型现在对两条路径都成立）                                                                                                                                                            |
+| 2026-08-18 | 校准至当前实现：补 `bus[]` / webhook / 公开端点章节；修正 `record30d` 量纲（条数而非比率）与 `recordByStrategy` 键（strategy id 而非档名）；补齐全部字段的 TypeScript 类型与单位约定                                                                                                   |
+| 2026-08-13 | 新增 `bus[]`（统一信号总线）与 key 的订阅范围过滤                                                                                                                                                                                                                                      |
+| 2026-08-13 | 新增 webhook 推送、`/api/record` 公开战绩与每日存证链                                                                                                                                                                                                                                  |
+| 2026-08-13 | 新增 `strategies` 段与 `delayed` tier；`api_keys` 多租户鉴权                                                                                                                                                                                                                           |
