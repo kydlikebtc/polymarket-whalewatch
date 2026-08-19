@@ -18,27 +18,27 @@ export type XPostKind =
 export const X_KINDS: { kind: XPostKind; label: string; hint: string }[] = [
   {
     kind: "whale",
-    label: "巨鲸大单",
+    label: "① 巨鲸大单(事件)",
     hint: "单笔成交额超过阈值即发。量最大,也最容易吃满日配额",
   },
   {
     kind: "consensus",
-    label: "聪明钱共识",
+    label: "① 聪明钱共识(事件)",
     hint: "多个白名单钱包同向买入同一结果。稀有且独家,优先级最高",
   },
   {
     kind: "pregame",
-    label: "赛前聚合",
+    label: "赛前聚合(市场汇总,非信号线)",
     hint: "结算前 1-6 小时的高热市场汇总,蹭事件峰值流量。每日至多 3 条",
   },
   {
     kind: "weekly",
-    label: "周报成绩单",
+    label: "周报成绩单(非信号线)",
     hint: "每周一图卡 + 站点链接。全家桶里唯一带链接的帖($0.20)",
   },
   {
     kind: "settled",
-    label: "结算战报",
+    label: "② 结算战报(策略事件)",
     hint: "对已发过的信号帖回复战果(赢输都发),形成「说了什么 → 后来怎样」的 thread。只回自己的帖",
   },
 ];

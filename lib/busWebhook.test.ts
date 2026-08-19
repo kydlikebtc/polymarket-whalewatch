@@ -354,3 +354,82 @@ describe("runBusWebhookCycle · 窗口纪律", () => {
     expect(r2.sent).toBe(3);
   });
 });
+
+describe("runBusWebhookCycle · 信号定义级订阅(def:<id>)", () => {
+  it("端点只订某个定义时,仅命中该定义阈值的事件被投", async () => {
+    const db = openDb(":memory:");
+    const keyId = seedKey(db);
+    const { createBusDef } = await import("./busDefs");
+    createBusDef(db, { sourceType: "large", label: "大额", threshold: 50_000 });
+    const huge = createBusDef(db, {
+      sourceType: "large",
+      label: "巨额",
+      threshold: 500_000,
+    });
+    registerWebhook(
+      db,
+      {
+        apiKeyId: keyId,
+        url: "https://a/h",
+        secret: "s".repeat(16),
+        busTypes: [`def:${huge}`],
+      },
+      NOW - 500,
+    );
+    insertBus(db, { payload: { usd: 120_000 }, emittedAt: NOW - 90 });
+    insertBus(db, { payload: { usd: 900_000 }, emittedAt: NOW - 30 });
+    const calls: string[] = [];
+    const fetchFn = (async (_u: unknown, init?: RequestInit) => {
+      calls.push(String(init?.body));
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+    const r = await runBusWebhookCycle(db, { nowSec: NOW, fetchFn });
+    expect(r.sent).toBe(1);
+    const ev = JSON.parse(calls[0]) as { bus: { payload: { usd: number } } };
+    expect(ev.bus.payload.usd).toBe(900_000);
+  });
+
+  it("订整个类型 = 全部定义命中的事件都投(类型名与 def 引用可并存)", async () => {
+    const db = openDb(":memory:");
+    const keyId = seedKey(db);
+    const { createBusDef } = await import("./busDefs");
+    createBusDef(db, { sourceType: "large", label: "大额", threshold: 50_000 });
+    registerWebhook(
+      db,
+      {
+        apiKeyId: keyId,
+        url: "https://a/h",
+        secret: "s".repeat(16),
+        busTypes: ["large"],
+      },
+      NOW - 500,
+    );
+    insertBus(db, { payload: { usd: 120_000 }, emittedAt: NOW - 90 });
+    insertBus(db, { payload: { usd: 900_000 }, emittedAt: NOW - 30 });
+    const r = await runBusWebhookCycle(db, { nowSec: NOW, fetchFn: okFetch() });
+    expect(r.sent).toBe(2);
+  });
+
+  it("def 引用受 key 类型授权约束:key 无权类型下的 def 不投(交集兜底)", async () => {
+    const db = openDb(":memory:");
+    const keyId = seedKey(db, ["strategy"]); // key 只授权策略
+    const { createBusDef } = await import("./busDefs");
+    const d = createBusDef(db, {
+      sourceType: "large",
+      label: "大额",
+      threshold: 0,
+    });
+    db.prepare(
+      "INSERT INTO webhook_endpoints (api_key_id, url, secret, created_at, bus_types) VALUES (?, ?, ?, ?, ?)",
+    ).run(
+      keyId,
+      "https://a/h",
+      "s".repeat(16),
+      NOW - 500,
+      JSON.stringify([`def:${d}`]),
+    );
+    insertBus(db, { payload: { usd: 900_000 } });
+    const r = await runBusWebhookCycle(db, { nowSec: NOW, fetchFn: okFetch() });
+    expect(r.sent).toBe(0);
+  });
+});

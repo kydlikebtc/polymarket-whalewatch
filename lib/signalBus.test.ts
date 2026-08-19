@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { openDb, type DB } from "./db";
+import { createBusDef } from "./busDefs";
 import { recordAlert } from "./seen";
 import {
   BUS_TYPES,
@@ -116,7 +117,7 @@ describe("getBusSettings / setBusSettings", () => {
 });
 
 describe("projectBusSignals", () => {
-  it("关闭的类型不写入总线(省表也省投递配额)", () => {
+  it("无启用信号定义的类型不写入总线(省表也省投递配额)", () => {
     const db = openDb(":memory:");
     whaleAlert(db, "a", 200_000, NOW - 60);
     expect(projectBusSignals(db, NOW).written).toBe(0);
@@ -125,10 +126,7 @@ describe("projectBusSignals", () => {
 
   it("大单:按各自阈值投影,低于阈值的不进总线", () => {
     const db = openDb(":memory:");
-    setBusSettings(db, {
-      ...DEFAULT_BUS_SETTINGS,
-      large: { enabled: true, minUsd: 100_000 },
-    });
+    createBusDef(db, { sourceType: "large", label: "默认", threshold: 100_000 });
     whaleAlert(db, "big", 200_000, NOW - 60);
     whaleAlert(db, "small", 20_000, NOW - 50);
     expect(projectBusSignals(db, NOW).written).toBe(1);
@@ -143,10 +141,7 @@ describe("projectBusSignals", () => {
 
   it("幂等:同一告警投影两次只留一行", () => {
     const db = openDb(":memory:");
-    setBusSettings(db, {
-      ...DEFAULT_BUS_SETTINGS,
-      large: { enabled: true, minUsd: 10_000 },
-    });
+    createBusDef(db, { sourceType: "large", label: "默认", threshold: 10_000 });
     whaleAlert(db, "a", 50_000, NOW - 60);
     expect(projectBusSignals(db, NOW).written).toBe(1);
     expect(projectBusSignals(db, NOW).written).toBe(0);
@@ -155,10 +150,7 @@ describe("projectBusSignals", () => {
 
   it("共识:按最少钱包数阈值过滤", () => {
     const db = openDb(":memory:");
-    setBusSettings(db, {
-      ...DEFAULT_BUS_SETTINGS,
-      consensus: { enabled: true, minWallets: 3 },
-    });
+    createBusDef(db, { sourceType: "consensus", label: "默认", threshold: 3 });
     consensusAlert(db, 2, NOW - 100);
     consensusAlert(db, 4, NOW - 50);
     expect(projectBusSignals(db, NOW).written).toBe(1);
@@ -169,10 +161,7 @@ describe("projectBusSignals", () => {
 
   it("发现:新入池的白名单成员进总线", () => {
     const db = openDb(":memory:");
-    setBusSettings(db, {
-      ...DEFAULT_BUS_SETTINGS,
-      discovery: { enabled: true, minScore: 60 },
-    });
+    createBusDef(db, { sourceType: "discovery", label: "默认", threshold: 60 });
     db.prepare(
       "INSERT INTO smart_wallets (address, score, is_whitelist, source, updated_at) VALUES (?,?,?,?,?)",
     ).run("0xnew", 88, 1, "discovered:splitter", NOW - 100);
@@ -188,10 +177,7 @@ describe("projectBusSignals", () => {
 
   it("只投影窗口内的新事件(不把历史一次性灌进总线)", () => {
     const db = openDb(":memory:");
-    setBusSettings(db, {
-      ...DEFAULT_BUS_SETTINGS,
-      large: { enabled: true, minUsd: 10_000 },
-    });
+    createBusDef(db, { sourceType: "large", label: "默认", threshold: 10_000 });
     whaleAlert(db, "ancient", 99_000, NOW - 30 * 86400);
     whaleAlert(db, "fresh", 99_000, NOW - 60);
     expect(projectBusSignals(db, NOW).written).toBe(1);
@@ -201,10 +187,7 @@ describe("projectBusSignals", () => {
 
   it("只读本地表 —— 投影期间不得有任何上游请求", () => {
     const db = openDb(":memory:");
-    setBusSettings(db, {
-      ...DEFAULT_BUS_SETTINGS,
-      large: { enabled: true, minUsd: 10_000 },
-    });
+    createBusDef(db, { sourceType: "large", label: "默认", threshold: 10_000 });
     whaleAlert(db, "a", 50_000, NOW - 60);
     const origFetch = globalThis.fetch;
     let called = 0;

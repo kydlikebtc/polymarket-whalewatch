@@ -359,6 +359,24 @@ export function webhookWantsType(
     : ep.selectedTypes.includes(type);
 }
 
+/**
+ * bus 事件行级判定(2026-08-19,信号定义):端点选择里
+ *   - 类型名(如 "large")= 订该类型**全部**定义;
+ *   - "def:<id>"        = 只订匹配该定义的事件。
+ * key 的授权仍是类型级(busTypeAllowed)—— 定义只是类型内的路由细分,
+ * 选了 key 无权类型下的定义照样不投(交集纪律与类型级一致)。
+ */
+export function webhookWantsBusRow(
+  ep: Pick<WebhookEndpoint, "busTypes" | "selectedTypes">,
+  row: { sourceType: string },
+  matchedDefIds: number[],
+): boolean {
+  if (!busTypeAllowed(ep.busTypes, row.sourceType)) return false;
+  if (ep.selectedTypes == null) return false; // 存量端点 = 仅策略信号
+  if (ep.selectedTypes.includes(row.sourceType)) return true;
+  return matchedDefIds.some((id) => ep.selectedTypes!.includes(`def:${id}`));
+}
+
 export function registerWebhook(
   db: DB,
   opts: {

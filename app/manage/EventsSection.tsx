@@ -28,7 +28,13 @@ interface BusTypeMeta {
   threshold?: { key: string; label: string; unit: string };
 }
 
-type BusSetting = { enabled: boolean } & Record<string, boolean | number>;
+interface BusDefRow {
+  id: number;
+  sourceType: string;
+  label: string;
+  threshold: number;
+  enabled: boolean;
+}
 
 interface EventLedgerRow {
   id: number;
@@ -118,7 +124,7 @@ const TYPE_LABEL: Record<string, string> = {
 
 export default function EventsSection({ token }: { token: string }) {
   const [types, setTypes] = useState<BusTypeMeta[] | null>(null);
-  const [settings, setSettings] = useState<Record<string, BusSetting>>({});
+  const [defs, setDefs] = useState<BusDefRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [routing, setRouting] = useState<RoutingState | null>(null);
   const [ledger, setLedger] = useState<EventLedgerRow[] | null>(null);
@@ -135,7 +141,7 @@ export default function EventsSection({ token }: { token: string }) {
       });
       const j = (await res.json()) as {
         busTypes?: BusTypeMeta[];
-        busSettings?: Record<string, BusSetting>;
+        busDefs?: BusDefRow[];
         busCounts24h?: Record<string, number>;
         routing?: RoutingState;
         eventLedger?: EventLedgerRow[];
@@ -146,7 +152,7 @@ export default function EventsSection({ token }: { token: string }) {
         return;
       }
       setTypes(j.busTypes ?? []);
-      setSettings(j.busSettings ?? {});
+      setDefs(j.busDefs ?? []);
       setCounts(j.busCounts24h ?? {});
       setRouting(j.routing ?? null);
       setLedger(j.eventLedger ?? []);
@@ -169,14 +175,14 @@ export default function EventsSection({ token }: { token: string }) {
         body: JSON.stringify(body),
       });
       const j = (await res.json()) as {
-        busSettings?: Record<string, BusSetting>;
+        busDefs?: BusDefRow[];
         error?: string;
       };
       if (j.error) {
         setError(j.error);
         return;
       }
-      if (j.busSettings) setSettings(j.busSettings);
+      if (j.busDefs) setDefs(j.busDefs);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -208,67 +214,82 @@ export default function EventsSection({ token }: { token: string }) {
       ) : !types ? (
         <div className="ds-empty">加载中…</div>
       ) : (
-        <div className="ds-table-wrap" style={{ marginBottom: "var(--s-5)" }}>
-          <table className="ds-table ds-table--compact">
-            <thead>
-              <tr>
-                <th>事件类型</th>
-                <th>总线开关</th>
-                <th>阈值</th>
-                <th>管线归属（属主开关）</th>
-                <th className="is-right">近 24h</th>
-              </tr>
-            </thead>
-            <tbody>
-              {types.map((t) => {
-                const st = settings[t.type];
-                const on = st?.enabled === true;
-                const thrKey = t.threshold?.key;
-                const cur =
-                  thrKey && st && typeof st[thrKey] === "number"
-                    ? String(st[thrKey])
-                    : "";
-                return (
-                  <tr
-                    key={t.type}
-                    style={on ? { background: "var(--up-50)" } : undefined}
-                  >
-                    <td data-label="类型" style={{ minWidth: 180 }}>
-                      <div style={{ display: "grid", gap: 2 }}>
-                        <span style={{ fontWeight: 500 }}>
-                          {t.label}{" "}
-                          {!t.available ? (
-                            <Tag variant="warn">待接入</Tag>
-                          ) : null}
-                        </span>
-                        <span className="ds-hint">{t.hint}</span>
+        <div style={{ display: "grid", gap: "var(--s-4)", marginBottom: "var(--s-5)" }}>
+          {types.map((t) => {
+            const typeDefs = defs.filter((d) => d.sourceType === t.type);
+            const anyOn = typeDefs.some((d) => d.enabled);
+            return (
+              <div
+                key={t.type}
+                className="ds-card"
+                style={{
+                  padding: "var(--s-4)",
+                  background: anyOn ? "var(--up-50)" : "var(--n-50)",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: "var(--s-3)",
+                    flexWrap: "wrap",
+                    marginBottom: "var(--s-2)",
+                  }}
+                >
+                  <div style={{ display: "grid", gap: 2 }}>
+                    <span style={{ fontWeight: 500 }}>
+                      {t.label}{" "}
+                      {!t.available ? <Tag variant="warn">待接入</Tag> : null}
+                      {t.available && (
+                        <Tag variant={anyOn ? "up" : undefined}>
+                          {anyOn
+                            ? `${typeDefs.filter((d) => d.enabled).length} 档启用`
+                            : "关(无启用定义)"}
+                        </Tag>
+                      )}
+                    </span>
+                    <span className="ds-hint">{t.hint}</span>
+                  </div>
+                  <div className="ds-hint" style={{ textAlign: "right" }}>
+                    <div className="num">近 24h 事件 {counts[t.type] ?? 0}</div>
+                    {routing && t.available && (
+                      <div style={{ marginTop: 4 }}>
+                        {pipeCells(t.type, routing, anyOn).map((c) => (
+                          <div key={c.pipe} title={`属主:${c.owner}`}>
+                            {c.pipe} {c.state}
+                          </div>
+                        ))}
                       </div>
-                    </td>
-                    <td data-label="总线开关">
-                      <button
-                        className={`ds-btn ds-btn--sm ${on ? "ds-btn--danger" : "ds-btn--primary"}`}
-                        disabled={busy === t.type || !t.available}
-                        title={
-                          t.available
-                            ? "控制该类型是否进入可推送台账(bus[] 与 webhook)"
-                            : "该类信号目前仅在页面实时计算,尚未落库"
-                        }
-                        onClick={() => {
-                          if (
-                            !on &&
-                            !window.confirm(
-                              `确认开启「${t.label}」并开始投递给订阅方？`,
-                            )
-                          )
-                            return;
-                          void post({ busType: t.type, enabled: !on }, t.type);
+                    )}
+                  </div>
+                </div>
+
+                {t.available && (
+                  <>
+                    {/* 同一类型可多档:各档独立阈值/启停,可被 webhook 端点
+                        以 def:<id> 单独订阅(🅑 登记时选)。 */}
+                    {typeDefs.map((d) => (
+                      <div
+                        key={d.id}
+                        style={{
+                          display: "flex",
+                          gap: "var(--s-3)",
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                          padding: "var(--s-2) 0",
+                          borderTop: "1px solid var(--n-150)",
                         }}
                       >
-                        {on ? "关闭" : "开启"}
-                      </button>
-                    </td>
-                    <td data-label="阈值">
-                      {t.threshold ? (
+                        <span
+                          className="mono ds-hint"
+                          style={{ minWidth: 56 }}
+                          title="webhook 端点可用 def:<id> 单独订阅这一档"
+                        >
+                          def:{d.id}
+                        </span>
+                        <span style={{ minWidth: 90, fontWeight: 500 }}>
+                          {d.label}
+                        </span>
                         <span
                           style={{
                             display: "inline-flex",
@@ -276,60 +297,161 @@ export default function EventsSection({ token }: { token: string }) {
                             alignItems: "center",
                           }}
                         >
+                          <span className="ds-hint">≥</span>
                           <input
                             className="ds-input ds-input--mono"
                             style={{ width: 100 }}
                             inputMode="numeric"
-                            value={draft[t.type] ?? cur}
-                            disabled={!t.available}
+                            value={draft[`d${d.id}`] ?? String(d.threshold)}
                             onChange={(e) =>
-                              setDraft((d) => ({
-                                ...d,
-                                [t.type]: e.target.value,
+                              setDraft((x) => ({
+                                ...x,
+                                [`d${d.id}`]: e.target.value,
                               }))
                             }
                             onBlur={() => {
-                              const v = Number(draft[t.type] ?? cur);
-                              if (!Number.isFinite(v) || String(v) === cur)
+                              const v = Number(
+                                draft[`d${d.id}`] ?? d.threshold,
+                              );
+                              if (!Number.isFinite(v) || v === d.threshold)
                                 return;
                               void post(
-                                { busType: t.type, threshold: v },
-                                t.type,
+                                { defAction: "update", id: d.id, threshold: v },
+                                `d${d.id}`,
                               );
                             }}
                           />
-                          <span className="ds-hint">{t.threshold.unit}</span>
+                          <span className="ds-hint">
+                            {t.threshold?.unit ?? ""}
+                          </span>
                         </span>
-                      ) : (
-                        <span className="muted">—</span>
-                      )}
-                    </td>
-                    <td data-label="管线">
-                      {routing && t.available ? (
-                        <div style={{ display: "grid", gap: 2 }}>
-                          {pipeCells(t.type, routing, on).map((c) => (
-                            <span
-                              key={c.pipe}
-                              className="ds-hint"
-                              title={`属主:${c.owner}`}
-                              style={{ whiteSpace: "nowrap" }}
-                            >
-                              {c.pipe} {c.state}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="muted">—</span>
-                      )}
-                    </td>
-                    <td className="mono is-right" data-label="近 24h">
-                      {counts[t.type] ?? 0}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                        <button
+                          className={`ds-btn ds-btn--sm ${d.enabled ? "ds-btn--danger" : "ds-btn--primary"}`}
+                          disabled={busy === `d${d.id}`}
+                          onClick={() => {
+                            if (
+                              !d.enabled &&
+                              !window.confirm(
+                                `确认启用「${t.label} · ${d.label}」并开始投递给订阅方？`,
+                              )
+                            )
+                              return;
+                            void post(
+                              {
+                                defAction: "update",
+                                id: d.id,
+                                enabled: !d.enabled,
+                              },
+                              `d${d.id}`,
+                            );
+                          }}
+                        >
+                          {d.enabled ? "停用" : "启用"}
+                        </button>
+                        <button
+                          className="ds-btn ds-btn--sm ds-btn--subtle"
+                          disabled={busy === `d${d.id}`}
+                          onClick={() => {
+                            if (
+                              !window.confirm(
+                                `删除定义「${d.label}」？订了 def:${d.id} 的端点将不再收到事件(端点配置不会被自动改写)。`,
+                              )
+                            )
+                              return;
+                            void post(
+                              { defAction: "delete", id: d.id },
+                              `d${d.id}`,
+                            );
+                          }}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    ))}
+
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "var(--s-3)",
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                        paddingTop: "var(--s-2)",
+                        borderTop:
+                          typeDefs.length > 0
+                            ? "1px solid var(--n-150)"
+                            : undefined,
+                      }}
+                    >
+                      <input
+                        className="ds-input"
+                        style={{ width: 130 }}
+                        placeholder="新档名(如 巨额)"
+                        value={draft[`nl:${t.type}`] ?? ""}
+                        onChange={(e) =>
+                          setDraft((x) => ({
+                            ...x,
+                            [`nl:${t.type}`]: e.target.value,
+                          }))
+                        }
+                      />
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          gap: 6,
+                          alignItems: "center",
+                        }}
+                      >
+                        <span className="ds-hint">≥</span>
+                        <input
+                          className="ds-input ds-input--mono"
+                          style={{ width: 100 }}
+                          inputMode="numeric"
+                          placeholder="阈值"
+                          value={draft[`nt:${t.type}`] ?? ""}
+                          onChange={(e) =>
+                            setDraft((x) => ({
+                              ...x,
+                              [`nt:${t.type}`]: e.target.value,
+                            }))
+                          }
+                        />
+                        <span className="ds-hint">
+                          {t.threshold?.unit ?? ""}
+                        </span>
+                      </span>
+                      <button
+                        className="ds-btn ds-btn--sm ds-btn--primary"
+                        disabled={
+                          busy === `new:${t.type}` ||
+                          !(draft[`nl:${t.type}`] ?? "").trim() ||
+                          !Number.isFinite(Number(draft[`nt:${t.type}`]))
+                        }
+                        onClick={() => {
+                          void post(
+                            {
+                              defAction: "create",
+                              sourceType: t.type,
+                              label: (draft[`nl:${t.type}`] ?? "").trim(),
+                              threshold: Number(draft[`nt:${t.type}`]),
+                            },
+                            `new:${t.type}`,
+                          ).then(() =>
+                            setDraft((x) => ({
+                              ...x,
+                              [`nl:${t.type}`]: "",
+                              [`nt:${t.type}`]: "",
+                            })),
+                          );
+                        }}
+                      >
+                        + 添加档
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

@@ -34,22 +34,22 @@ export const DEFAULT_TG_KINDS: TgKinds = {
 export const TG_KINDS: { kind: TgKind; label: string; hint: string }[] = [
   {
     kind: "large",
-    label: "🐳 大额成交",
+    label: "① 🐳 大额成交(事件)",
     hint: "单笔达阈值的大单/巨鲸/聪明钱告警。量最大的一类",
   },
   {
     kind: "consensus",
-    label: "🔥 聪明钱共识",
+    label: "① 🔥 聪明钱共识(事件)",
     hint: "多个白名单钱包同向买入同一结果。稀有且独家",
   },
   {
     kind: "strategy",
-    label: "📡 策略信号",
+    label: "② 📡 策略信号(事件)",
     hint: "策略档位的进出场信号。可配延迟做免费/付费分层",
   },
   {
     kind: "ops",
-    label: "🩺 运维通知",
+    label: "🩺 运维通知(非信号)",
     hint: "每日自检、断更报警、webhook 熔断、存证摘要。建议只发给自己",
   },
 ];

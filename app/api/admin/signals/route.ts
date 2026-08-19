@@ -7,6 +7,12 @@ import {
   setStrategyPush,
 } from "../../../../lib/adminOverview";
 import { getAlertConditions } from "../../../../lib/alertConditions";
+import {
+  createBusDef,
+  deleteBusDef,
+  listBusDefs,
+  updateBusDef,
+} from "../../../../lib/busDefs";
 import { getXKindSwitches } from "../../../../lib/xSettings";
 import { listTargets, type TgKind } from "../../../../lib/tgTargets";
 import {
@@ -33,7 +39,28 @@ export const dynamic = "force-dynamic";
 // (各档投递统计/TG 故障串/未放开档的表现),不属于公开面;公开面在 /record。
 // 本地开发照旧免令牌(checkWriteAccess 的既有姿态)。
 
-// 总线类型设置:逐类型部分更新(UI 只提交被改动的那个开关/阈值)。
+// 信号定义 CRUD(2026-08-19)。
+const DefBody = z.discriminatedUnion("defAction", [
+  z.object({
+    defAction: z.literal("create"),
+    sourceType: z.string().min(1),
+    label: z.string().min(1).max(32),
+    threshold: z.number().nonnegative(),
+  }),
+  z.object({
+    defAction: z.literal("update"),
+    id: z.number().int().positive(),
+    label: z.string().min(1).max(32).optional(),
+    threshold: z.number().nonnegative().optional(),
+    enabled: z.boolean().optional(),
+  }),
+  z.object({
+    defAction: z.literal("delete"),
+    id: z.number().int().positive(),
+  }),
+]);
+
+// 总线类型设置(legacy):逐类型部分更新 —— 现映射到该类型的信号定义。
 const BusBody = z.object({
   busType: z.string().min(1),
   enabled: z.boolean().optional(),
@@ -123,6 +150,9 @@ export async function GET(req: Request) {
       ...buildAdminSignalOverview(db, { channels: deliveryChannels(db) }),
       // 统一信号总线:类型注册表 + 当前开关/阈值 + 近 24h 各类产出量。
       busTypes: BUS_TYPES,
+      // 信号定义(2026-08-19,唯一真相):同一类型可多档,各自阈值/启停。
+      busDefs: listBusDefs(db),
+      // legacy 设置仅供旧 UI 兼容读,不再参与任何判定。
       busSettings: getBusSettings(db),
       busCounts24h: busCounts,
       // ① 原始事件线统一台账(大额/共识来自 alerts + 发现来自 bus)× 去向。
@@ -152,8 +182,59 @@ export async function POST(req: Request) {
   const limited = guardExpensive(req, "admin-signals", LIMITS, {});
   if (limited) return limited;
   const raw: unknown = await req.json().catch(() => null);
-  // 总线类型设置与既有档位开关共用这个端点,按请求体形状分派 —— 前者带
-  // busType,后者带 strategyId,两者互斥。
+
+  // 信号定义 CRUD(2026-08-19):{defAction: create|update|delete, ...}。
+  const defBody = DefBody.safeParse(raw);
+  if (defBody.success) {
+    const db = openDash();
+    try {
+      const d = defBody.data;
+      if (d.defAction === "create") {
+        if (!(d.sourceType in DEFAULT_BUS_SETTINGS)) {
+          return Response.json(
+            { error: `未知信号类型:${d.sourceType}` },
+            { status: 400 },
+          );
+        }
+        const meta = BUS_TYPES.find((t) => t.type === d.sourceType);
+        if (meta && !meta.available) {
+          return Response.json(
+            { error: `「${meta.label}」尚未接入总线,不能建信号定义` },
+            { status: 400 },
+          );
+        }
+        const id = createBusDef(db, {
+          sourceType: d.sourceType as BusSourceType,
+          label: d.label,
+          threshold: d.threshold,
+        });
+        return Response.json({ id, busDefs: listBusDefs(db) });
+      }
+      if (d.defAction === "update") {
+        if (!updateBusDef(db, d.id, d)) {
+          return Response.json(
+            { error: `信号定义 #${d.id} 不存在` },
+            { status: 404 },
+          );
+        }
+        return Response.json({ ok: true, busDefs: listBusDefs(db) });
+      }
+      // delete:同时提醒 —— 订了 def:<id> 的端点从此收不到(不级联改端点,
+      // 端点配置是运营者的显式意图,静默改写比失效更糟)。
+      if (!deleteBusDef(db, d.id)) {
+        return Response.json(
+          { error: `信号定义 #${d.id} 不存在` },
+          { status: 404 },
+        );
+      }
+      return Response.json({ ok: true, busDefs: listBusDefs(db) });
+    } finally {
+      db.close();
+    }
+  }
+
+  // legacy busType 路径(兼容旧脚本):映射到该类型的定义 —— 0 个则创建
+  // 「默认」,恰 1 个则更新,多个则拒绝(必须逐定义操作,不猜哪个)。
   const bus = BusBody.safeParse(raw);
   if (bus.success) {
     const db = openDash();
@@ -175,6 +256,42 @@ export async function POST(req: Request) {
           { status: 400 },
         );
       }
+      const defs = listBusDefs(db).filter((d) => d.sourceType === type);
+      if (defs.length > 1) {
+        return Response.json(
+          {
+            error: `「${meta?.label ?? type}」已有 ${defs.length} 个信号定义,请用 defAction 逐个操作`,
+          },
+          { status: 400 },
+        );
+      }
+      if (defs.length === 0) {
+        // 只在「开启」时创建;对不存在的定义发「关闭」是 no-op。
+        if (bus.data.enabled === true || bus.data.threshold != null) {
+          createBusDef(db, {
+            sourceType: type,
+            label: "默认",
+            threshold:
+              bus.data.threshold ??
+              (meta?.threshold
+                ? Number(DEFAULT_BUS_SETTINGS[type][meta.threshold.key])
+                : 0),
+          });
+          if (bus.data.enabled === false) {
+            // threshold-only 调用不该顺手开启
+            const created = listBusDefs(db).find(
+              (d) => d.sourceType === type,
+            );
+            if (created) updateBusDef(db, created.id, { enabled: false });
+          }
+        }
+      } else {
+        updateBusDef(db, defs[0].id, {
+          enabled: bus.data.enabled,
+          threshold: bus.data.threshold,
+        });
+      }
+      // legacy 设置同步写一份,免得旧读方(仅展示)漂移。
       const next: BusSettings = getBusSettings(db);
       if (typeof bus.data.enabled === "boolean") {
         next[type].enabled = bus.data.enabled;
@@ -183,7 +300,11 @@ export async function POST(req: Request) {
         next[type][meta.threshold.key] = bus.data.threshold;
       }
       setBusSettings(db, next);
-      return Response.json({ ok: true, busSettings: next });
+      return Response.json({
+        ok: true,
+        busSettings: next,
+        busDefs: listBusDefs(db),
+      });
     } finally {
       db.close();
     }

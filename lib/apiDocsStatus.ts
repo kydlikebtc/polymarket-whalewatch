@@ -1,5 +1,6 @@
 import type { DB } from "./db";
-import { BUS_TYPES, getBusSettings, type BusSourceType } from "./signalBus";
+import { listBusDefs } from "./busDefs";
+import { BUS_TYPES, type BusSourceType } from "./signalBus";
 import { DIGEST_DAY_KEY } from "./signalDigest";
 
 // /api-docs 的「当前开放状态」数据层。
@@ -48,11 +49,12 @@ export function buildApiDocsStatus(db: DB): ApiDocsStatus {
     )
     .all() as PublishedStrategy[];
 
-  const settings = getBusSettings(db);
+  // 2026-08-19 起类型「开」= 存在 ≥1 个启用的信号定义(lib/busDefs)。
+  const defs = listBusDefs(db);
   const busTypes: BusTypeStatus[] = SUBSCRIBABLE_BUS.map((type) => ({
     type,
     label: BUS_TYPES.find((b) => b.type === type)?.label ?? type,
-    enabled: settings[type]?.enabled === true,
+    enabled: defs.some((d) => d.enabled && d.sourceType === type),
   }));
 
   const digestDay =

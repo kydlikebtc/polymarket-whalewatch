@@ -37,10 +37,10 @@ interface WebhookRow {
 // 不能 import 碰 DB 的模块),外加 "strategy" —— 19 档策略信号在订阅层面
 // 也是一个类型。不勾任何项 = 不限(全部),与既有 key 的语义一致。
 const SUBSCRIBABLE = [
-  { type: "strategy", label: "策略信号(19 档)" },
-  { type: "large", label: "🐳 大额成交" },
-  { type: "consensus", label: "🔥 聪明钱共识" },
-  { type: "discovery", label: "🔭 聪明钱发现" },
+  { type: "strategy", label: "② 策略信号(19 档)" },
+  { type: "large", label: "① 🐳 大额成交" },
+  { type: "consensus", label: "① 🔥 聪明钱共识" },
+  { type: "discovery", label: "① 🔭 聪明钱发现" },
 ] as const;
 
 const TIERS = [
@@ -51,6 +51,10 @@ const TIERS = [
 export default function KeysSection({ token }: { token: string }) {
   const [keys, setKeys] = useState<KeyRow[] | null>(null);
   const [webhooks, setWebhooks] = useState<WebhookRow[] | null>(null);
+  // 信号定义(① 各类型的多档):webhook 端点可用 def:<id> 只订某一档。
+  const [busDefs, setBusDefs] = useState<
+    { id: number; sourceType: string; label: string; threshold: number }[]
+  >([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [issued, setIssued] = useState<{ id: number; key: string } | null>(
@@ -69,9 +73,10 @@ export default function KeysSection({ token }: { token: string }) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [kRes, wRes] = await Promise.all([
+      const [kRes, wRes, sRes] = await Promise.all([
         fetch("/api/admin/keys", { headers: authHeaders(token) }),
         fetch("/api/admin/webhooks", { headers: authHeaders(token) }),
+        fetch("/api/admin/signals", { headers: authHeaders(token) }),
       ]);
       const k = (await kRes.json()) as { keys?: KeyRow[]; error?: string };
       const w = (await wRes.json()) as {
@@ -86,6 +91,14 @@ export default function KeysSection({ token }: { token: string }) {
       }
       setKeys(k.keys ?? []);
       setWebhooks(w.webhooks ?? []);
+      try {
+        const sj = (await sRes.json()) as {
+          busDefs?: { id: number; sourceType: string; label: string; threshold: number }[];
+        };
+        setBusDefs(sj.busDefs ?? []);
+      } catch {
+        setBusDefs([]);
+      }
     } catch (e) {
       setError(String(e));
     }
@@ -542,31 +555,89 @@ export default function KeysSection({ token }: { token: string }) {
           <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
             推送类型(勾选须在 key 订阅范围内)
           </div>
-          <div style={{ display: "flex", gap: "var(--s-3)", flexWrap: "wrap" }}>
-            {SUBSCRIBABLE.map((o) => (
-              <label
-                key={o.type}
-                style={{
-                  display: "inline-flex",
-                  gap: 6,
-                  alignItems: "center",
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={whSubs.includes(o.type)}
-                  onChange={(e) =>
-                    setWhSubs((prev) =>
-                      e.target.checked
-                        ? [...prev, o.type]
-                        : prev.filter((x) => x !== o.type),
-                    )
-                  }
-                />
-                <span>{o.label}</span>
-              </label>
-            ))}
+          <div style={{ display: "grid", gap: 4 }}>
+            {SUBSCRIBABLE.map((o) => {
+              const typeDefs = busDefs.filter(
+                (d) => d.sourceType === o.type,
+              );
+              const typeChecked = whSubs.includes(o.type);
+              return (
+                <div key={o.type}>
+                  <label
+                    style={{
+                      display: "inline-flex",
+                      gap: 6,
+                      alignItems: "center",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={typeChecked}
+                      onChange={(e) =>
+                        setWhSubs((prev) => {
+                          const rest = prev.filter(
+                            (x) =>
+                              x !== o.type &&
+                              // 勾整类型时清掉该类型下的 def 细选(类型=全部)
+                              !typeDefs.some((d) => `def:${d.id}` === x),
+                          );
+                          return e.target.checked ? [...rest, o.type] : rest;
+                        })
+                      }
+                    />
+                    <span>{o.label}</span>
+                    {typeDefs.length > 0 && (
+                      <span className="ds-hint">(整类型 = 全部档)</span>
+                    )}
+                  </label>
+                  {/* def 级细选:只订某一档。勾了整类型时无意义,置灰。 */}
+                  {typeDefs.length > 0 && (
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        gap: "var(--s-3)",
+                        marginLeft: "var(--s-5)",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {typeDefs.map((d) => {
+                        const ref = `def:${d.id}`;
+                        return (
+                          <label
+                            key={d.id}
+                            style={{
+                              display: "inline-flex",
+                              gap: 4,
+                              alignItems: "center",
+                              cursor: typeChecked ? "not-allowed" : "pointer",
+                              opacity: typeChecked ? 0.5 : 1,
+                            }}
+                            title={`仅订「${d.label}」(≥${d.threshold})这一档`}
+                          >
+                            <input
+                              type="checkbox"
+                              disabled={typeChecked}
+                              checked={whSubs.includes(ref)}
+                              onChange={(e) =>
+                                setWhSubs((prev) =>
+                                  e.target.checked
+                                    ? [...prev, ref]
+                                    : prev.filter((x) => x !== ref),
+                                )
+                              }
+                            />
+                            <span className="ds-hint">
+                              {d.label}(≥{d.threshold})
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
         <button

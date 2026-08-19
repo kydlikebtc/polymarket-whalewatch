@@ -10,6 +10,7 @@
 //  · 与 strategy_signals 并存而非合并:后者 strategy_id NOT NULL,塞入
 //    "不属于任何档位"的信号会让既有战绩查询全都得加过滤,是把两件事搅一起。
 import type { DB } from "./db";
+import { listBusDefs, projectionFloor } from "./busDefs";
 import { notionalUsd } from "./trades";
 
 export type BusSourceType =
@@ -197,7 +198,14 @@ export function projectBusSignals(
   db: DB,
   nowSec: number,
 ): { written: number; byType: Record<string, number> } {
-  const s = getBusSettings(db);
+  // 2026-08-19:准入改由**信号定义**(lib/busDefs,零反向依赖故可顶部
+  // 导入)决定 —— 类型「开」= 存在 ≥1 个启用定义;投影下限取各启用定义的
+  // 最小阈值(台账要容纳任何一个定义想要的事件,更严的定义在投递/读取侧
+  // 再过滤)。
+  const defs = listBusDefs(db);
+  const largeFloor = projectionFloor(defs, "large");
+  const consensusFloor = projectionFloor(defs, "consensus");
+  const discoveryFloor = projectionFloor(defs, "discovery");
   const since = nowSec - PROJECT_WINDOW_SEC;
   const byType: Record<string, number> = {};
   let written = 0;
@@ -229,10 +237,10 @@ export function projectBusSignals(
   };
 
   // ---- 大额成交 / 聪明钱共识:都来自 alerts 表 ----
-  if (s.large.enabled || s.consensus.enabled) {
+  if (largeFloor != null || consensusFloor != null) {
     const types: string[] = [];
-    if (s.large.enabled) types.push("large", "smart");
-    if (s.consensus.enabled) types.push("consensus");
+    if (largeFloor != null) types.push("large", "smart");
+    if (consensusFloor != null) types.push("consensus");
     const rows = db
       .prepare(
         `SELECT id, type, dedup_key, payload, created_at FROM alerts
@@ -257,7 +265,7 @@ export function projectBusSignals(
       if (row.type === "consensus") {
         const walletCount =
           typeof p.walletCount === "number" ? p.walletCount : 0;
-        if (walletCount < Number(s.consensus.minWallets ?? 0)) continue;
+        if (walletCount < (consensusFloor ?? Infinity)) continue;
         emit(
           "consensus",
           `alert:${row.id}`,
@@ -277,7 +285,7 @@ export function projectBusSignals(
         const price = p.price;
         if (typeof size !== "number" || typeof price !== "number") continue;
         const usd = notionalUsd({ size, price });
-        if (usd < Number(s.large.minUsd ?? 0)) continue;
+        if (usd < (largeFloor ?? Infinity)) continue;
         emit(
           "large",
           `alert:${row.id}`,
@@ -299,13 +307,13 @@ export function projectBusSignals(
   }
 
   // ---- 聪明钱发现:新进白名单池的成员 ----
-  if (s.discovery.enabled) {
+  if (discoveryFloor != null) {
     const rows = db
       .prepare(
         `SELECT address, score, source, updated_at FROM smart_wallets
           WHERE is_whitelist = 1 AND updated_at >= ? AND score >= ?`,
       )
-      .all(since, Number(s.discovery.minScore ?? 0)) as {
+      .all(since, discoveryFloor) as {
       address: string;
       score: number | null;
       source: string | null;

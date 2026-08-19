@@ -2,10 +2,12 @@ import { z } from "zod";
 import type { DB } from "./db";
 import { getBusSignals, type BusSignalRow } from "./signalBus";
 import { SIGNAL_DISCLAIMER } from "./signalPush";
+import { listBusDefs, matchedDefs } from "./busDefs";
 import {
   postWebhookBody,
   recordWebhookResult,
   listActiveWebhooks,
+  webhookWantsBusRow,
   webhookWantsType,
   type WebhookEndpoint,
 } from "./webhookDelivery";
@@ -100,10 +102,14 @@ export async function runBusWebhookCycle(
   if (deps.checkHealth && !deps.checkHealth().ok) {
     return { sent: 0, failed: 0, frozen: true };
   }
-  const endpoints = listActiveWebhooks(db).filter((ep) =>
-    BUS_WEBHOOK_TYPES.some((t) => webhookWantsType(ep, t)),
+  // 可能收 bus 事件的端点:订了任一类型,或订了任一 def:<id>(定义级)。
+  const endpoints = listActiveWebhooks(db).filter(
+    (ep) =>
+      BUS_WEBHOOK_TYPES.some((t) => webhookWantsType(ep, t)) ||
+      (ep.selectedTypes?.some((x) => x.startsWith("def:")) ?? false),
   );
   if (endpoints.length === 0) return { sent: 0, failed: 0, frozen: false };
+  const defs = listBusDefs(db);
 
   // getBusSignals 是新在前;投递按时间正序 —— 消费方先收到先发生的。
   const rows = getBusSignals(db, {
@@ -129,7 +135,10 @@ export async function runBusWebhookCycle(
     let n = 0;
     for (const row of rows) {
       if (n >= BUS_MAX_SENDS_PER_CYCLE) break;
-      if (!webhookWantsType(ep, row.sourceType)) continue;
+      const defIds = matchedDefs(defs, row.sourceType, row.payload).map(
+        (d) => d.id,
+      );
+      if (!webhookWantsBusRow(ep, row, defIds)) continue;
       if (row.emittedAt < ep.createdAt) continue; // 不回灌
       if (claim.run(row.id, channel, nowSec).changes !== 1) continue;
 

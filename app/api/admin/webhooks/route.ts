@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { checkWriteAccess, guardExpensive } from "../../../../lib/apiGuard";
 import { busTypeAllowed, parseBusTypes } from "../../../../lib/apiKeys";
+import { listBusDefs } from "../../../../lib/busDefs";
 import { openDb } from "../../../../lib/db";
 import {
   deleteWebhook,
@@ -33,8 +34,14 @@ const RegisterBody = z.object({
   // 端点推送类型(2026-08-19)。刻意用枚举而非自由字符串(keys 路由是后者):
   // 打错的类型名不会报错,只会让该端点永远收不到那类事件 —— 对运营者配置,
   // 当场拒绝比静默空转仁慈。省略 = 仅策略信号(历史默认)。
+  // 2026-08-19:允许 "def:<id>"(信号定义级订阅,类型内的路由细分)。
   busTypes: z
-    .array(z.enum(["strategy", "large", "consensus", "discovery"]))
+    .array(
+      z.union([
+        z.enum(["strategy", "large", "consensus", "discovery"]),
+        z.string().regex(/^def:\d+$/),
+      ]),
+    )
     .nonempty()
     .optional(),
 });
@@ -204,9 +211,27 @@ export async function POST(req: Request) {
     // 勾选必须落在 key 的授权范围内。放进去也不会投(运行时按交集兜底),
     // 但「登记成功、永远不投」是最难排查的配置错误 —— 当场拒绝。
     const keyScope = parseBusTypes(key.bus_types);
-    const outOfScope = (body.busTypes ?? []).filter(
-      (t) => !busTypeAllowed(keyScope, t),
-    );
+    // def 引用先解引用成类型再做范围校验;不存在的 def 当场拒绝 ——
+    // 「登记成功、永远不投」是最难排查的配置错误。
+    const defs = listBusDefs(db);
+    const resolved: { raw: string; type: string }[] = [];
+    for (const t of body.busTypes ?? []) {
+      if (t.startsWith("def:")) {
+        const d = defs.find((x) => x.id === Number(t.slice(4)));
+        if (!d) {
+          return Response.json(
+            { error: `信号定义 ${t} 不存在(可能已被删除)` },
+            { status: 400 },
+          );
+        }
+        resolved.push({ raw: t, type: d.sourceType });
+      } else {
+        resolved.push({ raw: t, type: t });
+      }
+    }
+    const outOfScope = resolved
+      .filter((r) => !busTypeAllowed(keyScope, r.type))
+      .map((r) => r.raw);
     if (outOfScope.length > 0) {
       return Response.json(
         {
