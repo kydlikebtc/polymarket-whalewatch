@@ -142,12 +142,12 @@ export default function AlertRulesSection({ token }: { token: string }) {
       style={{ marginBottom: "var(--s-5)", scrollMarginTop: "var(--s-6)" }}
     >
       <SectionHead
-        title="🔔 TG 提醒规则(大额/聪明钱告警)"
+        title="① 聪明钱动向 · 告警触发条件"
         hint={
           <>
-            与 /alerts 页配置面板同一份规则;保存
-            {readonly ? "需要上方管理令牌" : "(本地部署免令牌)"}
-            。策略信号推送的开关在上方「可推送信号管理」区。
+            这条线没有总开关:条件达标即产出(进 TG 告警频道 / API 的 active[] / 𝕏
+            大单帖)。与 /alerts 页配置面板同一份规则;保存
+            {readonly ? "需要上方管理令牌" : "(本地部署免令牌)"}。
           </>
         }
       />

@@ -131,7 +131,7 @@ export default function SignalsSection({
       style={{ marginBottom: "var(--s-5)", scrollMarginTop: "var(--s-6)" }}
     >
       <SectionHead
-        title="📡 可推送信号管理"
+        title="② 可推送策略信号（19 档）"
         aside={
           overview && (
             <span className="ds-hint num">

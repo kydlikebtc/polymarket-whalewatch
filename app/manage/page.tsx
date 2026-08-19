@@ -12,6 +12,7 @@ import TgTargetsSection from "./TgTargetsSection";
 import XAccountsSection from "./XAccountsSection";
 import SignalsSection from "./SignalsSection";
 import StatusStrip from "./StatusStrip";
+import { PipelinesOverview, SignalLinesOverview } from "./TaxonomyOverview";
 import {
   gateMessage,
   gateState,
@@ -47,23 +48,27 @@ const AUTO_REFRESH_MS = 60_000;
 // 探针上:一旦 429,运营者会被自己锁在门外,且提示还是「服务端异常」。
 const TOKEN_DEBOUNCE_MS = 400;
 
+// 信息架构(2026-08-19 重排):两步模型 —— 第一步「产什么信号」(三条线,
+// 与接入文档 §6.1 同一套分类),第二步「投给谁」(下游管线)。此前五个 tab
+// 把两层揉在一起,策略开关/总线开关/TG 告警条件同住一个 tab,而 TG 目标、
+// API key、𝕏 又各占一个 —— 没有一张图回答「这条信号最终到谁手里」。
 const TABS = [
-  { id: "push", label: "📡 推送与提醒" },
-  { id: "tg", label: "📣 TG 推送" },
+  { id: "lines", label: "🧭 信号 · 三条线" },
+  { id: "pipes", label: "🚚 下游管线" },
   { id: "health", label: "🩺 健康度" },
-  { id: "access", label: "🔑 接入" },
-  { id: "x", label: "𝕏 播报账号" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
 // StatusStrip 发出的是**区块** id(它不该知道 tab 怎么分组),这里把它映射
 // 到承载该区块的 tab —— 契约不变,StatusStrip 零改动。
 const SECTION_TAB: Record<string, TabId> = {
-  signals: "push",
-  rules: "push",
+  rules: "lines",
+  signals: "lines",
+  bus: "lines",
+  tg: "pipes",
+  keys: "pipes",
+  x: "pipes",
   health: "health",
-  keys: "access",
-  x: "x",
 };
 
 const TAB_STORAGE_KEY = "manageTab";
@@ -81,7 +86,7 @@ export default function ManagePage() {
   // 水合后又解锁」的闪烁。
   const hydrated = useRef(false);
 
-  const [tab, setTab] = useState<TabId>("push");
+  const [tab, setTab] = useState<TabId>("lines");
 
   useEffect(() => {
     const saved = window.localStorage.getItem("adminToken") ?? "";
@@ -161,7 +166,15 @@ export default function ManagePage() {
   const message = gateMessage(probe, probeToken !== "");
 
   // 状态条上的 chip 点击:切到承载该区块的 tab(切完区块就在首屏,不必再滚动)。
-  const jump = (id: string) => selectTab(SECTION_TAB[id] ?? "push");
+  // 同 tab 内有多个区块,只切 tab 不滚动等于没跳 —— 切完等目标挂载再滚锚点。
+  const jump = (id: string) => {
+    selectTab(SECTION_TAB[id] ?? "lines");
+    window.setTimeout(() => {
+      document
+        .getElementById(`sec-${id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+  };
 
   const tokenField = (
     <div style={{ flex: "1 1 320px", maxWidth: 480 }}>
@@ -284,19 +297,41 @@ export default function ManagePage() {
       {/* 每个 tab 只挂载自己的区块:各 Section 在挂载时拉取自己的数据,
           切走即卸载,回来重新拉 —— 运营页的数据本来就要求新鲜,重挂载
           顺带成了「切 tab 即刷新」。 */}
-      {tab === "push" && (
+      {tab === "lines" && (
         <>
-          <BusTypesSection token={token} />
-          <SignalsSection token={token} overview={overview} reload={loadAll} />
-          <AlertRulesSection token={token} />
+          <SignalLinesOverview overview={overview} onJump={jump} />
+          <div id="sec-rules" style={{ scrollMarginTop: "var(--s-6)" }}>
+            <AlertRulesSection token={token} />
+          </div>
+          <div id="sec-signals" style={{ scrollMarginTop: "var(--s-6)" }}>
+            <SignalsSection
+              token={token}
+              overview={overview}
+              reload={loadAll}
+            />
+          </div>
+          <div id="sec-bus" style={{ scrollMarginTop: "var(--s-6)" }}>
+            <BusTypesSection token={token} />
+          </div>
+        </>
+      )}
+      {tab === "pipes" && (
+        <>
+          <PipelinesOverview overview={overview} onJump={jump} />
+          <div id="sec-tg" style={{ scrollMarginTop: "var(--s-6)" }}>
+            <TgTargetsSection token={token} />
+          </div>
+          <div id="sec-keys" style={{ scrollMarginTop: "var(--s-6)" }}>
+            <KeysSection token={token} />
+          </div>
+          <div id="sec-x" style={{ scrollMarginTop: "var(--s-6)" }}>
+            <XAccountsSection token={token} />
+          </div>
         </>
       )}
       {tab === "health" && (
         <HealthSection health={health} ops={overview?.ops ?? null} />
       )}
-      {tab === "access" && <KeysSection token={token} />}
-      {tab === "tg" && <TgTargetsSection token={token} />}
-      {tab === "x" && <XAccountsSection token={token} />}
     </main>
   );
 }

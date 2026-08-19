@@ -50,6 +50,102 @@ export interface ChannelBacklog {
   pendingEntries: number;
 }
 
+/**
+ * 总线台账单行(运营视角):一条 bus 事件 + 它的逐通道投递状态。
+ * 与 RecentSignalRow 的分工:那边是**策略**信号台账(strategy_signals ×
+ * signal_deliveries),这边是**总线**台账(bus_signals × bus_deliveries)——
+ * 两本账,两张表,同一套「发了没有」的问题。
+ */
+export interface BusLedgerRow {
+  id: number;
+  sourceType: string;
+  title: string | null;
+  conditionId: string | null;
+  emittedAt: number;
+  /** payload 一行摘要,按类型取最有信息量的两三个字段,运营者扫一眼用。 */
+  summary: string;
+  channels: { channel: string; status: string }[];
+}
+
+/** payload → 一行人话。坏载荷/缺字段一律降级成空串,不抛。 */
+function busSummary(sourceType: string, payload: Record<string, unknown>): string {
+  const num = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  const str = (v: unknown): string | null =>
+    typeof v === "string" && v ? v : null;
+  if (sourceType === "large") {
+    const usd = num(payload.usd);
+    const side = str(payload.side);
+    const price = num(payload.price);
+    return [
+      usd != null ? `$${Math.round(usd).toLocaleString()}` : null,
+      side,
+      price != null ? `@${price}` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (sourceType === "consensus") {
+    const n = num(payload.walletCount);
+    const usd = num(payload.totalNetUsd);
+    return [
+      n != null ? `${n} 钱包` : null,
+      usd != null ? `$${Math.round(usd).toLocaleString()}` : null,
+      str(payload.outcome),
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  if (sourceType === "discovery") {
+    const addr = str(payload.address);
+    const score = num(payload.score);
+    return [
+      addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : null,
+      score != null ? `score ${score}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  return "";
+}
+
+/** 总线台账最近 N 条 + 逐通道投递状态(bus_deliveries)。 */
+export function buildBusLedger(db: DB, limit = 20): BusLedgerRow[] {
+  const rows = db
+    .prepare(
+      `SELECT id, source_type, title, condition_id, payload, emitted_at
+       FROM bus_signals ORDER BY emitted_at DESC, id DESC LIMIT ?`,
+    )
+    .all(limit) as {
+    id: number;
+    source_type: string;
+    title: string | null;
+    condition_id: string | null;
+    payload: string;
+    emitted_at: number;
+  }[];
+  const chStmt = db.prepare(
+    "SELECT channel, status FROM bus_deliveries WHERE bus_signal_id = ? ORDER BY channel",
+  );
+  return rows.map((r) => {
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = JSON.parse(r.payload) as Record<string, unknown>;
+    } catch {
+      // 坏载荷:摘要留空,行仍完整。
+    }
+    return {
+      id: r.id,
+      sourceType: r.source_type,
+      title: r.title,
+      conditionId: r.condition_id,
+      emittedAt: r.emitted_at,
+      summary: busSummary(r.source_type, payload),
+      channels: chStmt.all(r.id) as { channel: string; status: string }[],
+    };
+  });
+}
+
 export interface AdminSignalOverview {
   updatedAt: number;
   strategies: StrategyPushRow[];

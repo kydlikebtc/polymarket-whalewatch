@@ -1,8 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { openDb } from "./db";
+import { openDb, type DB } from "./db";
 import { recordStrategySignal } from "./strategySignals";
 import { DIGEST_DAY_KEY, DIGEST_PREV_KEY } from "./signalDigest";
-import { buildAdminSignalOverview, setStrategyPush } from "./adminOverview";
+import {
+  buildAdminSignalOverview,
+  buildBusLedger,
+  setStrategyPush,
+} from "./adminOverview";
 
 // /manage 运营页的数据层:全部 13 档的推送开关态 + 台账/投递摘要 + 运维状态。
 // 与 /record(公开,只含已发布)不同,这里是运营者视角:未放开的档也要看到,
@@ -226,5 +230,69 @@ describe("buildAdminSignalOverview", () => {
     const none = buildAdminSignalOverview(db, { nowSec: NOW });
     expect(none.ops.channels).toEqual([]);
     db.close();
+  });
+});
+
+describe("buildBusLedger —— 总线台账的运营视图", () => {
+  const NOW = 1_790_000_000;
+  function seedBus(
+    db: DB,
+    over: Partial<{ sourceType: string; payload: unknown; emittedAt: number }> = {},
+  ): number {
+    const r = db
+      .prepare(
+        "INSERT INTO bus_signals (source_type, dedup_key, condition_id, title, payload, emitted_at) VALUES (?, ?, '0xabc', 'Market A', ?, ?)",
+      )
+      .run(
+        over.sourceType ?? "large",
+        `k${Math.random()}`,
+        JSON.stringify(over.payload ?? { usd: 120000, side: "BUY", price: 0.4 }),
+        over.emittedAt ?? NOW,
+      );
+    return Number(r.lastInsertRowid);
+  }
+
+  it("三类摘要各按类型取最有信息量的字段", () => {
+    const db = openDb(":memory:");
+    seedBus(db, { sourceType: "large", payload: { usd: 120000, side: "BUY", price: 0.4 }, emittedAt: NOW - 3 });
+    seedBus(db, { sourceType: "consensus", payload: { walletCount: 3, totalNetUsd: 92000, outcome: "Yes" }, emittedAt: NOW - 2 });
+    seedBus(db, { sourceType: "discovery", payload: { address: "0x1234567890abcdef1234567890abcdef12345678", score: 87 }, emittedAt: NOW - 1 });
+    const rows = buildBusLedger(db);
+    expect(rows.map((r) => r.summary)).toEqual([
+      "0x1234…5678 · score 87",
+      "3 钱包 · $92,000 · Yes",
+      "$120,000 BUY @0.4",
+    ]);
+  });
+
+  it("带上逐通道投递状态(bus_deliveries)", () => {
+    const db = openDb(":memory:");
+    const id = seedBus(db);
+    db.prepare(
+      "INSERT INTO bus_deliveries (bus_signal_id, channel, status, created_at) VALUES (?, 'webhook:1', 'sent', ?), (?, 'webhook:2', 'failed_permanent', ?)",
+    ).run(id, NOW, id, NOW);
+    const [row] = buildBusLedger(db);
+    expect(row.channels).toEqual([
+      { channel: "webhook:1", status: "sent" },
+      { channel: "webhook:2", status: "failed_permanent" },
+    ]);
+  });
+
+  it("坏载荷降级为空摘要,行不丢", () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO bus_signals (source_type, dedup_key, condition_id, title, payload, emitted_at) VALUES ('large', 'k', NULL, NULL, 'not json', ?)",
+    ).run(NOW);
+    const [row] = buildBusLedger(db);
+    expect(row.summary).toBe("");
+    expect(row.channels).toEqual([]);
+  });
+
+  it("新在前,限 20 条", () => {
+    const db = openDb(":memory:");
+    for (let i = 0; i < 25; i++) seedBus(db, { emittedAt: NOW - 100 + i });
+    const rows = buildBusLedger(db);
+    expect(rows).toHaveLength(20);
+    expect(rows[0].emittedAt).toBe(NOW - 100 + 24);
   });
 });

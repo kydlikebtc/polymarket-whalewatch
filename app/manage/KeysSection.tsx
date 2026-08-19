@@ -271,7 +271,7 @@ export default function KeysSection({ token }: { token: string }) {
       style={{ marginBottom: "var(--s-5)", scrollMarginTop: "var(--s-6)" }}
     >
       <SectionHead
-        title="🔑 API key 与 webhook"
+        title="🅑 API key 与 webhook"
         aside={
           keys && (
             <span className="ds-hint num">

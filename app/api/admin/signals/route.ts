@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   buildAdminSignalOverview,
+  buildBusLedger,
   setStrategyPush,
 } from "../../../../lib/adminOverview";
 import { checkWriteAccess, guardExpensive } from "../../../../lib/apiGuard";
@@ -83,6 +84,9 @@ export async function GET(req: Request) {
       busTypes: BUS_TYPES,
       busSettings: getBusSettings(db),
       busCounts24h: busCounts,
+      // 总线台账最近 20 条 + 逐通道投递状态(bus_deliveries)—— 与策略台账
+      // (recent × signal_deliveries)同一套「发了没有」的运营视图。
+      busLedger: buildBusLedger(db),
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

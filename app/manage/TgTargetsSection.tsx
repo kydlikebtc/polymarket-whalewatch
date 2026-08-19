@@ -133,7 +133,7 @@ export default function TgTargetsSection({ token }: { token: string }) {
   return (
     <section className="ds-card" style={{ padding: "var(--s-5)" }}>
       <SectionHead
-        title="📣 TG 推送目标"
+        title="🅐 Telegram · 推送目标"
         hint="一条 = 一个 bot 发到一个频道/群。可同时有多个目标，各自决定收哪些信号；改完引擎下一轮（≤60s）生效，无需重启。"
         aside={
           <button

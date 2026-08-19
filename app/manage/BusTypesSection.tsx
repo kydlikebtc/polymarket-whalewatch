@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Tag } from "../ui";
 import { SectionHead } from "./bits";
-import { authHeaders } from "./shared";
+import { authHeaders, timeText } from "./shared";
 
 // 区块:统一信号总线的类型管理。
 //
@@ -26,10 +26,20 @@ interface BusTypeMeta {
 
 type BusSetting = { enabled: boolean } & Record<string, boolean | number>;
 
+interface BusLedgerRow {
+  id: number;
+  sourceType: string;
+  title: string | null;
+  emittedAt: number;
+  summary: string;
+  channels: { channel: string; status: string }[];
+}
+
 export default function BusTypesSection({ token }: { token: string }) {
   const [types, setTypes] = useState<BusTypeMeta[] | null>(null);
   const [settings, setSettings] = useState<Record<string, BusSetting>>({});
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [ledger, setLedger] = useState<BusLedgerRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   // 阈值输入的本地草稿:输入中不该每敲一个字符就打一次接口。
@@ -46,6 +56,7 @@ export default function BusTypesSection({ token }: { token: string }) {
         busTypes?: BusTypeMeta[];
         busSettings?: Record<string, BusSetting>;
         busCounts24h?: Record<string, number>;
+        busLedger?: BusLedgerRow[];
         error?: string;
       };
       if (j.error) {
@@ -55,6 +66,7 @@ export default function BusTypesSection({ token }: { token: string }) {
       setTypes(j.busTypes ?? []);
       setSettings(j.busSettings ?? {});
       setCounts(j.busCounts24h ?? {});
+      setLedger(j.busLedger ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -95,8 +107,8 @@ export default function BusTypesSection({ token }: { token: string }) {
       style={{ padding: "var(--s-5)", marginBottom: "var(--s-5)" }}
     >
       <SectionHead
-        title="📡 信号类型（总线）"
-        hint="全站各类信号统一进入 bus_signals 台账，经 webhook 与 /api/signals 投递给订阅方。默认全关 —— 开启前请确认订阅方能接住这类事件。不影响 Telegram 告警频道。"
+        title="③ 原始信号总线（bus 类型）"
+        hint="全站各类原始事件统一进入 bus_signals 台账，经 webhook（端点勾选）与 /api/signals 的 bus[] 投递给订阅方。默认全关 —— 开启前请确认订阅方能接住这类事件。不影响 Telegram 告警频道。"
       />
 
       {error ? (
@@ -215,6 +227,92 @@ export default function BusTypesSection({ token }: { token: string }) {
             })}
           </tbody>
         </table>
+      )}
+
+      {token && ledger != null && (
+        <>
+          <div
+            className="ds-label"
+            style={{ margin: "var(--s-5) 0 var(--s-2)" }}
+          >
+            最近 20 条台账信号 · 逐通道投递状态
+          </div>
+          {ledger.length === 0 ? (
+            <div className="ds-empty">
+              总线台账暂无信号（类型全关或尚无达标事件）。
+            </div>
+          ) : (
+            <div className="ds-table-wrap">
+              <table className="ds-table ds-table--compact">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>类型</th>
+                    <th>市场</th>
+                    <th>摘要</th>
+                    <th>投递</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledger.map((r) => (
+                    <tr key={r.id}>
+                      <td
+                        className="ds-hint mono"
+                        style={{ whiteSpace: "nowrap" }}
+                      >
+                        {timeText(r.emittedAt)}
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {types?.find((t) => t.type === r.sourceType)?.label ??
+                          r.sourceType}
+                      </td>
+                      <td
+                        style={{
+                          maxWidth: 240,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                        title={r.title ?? undefined}
+                      >
+                        {r.title ?? <span className="muted">—</span>}
+                      </td>
+                      <td className="mono" style={{ whiteSpace: "nowrap" }}>
+                        {r.summary || <span className="muted">—</span>}
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {r.channels.length === 0 ? (
+                          <span
+                            className="muted"
+                            title="没有任何端点勾选该类型,或事件早于端点登记(不回灌)"
+                          >
+                            未投递
+                          </span>
+                        ) : (
+                          r.channels.map((c) => (
+                            <Tag
+                              key={c.channel}
+                              variant={
+                                c.status === "sent"
+                                  ? "up"
+                                  : c.status === "failed_permanent"
+                                    ? "down"
+                                    : undefined
+                              }
+                            >
+                              {c.channel}
+                              {c.status !== "sent" ? ` · ${c.status}` : ""}
+                            </Tag>
+                          ))
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </section>
   );

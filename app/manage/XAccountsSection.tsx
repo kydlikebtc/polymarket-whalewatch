@@ -189,7 +189,7 @@ export default function XAccountsSection({ token }: { token: string }) {
   return (
     <section className="ds-card" style={{ padding: "var(--s-5)" }}>
       <SectionHead
-        title="𝕏 播报账号"
+        title="🅒 𝕏 播报账号"
         hint="同时只有一个账号「使用中」，其余待命。切换后引擎下一轮（≤60s）自动改用新账号，无需重启。"
         aside={
           <button
