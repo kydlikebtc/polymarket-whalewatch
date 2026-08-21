@@ -36,6 +36,29 @@ Scope: 401 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that ran
 
 ## Batches
 
+### 2026-08-21 — The market card was never a signal
+
+The endpoint shipped at `/api/signals/market/{cid}`, which put it inside a namespace whose defining
+property it violates. Everything under `/api/signals` reads only our own database; the market card
+reaches upstream on demand. That contradiction had already forced three separate patches, and it
+took someone else reading the result to notice they were three symptoms of one mistake.
+
+The subscriber doc had to carve an exception into the reliability promise — "zero upstream calls,
+except for this one endpoint." A member that breaks the namespace's defining property is not an
+exception; it is filed in the wrong place. The grantable-scope list had to be split in two, because
+a card does not fit inside "event types you can subscribe to push for." And the `/manage` taxonomy
+table, which states the classification model in three rows, had nothing to say about it at all.
+
+The card is a third kind. It has no event id, cannot be pushed, and is not a fold of any event. You
+name a market and we compute an answer. It now lives at **`/api/market-card/{cid}`**, the doc states
+reliability per category rather than as one promise with a hole in it, and the `/manage` overview
+grew a fourth row so the operator can see the whole surface at once.
+
+The original choice was made because authentication could be reused from the signal feed. That was a
+convenience, not a taxonomy — and the difference between those two is the whole lesson here.
+
+Commits: this batch.
+
 ### 2026-08-21 — Making the market card survivable in production
 
 Four pieces of follow-up, none of them new capability. All of them are what the endpoint needed to
