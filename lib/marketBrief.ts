@@ -41,6 +41,13 @@ export interface SmartFlowWallet {
 export interface SmartOutcomeFlow {
   outcome: string;
   totalExposureUsd: number;
+  /**
+   * Σ netShares over EVERY wallet on this outcome — like `totalExposureUsd`,
+   * summed BEFORE `wallets` is truncated to the top N. Settled markets show
+   * this instead of the (zeroed) exposure, so it must not silently undercount
+   * a market with more than MAX_WALLETS_PER_OUTCOME smart wallets on one side.
+   */
+  totalNetShares: number;
   wallets: SmartFlowWallet[];
 }
 
@@ -53,6 +60,17 @@ export interface MarketBrief {
   classification: MarketClassification;
   smartFlow: SmartOutcomeFlow[];
   accum: AccumGroup[];
+  /**
+   * 市场已终局结算(lib/gamma `isSettled`)。置位时 smartFlow 的每一个
+   * `exposureUsd` / `totalExposureUsd` 都已归零 —— 见下方结算闸门的论证。
+   * 展示层据此打「已结算」标签,不要自己再去读 meta.closed 重算一遍。
+   */
+  settled: boolean;
+}
+
+export interface MarketBriefOpts {
+  /** 由调用方从 gamma meta 经 `isSettled` 判定后注入(本函数保持纯)。 */
+  settled?: boolean;
 }
 
 // Split-buy surfacing floors for the card — looser than the board's default
@@ -65,7 +83,9 @@ export function composeMarketBrief(
   trades: Trade[],
   smartTags: Map<string, SmartTag>,
   conditionId: string,
+  opts: MarketBriefOpts = {},
 ): MarketBrief {
+  const settled = opts.settled === true;
   const own: Trade[] = [];
   const seen = new Set<string>();
   for (const t of trades) {
@@ -118,6 +138,16 @@ export function composeMarketBrief(
       a.sellShares += t.size;
     }
   }
+  // 结算闸门。`exposureUsd` 的语义是「还持有的那部分的成本」,而它的全部
+  // 输入只有 BUY/SELL —— 赎回走的是 activity 的 REDEEM 事件,永远不会出现在
+  // /trades 里。所以市场一旦结算,netShares 就永久冻结在结算前的水位,敞口
+  // 从此是纯虚数。线上实测:0x6d20…a165 在 0xbee7d5…(Iron Wing vs BoomBoys)
+  // 赎回 3,200,000 股后 Polymarket /positions 返回空,本卡片仍报 $1,829,963。
+  // 输的一边同样虚高(结算价 0,成本价照记)。两边一起归零才是诚实的。
+  //
+  // 只归零「敞口」,不动 netShares / avgBuyPrice:那两个是窗口内的成交事实,
+  // 结算改变不了它们,复盘要靠它们。分类横幅说的是「净买入」(窗口流量),
+  // 结算后依然为真,同理不动。
   const smartFlow: SmartOutcomeFlow[] = [];
   for (const [outcome, byWallet] of acc) {
     const wallets: SmartFlowWallet[] = [];
@@ -126,7 +156,7 @@ export function composeMarketBrief(
       const t = smartTags.get(wallet);
       wallets.push({
         wallet,
-        exposureUsd: exposureUsd(a),
+        exposureUsd: settled ? 0 : exposureUsd(a),
         netShares: netShares(a),
         avgBuyPrice: avgBuyPrice(a),
         score: t?.score ?? null,
@@ -135,20 +165,30 @@ export function composeMarketBrief(
       });
     }
     if (wallets.length === 0) continue;
-    wallets.sort((a, b) => b.exposureUsd - a.exposureUsd);
+    // 净股数是兜底键:结算后主键全是 0,没有它排序会退化成 Map 插入序,
+    // 台账就读不出「谁押得最大」了。
+    wallets.sort(
+      (a, b) => b.exposureUsd - a.exposureUsd || b.netShares - a.netShares,
+    );
     smartFlow.push({
       outcome,
+      // 两个合计都在 slice 之前算 —— 截断只影响展示的行数,不该改总数。
       totalExposureUsd: wallets.reduce((s, w) => s + w.exposureUsd, 0),
+      totalNetShares: wallets.reduce((s, w) => s + w.netShares, 0),
       wallets: wallets.slice(0, MAX_WALLETS_PER_OUTCOME),
     });
   }
-  smartFlow.sort((a, b) => b.totalExposureUsd - a.totalExposureUsd);
+  smartFlow.sort(
+    (a, b) =>
+      b.totalExposureUsd - a.totalExposureUsd ||
+      b.totalNetShares - a.totalNetShares,
+  );
 
   const accum = aggregate(own, CARD_ACCUM)
     .filter((g) => g.conditionId === conditionId)
     .slice(0, MAX_ACCUM_ROWS);
 
-  return { classification, smartFlow, accum };
+  return { classification, smartFlow, accum, settled };
 }
 
 // ---------------------------------------------------------------------------

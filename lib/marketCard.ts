@@ -1,5 +1,5 @@
 import type { DB } from "./db";
-import { getMarketMeta, type MarketMeta } from "./gamma";
+import { getMarketMeta, isSettled, type MarketMeta } from "./gamma";
 import { getAllSmartTags } from "./smartWallets";
 import { getWalletAges } from "./walletAge";
 import {
@@ -78,7 +78,11 @@ export async function buildMarketCard(
   ]);
   const meta = metaMap[conditionId] ?? null;
   const smart = getAllSmartTags(db);
-  const brief = composeMarketBrief(window.trades, smart, conditionId);
+  // 结算事实注入 brief:市场已终局 → 留存敞口归零(赎回不走 /trades,靠成交
+  // 流水永远推不出来)。meta 拿不到时 isSettled 返回 false —— 未知不归零。
+  const brief = composeMarketBrief(window.trades, smart, conditionId, {
+    settled: isSettled(meta),
+  });
 
   // Market identity comes off the freshest trade row (gamma meta carries no
   // title); an empty window degrades to null and callers show the cid.

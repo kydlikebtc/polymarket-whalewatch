@@ -20,6 +20,7 @@ interface FlowWallet {
 interface OutcomeFlow {
   outcome: string;
   totalExposureUsd: number;
+  totalNetShares: number;
   wallets: FlowWallet[];
 }
 interface AccumRow {
@@ -65,6 +66,8 @@ interface Payload {
       | { kind: "none" };
     smartFlow: OutcomeFlow[];
     accum: AccumRow[];
+    /** 市场已终局结算 → 服务端已把 smartFlow 的敞口全部归零(见 lib/marketBrief)。 */
+    settled: boolean;
   };
   freshFlow: {
     wallet: string;
@@ -91,6 +94,7 @@ interface Payload {
 }
 
 const fmtUsd = (v: number) => Math.round(v).toLocaleString("en-US");
+const fmtShares = (v: number) => Math.round(v).toLocaleString("en-US");
 const fmtCents = (p: number) => `${+(p * 100).toFixed(1)}¢`;
 const fmtTime = (sec: number, locale: string) =>
   new Date(sec * 1000).toLocaleString(locale, { hour12: false });
@@ -232,13 +236,22 @@ export default function MarketCard() {
             {t("（{tilt}）：", {
               tilt: t(cls.market.tilt === "lopsided" ? "一边倒" : "势均力敌"),
             })}
+            {/* 结算后这个金额仍是真话,但只在「窗口内投入了多少」这层为真 ——
+                裸 $ 会被读成「现在还押着这么多」,所以补上口径词。检测器本身
+                不动(与告警链路共用),只改称谓。 */}
             {cls.market.sides.map((s) => (
               <span key={s.outcome} style={{ marginRight: "var(--s-3)" }}>
-                {t("{o} {n} 钱包 ${v}", {
-                  o: s.outcome,
-                  n: s.walletCount,
-                  v: fmtUsd(s.netUsd),
-                })}
+                {brief.settled
+                  ? t("{o} {n} 钱包 · 窗口净买入 ${v}", {
+                      o: s.outcome,
+                      n: s.walletCount,
+                      v: fmtUsd(s.netUsd),
+                    })
+                  : t("{o} {n} 钱包 ${v}", {
+                      o: s.outcome,
+                      n: s.walletCount,
+                      v: fmtUsd(s.netUsd),
+                    })}
               </span>
             ))}
           </div>
@@ -250,13 +263,23 @@ export default function MarketCard() {
         )}
       </section>
 
-      {/* Smart-money retained exposure */}
+      {/* Smart-money retained exposure — 结算后标题与口径都改写为「台账」,
+          因为「留存」在结算后不成立(见 lib/marketBrief 结算闸门)。 */}
       <section style={{ marginBottom: "var(--s-4)" }}>
         <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-          {t("🏆 聪明钱留存敞口（近 {h}h · 净股数 × 买入均价）", {
-            h: win.hours,
-          })}
+          {brief.settled
+            ? t("🏆 聪明钱窗口台账（近 {h}h · 市场已结算）", { h: win.hours })
+            : t("🏆 聪明钱留存敞口（近 {h}h · 净股数 × 买入均价）", {
+                h: win.hours,
+              })}
         </div>
+        {brief.settled && (
+          <div className="ds-hint" style={{ marginBottom: "var(--s-2)" }}>
+            {t(
+              "市场已结算——敞口一律归零。赎回（REDEEM）不走成交流水，无法从买卖推算，故不再声称任何仓位「仍持有」；下方净股数与买入均价仍是窗口内的成交事实。",
+            )}
+          </div>
+        )}
         {brief.smartFlow.length === 0 ? (
           <div className="ds-empty">{t("窗口内无白名单钱包留仓")}</div>
         ) : (
@@ -266,7 +289,11 @@ export default function MarketCard() {
                 <tr>
                   <th>{t("结果")}</th>
                   <th>{t("钱包")}</th>
-                  <th className="is-right">{t("敞口")}</th>
+                  {/* 结算后这一列若还印 $0 就是一排废数字;换成净股数,
+                      台账才留得住「谁押得最大」这个唯一还成立的事实。 */}
+                  <th className="is-right">
+                    {brief.settled ? t("窗口净股数") : t("敞口")}
+                  </th>
                   <th className="is-right">{t("买入均价")}</th>
                   <th className="is-right">{t("评分/胜率")}</th>
                 </tr>
@@ -278,7 +305,10 @@ export default function MarketCard() {
                       <td>
                         {i === 0 ? (
                           <b>
-                            {f.outcome} · ${fmtUsd(f.totalExposureUsd)}
+                            {f.outcome} ·{" "}
+                            {brief.settled
+                              ? fmtShares(f.totalNetShares)
+                              : `$${fmtUsd(f.totalExposureUsd)}`}
                           </b>
                         ) : (
                           ""
@@ -301,7 +331,9 @@ export default function MarketCard() {
                         )}
                       </td>
                       <td className="mono is-right">
-                        ${fmtUsd(w.exposureUsd)}
+                        {brief.settled
+                          ? fmtShares(w.netShares)
+                          : `$${fmtUsd(w.exposureUsd)}`}
                       </td>
                       <td className="mono is-right">
                         {fmtCents(w.avgBuyPrice)}
@@ -321,10 +353,13 @@ export default function MarketCard() {
         )}
       </section>
 
-      {/* Split-buy accumulators */}
+      {/* Split-buy accumulators — 结算后只是改称谓:「拆单买入」是窗口内的
+          行为观察,结算改变不了它;不成立的只有「敞口(still held)」这个词。 */}
       <section style={{ marginBottom: "var(--s-4)" }}>
         <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-          {t("🧩 拆单累计（≥3 笔 · 单笔 <$10k · 敞口 ≥$2k）")}
+          {brief.settled
+            ? t("🧩 拆单累计（≥3 笔 · 单笔 <$10k · 窗口净买入 ≥$2k）")
+            : t("🧩 拆单累计（≥3 笔 · 单笔 <$10k · 敞口 ≥$2k）")}
         </div>
         {brief.accum.length === 0 ? (
           <div className="ds-empty">{t("窗口内无拆单累计")}</div>
@@ -335,7 +370,9 @@ export default function MarketCard() {
                 <tr>
                   <th>{t("钱包")}</th>
                   <th>{t("结果")}</th>
-                  <th className="is-right">{t("敞口")}</th>
+                  <th className="is-right">
+                    {brief.settled ? t("窗口净买入") : t("敞口")}
+                  </th>
                   <th className="is-right">{t("笔数")}</th>
                   <th className="is-right">{t("均价")}</th>
                   <th>{t("标记")}</th>

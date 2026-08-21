@@ -43,9 +43,19 @@ export const DICT_MARKET: Record<string, string> = {
   "🏆 聪明钱留存敞口（近 {h}h · 净股数 × 买入均价）":
     "🏆 Smart-money retained exposure (last {h}h · net shares × avg buy price)",
   窗口内无白名单钱包留仓: "No whitelist wallet holding in window",
+  "🏆 聪明钱窗口台账（近 {h}h · 市场已结算）":
+    "🏆 Smart-money window ledger (last {h}h · market settled)",
+  "市场已结算——敞口一律归零。赎回（REDEEM）不走成交流水，无法从买卖推算，故不再声称任何仓位「仍持有」；下方净股数与买入均价仍是窗口内的成交事实。":
+    "Market settled — exposure is zeroed. Redemptions (REDEEM) never appear in the trade feed and cannot be inferred from buys/sells, so nothing here is claimed to be STILL held; net shares and avg buy price below remain the window's trade facts.",
   结果: "Outcome",
   钱包: "Wallet",
   敞口: "Exposure",
+  窗口净股数: "Net shares in window",
+  窗口净买入: "Net bought in window",
+  "{o} {n} 钱包 · 窗口净买入 ${v}":
+    "{o} {n} wallets · ${v} net bought in window",
+  "🧩 拆单累计（≥3 笔 · 单笔 <$10k · 窗口净买入 ≥$2k）":
+    "🧩 Split-buy accumulation (≥3 fills · <$10k each · ≥$2k net bought in window)",
   买入均价: "Avg buy price",
   "评分/胜率": "Score / win rate",
   "做市机器人：池内保留但不计入共识/分歧投票":

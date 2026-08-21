@@ -45,6 +45,7 @@ const card = (over: Partial<MarketCard> = {}): MarketCard => ({
       {
         outcome: "Yes",
         totalExposureUsd: 34_855,
+        totalNetShares: 70_000,
         wallets: [
           {
             wallet: "0xa",
@@ -59,6 +60,7 @@ const card = (over: Partial<MarketCard> = {}): MarketCard => ({
       },
     ],
     accum: [],
+    settled: false,
   },
   freshFlow: [
     {
@@ -111,6 +113,28 @@ describe("formatMarketCardTg", () => {
     expect(html).toContain("<b>本工具战绩</b>");
     expect(html).toContain("📐 90d 1 条告警 · 已判定 1/1 中");
     expect(html).toContain("polymarket.com/event/x-ev");
+  });
+
+  it("已结算市场:不说「留仓」,改报窗口净股数,且均价不被归零的敞口权重带崩", () => {
+    const base = card();
+    const html = formatMarketCardTg({
+      ...base,
+      brief: {
+        ...base.brief,
+        settled: true,
+        // 服务端(lib/marketBrief 结算闸门)已把敞口归零后的真实形状。
+        smartFlow: base.brief.smartFlow.map((f) => ({
+          ...f,
+          totalExposureUsd: 0,
+          wallets: f.wallets.map((w) => ({ ...w, exposureUsd: 0 })),
+        })),
+      },
+    });
+    expect(html).not.toContain("留仓");
+    expect(html).toContain("🏆 Yes 窗口净买 <b>70,000</b> 股");
+    // 权重换成净股数后,均价仍是 50¢ —— 用 exposureUsd 加权会打印 0¢。
+    expect(html).toContain("均价 50¢");
+    expect(html).toContain("已结算");
   });
 
   it("战绩行折叠共识升级 —— 一次共识不报成三条(与推送/看板同口径)", () => {
@@ -178,7 +202,12 @@ describe("formatMarketCardTg", () => {
     const html = formatMarketCardTg(
       card({
         identity: null,
-        brief: { classification: { kind: "none" }, smartFlow: [], accum: [] },
+        brief: {
+          classification: { kind: "none" },
+          smartFlow: [],
+          accum: [],
+          settled: false,
+        },
         freshFlow: [],
         history: [],
         window: { trades: 0, truncated: false, hours: 24 },

@@ -42,6 +42,24 @@ export interface MarketMeta {
 }
 
 /**
+ * 这个市场是否已经**终局结算**?
+ *
+ * 判据与 lib/alertOutcomes 的战绩写入完全一致(那里是内联的同一个表达式):
+ * `closed` 且不在 UMA 争议中。两条纪律都必须照抄:
+ *   - 争议中的 closed 市场**不算**结算 —— outcomePrices 仍可能被推翻,而且
+ *     争议期间赎回是卡住的,仓位可能真的还在。
+ *   - `umaDisputed` 为 null(未知)按未争议处理(严格 `=== true` 才算争议),
+ *     否则一次 gamma 抖动就能让所有市场永远"未结算"。
+ * meta 缺失 → false:不知道就不敢宣布任何东西归零。
+ *
+ * 用途:任何声称「现在还持有/还在场上」的口径都必须过这道闸门。成交流水
+ * (BUY/SELL)推不出结算 —— 赎回走的是 REDEEM,永远不会出现在 /trades 里。
+ */
+export function isSettled(meta: MarketMeta | null | undefined): boolean {
+  return meta?.closed === true && meta.umaDisputed !== true;
+}
+
+/**
  * Is this market's UMA resolution currently contested?
  *
  * gamma exposes TWO fields and only the SINGULAR one is authoritative:

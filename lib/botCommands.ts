@@ -93,15 +93,22 @@ export function formatMarketCardTg(
   //    the window carried nothing) ---------------------------------------
   const activity: string[] = [];
   for (const f of card.brief.smartFlow.slice(0, 2)) {
-    // Outcome-level entry price = exposure-weighted mean of wallet averages.
-    const totalExposure = f.wallets.reduce((s, w) => s + w.exposureUsd, 0);
+    // Outcome-level entry price = SHARE-weighted mean of wallet averages.
+    // Weighting by exposureUsd (= shares × price) would be price-SQUARED
+    // weighted, and on a settled market — where every exposure is zeroed —
+    // it would collapse the whole line to a fabricated "均价 0¢".
+    const shownShares = f.wallets.reduce((s, w) => s + w.netShares, 0);
     const wavg =
-      totalExposure > 0
-        ? f.wallets.reduce((s, w) => s + w.avgBuyPrice * w.exposureUsd, 0) /
-          totalExposure
+      shownShares > 0
+        ? f.wallets.reduce((s, w) => s + w.avgBuyPrice * w.netShares, 0) /
+          shownShares
         : 0;
     activity.push(
-      `🏆 ${esc(f.outcome)} 留仓 <b>${usd(f.totalExposureUsd)}</b>（${f.wallets.length} 钱包 · 均价 ${cents(wavg)}）`,
+      card.brief.settled
+        ? // 已结算:赎回不走成交流水,「留仓」无从谈起 —— 只报窗口台账。
+          // 合计用 totalNetShares(未截断),与 totalExposureUsd 同一口径。
+          `🏆 ${esc(f.outcome)} 窗口净买 <b>${Math.round(f.totalNetShares).toLocaleString("en-US")}</b> 股（${f.wallets.length} 钱包 · 均价 ${cents(wavg)} · 已结算,不计敞口）`
+        : `🏆 ${esc(f.outcome)} 留仓 <b>${usd(f.totalExposureUsd)}</b>（${f.wallets.length} 钱包 · 均价 ${cents(wavg)}）`,
     );
   }
   if (card.brief.accum.length > 0) {

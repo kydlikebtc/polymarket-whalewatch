@@ -6,6 +6,7 @@ import {
   getEventCategories,
   readEventCategories,
   getMarketMeta,
+  isSettled,
   parseUmaDisputed,
   tradeMarketContext,
   type MarketMeta,
@@ -42,6 +43,35 @@ const meta = (cid: string, over: Partial<MarketMeta> = {}): MarketMeta => ({
   feeSchedule: null,
   umaDisputed: false,
   ...over,
+});
+
+describe("isSettled", () => {
+  it("closed 且未争议 → 已结算", () => {
+    expect(isSettled(meta("0xc1", { closed: true }))).toBe(true);
+  });
+
+  it("未 closed → 未结算(不看价格)", () => {
+    expect(
+      isSettled(meta("0xc1", { closed: false, outcomePrices: [1, 0] })),
+    ).toBe(false);
+  });
+
+  it("争议中的 closed 市场不算结算 —— 赎回被卡住,仓位可能还真在", () => {
+    expect(isSettled(meta("0xc1", { closed: true, umaDisputed: true }))).toBe(
+      false,
+    );
+  });
+
+  it("umaDisputed 未知(null)按未争议处理 —— 与 alertOutcomes 同一条 fail-open 纪律", () => {
+    expect(isSettled(meta("0xc1", { closed: true, umaDisputed: null }))).toBe(
+      true,
+    );
+  });
+
+  it("meta 缺失 → 未结算(不知道就不敢宣布归零)", () => {
+    expect(isSettled(null)).toBe(false);
+    expect(isSettled(undefined)).toBe(false);
+  });
 });
 
 describe("fetchMarketMeta", () => {
