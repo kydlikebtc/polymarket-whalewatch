@@ -11,14 +11,14 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 415 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1604 tests across
-122 files (`npm test`).
+Scope: 421 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1634 tests across
+124 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
 | Date       | Commit    | What was wrong                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | ---------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-21 | PUSHGATE  | The same defect on the push path: consensus alerted "each of these wallets holds ≥$5k" for markets that had already settled, including the 6-hour TTL reminder. Quantified against 7131 production alerts × gamma `closedTime`: 73.6% of alerted markets resolve **inside** the 6h detection window (86.6% of alerted trades, 89.7% of notional), and the median wallet redeems 1.8 minutes after resolution — faster than the 5-minute cycle.                                                                         |
+| 2026-08-21 | `8ab12d8` | The same defect on the push path: consensus alerted "each of these wallets holds ≥$5k" for markets that had already settled, including the 6-hour TTL reminder. Quantified against 7131 production alerts × gamma `closedTime`: 73.6% of alerted markets resolve **inside** the 6h detection window (86.6% of alerted trades, 89.7% of notional), and the median wallet redeems 1.8 minutes after resolution — faster than the 5-minute cycle.                                                                         |
 | 2026-08-21 | `cba1193` | "Retained exposure" was inferred from buys and sells alone, but a Polymarket redemption is a separate `REDEEM` activity event that never appears in the trade feed — so once a market settled, net shares froze at the pre-settlement level forever. One wallet that had redeemed all 3,200,000 of its shares was still shown holding **$1,829,963**; its real position was zero. The losing side was inflated the same way, at cost basis against a settlement price of 0. Exposure is now zeroed on settled markets. |
 | 2026-08-18 | `58c6b16` | 95% intervals were computed per alert, but 3852 settled alerts sat in only 669 markets (one held 201) — alerts in one market are copies of a single random event, which understated the error by ~1.9x. Now clustered by market; the point estimate still counts alerts.                                                                                                                                                                                                                                               |
 | 2026-08-18 | `524d682` | X posts read the category from `market_meta.category`, empty for all 745 cached markets; the real data was in `event_category`. Every post shipped with only `#Polymarket`.                                                                                                                                                                                                                                                                                                                                            |
@@ -40,7 +40,7 @@ Scope: 415 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that ran
 
 ### 2026-08-21 — The same ghost, on the path that pushes
 
-PUSHGATE
+`8ab12d8` `916fcad` `c19f23d`
 
 The batch below fixed what the market card _displayed_. It deliberately left the detectors alone,
 because `exposureUsd` is a shared primitive and the push path deserved its own risk assessment
