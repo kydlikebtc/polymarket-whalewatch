@@ -12,6 +12,7 @@ import KeysSection from "./KeysSection";
 import TgTargetsSection from "./TgTargetsSection";
 import XAccountsSection from "./XAccountsSection";
 import SignalsSection from "./SignalsSection";
+import MarketCardSection from "./MarketCardSection";
 import StatusStrip from "./StatusStrip";
 import {
   PipelinesOverview,
@@ -60,7 +61,7 @@ const TOKEN_DEBOUNCE_MS = 400;
 // 把两层揉在一起,策略开关/总线开关/TG 告警条件同住一个 tab,而 TG 目标、
 // API key、𝕏 又各占一个 —— 没有一张图回答「这条信号最终到谁手里」。
 const TABS = [
-  { id: "lines", label: "🧭 信号(事件+视图)" },
+  { id: "lines", label: "🧭 对外产出" },
   { id: "pipes", label: "🚚 下游管线" },
   { id: "health", label: "🩺 健康度" },
 ] as const;
@@ -80,6 +81,9 @@ const SECTION_TAB: Record<string, TabId> = {
   tg: "pipes",
   keys: "pipes",
   x: "pipes",
+  // 🎯 按需查询自成一类(非信号、无管线),但它的旋钮住在下游管线 tab ——
+  // 分类在总览表里说清楚,操作放在够得着的地方,与 rules 同一处理。
+  card: "pipes",
   health: "health",
 };
 
@@ -96,6 +100,9 @@ const PIPE_SUBS = [
   { id: "tg", label: "🅐 Telegram" },
   { id: "keys", label: "🅑 API key + webhook" },
   { id: "x", label: "🅒 𝕏 播报" },
+  // 深度卡是管线而非信号线:它不产出事件,它是一条**按需**对外供数的通道,
+  // 而且是全站唯一会打上游的那条 —— 预算与背压的旋钮该和其它对外通道放一起。
+  { id: "card", label: "🎯 市场深度卡" },
 ] as const;
 type LineSub = (typeof LINE_SUBS)[number]["id"];
 type PipeSub = (typeof PIPE_SUBS)[number]["id"];
@@ -441,6 +448,7 @@ export default function ManagePage() {
               className="ds-segmented--wrap"
             />
           </div>
+          {pipeSub === "card" && <MarketCardSection token={token} />}
           {pipeSub === "tg" && (
             <>
               <TgTargetsSection token={token} />

@@ -43,6 +43,11 @@ function whaleAlert(
 // 源告警的载荷是 `JSON.stringify({...g, params})`(lib/consensus.ts)——
 // 整个 ConsensusGroup 平铺进去,`wallets` 一直都在。这里照着它的真实形状造,
 // 包括 `avgBuyPrice` 这个只在源侧存在的历史字段名。
+//
+// **组级** `avgBuyPrice` 与钱包级同名但不同义:它是 USD 加权
+// (`totalNetUsd / Σ(netUsd / avgBuyPrice)`,见 lib/consensus.ts),不是算术
+// 平均 —— 按本 fixture 的数字约为 0.413。投影只搬不算,故这里取定值:要测
+// 的是「搬运忠实」,加权算法本身归 consensus.test.ts 管。
 function consensusAlert(db: DB, n: number, ts: number) {
   recordAlert(
     db,
@@ -54,6 +59,7 @@ function consensusAlert(db: DB, n: number, ts: number) {
       outcome: "Yes",
       walletCount: n,
       totalNetUsd: 92000,
+      avgBuyPrice: 0.413,
       wallets: [
         { wallet: "0xbb", netUsd: 60000, avgBuyPrice: 0.4, score: 91 },
         { wallet: "0xcc", netUsd: 32000, avgBuyPrice: 0.44, score: 83 },
@@ -393,6 +399,92 @@ describe("bus[] 的 wallets —— 与 active[] 的钱包明细同名同义", ()
     const r = pick(db, "consensus");
     expect(r.walletCount).toBe(2);
     expect(r.wallets).toBeNull();
+    db.close();
+  });
+});
+
+// --- avgPrice:consensus 的成本基准补齐(2026-08-21)---------------------------
+//
+// 上两批把身份/方向/金额/钱包明细都对齐了 active[],唯独顶层 `avgPrice` 还是
+// 「large 专属」:读取侧只认 `payload.price`,而 consensus 的投影载荷从来没写
+// 过任何价格字段 —— 于是 consensus 事件的 avgPrice 恒为 null。
+//
+// 这不是「该类型没有这个概念」。源侧 ConsensusGroup 一直带着组级
+// `avgBuyPrice`(USD 加权,lib/consensus.ts),active[] 的 foldConsensus 也一直
+// 在用它(lib/signalFeed.ts)—— 只是投影那把白名单钥匙又漏了一格,和上一批漏
+// `wallets` 是同一个漏勺。
+//
+// 代价不止「少个字段」:docs/signals-api.md 把 avgPrice 定义为**追高闸门**的
+// 分母(实时价 − 成本 > 10¢ 就别跟),而 consensus 恰恰是最需要它的信号。缺了
+// 它,消费方只能自己从 wallets[] 重算 —— 多半会算成算术平均,口径静默分叉。
+
+describe("bus[] 的 avgPrice —— consensus 也要有成本基准", () => {
+  it("consensus:组级 avgBuyPrice 归一为顶层 avgPrice,与 active[] 同源同值", () => {
+    const db = seedAllTypes();
+    const r = pick(db, "consensus");
+    // active[] 的 foldConsensus 读的就是这个 `p.avgBuyPrice`(lib/signalFeed.ts)
+    // —— 两个 feed 同名同义,靠的是读同一个源字段,不是各算各的。
+    expect(r.avgPrice).toBe(0.413);
+    db.close();
+  });
+
+  it("组级 avgPrice 是 USD 加权,不等于 wallets[] 的算术平均", () => {
+    const db = seedAllTypes();
+    const r = pick(db, "consensus");
+    // 这条钉的是「为什么必须从源侧搬,不能让消费方自己算」:算术平均是 0.42,
+    // 加权是 0.413 —— 差 0.7¢。追高闸门红线才 10¢,7% 的口径差不是噪声。
+    const arithmetic =
+      r.wallets!.reduce((s, w) => s + w.avgPrice, 0) / r.wallets!.length;
+    expect(arithmetic).toBeCloseTo(0.42, 10);
+    // 先钉「是个数」:少了这句,avgPrice 为 null 时 not.toBe(0.42) 照样通过 ——
+    // 一条在修复前后都绿的断言等于没写。
+    expect(typeof r.avgPrice).toBe("number");
+    expect(r.avgPrice).not.toBe(arithmetic);
+    db.close();
+  });
+
+  it("payload 里也留一份 avgBuyPrice —— additive,顶层归一不夺走原名", () => {
+    const db = seedAllTypes();
+    const r = pick(db, "consensus");
+    // 与 usd/totalNetUsd、wallets[].avgBuyPrice 同一条纪律:载荷保留源侧原名,
+    // 归一只发生在顶层。
+    expect(r.payload.avgBuyPrice).toBe(0.413);
+    db.close();
+  });
+
+  it("large 不受影响:仍读 payload.price,不被 avgBuyPrice 的回退抢走", () => {
+    const db = seedAllTypes();
+    expect(pick(db, "large").avgPrice).toBe(1);
+    db.close();
+  });
+
+  it("载荷里没有价格的老事件给 null —— 补不出来就别编", () => {
+    const db = openDb(":memory:");
+    createBusDef(db, { sourceType: "consensus", label: "默认", threshold: 2 });
+    // 2026-08-21 之前入账的行:载荷里既没有 price 也没有 avgBuyPrice。
+    // 投影是一次性快照,读取侧再聪明也补不出来 —— 给 0 会被当成「1¢ 都不到
+    // 的成本」,那是彻底的谎报。
+    recordAlert(
+      db,
+      "consensus",
+      "consensus:0xold:Yes:2",
+      JSON.stringify({
+        conditionId: "0xold",
+        title: "老事件",
+        outcome: "Yes",
+        walletCount: 2,
+        totalNetUsd: 50_000,
+      }),
+      NOW - 30,
+    );
+    projectBusSignals(db, NOW);
+    expect(pick(db, "consensus").avgPrice).toBeNull();
+    db.close();
+  });
+
+  it("discovery 没有仓位:avgPrice 仍为 null", () => {
+    const db = seedAllTypes();
+    expect(pick(db, "discovery").avgPrice).toBeNull();
     db.close();
   });
 });

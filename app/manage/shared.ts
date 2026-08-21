@@ -3,20 +3,14 @@
 export const authHeaders = (token: string): Record<string, string> =>
   token ? { "x-admin-token": token } : {};
 
-/**
- * 可订阅的信号类型。与 lib/signalBus.BUS_TYPES 同源语义(客户端组件不能
- * import 碰 DB 的模块),外加 "strategy" —— 19 档策略信号在订阅层面也是一个
- * 类型。不勾任何项 = 不限(全部),与既有 key 的语义一致。
- *
- * key 的订阅范围与 webhook 端点的推送类型共用这一份 —— 两处各写一份的话,
- * 加一个信号类型就会漏掉其中之一。
- */
-export const SUBSCRIBABLE = [
-  { type: "strategy", label: "② 策略信号(19 档)" },
-  { type: "large", label: "① 🐳 大额成交" },
-  { type: "consensus", label: "① 🔥 聪明钱共识" },
-  { type: "discovery", label: "① 🔭 聪明钱发现" },
-] as const;
+// 事件类型 / key 范围的定义在 lib/keyScopes(零依赖,服务端与本页共用一份)。
+// 此前这里手抄了一份,新增 `market` 时立刻分叉:API 认得它而发 key 的 UI 里没有,
+// 范围存在却没人能授予。再导出是为了不改各组件的既有 import 路径。
+export {
+  PUSHABLE_SCOPES as SUBSCRIBABLE,
+  ALL_SCOPES as KEY_SCOPES,
+  scopeLabel,
+} from "../../lib/keyScopes";
 
 export const cents = (p: number | null | undefined): string =>
   p == null ? "—" : `${(p * 100).toFixed(1).replace(/\.0$/, "")}¢`;

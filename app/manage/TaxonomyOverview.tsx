@@ -66,21 +66,31 @@ export function SignalLinesOverview({
       jump: "views",
       isView: true,
     },
+    {
+      no: "🎯",
+      name: "按需查询(非信号)",
+      what: "市场深度卡:调用方点名一个市场,现算一份全景(/api/market-card)",
+      manage: "上游预算 / 新鲜期 / 陈旧闸 / 工作集上限(在 🚚 下游管线)",
+      dest: "不适用:无管线可推 —— 它是拉取,不是推送",
+      status: "状态:全站唯一**会打上游**的对外端点,故有预算与 429 背压",
+      jump: "card",
+      isView: true,
+    },
   ];
   return (
     <Foldable
       storageKey="manageGuideLines"
-      title="🧭 信号 = 事件（两条线）+ 视图"
-      hint="信号=事件(触发后发出,管线只挂在事件上);视图=事件的折叠,非信号。点行切换下方子 tab;接线管理在「下游管线」tab。"
+      title="🧭 对外产出 = 信号（两条线）+ 视图 + 按需查询"
+      hint="信号=事件(触发后发出,管线只挂在事件上);视图=事件的折叠;按需查询=调用方点名、现算的答案 —— 后两者都非信号,无管线可挂。点行切换下方子 tab;接线管理在「下游管线」tab。"
       summary={`① 原始事件(大额/共识/发现)　·　② 策略 ${
         pushed != null && total != null ? `推送中 ${pushed}/${total} 档` : "…"
-      }　·　👁 视图(非信号)`}
+      }　·　👁 视图　·　🎯 按需查询`}
     >
       <div className="ds-table-wrap">
         <table className="ds-table ds-table--compact">
           <thead>
             <tr>
-              <th>信号线</th>
+              <th>产出</th>
               <th>是什么</th>
               <th>在这页管什么</th>
               <th>可达管线</th>

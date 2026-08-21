@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CopyButton, Segmented, Tag } from "../ui";
 import { SectionHead } from "./bits";
-import { agoText, authHeaders, SUBSCRIBABLE, timeText } from "./shared";
+import { agoText, authHeaders, KEY_SCOPES, timeText } from "./shared";
 import WebhookEndpointsSection, {
   type BusDefRow,
   type WebhookRow,
@@ -250,7 +250,7 @@ export default function KeysSection({ token }: { token: string }) {
             订阅信号类型（不勾 = 不限，拿全部）
           </div>
           <div style={{ display: "flex", gap: "var(--s-3)", flexWrap: "wrap" }}>
-            {SUBSCRIBABLE.map((o) => (
+            {KEY_SCOPES.map((o) => (
               <label
                 key={o.type}
                 style={{
@@ -328,7 +328,7 @@ export default function KeysSection({ token }: { token: string }) {
                       >
                         {k.busTypes.map((t) => (
                           <Tag key={t}>
-                            {SUBSCRIBABLE.find((o) => o.type === t)?.label ?? t}
+                            {KEY_SCOPES.find((o) => o.type === t)?.label ?? t}
                           </Tag>
                         ))}
                       </span>

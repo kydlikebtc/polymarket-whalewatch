@@ -1,21 +1,32 @@
-# WhaleWatch 信号 API — 接入文档
+# WhaleWatch API — 接入文档
 
 > 面向持有 API key 的订阅方。key 由运营者签发，明文只显示一次（库中仅存
-> sha256），丢失只能重新签发。设计取舍与口径修订史见内部契约
+> sha256），丢失只能重新签发。本文覆盖两类端点：**信号**（推/拉事件与视图）与
+> **按需查询**（点名一个市场现算答案）——两类的可靠性承诺不同，见下表。设计取舍与口径修订史见内部契约
 > `docs/signals-api.md`，本文只讲怎么用。
 
 **基址**：`https://whalewatch.wired.fund`
 
-| 端点                | 方法   | 鉴权          | 缓存 | 用途                             |
-| ------------------- | ------ | ------------- | ---- | -------------------------------- |
-| `/api/signals`      | `GET`  | API key       | 30s  | 主 feed：信号（事件）+ 视图      |
-| `/api/record`       | `GET`  | 无（公开）    | 60s  | 已公开发布信号的战绩与存证链     |
-| `/api/health`       | `GET`  | 无（公开）    | 无   | 引擎存活探针（200 / 503）        |
-| webhook（你的端点） | `POST` | HMAC 签名验证 | —    | 事件推送（`realtime` tier 专属） |
+| 端点                        | 方法   | 鉴权          | 缓存 | 用途                                       |
+| --------------------------- | ------ | ------------- | ---- | ------------------------------------------ |
+| `/api/signals`              | `GET`  | API key       | 30s  | 主 feed：信号（事件）+ 视图                |
+| `/api/market-card/{cid}`    | `GET`  | API key       | 30s  | 单市场深度卡（`realtime` + `market` 范围） |
+| `/api/record`               | `GET`  | 无（公开）    | 60s  | 已公开发布信号的战绩与存证链               |
+| `/api/health`               | `GET`  | 无（公开）    | 无   | 引擎存活探针（200 / 503）                  |
+| webhook（你的端点）         | `POST` | HMAC 签名验证 | —    | 事件推送（`realtime` tier 专属）           |
 
-两条恒定承诺：
+本文的端点分两类，**它们的可靠性承诺不同**，别把一类的经验套到另一类上：
 
-- **零上游调用**：全部字段来自已持久化状态，你的请求不会失败于上游抖动。
+| 类别         | 端点                                    | 承诺                                                                 |
+| ------------ | --------------------------------------- | -------------------------------------------------------------------- |
+| **信号**     | `/api/signals`、webhook、`/api/record`  | **零上游调用**——全部字段来自已持久化状态，你的请求不会失败于上游抖动 |
+| **按需查询** | `/api/market-card/{cid}`                | **按需向 Polymarket 取数**——会背压（`429`），也会受上游波动影响      |
+
+深度卡不是信号：它没有事件 id、不可被推送、也不是任何事件的折叠。它是你点名一个
+市场、我们现算一份答案。接入前请读完 §14。
+
+一条跨类别的恒定承诺：
+
 - **字段只增不改**：既有字段名称与语义不变；解析时请忽略未知字段。
 
 ---
@@ -90,12 +101,13 @@ key 形如 `wlk_` + 32 字符 base64url。
 
 签发 key 时可限定订阅范围，**过滤在服务端执行**：
 
-| 类型        | 对应的信号       | 出现在                    |
-| ----------- | ---------------- | ------------------------- |
-| `strategy`  | ② 策略事件       | `strategies` 段 + webhook |
-| `large`     | ① 大额成交事件   | `bus[]` + webhook（勾选） |
-| `consensus` | ① 聪明钱共识事件 | `bus[]` + webhook（勾选） |
-| `discovery` | ① 钱包发现事件   | `bus[]` + webhook（勾选） |
+| 类型        | 对应的信号       | 出现在                                            |
+| ----------- | ---------------- | ------------------------------------------------- |
+| `strategy`  | ② 策略事件       | `strategies` 段 + webhook                         |
+| `large`     | ① 大额成交事件   | `bus[]` + webhook（勾选）                         |
+| `consensus` | ① 聪明钱共识事件 | `bus[]` + webhook（勾选）                         |
+| `discovery` | ① 钱包发现事件   | `bus[]` + webhook（勾选）                         |
+| `market`    | —（非事件，属**按需查询**类） | `/api/market-card/{cid}`，仅 `realtime`（§14） |
 
 - 未限定 = 不限，拿全部类型。
 - key 不含 `strategy` 时 `strategies` 段是空结构（形状不变，不必判空）。
@@ -217,7 +229,7 @@ interface BusSignal {
 
   // ——— 金额（跨类型同名同义）———
   netUsd: number | null; // large=名义额，consensus=总净买
-  avgPrice: number | null; // large=成交价
+  avgPrice: number | null; // 成本基准：large=成交价，consensus=组级 USD 加权均价
   walletCount: number | null; // large 恒 1（一笔成交=一个钱包）
   // ——— 谁买的（与 walletCount 同源，数字与列表不打架）———
   wallets: { wallet: string; netUsd: number; avgPrice: number }[] | null;
@@ -244,17 +256,25 @@ interface BusSignal {
 
 `payload` 保留原始载荷，字段一个没少（**additive**，既有消费方零改动）：
 
-| `sourceType` | 事件含义                           | `payload` 字段（中文名）                                                                                                                                            |
-| ------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `large`      | 单笔大额成交（含白名单与非白名单） | `usd` 名义额 · `side` 买卖向（`"BUY"\|"SELL"\|null`）· `outcome` 方向 · `outcomeIndex` · `asset` · `price` 成交价 · `wallet` 钱包 · `slug`/`eventSlug`              |
-| `consensus`  | ≥N 个白名单钱包同向共识            | `outcome` 方向 · `outcomeIndex` · `asset` · `walletCount` 钱包数 · `totalNetUsd` 总净买 · `wallets` 钱包明细（`wallet`/`netUsd`/`avgBuyPrice`）· `slug`/`eventSlug` |
-| `discovery`  | 新钱包通过准入进白名单池           | `address` 地址 · `score` 评分(0-100) · `source` 发现渠道                                                                                                            |
+| `sourceType` | 事件含义                           | `payload` 字段（中文名）                                                                                                                                                                         |
+| ------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `large`      | 单笔大额成交（含白名单与非白名单） | `usd` 名义额 · `side` 买卖向（`"BUY"\|"SELL"\|null`）· `outcome` 方向 · `outcomeIndex` · `asset` · `price` 成交价 · `wallet` 钱包 · `slug`/`eventSlug`                                           |
+| `consensus`  | ≥N 个白名单钱包同向共识            | `outcome` 方向 · `outcomeIndex` · `asset` · `walletCount` 钱包数 · `totalNetUsd` 总净买 · `avgBuyPrice` 组级加权均价 · `wallets` 钱包明细（`wallet`/`netUsd`/`avgBuyPrice`）· `slug`/`eventSlug` |
+| `discovery`  | 新钱包通过准入进白名单池           | `address` 地址 · `score` 评分(0-100) · `source` 发现渠道                                                                                                                                         |
 
 > `payload.usd`（large）与 `payload.totalNetUsd`（consensus）是同一语义的两个
-> 历史名字，顶层的 `netUsd` 已统一；`payload.wallets[].avgBuyPrice` 同理，顶层
-> `wallets[].avgPrice` 才是归一后的名字。新接入请读顶层字段。
-> `outcomeIndex`/`asset` 自 2026-08-19 起、`wallets` 自 2026-08-21 起写入载荷，
-> 此前入账的事件为 `null`；`bus[]` 窗口最长 48h，一天之后全量数据都齐。
+> 历史名字，顶层的 `netUsd` 已统一；`payload.price`（large）与
+> `payload.avgBuyPrice`（consensus）同理，顶层 `avgPrice` 已统一；
+> `payload.wallets[].avgBuyPrice` 同理，顶层 `wallets[].avgPrice` 才是归一后的
+> 名字。新接入请读顶层字段。
+> `outcomeIndex`/`asset` 自 2026-08-19 起、`wallets` 与 `avgBuyPrice` 自
+> 2026-08-21 起写入载荷，此前入账的事件为 `null`；`bus[]` 窗口最长 48h，一天
+> 之后全量数据都齐。
+
+> **`consensus` 的 `avgPrice` 请勿自行从 `wallets[]` 重算。** 源侧给的是按份额
+> **USD 加权**的组级成本（`totalNetUsd / Σ(netUsd / avgBuyPrice)`），不是各钱包
+> 均价的算术平均——两者能差近 1¢，而追高闸门的红线只有 10¢。顶层 `avgPrice`
+> 与 `active[]` 的同名字段读的是同一个源字段，口径保证一致。
 
 要点：
 
@@ -620,7 +640,93 @@ interface RecordFeed {
 
 ---
 
-## 14. 常见问题
+## 14. 按需查询 · 市场深度卡
+
+```
+GET /api/market-card/{conditionId}
+```
+
+**这是与「信号」并列的另一类端点**，不是 `/api/signals` 的一部分——它没有事件
+id、不可被推送、也不是任何事件的折叠（§6 的判据）。你点名一个市场，我们现算一份
+答案。
+
+需 key 范围含 `market`，且 **`realtime` tier 专属**。回答的是「用户正要在这个
+市场下单，此刻盘面长什么样」：谁在买、多强、成本多少、有没有分歧、我们历史上
+在这里发过什么信号、准不准。
+
+> **一张延迟 30 分钟的盘面回答不了「我现在该不该进」** ——所以延迟档拿不到它，
+> 这是范围问题不是字段阉割（`delayed` key 的 `/api/signals` 字段仍一个不少）。
+
+### 与「信号」类端点的根本差别（先读这一段）
+
+|            | `/api/signals`                   | 本端点                       |
+| ---------- | -------------------------------- | ---------------------------- |
+| 数据来源   | 全部已持久化状态，**零上游调用** | **按需打上游**（成交窗口）   |
+| 突发流量   | 永远挤不占引擎预算               | 受全局预算约束，会背压       |
+| `429`      | 不会                             | **会，且是正常工作状态**     |
+| 稳定性依赖 | 只依赖我们自己                   | 额外依赖 Polymarket 公开 API |
+
+### 响应
+
+```typescript
+interface MarketCardResponse {
+  card: MarketCard; // identity / meta / brief / freshFlow / history / window
+  builtAt: number; // 本卡数据的基准时刻（unix 秒）
+  staleSec: number; // 响应时刻 − builtAt
+  live: boolean; // true = 新鲜期内；false = 预算耗尽，发的是陈旧窗口重算的卡
+  healthy: boolean; // 引擎健康位，与 /api/signals 同义
+  notice: string; // 研究用途 · 非投资建议 · 只读非托管
+}
+```
+
+`card.brief` 三段：`classification`（`consensus` / `disagreement` / `none`，与
+全站同一套判据与门槛）、`smartFlow`（按结果分组的聪明钱**留存**敞口，逐钱包给
+`exposureUsd` / `netShares` / `avgBuyPrice` / `scoreBand` / `winRate` /
+`isMarketMaker`）、`accum`（拆单建仓组）。另有 `freshFlow`（≤7 天新钱包的大额
+买入）与 `history`（我们在这个市场发过的告警 + 验证结论）。
+
+### 为什么给的是 `scoreBand` 而不是原始分
+
+`scoreBand` 取值 `"high"` / `"mid"` / `"low"` / `null`（未知）。
+
+原始评分是我们内部模型的输出，会随模型迭代漂移。把一个连续值写进对外契约，等于
+承诺它的语义永不变——那样我们每调一次模型，对你就是一次无声的破坏性变更。分档是
+**稳定语义**：模型怎么调，都不改变「这个钱包算强」这件事。分档边界的改动才算破坏
+性变更，而那是件明确、罕见、会公告的事。
+
+`winRate` 照给原值：它是实测统计（逐仓盈亏聚合，已处理持有到归零的幸存者偏差），
+不是模型输出，没有随版本漂移的问题。
+
+### 状态判据
+
+| 情形                        | 返回                                      |
+| --------------------------- | ----------------------------------------- |
+| 数据在新鲜期内              | `200`，`live: true`，`staleSec` 很小      |
+| 预算耗尽，但缓存窗口在闸内  | `200`，`live: false` + `staleSec`         |
+| 预算耗尽且无缓存 / 超陈旧闸 | `429` + `Retry-After`                     |
+| 引擎停跳                    | 预算归零 → 多为上面两行，`healthy: false` |
+
+**`429` 是背压，不是故障。** 它意味着「此刻不能诚实地回答你」，请按
+`Retry-After` 退避后重试——立刻重试只会把背压变成雪崩。429 的响应体**不含
+`card`**，所以不会被误读成「这个市场没有信号」。
+
+**超过陈旧闸我们宁可拒绝，也不发旧卡。** 卡片说「3 个聪明钱刚买了 YES」，若其中
+2 个在这几分钟里已经卖了，那张卡不是「不够新」，是**错的**，而且错在会让人亏钱
+的方向上。
+
+### ⚠️ 这条端点的依赖风险，必须知道
+
+`/api/signals` 只读我们自己的库；**本端点按需向 Polymarket 的公开 API 取数**，
+而那些接口**无版本、会静默变更**。实测有过：`/activity` 的 `limit` 上限从 1000
+悄悄降到 500，没有公告，直接把依赖它的页面全打挂。
+
+所以：本端点的可用性含有一段我们控制不了的部分。把它接进你的关键路径前，请准备
+好降级显示（例如仅用 `/api/signals` 的信号做提示），不要让一张卡片拿不到就阻断
+用户的操作。
+
+---
+
+## 15. 常见问题
 
 **`bus` 一直是空数组？** 看 §4 实时状态表——类型未开启就是预期行为，
 不是故障。
@@ -644,10 +750,11 @@ interface RecordFeed {
 
 ---
 
-## 15. 变更记录
+## 16. 变更记录
 
 | 日期       | 变更                                                                                                                   |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-21 | 新增 `/api/market-card/{cid}` 市场深度卡——本文首个**会打上游**的端点，自成「按需查询」一类（`realtime` + `market` 范围），含 `429` 背压语义 |
 | 2026-08-21 | ① `bus[]` 增 `wallets` 钱包明细（与 `active[]` 同名同义；`discovery` 恒 `null`）——webhook 同步生效                     |
 | 2026-08-19 | 文档重写为使用者参考版（理由与修订史移至内部契约）。信号=事件（①原始/②策略）与视图分立为本文骨架                       |
 | 2026-08-19 | ① 支持多档信号定义（同类型不同阈值），webhook 可按档订阅；`settled[]` 补齐与 `active[]` 同构字段；`active[]` 增 `slug` |

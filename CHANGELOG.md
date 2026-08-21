@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 380 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1510 tests across
-112 files (`npm test`).
+Scope: 406 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1587 tests across
+121 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -36,6 +36,202 @@ Scope: 380 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that ran
 
 ## Batches
 
+### 2026-08-21 — One function was answering two different questions
+
+Renaming `busTypeAllowed` would have been the obvious follow-up to moving the market card out of the
+signal namespace. It would also have been the wrong fix, because the name was not the problem.
+
+That one function answered two questions that happen to share an implementation: what may this API
+key access, and what does this webhook endpoint push. A list-contains check serves both, so both had
+used it for months. But the domains had already diverged. A key can be granted the market card,
+which is a capability with no events to push; an endpoint cannot push it, because there is nothing
+to push. That divergence is exactly what made adding `market` feel awkward, and exactly why the
+grantable-scope list in `/manage` had to be split into two hand-maintained copies.
+
+Splitting it into `keyAllows` and `endpointPushes` is not cosmetic. With one function, "check
+whether `market` is a pushable type" is a sentence you can write. With two, it stops looking right
+at the call site.
+
+The duplicated list in `/manage` had already drifted once, in the way duplicated lists always do:
+`market` existed in the API and was missing from the key-issuing UI, so the scope was real and
+ungrantable. Both sides now read one zero-dependency definition — the client component could not
+import the server module because it pulls in node's crypto, but the correct response to that
+constraint was to extract the data, not to copy it. A guard test pins the two domains apart and
+their difference against the webhook layer's own list.
+
+The database column keeps the name `bus_types`, which has been inaccurate since the day `strategy`
+was first stored in it. Renaming a column requires a migration, and the column is visible only to
+maintainers; it was the concept that was lying, not the storage.
+
+Commits: this batch.
+
+### 2026-08-21 — The market card was never a signal
+
+The endpoint shipped at `/api/signals/market/{cid}`, which put it inside a namespace whose defining
+property it violates. Everything under `/api/signals` reads only our own database; the market card
+reaches upstream on demand. That contradiction had already forced three separate patches, and it
+took someone else reading the result to notice they were three symptoms of one mistake.
+
+The subscriber doc had to carve an exception into the reliability promise — "zero upstream calls,
+except for this one endpoint." A member that breaks the namespace's defining property is not an
+exception; it is filed in the wrong place. The grantable-scope list had to be split in two, because
+a card does not fit inside "event types you can subscribe to push for." And the `/manage` taxonomy
+table, which states the classification model in three rows, had nothing to say about it at all.
+
+The card is a third kind. It has no event id, cannot be pushed, and is not a fold of any event. You
+name a market and we compute an answer. It now lives at **`/api/market-card/{cid}`**, the doc states
+reliability per category rather than as one promise with a hole in it, and the `/manage` overview
+grew a fourth row so the operator can see the whole surface at once.
+
+The original choice was made because authentication could be reused from the signal feed. That was a
+convenience, not a taxonomy — and the difference between those two is the whole lesson here.
+
+Commits: this batch.
+
+### 2026-08-21 — Making the market card survivable in production
+
+Four pieces of follow-up, none of them new capability. All of them are what the endpoint needed to
+be operable by someone who is not the person who wrote it.
+
+A **billing defect surfaced during the first live smoke test**. The token bucket is meant to
+approximate upstream requests, but a cold start and a warm refresh both cost exactly one token —
+while a cold start pages one to thirteen times and a warm refresh pages exactly once. On a freshly
+restarted process, where the working set is empty by definition, a hundred cold starts a minute
+would have spent up to thirteen hundred upstream requests against a hundred-request ceiling. The
+page count turned out to be derivable from the rows returned, so the gate now charges one to let the
+request through and settles the difference once the fetch lands. The settlement ignores its own
+verdict: the money is already spent, and a ledger that refuses to record it is worse than useless.
+
+The **window is now archived to SQLite**, for exactly one reason: a restart should not force the
+entire working set through a cold start at once. Two things keep it cheap. An archive does not need
+to be current, only recent — reading back a five-minute-old window means the incremental refetch
+starts from that window's newest trade, and five minutes of $500+ fills on a single market is
+nowhere near a page, so the catch-up is still one request. That in turn allows throttling writes to
+once per market per five minutes, which drops write amplification by an order of magnitude against
+the thirty-second refresh cycle. And an archive older than the window span is discarded on read
+rather than trusted, because by then the entire window has rolled out from under it. Pruning runs in
+the engine's own loop: the archive table is not bounded by the in-memory LRU, so it grows with every
+market ever queried, and cleanup is an operations cost that should not land on whichever user
+request happens to trigger it.
+
+The **four tuning parameters moved from constants into the config table** — budget, freshness
+window, staleness ceiling, working-set cap. Not environment variables, deliberately: these are
+numbers you can only choose after watching real traffic, and if changing one requires a redeploy
+then nobody changes it, and a knob nobody turns is not a knob. They clamp, and they enforce one
+cross-field invariant — the staleness ceiling must exceed the freshness window. That is not
+aesthetics. A window only triggers a refetch once it reaches the freshness limit, at which point its
+age already equals that limit; a ceiling below it would send every single degradation straight to a
+429, and the entire "serve an older card, labelled" path would be dead code that never once ran.
+
+**Per-wallet scores are bucketed on the subscriber endpoint** into high/mid/low. The design document
+had filed this under secrecy, and that reasoning was wrong: the raw score has been public on the
+unkeyed dashboard route all along, so masking only the keyed one is theatre. The real problem is
+contract stability. A raw score is the output of an internal model that drifts as the model
+improves, and publishing it promises subscribers that a continuous value's meaning will never
+change — which turns every model adjustment into a silent breaking change. A band survives model
+changes; only moving the band boundaries breaks anything, and that is a rare, deliberate,
+announceable act. Win rate stays raw, because it is a measurement rather than a model output.
+
+The `/manage` panel shows five counters, the working set, the archive size, and — the one that
+matters — the budget actually in force right now. The configured number is only a ceiling; engine
+health decides what is really allowed. Showing only the configured value would leave an operator
+staring at a rising refusal count with no way to see why.
+
+One gap closed on the way through: the `market` scope existed in the API but appeared nowhere in the
+key-issuing UI, which meant nobody could actually grant it. Adding it revealed that the scope list
+was shared with the webhook push-type list, where a market card — having no events to push — has no
+business appearing. The two are now separate lists.
+
+Commits: this batch.
+
+### 2026-08-21 — A market card you can call while you trade
+
+Subscribers wanted the thing a trader actually needs in the seconds before placing an order: who is
+buying this market right now, how strongly, at what cost, whether the smart money disagrees, and
+what we ourselves have called here before and how those calls turned out. The 🎯 card behind the
+dashboard and the Telegram bot already computed all of it. It just had no keyed way out.
+
+The obvious safe design was to let the engine compose a card when a signal fires and serve it from
+the database — zero upstream, the same discipline every other endpoint here follows. It was
+rejected, correctly. A snapshot answers "what did this market look like when the signal formed",
+which is an evidence question. Deciding whether to enter is a _now_ question, and a forty-minute-old
+order book cannot answer it.
+
+That meant confronting concurrency honestly, and three things fell out.
+
+The existing rate limiter was **guarding the wrong dimension**. It caps requests per minute, but
+upstream cost tracks the number of _distinct markets_ — concurrent callers on one market already
+collapse into a single fetch, so the expensive case is three hundred people each opening a different
+market. A limiter counting requests stops the abuse that was free anyway and waves through the abuse
+that costs money. The budget now counts refetches.
+
+Freshness and capacity looked like a zero-sum trade, and weren't. Refetching a 24-hour window every
+thirty seconds re-pays for twenty-three hours and fifty-nine minutes that did not change. The alert
+loop stopped doing that long ago — it stops paginating the moment a page touches something already
+seen. Applying the same trick here (remember the newest trade seen, and `fetchMarketWindow` halts on
+page zero) turns a warm refresh into exactly one request, against one to thirteen for a cold start.
+Same budget, eight times the capacity, at a fresher setting rather than a staler one.
+
+And "within what the server can take" did not have to be a number someone guessed. The heartbeat
+table already records every loop's age against its own staleness threshold. The budget now reads the
+worst loop — not the average, since one loop gasping is enough — cuts to a quarter past sixty
+percent drift, and drops to zero the moment any loop goes stale. Continuing to spend upstream while
+the engine is falling behind deepens the failure, because the likely cause of it falling behind is
+upstream contention in the first place.
+
+Where the budget runs out, a card is rebuilt from the stale window and labelled with its age, up to
+a ninety-second ceiling; past that the endpoint returns 429 with a `Retry-After` rather than a card.
+This is deliberate and it is not politeness. A card reporting "three smart wallets just bought YES"
+when two of them have since sold is not stale, it is wrong, and wrong in the direction that costs
+the reader money. Handing over `staleSec` and trusting the client to judge does not work — clients
+render rather than show a blank.
+
+The web and bot route now share the same working set and the same bucket. The upstream budget is one
+budget; splitting it in two only halves the same ceiling, and the hot markets a human browses are
+the hot markets a subscriber queries, so sharing warms both. That route's own sixty-second cache is
+gone, because two cache layers make "how old is this card" a question with two answers.
+
+The subscriber-facing doc gained the caveat that matters most: every other endpoint here reads only
+our own database, and this one does not. Polymarket's public API is unversioned and has changed
+under us before — `/activity`'s limit silently dropped from 1000 to 500 and took a page down with
+it. Anyone wiring this into a critical path needs to know that, and needs a fallback.
+
+Commits: this batch.
+
+### 2026-08-21 — the cost basis a `consensus` event never had
+
+Two batches in a row closed the gap between `bus[]` and `active[]` one field at a time, and both
+times the field that got left behind was the one a follower actually acts on. This time it was
+`avgPrice`.
+
+The read side recognised exactly one key, `payload.price`, which only a `large` event writes. A
+`consensus` event's projected payload had never carried a price of any kind — so every consensus
+row on the bus reported `avgPrice: null`, forever, by construction. Nothing was lost in transit:
+`ConsensusGroup` has always computed a group-level `avgBuyPrice`, the source alert flattens the
+whole group into its payload, and `active[]`'s `foldConsensus` has been reading that exact field
+the entire time. The projection's whitelist skipped it, the same way it had skipped `wallets`.
+
+The stakes are higher than a missing number. `avgPrice` is documented as the denominator of the
+chase gate — current price minus cost basis, don't follow past 10¢ — and `consensus` is the signal
+that gate exists for. A consumer holding a consensus event could see who bought and how much, but
+not what they paid, which is the one input the gate needs.
+
+The fix is the same shape as last time: the projection now carries the source's `avgBuyPrice`, and
+the read side falls back to it when `price` is absent. Order matters — `price` stays first, because
+a single fill's actual execution price is a stronger fact than an aggregate, and a future type
+carrying both should not silently switch to the derived one.
+
+Consumers should not compute this themselves, and the docs now say so outright. The group figure is
+**USD-weighted by shares** (`totalNetUsd / Σ(netUsd / avgBuyPrice)`), not the arithmetic mean of the
+per-wallet averages that `wallets[]` now makes so easy to reach for. On a representative group the
+two differ by close to a cent against a 10¢ red line — a 7% divergence in the gate, arrived at
+silently. A test pins the difference so the distinction can't quietly erode.
+
+Events booked before this change still read `null`. Projection is a one-shot snapshot; no amount of
+cleverness on the read side reconstructs a field the payload never held, and returning `0` would
+report a sub-penny cost basis rather than an unknown one. The 48h window clears them within a day.
+
+Commits: `0edf02f`, plus the wrap-up commit.
 ### 2026-08-21 — `bus[]` finally says who bought
 
 The parity pass two days earlier aligned identity, direction and money, and stopped one field short

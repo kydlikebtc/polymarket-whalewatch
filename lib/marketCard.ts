@@ -1,5 +1,10 @@
 import type { DB } from "./db";
-import { getMarketMeta, isSettled, type MarketMeta } from "./gamma";
+import {
+  getMarketMeta,
+  isSettled,
+  type fetchMarketMeta,
+  type MarketMeta,
+} from "./gamma";
 import { getAllSmartTags } from "./smartWallets";
 import { getWalletAges } from "./walletAge";
 import {
@@ -60,6 +65,12 @@ export interface MarketCardDeps {
   nowSec?: number;
   fetchWindow?: typeof fetchMarketWindow;
   agesFetcher?: typeof getWalletAges;
+  /**
+   * 元信息抓取。可注入有两个理由:单元测试不该打网络;以及**降级路径必须零上游**
+   * —— 预算耗尽时用陈旧窗口重算卡片,若这里偷偷捅一次 gamma,「零上游」这个契约
+   * 就是假的(哪怕 gamma 与 data-api 是不同 host)。见 lib/marketCardService。
+   */
+  metaFetcher?: typeof fetchMarketMeta;
 }
 
 export async function buildMarketCard(
@@ -71,9 +82,14 @@ export async function buildMarketCard(
     nowSec = Math.floor(Date.now() / 1000),
     fetchWindow = fetchMarketWindow,
     agesFetcher = getWalletAges,
+    metaFetcher,
   } = deps;
   const [metaMap, window] = await Promise.all([
-    getMarketMeta(db, [conditionId]),
+    getMarketMeta(
+      db,
+      [conditionId],
+      metaFetcher ? { fetcher: metaFetcher } : {},
+    ),
     fetchWindow(conditionId, { sinceSec: nowSec - CARD_WINDOW_SEC }),
   ]);
   const meta = metaMap[conditionId] ?? null;

@@ -110,12 +110,44 @@ export function parseBusTypes(raw: string | null): string[] | null {
   }
 }
 
-/** 该订阅范围是否放行某个类型。null(不限)一律放行。 */
-export function busTypeAllowed(
-  busTypes: string[] | null | undefined,
+// --- 两个权限域 ------------------------------------------------------------
+//
+// 「这把 **key** 能访问什么」与「这个 **webhook 端点** 推什么事件」实现恰好相同
+// (列表包含判断),于是长期共用一个 `busTypeAllowed`。但域早就分叉了:
+//
+//   · key 范围含 `market`(市场深度卡)—— 那是一种**能力**,不是事件类型;
+//   · 端点推送域不含它 —— 深度卡是拉取的,**没有事件可推**。
+//
+// 当初把 market 塞进来时的别扭、以及 /manage 里可授予范围被迫拆成两份清单,
+// 根源都在这一处合并。名字也一直在撒谎:`bus_types` 里从来就装着 `strategy`,
+// 而策略信号住在 strategy_signals,根本不是 bus 类型。
+//
+// 拆成两个函数不是为了好看:合成一个时,「把 market 当可推送类型去检查」是一句
+// 写得出来的话,拆开后它在调用点上就显得不对了。库表列名 `bus_types` 保持不动
+// (改列要迁移,而列名只有维护者看得见;撒谎的是概念,不是存储)。
+
+// 域的定义在 lib/keyScopes(零依赖,/manage 的客户端组件也从那里取)——
+// 这里只再导出,免得调用方为了一个常量去认第二个模块。
+export { KEY_SCOPES, PUSHABLE_TYPES } from "./keyScopes";
+
+/** 两个域共用的判断:null / 空 = 不限,一律放行。 */
+const listAllows = (list: string[] | null | undefined, v: string): boolean =>
+  !list || list.length === 0 || list.includes(v);
+
+/** 这把 key 的范围是否放行某项能力(域见 KEY_SCOPES)。 */
+export function keyAllows(
+  scopes: string[] | null | undefined,
+  scope: string,
+): boolean {
+  return listAllows(scopes, scope);
+}
+
+/** 这个 webhook 端点是否推送某个事件类型(域见 PUSHABLE_TYPES)。 */
+export function endpointPushes(
+  types: string[] | null | undefined,
   type: string,
 ): boolean {
-  return !busTypes || busTypes.length === 0 || busTypes.includes(type);
+  return listAllows(types, type);
 }
 
 /** 吊销(软删,revoked_at 时间戳即审计)。已吊销/未知 id 返回 false。 */
