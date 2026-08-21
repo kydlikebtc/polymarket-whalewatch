@@ -11,7 +11,7 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 380 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1516 tests across
+Scope: 382 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1516 tests across
 112 files (`npm test`).
 
 ## Corrections that changed reported numbers
@@ -69,7 +69,7 @@ Events booked before this change still read `null`. Projection is a one-shot sna
 cleverness on the read side reconstructs a field the payload never held, and returning `0` would
 report a sub-penny cost basis rather than an unknown one. The 48h window clears them within a day.
 
-Commits: pending.
+Commits: `0edf02f`, plus the wrap-up commit.
 
 ### 2026-08-21 — `bus[]` finally says who bought
 
