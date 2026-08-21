@@ -4,6 +4,7 @@ import { busTypeAllowed } from "../../../../../lib/apiKeys";
 import { getEngineStart, getHeartbeats } from "../../../../../lib/heartbeat";
 import { evaluateHealth } from "../../../../../lib/health";
 import { budgetFor, takeCardToken } from "../../../../../lib/cardBudget";
+import { toPublicCard } from "../../../../../lib/cardPublicView";
 import { getCardSettings } from "../../../../../lib/cardSettings";
 import { serveMarketCard } from "../../../../../lib/marketCardService";
 import { SIGNAL_DISCLAIMER } from "../../../../../lib/signalPush";
@@ -85,7 +86,10 @@ export async function GET(
       );
     }
     return Response.json({
-      card: out.card,
+      // 对外投影:每钱包的原始评分换成分档。理由是契约稳定性而非保密 ——
+      // raw score 是内部模型输出,写进对外契约等于承诺它的语义永不变,于是每次
+      // 调模型都成了破坏性 API 变更(详见 lib/cardPublicView)。
+      card: toPublicCard(out.card),
       builtAt: out.builtAt,
       staleSec: out.staleSec,
       live: out.live,
