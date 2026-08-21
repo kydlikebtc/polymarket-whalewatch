@@ -19,3 +19,8 @@ sample_*.json
 .claude/
 .playwright-mcp/
 next-env.d.ts
+
+# macOS Finder droppings. Deliberately unanchored (no leading slash) so it
+# matches at every depth — Finder drops one of these into any directory that
+# gets browsed, and docs/ is the one people actually open in Finder.
+.DS_Store
