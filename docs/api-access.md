@@ -661,9 +661,21 @@ interface MarketCardResponse {
 
 `card.brief` 三段：`classification`（`consensus` / `disagreement` / `none`，与
 全站同一套判据与门槛）、`smartFlow`（按结果分组的聪明钱**留存**敞口，逐钱包给
-`exposureUsd` / `netShares` / `avgBuyPrice` / `score` / `winRate` /
+`exposureUsd` / `netShares` / `avgBuyPrice` / `scoreBand` / `winRate` /
 `isMarketMaker`）、`accum`（拆单建仓组）。另有 `freshFlow`（≤7 天新钱包的大额
 买入）与 `history`（我们在这个市场发过的告警 + 验证结论）。
+
+### 为什么给的是 `scoreBand` 而不是原始分
+
+`scoreBand` 取值 `"high"` / `"mid"` / `"low"` / `null`（未知）。
+
+原始评分是我们内部模型的输出，会随模型迭代漂移。把一个连续值写进对外契约，等于
+承诺它的语义永不变——那样我们每调一次模型，对你就是一次无声的破坏性变更。分档是
+**稳定语义**：模型怎么调，都不改变「这个钱包算强」这件事。分档边界的改动才算破坏
+性变更，而那是件明确、罕见、会公告的事。
+
+`winRate` 照给原值：它是实测统计（逐仓盈亏聚合，已处理持有到归零的幸存者偏差），
+不是模型输出，没有随版本漂移的问题。
 
 ### 状态判据
 
