@@ -8,7 +8,7 @@ import {
   beforeEach,
 } from "vitest";
 
-// 网页 / TG bot 的卡片路由。它与对外路由(/api/signals/market/[cid])共用同一个
+// 网页 / TG bot 的卡片路由。它与对外路由(/api/market-card/[cid])共用同一个
 // 窗口层与同一个令牌桶 —— 上游预算本来就是同一份,分两个桶只是把同一个天花板
 // 切成两半;而人在网页上看的热门市场正好也是订阅方在看的,共享工作集是净收益。
 //

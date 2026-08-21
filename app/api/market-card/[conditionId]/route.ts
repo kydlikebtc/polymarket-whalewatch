@@ -1,26 +1,34 @@
-import { openDb } from "../../../../../lib/db";
-import { checkFeedAccess } from "../../../../../lib/feedAuth";
-import { busTypeAllowed } from "../../../../../lib/apiKeys";
-import { getEngineStart, getHeartbeats } from "../../../../../lib/heartbeat";
-import { evaluateHealth } from "../../../../../lib/health";
-import { budgetFor, takeCardToken } from "../../../../../lib/cardBudget";
-import { toPublicCard } from "../../../../../lib/cardPublicView";
-import { getCardSettings } from "../../../../../lib/cardSettings";
-import { serveMarketCard } from "../../../../../lib/marketCardService";
-import { SIGNAL_DISCLAIMER } from "../../../../../lib/signalPush";
+import { openDb } from "../../../../lib/db";
+import { checkFeedAccess } from "../../../../lib/feedAuth";
+import { busTypeAllowed } from "../../../../lib/apiKeys";
+import { getEngineStart, getHeartbeats } from "../../../../lib/heartbeat";
+import { evaluateHealth } from "../../../../lib/health";
+import { budgetFor, takeCardToken } from "../../../../lib/cardBudget";
+import { toPublicCard } from "../../../../lib/cardPublicView";
+import { getCardSettings } from "../../../../lib/cardSettings";
+import { serveMarketCard } from "../../../../lib/marketCardService";
+import { SIGNAL_DISCLAIMER } from "../../../../lib/signalPush";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // 对外的市场深度卡 —— 订阅方的用户正要下单时的那一眼。
 //
+// **它不属于 /api/signals 命名空间**(2026-08-21 从 /api/signals/market/ 迁出)。
+// 当初挂在那下面是因为鉴权可以复用 checkFeedAccess —— 但那是实现便利,不是分类
+// 判据。三个症状指向同一个归类错误:接入文档不得不为它给「零上游调用」这条承诺
+// 开特例(一个成员违反命名空间的定义性属性,那不是例外是归错类)、可授予范围清单
+// 被迫拆成两份(它塞不进「可推送的事件类型」)、而按文档 §6 的判据它既不是信号
+// (没有 id、不可推送)也不是视图(不是任何事件的折叠)。
+//
+// 它是**第三类:按需查询**。调用方点名一个市场,我们现算一个答案。
+//
 // 与 /api/market/[cid](网页 + TG bot,无 key)刻意分立:那条是内部面,可随网页
-// 需求自由改;这条是对外契约,要鉴权/范围/预算/陈旧闸。把两套策略塞进一个路由会
-// 很脏,而且对外契约一旦定了就不该跟着网页需求漂。二者共用 buildMarketCard,
+// 需求自由改;这条是对外契约,要鉴权/范围/预算/陈旧闸。二者共用 buildMarketCard,
 // 也共用同一个窗口层与同一个令牌桶(lib/marketCardService 文件头有理由)。
 //
-// 与 /api/signals 的根本差别,必须写进对外文档:那条零上游调用,这条**按需打上游**。
-// 所以这里有预算、有背压(429)、有陈旧闸,而那条没有。
+// 与 /api/signals 的根本差别:那条零上游调用,这条**按需打上游**。所以这里有
+// 预算、有背压(429)、有陈旧闸,而那条没有 —— 这正是它该独立成类的理由。
 //
 // 范围 `market` 且 realtime 专属。这不违反「延迟是唯一杠杆、字段不阉割」——
 // 那条纪律管的是同一端点内不同 tier 的字段集;范围机制本来就是「没订阅就拿不到」。
@@ -100,7 +108,7 @@ export async function GET(
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    console.error("[/api/signals/market] failed:", message);
+    console.error("[/api/market-card] failed:", message);
     return Response.json({ error: message }, { status: 500 });
   } finally {
     db.close();

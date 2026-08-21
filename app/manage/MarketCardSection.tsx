@@ -5,7 +5,7 @@ import { StatCard } from "../ui";
 import { Dot, SectionHead } from "./bits";
 import { authHeaders } from "./shared";
 
-// 区块:市场深度卡(/api/signals/market/[cid])的预算与可观测。
+// 区块:市场深度卡(/api/market-card/[cid])的预算与可观测。
 //
 // 这一页要回答运维的两个问题:「预算花在哪了」与「该不该调」。所以左边是五个
 // 计数,右边是四个旋钮,中间那行 effectiveBudget 把两者连起来 —— 配置里的额度

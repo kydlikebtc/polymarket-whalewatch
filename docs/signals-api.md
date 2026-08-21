@@ -359,11 +359,18 @@ signal, paper, record, settle, notice}`，zod schema 见 `lib/webhookDelivery.ts
 2026-08-21 之前入账的事件仍为 `null`（投影是一次性快照，读取侧补不出来），48h 窗口滚过
 之后全量数据都齐。
 
-## v4 增量（2026-08-21）—— 第一个会打上游的端点
+## v4 增量（2026-08-21）—— 新增「按需查询」类端点
 
-### `GET /api/signals/market/{conditionId}` 市场深度卡
+### `GET /api/market-card/{conditionId}` 市场深度卡
 
 范围 `market`，`realtime` 专属。回答「用户正要下单，此刻这个市场长什么样」。
+
+**它自成一类,不属于 `/api/signals` 命名空间。** 首版挂在 `/api/signals/market/` 下,
+理由是鉴权可复用 `checkFeedAccess` —— 那是实现便利,不是分类判据。三个症状指向同一个
+归类错误:接入文档不得不为它给「零上游调用」开特例(一个成员违反命名空间的定义性属性,
+那不是例外,是归错类)、可授予范围清单被迫拆成两份(它塞不进「可推送的事件类型」)、
+而按 §6 的判据它既不是信号(没有 id、不可推送)也不是视图(不是任何事件的折叠)。
+2026-08-21 迁至 `/api/market-card/{cid}`,文档与 /manage 总览表同步补上第三类。
 
 **它打破了本 API 迄今唯一的架构恒定式**：`/api/signals` 的一切安全性来自「零上游
 调用」，突发流量永远挤不占引擎的 data-api 预算。深度卡恰恰相反——按需向 data-api

@@ -61,7 +61,7 @@ const TOKEN_DEBOUNCE_MS = 400;
 // 把两层揉在一起,策略开关/总线开关/TG 告警条件同住一个 tab,而 TG 目标、
 // API key、𝕏 又各占一个 —— 没有一张图回答「这条信号最终到谁手里」。
 const TABS = [
-  { id: "lines", label: "🧭 信号(事件+视图)" },
+  { id: "lines", label: "🧭 对外产出" },
   { id: "pipes", label: "🚚 下游管线" },
   { id: "health", label: "🩺 健康度" },
 ] as const;
@@ -81,6 +81,9 @@ const SECTION_TAB: Record<string, TabId> = {
   tg: "pipes",
   keys: "pipes",
   x: "pipes",
+  // 🎯 按需查询自成一类(非信号、无管线),但它的旋钮住在下游管线 tab ——
+  // 分类在总览表里说清楚,操作放在够得着的地方,与 rules 同一处理。
+  card: "pipes",
   health: "health",
 };
 

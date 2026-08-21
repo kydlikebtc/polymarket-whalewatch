@@ -16,28 +16,28 @@ import {
 // 响应形状),mock 掉服务层就只剩一个转发器,测了等于没测。
 const budget = vi.hoisted(() => ({ limit: 100 }));
 
-vi.mock("../../../../../lib/marketBrief", async (importOriginal) => {
+vi.mock("../../../../lib/marketBrief", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("../../../../../lib/marketBrief")>();
+    await importOriginal<typeof import("../../../../lib/marketBrief")>();
   return {
     ...actual,
     fetchMarketWindow: async () => ({ trades: [], truncated: false }),
   };
 });
 
-vi.mock("../../../../../lib/gamma", async (importOriginal) => {
+vi.mock("../../../../lib/gamma", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("../../../../../lib/gamma")>();
+    await importOriginal<typeof import("../../../../lib/gamma")>();
   return { ...actual, getMarketMeta: async () => ({}) };
 });
 
-vi.mock("../../../../../lib/cardBudget", async (importOriginal) => {
+vi.mock("../../../../lib/cardBudget", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("../../../../../lib/cardBudget")>();
+    await importOriginal<typeof import("../../../../lib/cardBudget")>();
   return { ...actual, budgetFor: () => budget.limit };
 });
 
-import { __resetWindows } from "../../../../../lib/marketWindow";
+import { __resetWindows } from "../../../../lib/marketWindow";
 import { GET } from "./route";
 
 const saved = {
@@ -64,13 +64,13 @@ const CID = `0x${"a".repeat(64)}`;
 
 async function call(conditionId: string) {
   const res = await GET(
-    new Request(`http://localhost/api/signals/market/${conditionId}`),
+    new Request(`http://localhost/api/market-card/${conditionId}`),
     { params: Promise.resolve({ conditionId }) },
   );
   return { res, body: (await res.json()) as Record<string, unknown> };
 }
 
-describe("GET /api/signals/market/[conditionId]", () => {
+describe("GET /api/market-card/[conditionId]", () => {
   it("非法 conditionId → 400", async () => {
     const { res } = await call("not-a-condition-id");
     expect(res.status).toBe(400);
