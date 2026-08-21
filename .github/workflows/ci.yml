@@ -27,16 +27,31 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # v7, not v4: v4 runs on node20, which GitHub deprecated — those runs were
+      # already being force-migrated to node24 with a warning. checkout ships
+      # `runs.using: node24` from v5 onward, so v5 alone would silence the
+      # warning; v7 is picked to avoid repeating this chore in two months.
+      # Neither post-v5 breaking change reaches this workflow: v6 moved git
+      # credentials into a separate file (nothing here writes to git), and v7
+      # blocks fork-PR checkout under pull_request_target/workflow_run (this
+      # workflow triggers on push/pull_request only).
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Node 22 mirrors the Dockerfile, which uses node:22-bookworm-slim for
       # BOTH the builder and the runner stage. Keeping CI on the same major
       # version means what passes here is compiled against what ships.
       # (package.json has no "engines" field, so the Dockerfile is the only
       # place this project actually pins a Node version.)
+      #
+      # `cache: 'npm'` is stated explicitly and stays that way. setup-node v5
+      # added implicit caching driven by package.json's `packageManager` field
+      # and v6 narrowed that to npm only, but this project declares no
+      # `packageManager`, so the implicit path would cache nothing. The explicit
+      # input still exists in v7 with unchanged semantics (npm/yarn/pnpm) and
+      # takes effect regardless of what the implicit detection concludes.
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
