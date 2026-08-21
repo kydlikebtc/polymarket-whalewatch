@@ -18,6 +18,7 @@ Scope: 415 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that ran
 
 | Date       | Commit    | What was wrong                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | ---------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-21 | PUSHGATE  | The same defect on the push path: consensus alerted "each of these wallets holds ≥$5k" for markets that had already settled, including the 6-hour TTL reminder. Quantified against 7131 production alerts × gamma `closedTime`: 73.6% of alerted markets resolve **inside** the 6h detection window (86.6% of alerted trades, 89.7% of notional), and the median wallet redeems 1.8 minutes after resolution — faster than the 5-minute cycle.                                                                         |
 | 2026-08-21 | `cba1193` | "Retained exposure" was inferred from buys and sells alone, but a Polymarket redemption is a separate `REDEEM` activity event that never appears in the trade feed — so once a market settled, net shares froze at the pre-settlement level forever. One wallet that had redeemed all 3,200,000 of its shares was still shown holding **$1,829,963**; its real position was zero. The losing side was inflated the same way, at cost basis against a settlement price of 0. Exposure is now zeroed on settled markets. |
 | 2026-08-18 | `58c6b16` | 95% intervals were computed per alert, but 3852 settled alerts sat in only 669 markets (one held 201) — alerts in one market are copies of a single random event, which understated the error by ~1.9x. Now clustered by market; the point estimate still counts alerts.                                                                                                                                                                                                                                               |
 | 2026-08-18 | `524d682` | X posts read the category from `market_meta.category`, empty for all 745 cached markets; the real data was in `event_category`. Every post shipped with only `#Polymarket`.                                                                                                                                                                                                                                                                                                                                            |
@@ -36,6 +37,65 @@ Scope: 415 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-21 — The same ghost, on the path that pushes
+
+PUSHGATE
+
+The batch below fixed what the market card _displayed_. It deliberately left the detectors alone,
+because `exposureUsd` is a shared primitive and the push path deserved its own risk assessment
+rather than a reflex. This is that assessment, and the answer was not the comfortable one.
+
+The first job was to find out whether the push path actually had a problem or merely could. Joining
+7131 production alerts against gamma's `closedTime` — the real resolution timestamp, not the
+scheduled `endDate` — 73.6% of alerted markets resolve **inside** the 6-hour detection window,
+covering 86.6% of alerted trades and 89.7% of notional. The average affected market spends 4.35 of
+its 6 window-hours already resolved, which across the corpus is roughly 43,600 five-minute cycles
+measuring redeemed positions. Consensus's 6-hour TTL reminder is the sharp end of that: it re-pushes
+a formation long after the market it describes has settled.
+
+Two measurements decided the shape of the fix. Redemption is not a slow drip — the median wallet
+redeems 1.8 minutes after resolution, faster than the 5-minute cycle, so the very next pass is
+already fiction. And the losing side never redeems at all, because worthless shares are simply
+abandoned; for them the figure hangs at full cost basis permanently. "No REDEEM" is not evidence of
+a live position, it is the more durable failure. Together those rule out watching for redemptions
+and force the gate onto settlement itself.
+
+They also rule out the tempting shortcut of reusing the `maxHoursToEnd` machinery, which reads
+`endDate`. The median market resolves 2.3 hours _after_ its listed `endDate`, while eliminated
+World-Cup outrights resolve up to ten days _before_ theirs. The market in the original report listed
+`endDate 08:15Z` and closed at `05:57Z`, so `hoursToEnd` would have reported 2.3 hours remaining on
+a market whose $3.2M position had been redeemed eighteen seconds after the close.
+
+`runConsensusCycle` now drops settled groups before the claim — no push, no `alerts` row, no
+`consensus_state` — reusing `gamma.isSettled` rather than a fourth private copy of the predicate.
+Dropping before the claim matters beyond the push: an `alerts` row would have entered the consensus
+signal type's own 30-day record, which is printed inside the next consensus push. Missing market
+metadata defers the group to the next cycle instead of guessing in either direction, the same
+discipline `alertEngine` already applies to `maxHoursToEnd`. The dependency is required rather than
+optional, so omitting it is a compile error; every other dep on that interface degrades safely, and
+this one would have degraded into silently disabling a correctness gate. It is injected with a
+5-minute TTL, because the default hour-long `market_meta` cache would keep a settled market reading
+as open for twelve consecutive cycles.
+
+Three of the four detectors that share the primitive were examined and deliberately left alone.
+Discovery records retrospective behaviour and already labels it 净买 — a wallet that echoed the smart
+money at 01:59 echoed it, whatever happened at 05:57, and trades cannot occur after a close, so
+gating it would delete true evidence and starve the admission funnel. Disagreement output is only
+ever used to _suppress_, and settlement does not conjure an opposing side. `sourceWallet` feeds only
+the follow engine, which has refused to open on `closed === true` markets since it was written.
+
+That last guard is deliberately stricter than `isSettled` and was left that way. The two predicates
+answer different questions: `isSettled` asks "may I declare this position gone", where a disputed
+market must _not_ count because redemption is blocked and the shares may genuinely still be there;
+`closed === true` asks "may I act on this market", where a dispute is no reason to touch it.
+Unifying them would have quietly made disputed-but-closed markets openable.
+
+`alertOutcomes` also inlined the predicate. It now calls `isSettled`, but only behind a boundary
+matrix pinning all five cases first — that path writes win/loss verdicts that are never recomputed,
+so the tests had to pass before the refactor as well as after. And `netPosition.ts`, whose docstring
+started this by promising "cost basis of what is STILL held", now states the settlement blind spot
+outright and names every guard as well as the three deliberate non-guards.
 
 ### 2026-08-21 — A position that had already been cashed out
 

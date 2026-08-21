@@ -146,7 +146,12 @@ outcome; disagreement is smart money on both sides, quality-weighted by pool sco
 `marketSignals.excludeContestedFromConsensus` keeps the two mutually exclusive at the market level, so a
 contested market can never render as two independent consensus signals.
 `netPosition.ts` defines net exposure by cost basis rather than raw `buyUsd − sellUsd` cash flow, which
-was the fix that eliminated phantom "net buys". `marketCard.ts` is shared verbatim between
+was the fix that eliminated phantom "net buys". Its inputs are BUY/SELL fills only, and redemption is a
+separate activity type that never appears in `/trades` — so once a market settles the figure describes
+what was _deployed in the window_, not what is _still held_. `gamma.isSettled` is the single definition
+of "settled", and `runConsensusCycle` gates the push path on it: a settled market's group is dropped
+before the claim, so no push, no `alerts` row, no `consensus_state`. Missing meta defers to the next
+cycle rather than guessing either way. `marketCard.ts` is shared verbatim between
 `/api/market/[conditionId]` and the Telegram bot's card reply, so the two surfaces cannot drift.
 `cycleMetrics.ts` records per-cycle signal density — the only thing that distinguishes "the market cooled
 off" from "our thresholds drifted".
