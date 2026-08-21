@@ -217,7 +217,7 @@ interface BusSignal {
 
   // ——— 金额（跨类型同名同义）———
   netUsd: number | null; // large=名义额，consensus=总净买
-  avgPrice: number | null; // large=成交价
+  avgPrice: number | null; // 成本基准：large=成交价，consensus=组级 USD 加权均价
   walletCount: number | null; // large 恒 1（一笔成交=一个钱包）
   // ——— 谁买的（与 walletCount 同源，数字与列表不打架）———
   wallets: { wallet: string; netUsd: number; avgPrice: number }[] | null;
@@ -244,17 +244,25 @@ interface BusSignal {
 
 `payload` 保留原始载荷，字段一个没少（**additive**，既有消费方零改动）：
 
-| `sourceType` | 事件含义                           | `payload` 字段（中文名）                                                                                                                                            |
-| ------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `large`      | 单笔大额成交（含白名单与非白名单） | `usd` 名义额 · `side` 买卖向（`"BUY"\|"SELL"\|null`）· `outcome` 方向 · `outcomeIndex` · `asset` · `price` 成交价 · `wallet` 钱包 · `slug`/`eventSlug`              |
-| `consensus`  | ≥N 个白名单钱包同向共识            | `outcome` 方向 · `outcomeIndex` · `asset` · `walletCount` 钱包数 · `totalNetUsd` 总净买 · `wallets` 钱包明细（`wallet`/`netUsd`/`avgBuyPrice`）· `slug`/`eventSlug` |
-| `discovery`  | 新钱包通过准入进白名单池           | `address` 地址 · `score` 评分(0-100) · `source` 发现渠道                                                                                                            |
+| `sourceType` | 事件含义                           | `payload` 字段（中文名）                                                                                                                                                                         |
+| ------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `large`      | 单笔大额成交（含白名单与非白名单） | `usd` 名义额 · `side` 买卖向（`"BUY"\|"SELL"\|null`）· `outcome` 方向 · `outcomeIndex` · `asset` · `price` 成交价 · `wallet` 钱包 · `slug`/`eventSlug`                                           |
+| `consensus`  | ≥N 个白名单钱包同向共识            | `outcome` 方向 · `outcomeIndex` · `asset` · `walletCount` 钱包数 · `totalNetUsd` 总净买 · `avgBuyPrice` 组级加权均价 · `wallets` 钱包明细（`wallet`/`netUsd`/`avgBuyPrice`）· `slug`/`eventSlug` |
+| `discovery`  | 新钱包通过准入进白名单池           | `address` 地址 · `score` 评分(0-100) · `source` 发现渠道                                                                                                                                         |
 
 > `payload.usd`（large）与 `payload.totalNetUsd`（consensus）是同一语义的两个
-> 历史名字，顶层的 `netUsd` 已统一；`payload.wallets[].avgBuyPrice` 同理，顶层
-> `wallets[].avgPrice` 才是归一后的名字。新接入请读顶层字段。
-> `outcomeIndex`/`asset` 自 2026-08-19 起、`wallets` 自 2026-08-21 起写入载荷，
-> 此前入账的事件为 `null`；`bus[]` 窗口最长 48h，一天之后全量数据都齐。
+> 历史名字，顶层的 `netUsd` 已统一；`payload.price`（large）与
+> `payload.avgBuyPrice`（consensus）同理，顶层 `avgPrice` 已统一；
+> `payload.wallets[].avgBuyPrice` 同理，顶层 `wallets[].avgPrice` 才是归一后的
+> 名字。新接入请读顶层字段。
+> `outcomeIndex`/`asset` 自 2026-08-19 起、`wallets` 与 `avgBuyPrice` 自
+> 2026-08-21 起写入载荷，此前入账的事件为 `null`；`bus[]` 窗口最长 48h，一天
+> 之后全量数据都齐。
+
+> **`consensus` 的 `avgPrice` 请勿自行从 `wallets[]` 重算。** 源侧给的是按份额
+> **USD 加权**的组级成本（`totalNetUsd / Σ(netUsd / avgBuyPrice)`），不是各钱包
+> 均价的算术平均——两者能差近 1¢，而追高闸门的红线只有 10¢。顶层 `avgPrice`
+> 与 `active[]` 的同名字段读的是同一个源字段，口径保证一致。
 
 要点：
 

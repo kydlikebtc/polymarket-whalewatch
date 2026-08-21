@@ -11,7 +11,7 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 380 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1510 tests across
+Scope: 380 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1516 tests across
 112 files (`npm test`).
 
 ## Corrections that changed reported numbers
@@ -35,6 +35,41 @@ Scope: 380 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                  |
 
 ## Batches
+
+### 2026-08-21 — the cost basis a `consensus` event never had
+
+Two batches in a row closed the gap between `bus[]` and `active[]` one field at a time, and both
+times the field that got left behind was the one a follower actually acts on. This time it was
+`avgPrice`.
+
+The read side recognised exactly one key, `payload.price`, which only a `large` event writes. A
+`consensus` event's projected payload had never carried a price of any kind — so every consensus
+row on the bus reported `avgPrice: null`, forever, by construction. Nothing was lost in transit:
+`ConsensusGroup` has always computed a group-level `avgBuyPrice`, the source alert flattens the
+whole group into its payload, and `active[]`'s `foldConsensus` has been reading that exact field
+the entire time. The projection's whitelist skipped it, the same way it had skipped `wallets`.
+
+The stakes are higher than a missing number. `avgPrice` is documented as the denominator of the
+chase gate — current price minus cost basis, don't follow past 10¢ — and `consensus` is the signal
+that gate exists for. A consumer holding a consensus event could see who bought and how much, but
+not what they paid, which is the one input the gate needs.
+
+The fix is the same shape as last time: the projection now carries the source's `avgBuyPrice`, and
+the read side falls back to it when `price` is absent. Order matters — `price` stays first, because
+a single fill's actual execution price is a stronger fact than an aggregate, and a future type
+carrying both should not silently switch to the derived one.
+
+Consumers should not compute this themselves, and the docs now say so outright. The group figure is
+**USD-weighted by shares** (`totalNetUsd / Σ(netUsd / avgBuyPrice)`), not the arithmetic mean of the
+per-wallet averages that `wallets[]` now makes so easy to reach for. On a representative group the
+two differ by close to a cent against a 10¢ red line — a 7% divergence in the gate, arrived at
+silently. A test pins the difference so the distinction can't quietly erode.
+
+Events booked before this change still read `null`. Projection is a one-shot snapshot; no amount of
+cleverness on the read side reconstructs a field the payload never held, and returning `0` would
+report a sub-penny cost basis rather than an unknown one. The 48h window clears them within a day.
+
+Commits: pending.
 
 ### 2026-08-21 — `bus[]` finally says who bought
 

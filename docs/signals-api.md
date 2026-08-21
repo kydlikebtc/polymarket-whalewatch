@@ -348,6 +348,17 @@ signal, paper, record, settle, notice}`，zod schema 见 `lib/webhookDelivery.ts
 收成三字段白名单——`ConsensusWallet` 还带着 `score`/`winRate`/`buyCount`/`qualifiedTs`，
 原样带走等于把内部类型的未来字段预先许诺给订阅方，而白名单挑选正是投影层存在的理由。
 
+同日补上 `consensus` 的顶层 `avgPrice`。此前读取侧只认 `payload.price`，而 consensus 的
+投影载荷从未写过任何价格字段——于是 `sourceType: "consensus"` 的事件 `avgPrice` **恒为
+`null`**，`active[]` 那边却一直有值：「同名同义」在最关键的那一格上是断的，而
+`avgPrice` 正是追高闸门的分母（见下方 §「不做实时价」）。现在投影带上源侧的组级
+`avgBuyPrice`，顶层归一为 `avgPrice`，与 `active[]` 读同一个源字段。
+
+⚠️ 该值是按份额 **USD 加权**（`totalNetUsd / Σ(netUsd / avgBuyPrice)`），不是 `wallets[]`
+均价的算术平均——自行重算容易算成后者，两者能差近 1¢，而红线只有 10¢。请直接读顶层字段。
+2026-08-21 之前入账的事件仍为 `null`（投影是一次性快照，读取侧补不出来），48h 窗口滚过
+之后全量数据都齐。
+
 ### key 绑定订阅范围
 
 签发 key 时可勾选类型（`strategy` / `large` / `consensus` / `discovery`）。**过滤在服务端

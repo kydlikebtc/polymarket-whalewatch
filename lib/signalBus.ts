@@ -294,7 +294,15 @@ export function getBusSignals(
     // 归一命名:large 写 usd、consensus 写 totalNetUsd,同一个语义两个名字
     // 逼着消费方先 switch(sourceType) 才知道读哪个键。
     const netUsd = num(payload.usd) ?? num(payload.totalNetUsd);
-    const avgPrice = num(payload.price);
+    // 同一个「成本基准」也是两个历史名:large 写 price(单笔成交价)、consensus
+    // 写 avgBuyPrice(组级 USD 加权均价)。此前只认前者 → consensus 的 avgPrice
+    // 恒为 null,而 active[] 的 foldConsensus 一直有值(lib/signalFeed.ts):
+    // 「一套解析器吃两个 feed」在这一格上是断的。
+    //
+    // 不让消费方自己从 wallets[] 重算:源侧那个数是 USD 加权(按份额),不是算术
+    // 平均,重算极易分叉 —— 而 avgPrice 正是追高闸门的分母(docs/signals-api.md),
+    // 分叉直接变成跟单决策的偏差。
+    const avgPrice = num(payload.price) ?? num(payload.avgBuyPrice);
     return {
       id: r.id,
       sourceType: r.source_type,
@@ -432,6 +440,10 @@ export function projectBusSignals(
             asset: p.asset ?? null,
             walletCount,
             totalNetUsd: p.totalNetUsd ?? null,
+            // 组级 USD 加权均价(ConsensusGroup.avgBuyPrice)。与 wallets[] 里
+            // 的同名字段不同义:那是每个钱包自己的成本,这是整组按份额加权后
+            // 的成本基准 —— 顶层 avgPrice 读的就是它。
+            avgBuyPrice: p.avgBuyPrice ?? null,
             // 钱包明细:源告警载荷平铺了整个 ConsensusGroup(lib/consensus.ts
             // 的 `{...g}`),`wallets` 一直都在,此前这把白名单钥匙没带上它 ——
             // 于是 bus[] 只有一个 walletCount 数字,而 active[] 早有明细。
