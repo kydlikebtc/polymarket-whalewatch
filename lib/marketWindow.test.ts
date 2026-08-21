@@ -9,6 +9,7 @@ import {
   __resetWindows,
 } from "./marketWindow";
 import type { Trade } from "./types";
+import { openDb } from "./db";
 
 /** 只变 transactionHash —— dedupKey 的第一段,足以区分两笔。 */
 export const trade = (ts: number, hash: string): Trade => ({
@@ -275,6 +276,45 @@ describe("getMarketWindow", () => {
     expect(s.degraded).toBe(1);
     expect(s.refused).toBe(1);
     expect(s.workingSet).toBe(1);
+  });
+
+  it("重启后从存档水合 —— 算热续不算冷启,且续抓下界是存档的锚点", async () => {
+    const db = openDb(":memory:");
+    __resetWindows();
+    await getMarketWindow("0xc1", {
+      nowSec: NOW,
+      takeToken: () => true,
+      fetchWindow: okFetch(),
+      db,
+    });
+    // 模拟进程重启:内存工作集没了,库还在。
+    __resetWindows();
+    const calls: number[] = [];
+    await getMarketWindow("0xc1", {
+      nowSec: NOW + 600,
+      takeToken: () => true,
+      fetchWindow: async (_cid, o) => {
+        calls.push(o.sinceSec);
+        return { trades: [], truncated: false };
+      },
+      db,
+    });
+    // 冷启一个市场要翻 1–13 页,而重启那一刻工作集全空 —— 若干热门市场同时被
+    // 访问就是一次自伤式的上游冲击,恰好在服务刚起来、最该表现稳的时候。
+    expect(windowStats().cold).toBe(0);
+    expect(windowStats().warm).toBe(1);
+    expect(calls[0]).toBe(NOW - 10);
+    db.close();
+  });
+
+  it("没有 db 也能跑 —— 落库是可选增强,不是必需依赖", async () => {
+    __resetWindows();
+    const r = await getMarketWindow("0xc1", {
+      nowSec: NOW,
+      takeToken: () => true,
+      fetchWindow: okFetch(),
+    });
+    expect(r.trades).toHaveLength(1);
   });
 
   it("cid 大小写不影响命中 —— 0xAB… 与 0xab… 是同一个工作集条目", async () => {

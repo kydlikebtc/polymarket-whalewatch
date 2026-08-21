@@ -2,6 +2,8 @@ import type { Trade } from "./types";
 import { dedupKey } from "./trades";
 import { fetchMarketWindow } from "./marketBrief";
 import { CARD_WINDOW_SEC } from "./marketCard";
+import type { DB } from "./db";
+import { loadPersistedWindow, persistWindow } from "./marketWindowStore";
 
 // 市场深度卡的窗口层。
 //
@@ -143,6 +145,12 @@ export interface MarketWindowDeps {
    */
   takeToken: (cost: number) => boolean;
   fetchWindow?: typeof fetchMarketWindow;
+  /**
+   * 给了就启用持久化:内存工作集未命中时从存档水合,续抓后节流落盘。
+   * 可选 —— 落库是「重启后不必冷启」这一件事的增强,不是窗口层的必需依赖,
+   * 纯单元测试不该被迫开一个库。
+   */
+  db?: DB;
 }
 
 /**
@@ -155,10 +163,21 @@ export async function getMarketWindow(
   conditionId: string,
   deps: MarketWindowDeps,
 ): Promise<MarketWindowResult> {
-  const { nowSec, takeToken, fetchWindow = fetchMarketWindow } = deps;
+  const { nowSec, takeToken, fetchWindow = fetchMarketWindow, db } = deps;
   // 归一化键:0xAB… 与 0xab… 是同一个市场,不该占两份工作集与两次预算。
   const cid = conditionId.toLowerCase();
-  const prev = windows.get(cid);
+  let prev = windows.get(cid);
+  if (!prev && db) {
+    // 进程重启后的第一次访问:库里还留着上一个进程的窗口。水合进来,这一次
+    // 就是**热续而非冷启** —— 否则重启那一刻若干热门市场同时被访问,就是一次
+    // 自伤式的上游冲击,恰好在服务刚起来、最该表现稳的时候。
+    const archived = loadPersistedWindow(db, cid, nowSec);
+    if (archived) {
+      prev = { ...archived, touchedAt: nowSec };
+      windows.set(cid, prev);
+      evictLru();
+    }
+  }
 
   if (prev && nowSec - prev.builtAt < WINDOW_TTL_SEC) {
     prev.touchedAt = nowSec;
@@ -205,6 +224,14 @@ export async function getMarketWindow(
     };
     windows.set(cid, next);
     evictLru();
+    if (db) {
+      // 落盘失败绝不能影响出卡:存档只是重启优化,没有它一切照常(冷启一次)。
+      try {
+        persistWindow(db, cid, next, nowSec);
+      } catch (e) {
+        console.warn(`[marketWindow] 存档写入失败 ${cid}:`, e);
+      }
+    }
     return next;
   })();
   inFlight.set(cid, started);

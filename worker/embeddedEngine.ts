@@ -2,6 +2,7 @@ import { parseConfig } from "../lib/config";
 import { openDb, type DB } from "../lib/db";
 import { getLargeTrades, getTradesWindowDeep } from "../lib/polymarket";
 import { maybePruneSeen, seenKeySet } from "../lib/seen";
+import { prunePersistedWindows } from "../lib/marketWindowStore";
 import { dedupKey } from "../lib/trades";
 import { sendMessage } from "../lib/telegram";
 import {
@@ -387,6 +388,19 @@ export function startAlertEngine(): void {
       } catch (e) {
         console.error("[engine] follow cycle error", e);
       }
+      // 市场深度卡的窗口存档清理。存档表**不受内存 LRU 约束** —— 内存工作集
+      // 封顶 200 个市场,但库里每个被访问过的市场都会留一行,不清就随访问过的
+      // 市场数无限涨。超过 24h 的行整个窗口都已滚出下界,读回来也是骗人。
+      // 由引擎做而非请求侧:清理是运维动作,不该让某个倒霉的用户请求付这笔钱。
+      try {
+        const dropped = prunePersistedWindows(db, Math.floor(Date.now() / 1000));
+        if (dropped > 0) {
+          console.log(`[marketWindow] pruned ${dropped} stale window archive(s)`);
+        }
+      } catch (e) {
+        console.error("[marketWindow] prune failed", e);
+      }
+
       // 统一信号总线:把本轮刚落库的告警/新入池成员投影进 bus_signals。
       // 纯本地读写(有测试钉死无网络),失败不得扰动共识节奏。
       try {
