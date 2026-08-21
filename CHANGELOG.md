@@ -11,7 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-SCOPE_PLACEHOLDER
+Scope: 401 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1577 tests across
+120 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
