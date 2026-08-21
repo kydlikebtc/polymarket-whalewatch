@@ -86,6 +86,43 @@ describe("computeAlertOutcomes UMA 争议门", () => {
     db.close();
   });
 
+  // 下面两条补齐「已结算」判据的边界矩阵(closed × umaDisputed × meta 有无)。
+  // 这三条纪律后来被提取成 lib/gamma 的 isSettled；矩阵钉死的是**行为**，
+  // 提取前后必须逐格相同，否则动的就是已经写进 30 天战绩的终局结论。
+  it("未 closed 不判定 —— 哪怕 outcomePrices 已经是终局形状", async () => {
+    const db = openDb(":memory:");
+    const id = insertAlert(db);
+    const out = await computeAlertOutcomes(db, [id], {
+      fetchPrice: async () => null,
+      getMeta: async () => ({
+        "0xc1": meta({
+          closed: false,
+          outcomePrices: [1, 0],
+          umaDisputed: false,
+        }),
+      }),
+      nowSec: T0 + 90_000,
+    });
+    expect(out[id].resolved).toBe(false);
+    expect(out[id].won).toBeNull();
+    expect(out[id].resolutionPrice).toBeNull();
+    db.close();
+  });
+
+  it("meta 缺失不判定 —— 未知 ≠ 已结算", async () => {
+    const db = openDb(":memory:");
+    const id = insertAlert(db);
+    const out = await computeAlertOutcomes(db, [id], {
+      fetchPrice: async () => null,
+      getMeta: async () => ({}),
+      nowSec: T0 + 90_000,
+    });
+    expect(out[id].resolved).toBe(false);
+    expect(out[id].won).toBeNull();
+    expect(out[id].resolutionPrice).toBeNull();
+    db.close();
+  });
+
   it("umaDisputed=null(未知)照常判定 —— fail-open", async () => {
     const db = openDb(":memory:");
     const id = insertAlert(db);

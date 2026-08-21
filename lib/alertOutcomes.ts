@@ -1,5 +1,5 @@
 import type { DB } from "./db";
-import type { MarketMeta } from "./gamma";
+import { isSettled, type MarketMeta } from "./gamma";
 import { fetchPriceAt } from "./priceHistory";
 import { mapLimit } from "./mapLimit";
 import { settleWon } from "./outcomeStats";
@@ -203,11 +203,11 @@ export async function computeAlertOutcomes(
       // UMA 争议门:争议中的市场其 outcomePrices 仍可能被推翻,而结算判定
       // (won)一旦写入就是终局并直接进 30 天战绩分子/分母。严格 ===true,
       // null(未知)照常结算 —— fail-open,与 follow 结算同一条纪律。
-      const disputed = meta?.umaDisputed === true;
-      const rp =
-        meta?.closed && !disputed
-          ? meta.outcomePrices[p.outcomeIndex]
-          : undefined;
+      // 这三条纪律现在由 lib/gamma 的 isSettled 独家持有(本处曾内联同一个
+      // 表达式,逐格行为由「UMA 争议门」describe 里的边界矩阵钉死)。
+      const rp = isSettled(meta)
+        ? meta?.outcomePrices[p.outcomeIndex]
+        : undefined;
       if (typeof rp === "number" && Number.isFinite(rp)) {
         resolved = true;
         resolutionPrice = rp;
