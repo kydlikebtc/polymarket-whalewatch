@@ -72,6 +72,11 @@ export async function serveMarketCard(
       nowSec,
       takeToken,
       fetchWindow,
+      // db 传下去 = 启用窗口存档(重启后不必冷启整个工作集)。少传这一个参数,
+      // 整条落库链路就静默失效 —— 单元测试照样全绿、真机上存档恒为空。
+      db,
+      ttlSec,
+      lruMax,
     });
   } catch (e) {
     if (e instanceof NoBudgetError) {

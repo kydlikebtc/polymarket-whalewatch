@@ -78,6 +78,32 @@ describe("marketWindowStore", () => {
     db.close();
   });
 
+  it("合法的空窗口能读回 —— 写进去却拒绝读回来是自相矛盾", () => {
+    const db = openDb(":memory:");
+    // 这个市场 24h 内确实没有 $500+ 成交:空窗口是事实,不是损坏。
+    // 拒绝读回它会白丢 newestTs 锚点,每次重启都退回冷启。
+    persistWindow(
+      db,
+      CID,
+      { trades: [], truncated: false, newestTs: NOW - 5, builtAt: NOW },
+      NOW,
+    );
+    const got = loadPersistedWindow(db, CID, NOW);
+    expect(got).not.toBeNull();
+    expect(got?.trades).toEqual([]);
+    expect(got?.newestTs).toBe(NOW - 5);
+    db.close();
+  });
+
+  it("原本有行但全部解析失败 = 损坏,读成 null", () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO market_window_cache (condition_id, trades_json, newest_ts, built_at, persisted_at) VALUES (?,?,?,?,?)",
+    ).run(CID, JSON.stringify([{ garbage: 1 }, { junk: 2 }]), NOW, NOW, NOW);
+    expect(loadPersistedWindow(db, CID, NOW)).toBeNull();
+    db.close();
+  });
+
   it("坏 JSON 读成 null,不炸 —— 一行坏存档不该让端点挂掉", () => {
     const db = openDb(":memory:");
     db.prepare(

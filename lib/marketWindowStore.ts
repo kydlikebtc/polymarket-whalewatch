@@ -60,7 +60,10 @@ export function loadPersistedWindow(
       const p = TradeSchema.safeParse(t);
       return p.success ? [p.data] : [];
     });
-    if (trades.length === 0) return null;
+    // 「本来就是空的」与「有行但全部解析失败」是两件事:前者是合法事实(这个
+    // 市场 24h 内确实没有达标成交),后者是损坏存档。判据必须分开 —— 都当成
+    // null 的话,写进去却拒绝读回来,锚点白丢、每次重启都退回冷启。
+    if (raw.length > 0 && trades.length === 0) return null;
     return {
       trades,
       truncated: row.truncated === 1,

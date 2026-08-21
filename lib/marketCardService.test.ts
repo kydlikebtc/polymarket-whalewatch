@@ -2,6 +2,23 @@ import { describe, it, expect } from "vitest";
 import { openDb } from "./db";
 import { serveMarketCard, STALE_GATE_SEC } from "./marketCardService";
 import { __resetWindows } from "./marketWindow";
+import type { Trade } from "./types";
+
+const aTrade = (ts: number): Trade => ({
+  proxyWallet: "0xa",
+  side: "BUY",
+  asset: "1",
+  conditionId: CID,
+  size: 100,
+  price: 0.5,
+  timestamp: ts,
+  title: "t",
+  slug: "s",
+  eventSlug: "e",
+  outcome: "Yes",
+  outcomeIndex: 0,
+  transactionHash: "0xh",
+});
 
 const NOW = 1_700_000_000;
 const CID = `0x${"a".repeat(64)}`;
@@ -113,6 +130,48 @@ describe("serveMarketCard", () => {
     // 降级的全部意义就是「不再向上游要任何东西」。一条声称零上游的路径上
     // 藏着一个网络调用,这个契约就是假的 —— 哪怕它打的是另一个 host。
     expect(metaCalls).toBe(1);
+    db.close();
+  });
+
+  it("窗口存档确实落盘 —— 服务层必须把 db 传到窗口层", async () => {
+    __resetWindows();
+    const db = openDb(":memory:");
+    await serveMarketCard(db, CID, {
+      ...baseDeps,
+      // 非空窗口:存档要有内容才有意义。
+      fetchWindow: async () => ({
+        trades: [aTrade(NOW - 10)],
+        truncated: false,
+      }),
+      nowSec: NOW,
+      takeToken: () => true,
+    });
+    const n = (
+      db.prepare("SELECT COUNT(*) AS c FROM market_window_cache").get() as {
+        c: number;
+      }
+    ).c;
+    // 少传一个参数,落库整条链路就静默失效 —— 单元测试全绿、真机上存档恒为空。
+    expect(n).toBe(1);
+    db.close();
+  });
+
+  it("新鲜期可由调用方覆盖 —— ttlSec 必须真的传到窗口层", async () => {
+    __resetWindows();
+    const db = openDb(":memory:");
+    let fetches = 0;
+    const deps = {
+      ...baseDeps,
+      fetchWindow: async () => {
+        fetches++;
+        return { trades: [], truncated: false };
+      },
+      takeToken: () => true,
+    };
+    await serveMarketCard(db, CID, { ...deps, nowSec: NOW, ttlSec: 300 });
+    // 默认新鲜期 30 秒,若 ttlSec 没传下去,这次会再抓一遍。
+    await serveMarketCard(db, CID, { ...deps, nowSec: NOW + 100, ttlSec: 300 });
+    expect(fetches).toBe(1);
     db.close();
   });
 
