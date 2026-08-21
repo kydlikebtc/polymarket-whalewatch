@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 380 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1510 tests across
-112 files (`npm test`).
+Scope: 390 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1544 tests across
+117 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -35,6 +35,60 @@ Scope: 380 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                  |
 
 ## Batches
+
+### 2026-08-21 — A market card you can call while you trade
+
+Subscribers wanted the thing a trader actually needs in the seconds before placing an order: who is
+buying this market right now, how strongly, at what cost, whether the smart money disagrees, and
+what we ourselves have called here before and how those calls turned out. The 🎯 card behind the
+dashboard and the Telegram bot already computed all of it. It just had no keyed way out.
+
+The obvious safe design was to let the engine compose a card when a signal fires and serve it from
+the database — zero upstream, the same discipline every other endpoint here follows. It was
+rejected, correctly. A snapshot answers "what did this market look like when the signal formed",
+which is an evidence question. Deciding whether to enter is a _now_ question, and a forty-minute-old
+order book cannot answer it.
+
+That meant confronting concurrency honestly, and three things fell out.
+
+The existing rate limiter was **guarding the wrong dimension**. It caps requests per minute, but
+upstream cost tracks the number of _distinct markets_ — concurrent callers on one market already
+collapse into a single fetch, so the expensive case is three hundred people each opening a different
+market. A limiter counting requests stops the abuse that was free anyway and waves through the abuse
+that costs money. The budget now counts refetches.
+
+Freshness and capacity looked like a zero-sum trade, and weren't. Refetching a 24-hour window every
+thirty seconds re-pays for twenty-three hours and fifty-nine minutes that did not change. The alert
+loop stopped doing that long ago — it stops paginating the moment a page touches something already
+seen. Applying the same trick here (remember the newest trade seen, and `fetchMarketWindow` halts on
+page zero) turns a warm refresh into exactly one request, against one to thirteen for a cold start.
+Same budget, eight times the capacity, at a fresher setting rather than a staler one.
+
+And "within what the server can take" did not have to be a number someone guessed. The heartbeat
+table already records every loop's age against its own staleness threshold. The budget now reads the
+worst loop — not the average, since one loop gasping is enough — cuts to a quarter past sixty
+percent drift, and drops to zero the moment any loop goes stale. Continuing to spend upstream while
+the engine is falling behind deepens the failure, because the likely cause of it falling behind is
+upstream contention in the first place.
+
+Where the budget runs out, a card is rebuilt from the stale window and labelled with its age, up to
+a ninety-second ceiling; past that the endpoint returns 429 with a `Retry-After` rather than a card.
+This is deliberate and it is not politeness. A card reporting "three smart wallets just bought YES"
+when two of them have since sold is not stale, it is wrong, and wrong in the direction that costs
+the reader money. Handing over `staleSec` and trusting the client to judge does not work — clients
+render rather than show a blank.
+
+The web and bot route now share the same working set and the same bucket. The upstream budget is one
+budget; splitting it in two only halves the same ceiling, and the hot markets a human browses are
+the hot markets a subscriber queries, so sharing warms both. That route's own sixty-second cache is
+gone, because two cache layers make "how old is this card" a question with two answers.
+
+The subscriber-facing doc gained the caveat that matters most: every other endpoint here reads only
+our own database, and this one does not. Polymarket's public API is unversioned and has changed
+under us before — `/activity`'s limit silently dropped from 1000 to 500 and took a page down with
+it. Anyone wiring this into a critical path needs to know that, and needs a fallback.
+
+Commits: this batch.
 
 ### 2026-08-21 — `bus[]` finally says who bought
 
