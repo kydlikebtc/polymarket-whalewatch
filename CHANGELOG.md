@@ -11,7 +11,7 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 379 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1510 tests across
+Scope: 380 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1510 tests across
 112 files (`npm test`).
 
 ## Corrections that changed reported numbers
@@ -67,7 +67,7 @@ The webhook needed no work: `BusEventV1` embeds the same zod schema and passes t
 the field appeared on both routes at once — the payoff from collapsing three hand-copied field lists
 into one definition in the previous batch.
 
-Commits: this batch.
+Commits: `73c3abd`, plus the wrap-up commit.
 
 ### 2026-08-19 — `bus[]` reaches parity with `active[]`
 
