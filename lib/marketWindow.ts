@@ -76,14 +76,49 @@ const windows = new Map<string, WindowEntry>();
 // promise,settle 后立刻删掉」。
 const inFlight = new Map<string, Promise<WindowEntry>>();
 
+/**
+ * 运营可观测的五个计数 + 工作集大小。进程内累计,重启归零 —— 它回答的是
+ * 「这个进程活着这段时间里,预算花在哪了」,不是历史统计。
+ *
+ * 为什么这五个:cold/warm 分开,是因为二者的上游成本差一个数量级(1–13 页 vs
+ * 恒 1 页),混在一起就看不出「工作集有没有预热起来」;hit 与它们的比值就是
+ * 缓存效率;degraded/refused 是背压的两级,前者还能给答案、后者已经在拒绝 ——
+ * refused 持续非零意味着预算或工作集上限该调了。
+ */
+export interface WindowStats {
+  /** 冷启:工作集里没有,整窗抓。 */
+  cold: number;
+  /** 热续:有窗口但过了新鲜期,增量抓。 */
+  warm: number;
+  /** 新鲜期内直接命中,零上游。 */
+  hit: number;
+  /** 没预算但有陈旧窗口,降级返回。 */
+  degraded: number;
+  /** 没预算也没窗口,拒绝(上层转 429)。 */
+  refused: number;
+  /** 当前工作集里的市场数。 */
+  workingSet: number;
+}
+
+const stats = { cold: 0, warm: 0, hit: 0, degraded: 0, refused: 0 };
+
+export function windowStats(): WindowStats {
+  return { ...stats, workingSet: windows.size };
+}
+
 export function windowCount(): number {
   return windows.size;
 }
 
-/** 仅供测试:清空工作集与在途表。 */
+/** 仅供测试:清空工作集、在途表与计数。 */
 export function __resetWindows(): void {
   windows.clear();
   inFlight.clear();
+  stats.cold = 0;
+  stats.warm = 0;
+  stats.hit = 0;
+  stats.degraded = 0;
+  stats.refused = 0;
 }
 
 export interface MarketWindowResult {
@@ -94,9 +129,19 @@ export interface MarketWindowResult {
   degraded: boolean;
 }
 
+/** data-api 的 /trades 每页上限,与 lib/marketBrief 的 PAGE_LIMIT 同源。 */
+const PAGE_LIMIT = 250;
+
 export interface MarketWindowDeps {
   nowSec: number;
-  takeToken: () => boolean;
+  /**
+   * 花掉 `cost` 枚令牌,返回是否仍在预算内。
+   *
+   * 令牌近似的是**向上游发了几个请求**,所以冷启(翻 1–13 页)不能和热续
+   * (恒 1 页)收同样的钱:那样进程刚重启、工作集全空时,预算会被超出十几倍,
+   * 而那正是最脆弱的时刻。页数由抓回的行数反推,抓完补收差额。
+   */
+  takeToken: (cost: number) => boolean;
   fetchWindow?: typeof fetchMarketWindow;
 }
 
@@ -117,6 +162,7 @@ export async function getMarketWindow(
 
   if (prev && nowSec - prev.builtAt < WINDOW_TTL_SEC) {
     prev.touchedAt = nowSec;
+    stats.hit++;
     return { ...toResult(prev), degraded: false };
   }
   // 在途检查必须在取令牌**之前**:加入一次已在飞的续抓是免费的,而令牌计量的
@@ -125,12 +171,14 @@ export async function getMarketWindow(
   const running = inFlight.get(cid);
   if (running) return { ...toResult(await running), degraded: false };
 
-  if (!takeToken()) {
+  if (!takeToken(1)) {
     // 预算耗尽:有陈旧窗口就降级(陈旧闸由上层判),没有就诚实拒绝。
     if (prev) {
       prev.touchedAt = nowSec;
+      stats.degraded++;
       return { ...toResult(prev), degraded: true };
     }
+    stats.refused++;
     throw new NoBudgetError();
   }
 
@@ -139,7 +187,13 @@ export async function getMarketWindow(
     // `oldest < sinceSec` 时停止翻页,于是第 0 页就止,恒 1 个请求。
     const cutoff = nowSec - CARD_WINDOW_SEC;
     const sinceSec = prev ? prev.newestTs : cutoff;
+    if (prev) stats.warm++;
+    else stats.cold++;
     const got = await fetchWindow(conditionId, { sinceSec });
+    // 补收差额:闸门只先收了 1 枚,而这次实际翻了 ceil(行数/250) 页。
+    // 结果忽略 —— 钱已经花出去了,记账必须如实,拒绝要等下一次进闸门。
+    const pages = Math.max(1, Math.ceil(got.trades.length / PAGE_LIMIT));
+    if (pages > 1) takeToken(pages - 1);
     const merged = mergeWindow(prev?.trades ?? [], got.trades, cutoff);
     const next: WindowEntry = {
       trades: merged,

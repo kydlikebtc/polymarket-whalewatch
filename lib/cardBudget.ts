@@ -47,7 +47,17 @@ export function budgetFor(health: BudgetHealth): number {
  * 注意其语义:**被拒的调用同样计数** —— 那正是「压力下自我收敛」想要的,
  * 与 guardExpensive「两级都记账,不短路」是同一条理由。
  */
-export function takeCardToken(limit: number, nowMs = Date.now()): boolean {
+export function takeCardToken(
+  limit: number,
+  cost = 1,
+  nowMs = Date.now(),
+): boolean {
   if (limit <= 0) return false;
-  return rateLimit("market-card:__upstream__", limit, 60_000, nowMs, 1);
+  return rateLimit(
+    "market-card:__upstream__",
+    limit,
+    60_000,
+    nowMs,
+    Math.max(1, Math.floor(cost)),
+  );
 }

@@ -63,7 +63,7 @@ export async function GET(
     const limit = budgetFor(health);
     const out = await serveMarketCard(db, conditionId, {
       nowSec,
-      takeToken: () => takeCardToken(limit),
+      takeToken: (cost) => takeCardToken(limit, cost),
     });
     if (!out.ok) {
       // 429 是背压不是错误:订阅方按 Retry-After 退避即可,这一点必须在文档里

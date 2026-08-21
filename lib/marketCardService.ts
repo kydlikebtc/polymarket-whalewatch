@@ -38,7 +38,7 @@ export type CardOutcome =
 
 export interface CardServiceDeps {
   nowSec: number;
-  takeToken: () => boolean;
+  takeToken: (cost: number) => boolean;
   fetchWindow?: typeof fetchMarketWindow;
   agesFetcher?: typeof getWalletAges;
   metaFetcher?: typeof fetchMarketMeta;

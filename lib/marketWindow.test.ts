@@ -3,6 +3,7 @@ import {
   mergeWindow,
   getMarketWindow,
   windowCount,
+  windowStats,
   NoBudgetError,
   WINDOW_LRU_MAX,
   __resetWindows,
@@ -191,6 +192,89 @@ describe("getMarketWindow", () => {
     // 第二个请求加入在途那一次,不该再付一枚 —— 否则热门市场的并发会把预算
     // 按并发数烧掉,而预算的全部意义就是按市场数计量。
     expect(tokens).toBe(1);
+  });
+
+  it("按实际页数计费 —— 冷启翻了几页就补收几枚", async () => {
+    __resetWindows();
+    const spent: number[] = [];
+    // 600 笔 = 3 页(每页 250)。闸门先收 1 枚放行,抓完补收 2 枚。
+    const many = Array.from({ length: 600 }, (_, i) =>
+      trade(NOW - 100 - i, `0x${i}`),
+    );
+    await getMarketWindow("0xc1", {
+      nowSec: NOW,
+      takeToken: (cost) => {
+        spent.push(cost);
+        return true;
+      },
+      fetchWindow: async () => ({ trades: many, truncated: false }),
+    });
+    // 令牌桶想近似的是「向上游发了几个请求」。冷启和热续都只收 1 枚的话,
+    // 进程刚重启、工作集全空时,预算会被超出十几倍 —— 正好在最脆弱的时刻。
+    expect(spent.reduce((a, b) => a + b, 0)).toBe(3);
+  });
+
+  it("热续只有一页 —— 不补收", async () => {
+    __resetWindows();
+    const spent: number[] = [];
+    const deps = {
+      takeToken: (cost: number) => {
+        spent.push(cost);
+        return true;
+      },
+      fetchWindow: async () => ({
+        trades: [trade(NOW - 10, "0xa")],
+        truncated: false,
+      }),
+    };
+    await getMarketWindow("0xc1", { ...deps, nowSec: NOW });
+    await getMarketWindow("0xc1", { ...deps, nowSec: NOW + 60 });
+    expect(spent).toEqual([1, 1]);
+  });
+
+  it("指标:冷启 / 热续 / 命中 / 降级 / 拒绝 各自计数", async () => {
+    __resetWindows();
+    const fetchWindow = okFetch();
+    // 冷启
+    await getMarketWindow("0xc1", {
+      nowSec: NOW,
+      takeToken: () => true,
+      fetchWindow,
+    });
+    // 新鲜期内命中
+    await getMarketWindow("0xc1", {
+      nowSec: NOW + 5,
+      takeToken: () => true,
+      fetchWindow,
+    });
+    // 热续
+    await getMarketWindow("0xc1", {
+      nowSec: NOW + 60,
+      takeToken: () => true,
+      fetchWindow,
+    });
+    // 降级
+    await getMarketWindow("0xc1", {
+      nowSec: NOW + 120,
+      takeToken: () => false,
+      fetchWindow,
+    });
+    // 拒绝(无窗口且无预算)
+    await expect(
+      getMarketWindow("0xother", {
+        nowSec: NOW,
+        takeToken: () => false,
+        fetchWindow,
+      }),
+    ).rejects.toThrow(NoBudgetError);
+
+    const s = windowStats();
+    expect(s.cold).toBe(1);
+    expect(s.warm).toBe(1);
+    expect(s.hit).toBe(1);
+    expect(s.degraded).toBe(1);
+    expect(s.refused).toBe(1);
+    expect(s.workingSet).toBe(1);
   });
 
   it("cid 大小写不影响命中 —— 0xAB… 与 0xab… 是同一个工作集条目", async () => {

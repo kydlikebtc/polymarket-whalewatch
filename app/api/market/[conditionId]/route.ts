@@ -52,7 +52,7 @@ export async function GET(
     );
     const out = await serveMarketCard(db, conditionId, {
       nowSec,
-      takeToken: () => takeCardToken(budgetFor(health)),
+      takeToken: (cost) => takeCardToken(budgetFor(health), cost),
     });
     if (!out.ok) {
       return Response.json(
