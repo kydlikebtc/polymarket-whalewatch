@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 390 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1544 tests across
-117 files (`npm test`).
+Scope: 397 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1567 tests across
+120 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -35,6 +35,62 @@ Scope: 390 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                  |
 
 ## Batches
+
+### 2026-08-21 — Making the market card survivable in production
+
+Four pieces of follow-up, none of them new capability. All of them are what the endpoint needed to
+be operable by someone who is not the person who wrote it.
+
+A **billing defect surfaced during the first live smoke test**. The token bucket is meant to
+approximate upstream requests, but a cold start and a warm refresh both cost exactly one token —
+while a cold start pages one to thirteen times and a warm refresh pages exactly once. On a freshly
+restarted process, where the working set is empty by definition, a hundred cold starts a minute
+would have spent up to thirteen hundred upstream requests against a hundred-request ceiling. The
+page count turned out to be derivable from the rows returned, so the gate now charges one to let the
+request through and settles the difference once the fetch lands. The settlement ignores its own
+verdict: the money is already spent, and a ledger that refuses to record it is worse than useless.
+
+The **window is now archived to SQLite**, for exactly one reason: a restart should not force the
+entire working set through a cold start at once. Two things keep it cheap. An archive does not need
+to be current, only recent — reading back a five-minute-old window means the incremental refetch
+starts from that window's newest trade, and five minutes of $500+ fills on a single market is
+nowhere near a page, so the catch-up is still one request. That in turn allows throttling writes to
+once per market per five minutes, which drops write amplification by an order of magnitude against
+the thirty-second refresh cycle. And an archive older than the window span is discarded on read
+rather than trusted, because by then the entire window has rolled out from under it. Pruning runs in
+the engine's own loop: the archive table is not bounded by the in-memory LRU, so it grows with every
+market ever queried, and cleanup is an operations cost that should not land on whichever user
+request happens to trigger it.
+
+The **four tuning parameters moved from constants into the config table** — budget, freshness
+window, staleness ceiling, working-set cap. Not environment variables, deliberately: these are
+numbers you can only choose after watching real traffic, and if changing one requires a redeploy
+then nobody changes it, and a knob nobody turns is not a knob. They clamp, and they enforce one
+cross-field invariant — the staleness ceiling must exceed the freshness window. That is not
+aesthetics. A window only triggers a refetch once it reaches the freshness limit, at which point its
+age already equals that limit; a ceiling below it would send every single degradation straight to a
+429, and the entire "serve an older card, labelled" path would be dead code that never once ran.
+
+**Per-wallet scores are bucketed on the subscriber endpoint** into high/mid/low. The design document
+had filed this under secrecy, and that reasoning was wrong: the raw score has been public on the
+unkeyed dashboard route all along, so masking only the keyed one is theatre. The real problem is
+contract stability. A raw score is the output of an internal model that drifts as the model
+improves, and publishing it promises subscribers that a continuous value's meaning will never
+change — which turns every model adjustment into a silent breaking change. A band survives model
+changes; only moving the band boundaries breaks anything, and that is a rare, deliberate,
+announceable act. Win rate stays raw, because it is a measurement rather than a model output.
+
+The `/manage` panel shows five counters, the working set, the archive size, and — the one that
+matters — the budget actually in force right now. The configured number is only a ceiling; engine
+health decides what is really allowed. Showing only the configured value would leave an operator
+staring at a rising refusal count with no way to see why.
+
+One gap closed on the way through: the `market` scope existed in the API but appeared nowhere in the
+key-issuing UI, which meant nobody could actually grant it. Adding it revealed that the scope list
+was shared with the webhook push-type list, where a market card — having no events to push — has no
+business appearing. The two are now separate lists.
+
+Commits: this batch.
 
 ### 2026-08-21 — A market card you can call while you trade
 
