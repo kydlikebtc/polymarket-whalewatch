@@ -11,30 +11,82 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 406 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1587 tests across
-121 files (`npm test`).
+Scope: 409 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1604 tests across
+122 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
-| Date       | Commit    | What was wrong                                                                                                                                                                                                                                                           |
-| ---------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-08-18 | `58c6b16` | 95% intervals were computed per alert, but 3852 settled alerts sat in only 669 markets (one held 201) — alerts in one market are copies of a single random event, which understated the error by ~1.9x. Now clustered by market; the point estimate still counts alerts. |
-| 2026-08-18 | `524d682` | X posts read the category from `market_meta.category`, empty for all 745 cached markets; the real data was in `event_category`. Every post shipped with only `#Polymarket`.                                                                                              |
-| 2026-08-04 | `80d2d34` | The implied-probability baseline summed the raw fill price for SELL rows while `settleWon` scores a SELL as won when price _falls_. Ten zero-edge SELLs at 0.20 that all went to zero were graded 6.3σ alpha; corrected to 1.58σ, inside noise.                          |
-| 2026-08-04 | `bb4fe4f` | Consensus upgrade rows counted one consensus event several times in the record.                                                                                                                                                                                          |
-| 2026-08-04 | `0e52e33` | Protocol fees were never booked. P&L split into three explicit tiers, subtractable only within a tier (`fd6c3f4`).                                                                                                                                                       |
-| 2026-08-04 | `bbc2b61` | Settlement was pinned on prices a UMA dispute could still overturn; disputed markets are now held.                                                                                                                                                                       |
-| 2026-07-28 | `e9c658e` | The ε "tie" dead-band was applied to binary 0/1 settlements, making it one-sided: a 0.997 alert could only lose, a 0.001 alert could only win.                                                                                                                           |
-| 2026-07-28 | `d04e08b` | "At least X% after removing luck" was a Wilson lower bound on the _raw_ hit rate — it removed sampling luck but never the market baseline, i.e. it silently used 50% as the yardstick. Replaced with hits vs. implied expectation plus σ.                                |
-| 2026-07-26 | `f7bdc01` | Net position was `buyUsd − sellUsd` cash flow, which labels round-trips as net buying. Replaced with share-based cost exposure across consensus, disagreement, accumulation and discovery.                                                                               |
-| 2026-07-26 | `1d6eb0b` | Market-maker flow was counted as directional opinion in consensus and disagreement.                                                                                                                                                                                      |
-| 2026-07-07 | `42af83b` | Net P&L summed `/closed-positions`, which is sorted by `realizedPnl` descending under a page cap — so it only ever saw the winning slice. One wallet displayed **+$22.96M** against a true **−$6.14M**. Now uses the official user-pnl endpoint.                         |
-| 2026-07-07 | `d1b5f69` | Truncated samples still produced a win rate; bot wallets showed fake 100%. Truncated now renders `—`, and wallets trading ≥1000 distinct markets are classified as market makers with no win rate at all.                                                                |
-| 2026-07-02 | `163dcb5` | Positions held to zero produce no closing transaction, so they never reach `/closed-positions` — wallets that rode losers to zero showed fake perfect records. One wallet went from `100% · +$56.6m` to `91.1% · +$55.1m` over 439 settled.                              |
-| 2026-07-02 | `f302050` | `/activity` sorting is unreliable and Cloudflare caches the mis-sorted payload per URL, so a _wrong_ first-activity timestamp was cached permanently. Now the sorted query is only a candidate, verified with an end-filter probe.                                       |
-| 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                  |
+| Date       | Commit    | What was wrong                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-21 | `cba1193` | "Retained exposure" was inferred from buys and sells alone, but a Polymarket redemption is a separate `REDEEM` activity event that never appears in the trade feed — so once a market settled, net shares froze at the pre-settlement level forever. One wallet that had redeemed all 3,200,000 of its shares was still shown holding **$1,829,963**; its real position was zero. The losing side was inflated the same way, at cost basis against a settlement price of 0. Exposure is now zeroed on settled markets. |
+| 2026-08-18 | `58c6b16` | 95% intervals were computed per alert, but 3852 settled alerts sat in only 669 markets (one held 201) — alerts in one market are copies of a single random event, which understated the error by ~1.9x. Now clustered by market; the point estimate still counts alerts.                                                                                                                                                                                                                                               |
+| 2026-08-18 | `524d682` | X posts read the category from `market_meta.category`, empty for all 745 cached markets; the real data was in `event_category`. Every post shipped with only `#Polymarket`.                                                                                                                                                                                                                                                                                                                                            |
+| 2026-08-04 | `80d2d34` | The implied-probability baseline summed the raw fill price for SELL rows while `settleWon` scores a SELL as won when price _falls_. Ten zero-edge SELLs at 0.20 that all went to zero were graded 6.3σ alpha; corrected to 1.58σ, inside noise.                                                                                                                                                                                                                                                                        |
+| 2026-08-04 | `bb4fe4f` | Consensus upgrade rows counted one consensus event several times in the record.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2026-08-04 | `0e52e33` | Protocol fees were never booked. P&L split into three explicit tiers, subtractable only within a tier (`fd6c3f4`).                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 2026-08-04 | `bbc2b61` | Settlement was pinned on prices a UMA dispute could still overturn; disputed markets are now held.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 2026-07-28 | `e9c658e` | The ε "tie" dead-band was applied to binary 0/1 settlements, making it one-sided: a 0.997 alert could only lose, a 0.001 alert could only win.                                                                                                                                                                                                                                                                                                                                                                         |
+| 2026-07-28 | `d04e08b` | "At least X% after removing luck" was a Wilson lower bound on the _raw_ hit rate — it removed sampling luck but never the market baseline, i.e. it silently used 50% as the yardstick. Replaced with hits vs. implied expectation plus σ.                                                                                                                                                                                                                                                                              |
+| 2026-07-26 | `f7bdc01` | Net position was `buyUsd − sellUsd` cash flow, which labels round-trips as net buying. Replaced with share-based cost exposure across consensus, disagreement, accumulation and discovery.                                                                                                                                                                                                                                                                                                                             |
+| 2026-07-26 | `1d6eb0b` | Market-maker flow was counted as directional opinion in consensus and disagreement.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2026-07-07 | `42af83b` | Net P&L summed `/closed-positions`, which is sorted by `realizedPnl` descending under a page cap — so it only ever saw the winning slice. One wallet displayed **+$22.96M** against a true **−$6.14M**. Now uses the official user-pnl endpoint.                                                                                                                                                                                                                                                                       |
+| 2026-07-07 | `d1b5f69` | Truncated samples still produced a win rate; bot wallets showed fake 100%. Truncated now renders `—`, and wallets trading ≥1000 distinct markets are classified as market makers with no win rate at all.                                                                                                                                                                                                                                                                                                              |
+| 2026-07-02 | `163dcb5` | Positions held to zero produce no closing transaction, so they never reach `/closed-positions` — wallets that rode losers to zero showed fake perfect records. One wallet went from `100% · +$56.6m` to `91.1% · +$55.1m` over 439 settled.                                                                                                                                                                                                                                                                            |
+| 2026-07-02 | `f302050` | `/activity` sorting is unreliable and Cloudflare caches the mis-sorted payload per URL, so a _wrong_ first-activity timestamp was cached permanently. Now the sorted query is only a candidate, verified with an end-filter probe.                                                                                                                                                                                                                                                                                     |
+| 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-21 — A position that had already been cashed out
+
+`cba1193` `1e2907f` `531d151`
+
+A user compared one wallet's exposure against Polymarket's own page and found the two disagreed.
+Reconciling them turned up three separate defects, only one of which was the one being reported.
+
+The real one: the market card claimed a wallet was holding **$1,829,963** in a Dota 2 market it had
+completely exited. `exposureUsd` is `(buyShares − sellShares) × avgBuyPrice`, and its only inputs
+are buys and sells. But Polymarket settles by **redemption**, and a redemption is a distinct
+`REDEEM` event on `/activity` that never appears in the trade feed at all. The wallet had bought
+3,339,219 shares, sold 139,219, then redeemed the remaining 3,200,000 in a single event at 13:58.
+Net shares therefore froze at the pre-settlement level and stayed there permanently. No amount of
+trade data can express "this is gone" — the fact lives in a feed the calculation never reads. The
+losing side of the same market was wrong in the mirror image: shares carried at cost basis against
+a settlement price of zero.
+
+The fix costs nothing upstream, because the answer was already in hand: `buildMarketCard` fetches
+gamma metadata, which carries `closed` and `outcomePrices`. A settled market now zeroes exposure.
+The gate reuses the discipline settlement already follows elsewhere — closed **and** not under UMA
+dispute, since redemption is blocked during a dispute and the position may genuinely still be
+there.
+
+What made this more than a one-line change is that `exposureUsd` has five consumers. The line drawn
+here is between two things the interface had been conflating: **exposure** means _still held_ and
+becomes false at settlement, while **net bought** means _deployed during the window_ and stays true
+forever. So net shares and average buy price survive settlement untouched, the disagreement banner
+and split-buy table were renamed rather than zeroed, and the detectors feeding the alert path were
+left alone — they need their own risk assessment, not a drive-by edit.
+
+Rendering the page is what caught the rest. Unit tests were green and the type-checker was happy
+while the most prominent element on the card still printed the phantom figure, directly above a
+table announcing that exposure had been zeroed. Zeroing one consumer of a shared primitive leaves
+every other consumer lying. Two second-order breaks came from the same place: the Telegram card
+weighted its average entry price by exposure, which collapses to a fabricated "0¢" once exposure is
+zero, and the outcome subtotal was summing the eight displayed wallets rather than all of them.
+
+The second defect explains what was actually reported. Holdings were cached for ten minutes,
+bundled into the same entry as the wallet profile. That was backwards on both axes: the profile is
+a multi-page 2000-trade pull while holdings are a single request, and holdings are the one number on
+that page that moves tick by tick. The wallet in question went from 231,026 shares to 416,835 in
+seventeen minutes — the two figures the user saw. Holdings now hold their own 60-second TTL,
+matching `/api/positions`, so the dossier and the market card can no longer disagree about the same
+wallet. Extracting the cache also fixed an inverted eviction: `Map.set` on an existing key keeps its
+original slot, so the most frequently refreshed address was the first one evicted.
+
+The third is unfixed and stated here rather than quietly carried: the trade window is collected with
+a USD floor and `takerOnly=true`, so exposure is a filtered approximation by construction — measured
+at 3.7% below the true position for this wallet. That is defensible for a whale monitor, but the
+column is labelled "exposure" with no indication that it is a filtered one.
 
 ### 2026-08-21 — One function was answering two different questions
 
@@ -232,6 +284,7 @@ cleverness on the read side reconstructs a field the payload never held, and ret
 report a sub-penny cost basis rather than an unknown one. The 48h window clears them within a day.
 
 Commits: `0edf02f`, plus the wrap-up commit.
+
 ### 2026-08-21 — `bus[]` finally says who bought
 
 The parity pass two days earlier aligned identity, direction and money, and stopped one field short
