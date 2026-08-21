@@ -5,6 +5,7 @@ import { dedupKey, latestPriceByAsset, notionalUsd } from "./trades";
 import { cents, durText, esc, short, urlSeg, usd } from "./tgFormat";
 import { isPermanentSendError } from "./telegram";
 import { DEFAULT_DISAGREEMENT, detectDisagreement } from "./disagreement";
+import { isSettled, type MarketMeta } from "./gamma";
 import { avgBuyPrice, exposureUsd, netShares } from "./netPosition";
 import { formatRecordLine, typeSignalRecord } from "./signalRecord";
 import { recordConsensusCycle } from "./cycleMetrics";
@@ -388,6 +389,21 @@ export interface ConsensusCycleDeps {
     effectiveSinceSec?: number;
   }>;
   getSmart: () => Map<string, SmartTag>;
+  /**
+   * 存活组所在市场的元数据,喂给已结算闸门(见 runConsensusCycle 里的
+   * 「已结算闸门」段)。
+   *
+   * **必填,不是可选** —— 与本文件其它 deps(send/opts)的可选纪律刻意不同:
+   * send 缺省只是"不推送"(安全降级),这个依赖缺省却是"正确性闸门整个关掉"
+   * (不安全降级)。做成必填,漏接就是编译错误而不是线上静默失真 —— 这类
+   * 静默失效本仓吃过亏(见 CHANGELOG「落库链路两处静默失效」)。
+   *
+   * 调用方应传一个**短 TTL** 的 getMarketMeta:默认 1h 缓存能把一个 50 分钟前
+   * 就结算了的市场继续报成 open(整整 10 轮虚构)。参照 /api/consensus 对
+   * currentPrice 的同一处理(ttlSec=60);closed 市场在 getMarketMeta 内部
+   * 是永久缓存,短 TTL 不会带来重复拉取。
+   */
+  getMeta: (conditionIds: string[]) => Promise<Record<string, MarketMeta>>;
   send?: (html: string) => Promise<void>;
   opts?: ConsensusOptions;
   // A state row older than this is expired: the group left the rolling window
@@ -412,6 +428,12 @@ let lastEmptyWhitelistWarnTs = -Infinity;
  * One consensus detection cycle. Fires an alert when a group FORMS or grows to
  * more wallets than previously alerted (escalation); a same-or-smaller group
  * within the state TTL stays silent. Returns alerts fired.
+ *
+ * 组在推送前要过两道互不相干的闸门,顺序固定:
+ *   1. 分歧互斥(P0.7):对立结果都有聪明钱 → 单边"共识"是假象,整体沉默。
+ *   2. 已结算闸门:市场已终局结算 → 敞口口径失效(赎回不进 /trades),不推。
+ * 两道都是"跳过而不预占状态":不落 alerts、不写 consensus_state,所以条件
+ * 变化后同一次形成还能作为"新闻"推出去。
  */
 export async function runConsensusCycle(
   deps: ConsensusCycleDeps,
@@ -420,6 +442,7 @@ export async function runConsensusCycle(
     db,
     fetchWindow,
     getSmart,
+    getMeta,
     send,
     opts = DEFAULT_CONSENSUS,
     stateTtlSec = 6 * 3600,
@@ -525,13 +548,81 @@ export async function runConsensusCycle(
   }
   if (groups.length === 0)
     return finish(rawGroups.length, rawGroups.length - groups.length, 0);
+  // --- 已结算闸门 ---------------------------------------------------------
+  // 本模块的资格判据是 exposureUsd(留存净股数 × 买入均价),而它的**唯一**
+  // 输入是 BUY/SELL 流水。赎回在 Polymarket 是另一种活动类型(data-api
+  // /activity 的 REDEEM),**永远不会**出现在 /trades 里 —— 所以市场一旦结算,
+  // netShares 就永久冻结在结算前的水位,敞口从那一刻起是纯虚构。
+  //
+  // 实测(2026-08-21,7131 条生产告警 × gamma closedTime):
+  //   · 73.6% 的市场在 6h 检测窗口**内**结算(体育/电竞开盘到结算常常几小时);
+  //   · 结算后中位 1.8 分钟就 REDEEM 完毕 —— 比 5 分钟的巡检节奏还快;
+  //   · 输的那一边根本不赎(份额归零),敞口反而**永久**挂在成本价上。
+  // 没有这道闸门,一个已结算市场会在 TTL 到期时作为"提醒"再推一次,内容是
+  // 一笔谁都不再持有的仓位。
+  //
+  // 三条纪律:
+  //   1. 判据复用 lib/gamma 的 `isSettled`,不在这里重新推导 —— 全站对"已结算"
+  //      只能有一个定义。注意它比 follow.ts 开仓处的 `closed === true` **宽**
+  //      (争议中的 closed 市场不算结算):争议期赎回被卡住,仓位可能还真在,
+  //      不能替人宣布归零。两处问的不是同一个问题,不要"统一"。
+  //   2. meta 缺失(冷缓存 + gamma 抖动)= 未知,既不算已结算也不放行,而是
+  //      **延到下轮**(与 alertEngine 对 maxHoursToEnd 的 defer 同一套纪律)。
+  //      这里 defer 是免费的:没走到下面的 claim,就没写 alerts / consensus_state,
+  //      下一轮这次形成照样算"新闻"。
+  //   3. 丢弃发生在 claim **之前** —— 落一行 alerts 会污染 typeSignalRecord
+  //      算的「共识」30 天战绩,而那个数字就印在推送里。
+  const live: ConsensusGroup[] = [];
+  {
+    const cids = [...new Set(groups.map((g) => g.conditionId))];
+    let meta: Record<string, MarketMeta> = {};
+    try {
+      // 只为**存活组**的市场取 meta(通常个位数),不是整个窗口的几百个市场。
+      meta = await getMeta(cids);
+    } catch (e) {
+      // 真实注入的 getMarketMeta 内部已降级为 cached-only,还能抛说明是注入的
+      // 实现出了问题 —— 退化成"全部延到下轮",绝不放行未经检验的组。
+      console.warn(
+        `[consensus] getMeta failed for ${cids.length} market(s) — 本轮全部延到下轮再判:`,
+        e,
+      );
+    }
+    const deferred: string[] = [];
+    const settled: string[] = [];
+    for (const g of groups) {
+      const m = meta[g.conditionId];
+      if (!m) {
+        deferred.push(`${g.conditionId}/${g.outcome}`);
+        continue;
+      }
+      if (isSettled(m)) {
+        settled.push(`${g.conditionId}/${g.outcome}（${g.title}）`);
+        continue;
+      }
+      live.push(g);
+    }
+    if (settled.length > 0) {
+      console.log(
+        `[consensus] 已结算闸门: dropped ${settled.length} settled group(s) from the push path — ${settled.join(", ")}`,
+      );
+    }
+    if (deferred.length > 0) {
+      // WARN 而非 log:持续出现说明 gamma 侧这些市场取不到 meta,那这些组会
+      // **一直**静默 —— 这是可诊断性的最后一道防线,不能只留一行 info。
+      console.warn(
+        `[consensus] 已结算闸门: market meta missing for ${deferred.length} group(s) — 延到下轮再判(未落 alerts/consensus_state): ${deferred.join(", ")}`,
+      );
+    }
+  }
+  if (live.length === 0)
+    return finish(rawGroups.length, rawGroups.length - groups.length, 0);
   // Per qualified wallet: the smallest single visible BUY fill (lower bound —
   // fills under the fetch floor are invisible). Minima hugging the floor mean
   // the wallet's real chunks are likely smaller and the floor is masking them
   // ($2k fetch floor vs $5k/wallet qualification mismatch).
   {
     const qualified = new Set<string>();
-    for (const g of groups) for (const w of g.wallets) qualified.add(w.wallet);
+    for (const g of live) for (const w of g.wallets) qualified.add(w.wallet);
     const minFill = new Map<string, number>();
     for (const t of trades) {
       if (t.side !== "BUY") continue;
@@ -545,7 +636,7 @@ export async function runConsensusCycle(
       .map((v) => Math.round(v))
       .sort((a, b) => a - b);
     console.log(
-      `[consensus] ${groups.length} group(s) · qualified-wallet min single fill USD: [${dist.join(", ")}]`,
+      `[consensus] ${live.length} group(s) · qualified-wallet min single fill USD: [${dist.join(", ")}]`,
     );
   }
 
@@ -568,7 +659,7 @@ export async function runConsensusCycle(
   let fired = 0;
   // One pass over the window for every group's chase-cost line.
   const latestPrices = latestPriceByAsset(trades);
-  for (const g of groups) {
+  for (const g of live) {
     const row = sel.get(g.conditionId, g.outcome) as
       { wallet_count: number; last_alert_ts: number } | undefined;
     const expired = row ? nowSec - row.last_alert_ts > stateTtlSec : false;

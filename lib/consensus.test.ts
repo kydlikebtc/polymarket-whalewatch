@@ -7,6 +7,7 @@ import {
 } from "./consensus";
 import { TelegramPermanentError } from "./telegram";
 import type { SmartTag } from "./smartWallets";
+import type { MarketMeta } from "./gamma";
 import type { Trade } from "./types";
 
 const mk = (over: Partial<Trade> = {}): Trade =>
@@ -36,6 +37,27 @@ const tag = (score: number | null = 80): SmartTag => ({
 
 const smartSet = (...wallets: string[]): Map<string, SmartTag> =>
   new Map(wallets.map((w) => [w.toLowerCase(), tag()]));
+
+// 结算闸门只读 closed/umaDisputed 两个字段，其余按 MarketMeta 补齐即可。
+const mktMeta = (
+  conditionId: string,
+  over: Partial<MarketMeta> = {},
+): MarketMeta => ({
+  conditionId,
+  volume24hr: 100_000,
+  liquidity: 50_000,
+  endDate: "2026-07-03T22:00:00Z",
+  closed: false,
+  category: "Sports",
+  outcomes: ["Yes", "No"],
+  outcomePrices: [0.6, 0.4],
+  clobTokenIds: ["tok-yes", "tok-no"],
+  feesEnabled: false,
+  feeType: null,
+  feeSchedule: null,
+  umaDisputed: false,
+  ...over,
+});
 
 describe("detectConsensus", () => {
   it("surfaces a group when >=2 smart wallets each net-buy >= the floor", () => {
@@ -349,6 +371,10 @@ describe("runConsensusCycle", () => {
       truncated: false,
     }),
     getSmart: () => smartSet("0xA", "0xB", "0xC"),
+    // 默认「市场还开着」——结算闸门是必填依赖（编译期防静默失效），所以
+    // 每个既有用例都从这里拿到一个不触发闸门的实现。
+    getMeta: async (cids: string[]) =>
+      Object.fromEntries(cids.map((c) => [c, mktMeta(c)])),
     nowSec: 10_000,
     ...over,
   });
@@ -423,6 +449,103 @@ describe("runConsensusCycle", () => {
     expect(
       db.prepare("SELECT COUNT(*) AS n FROM consensus_state").get(),
     ).toEqual({ n: 0 });
+  });
+
+  it("已结算市场整体沉默：赎回走 REDEEM 不进 /trades，敞口早已是虚构", async () => {
+    const db = openDb(":memory:");
+    const send = vi.fn().mockResolvedValue(undefined);
+    const settled = deps(db, {
+      send,
+      getMeta: async (cids: string[]) =>
+        Object.fromEntries(cids.map((c) => [c, mktMeta(c, { closed: true })])),
+    });
+    expect(await runConsensusCycle(settled)).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    // 与 contested 同一条纪律：既不落 alerts 也不写 consensus_state。落了
+    // alerts 会污染 typeSignalRecord 的「共识」30 天战绩（推送里印的就是它）。
+    expect(db.prepare("SELECT COUNT(*) AS n FROM alerts").get()).toEqual({
+      n: 0,
+    });
+    expect(
+      db.prepare("SELECT COUNT(*) AS n FROM consensus_state").get(),
+    ).toEqual({ n: 0 });
+  });
+
+  it("争议中的 closed 市场照常推送：争议期赎回被卡住，仓位可能还真在", async () => {
+    const db = openDb(":memory:");
+    const send = vi.fn().mockResolvedValue(undefined);
+    const disputed = deps(db, {
+      send,
+      getMeta: async (cids: string[]) =>
+        Object.fromEntries(
+          cids.map((c) => [c, mktMeta(c, { closed: true, umaDisputed: true })]),
+        ),
+    });
+    expect(await runConsensusCycle(disputed)).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("meta 缺失 → 本轮跳过且不预占状态，下轮 meta 到位仍作为「新闻」推送", async () => {
+    const db = openDb(":memory:");
+    const send = vi.fn().mockResolvedValue(undefined);
+    // 冷缓存 + gamma 抖动：未知 ≠ 未结算，也 ≠ 已结算。照 alertEngine 的
+    // maxHoursToEnd 同一套 defer 纪律，跳过本轮而不是二选一地猜。
+    expect(
+      await runConsensusCycle(deps(db, { send, getMeta: async () => ({}) })),
+    ).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM alerts").get()).toEqual({
+      n: 0,
+    });
+    expect(
+      db.prepare("SELECT COUNT(*) AS n FROM consensus_state").get(),
+    ).toEqual({ n: 0 });
+    // 下一轮 meta 到位：这次形成必须还能推 —— defer 不能吞掉信号。
+    expect(await runConsensusCycle(deps(db, { send, nowSec: 10_300 }))).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("getMeta 抛错 → 退化为「本轮跳过」，不炸整轮", async () => {
+    const db = openDb(":memory:");
+    const send = vi.fn().mockResolvedValue(undefined);
+    const boom = deps(db, {
+      send,
+      getMeta: async () => {
+        throw new Error("gamma down");
+      },
+    });
+    await expect(runConsensusCycle(boom)).resolves.toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM alerts").get()).toEqual({
+      n: 0,
+    });
+  });
+
+  it("闸门只为存活组的市场取 meta —— 不为整个窗口的市场埋单", async () => {
+    const db = openDb(":memory:");
+    // 窗口里两个市场：0xc 成组（0xA+0xB 各 $10k），0xOTHER 只有一笔不成组。
+    const seen: string[][] = [];
+    const scoped = deps(db, {
+      send: vi.fn().mockResolvedValue(undefined),
+      fetchWindow: async () => ({
+        trades: [
+          mk({ proxyWallet: "0xA", transactionHash: "0x1" }),
+          mk({ proxyWallet: "0xB", transactionHash: "0x2" }),
+          mk({
+            proxyWallet: "0xC",
+            transactionHash: "0x3",
+            conditionId: "0xOTHER",
+          }),
+        ],
+        truncated: false,
+      }),
+      getMeta: async (cids: string[]) => {
+        seen.push([...cids]);
+        return Object.fromEntries(cids.map((c) => [c, mktMeta(c)]));
+      },
+    });
+    expect(await runConsensusCycle(scoped)).toBe(1);
+    expect(seen).toEqual([["0xc"]]);
   });
 
   it("每轮落库 cycle_metrics 决策元数据（P0.9），contested 轮次也记录", async () => {

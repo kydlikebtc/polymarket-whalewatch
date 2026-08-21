@@ -325,6 +325,9 @@ export function startAlertEngine(): void {
   const CONSENSUS_INTERVAL_MS = 5 * 60_000;
   const CONSENSUS_WINDOW_SEC = 6 * 3600;
   const CONSENSUS_FLOOR_USD = 2000;
+  // 已结算闸门读 meta 的新鲜度上限:一轮的长度。再久就意味着闸门会用上一轮
+  // 之前的 closed 状态判这一轮,那正是它要消灭的那种失真。
+  const CONSENSUS_META_TTL_SEC = CONSENSUS_INTERVAL_MS / 1000;
 
   async function consensusLoop() {
     try {
@@ -340,6 +343,13 @@ export function startAlertEngine(): void {
         db,
         fetchWindow: async () => win,
         getSmart: () => smart,
+        // 已结算闸门的输入。短 TTL 是必须的:market_meta 默认缓存 1 小时,
+        // 而体育/电竞市场从结算到钱包赎完中位只要 1.8 分钟 —— 用默认 TTL 会
+        // 让一个早已结算的市场在整整 12 轮里继续被判成 open。closed 市场在
+        // getMarketMeta 内部是永久缓存,短 TTL 不会造成重复拉取,真正多花的
+        // 只有"还开着的存活组市场"那几个 id,每轮个位数。
+        getMeta: (cids) =>
+          getMarketMeta(db, cids, { ttlSec: CONSENSUS_META_TTL_SEC }),
         send: sendConsensus,
         // Coverage-log denominator: fetchWindow's effectiveSinceSec is
         // measured against this requested window.
@@ -393,9 +403,14 @@ export function startAlertEngine(): void {
       // 市场数无限涨。超过 24h 的行整个窗口都已滚出下界,读回来也是骗人。
       // 由引擎做而非请求侧:清理是运维动作,不该让某个倒霉的用户请求付这笔钱。
       try {
-        const dropped = prunePersistedWindows(db, Math.floor(Date.now() / 1000));
+        const dropped = prunePersistedWindows(
+          db,
+          Math.floor(Date.now() / 1000),
+        );
         if (dropped > 0) {
-          console.log(`[marketWindow] pruned ${dropped} stale window archive(s)`);
+          console.log(
+            `[marketWindow] pruned ${dropped} stale window archive(s)`,
+          );
         }
       } catch (e) {
         console.error("[marketWindow] prune failed", e);
