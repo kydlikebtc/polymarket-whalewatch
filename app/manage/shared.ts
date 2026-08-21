@@ -18,6 +18,21 @@ export const SUBSCRIBABLE = [
   { type: "discovery", label: "① 🔭 聪明钱发现" },
 ] as const;
 
+/**
+ * 签发 key 时可勾的范围 = 事件类型 **+ 非事件能力**。
+ *
+ * 深度卡(`market`)不是事件类型:它没有可推送的事件,所以**不能**出现在
+ * webhook 端点的推送类型里(服务端的 BUS_WEBHOOK_TYPES 也会拒收);但在
+ * 「这把 key 能拿到什么」这一层,它与其它类型同构 —— 没勾就拿不到。
+ *
+ * 于是两份清单:SUBSCRIBABLE 仍是事件类型(key 与 webhook 共用,保住「加一个
+ * 事件类型不会漏掉其中之一」的原意),KEY_SCOPES 在其上追加非事件能力。
+ */
+export const KEY_SCOPES = [
+  ...SUBSCRIBABLE,
+  { type: "market", label: "🎯 市场深度卡(仅 realtime)" },
+] as const;
+
 export const cents = (p: number | null | undefined): string =>
   p == null ? "—" : `${(p * 100).toFixed(1).replace(/\.0$/, "")}¢`;
 

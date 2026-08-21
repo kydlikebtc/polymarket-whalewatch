@@ -12,6 +12,7 @@ import KeysSection from "./KeysSection";
 import TgTargetsSection from "./TgTargetsSection";
 import XAccountsSection from "./XAccountsSection";
 import SignalsSection from "./SignalsSection";
+import MarketCardSection from "./MarketCardSection";
 import StatusStrip from "./StatusStrip";
 import {
   PipelinesOverview,
@@ -96,6 +97,9 @@ const PIPE_SUBS = [
   { id: "tg", label: "🅐 Telegram" },
   { id: "keys", label: "🅑 API key + webhook" },
   { id: "x", label: "🅒 𝕏 播报" },
+  // 深度卡是管线而非信号线:它不产出事件,它是一条**按需**对外供数的通道,
+  // 而且是全站唯一会打上游的那条 —— 预算与背压的旋钮该和其它对外通道放一起。
+  { id: "card", label: "🎯 市场深度卡" },
 ] as const;
 type LineSub = (typeof LINE_SUBS)[number]["id"];
 type PipeSub = (typeof PIPE_SUBS)[number]["id"];
@@ -441,6 +445,7 @@ export default function ManagePage() {
               className="ds-segmented--wrap"
             />
           </div>
+          {pipeSub === "card" && <MarketCardSection token={token} />}
           {pipeSub === "tg" && (
             <>
               <TgTargetsSection token={token} />
