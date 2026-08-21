@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 404 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1577 tests across
-120 files (`npm test`).
+Scope: 406 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1587 tests across
+121 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -35,6 +35,35 @@ Scope: 404 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                  |
 
 ## Batches
+
+### 2026-08-21 — One function was answering two different questions
+
+Renaming `busTypeAllowed` would have been the obvious follow-up to moving the market card out of the
+signal namespace. It would also have been the wrong fix, because the name was not the problem.
+
+That one function answered two questions that happen to share an implementation: what may this API
+key access, and what does this webhook endpoint push. A list-contains check serves both, so both had
+used it for months. But the domains had already diverged. A key can be granted the market card,
+which is a capability with no events to push; an endpoint cannot push it, because there is nothing
+to push. That divergence is exactly what made adding `market` feel awkward, and exactly why the
+grantable-scope list in `/manage` had to be split into two hand-maintained copies.
+
+Splitting it into `keyAllows` and `endpointPushes` is not cosmetic. With one function, "check
+whether `market` is a pushable type" is a sentence you can write. With two, it stops looking right
+at the call site.
+
+The duplicated list in `/manage` had already drifted once, in the way duplicated lists always do:
+`market` existed in the API and was missing from the key-issuing UI, so the scope was real and
+ungrantable. Both sides now read one zero-dependency definition — the client component could not
+import the server module because it pulls in node's crypto, but the correct response to that
+constraint was to extract the data, not to copy it. A guard test pins the two domains apart and
+their difference against the webhook layer's own list.
+
+The database column keeps the name `bus_types`, which has been inaccurate since the day `strategy`
+was first stored in it. Renaming a column requires a migration, and the column is visible only to
+maintainers; it was the concept that was lying, not the storage.
+
+Commits: this batch.
 
 ### 2026-08-21 — The market card was never a signal
 

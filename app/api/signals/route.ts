@@ -7,7 +7,7 @@ import { evaluateHealth } from "../../../lib/health";
 import { createPromiseCache } from "../../../lib/promiseCache";
 import { parseConfig } from "../../../lib/config";
 import { getBusSignals } from "../../../lib/signalBus";
-import { busTypeAllowed } from "../../../lib/apiKeys";
+import { keyAllows } from "../../../lib/apiKeys";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -90,7 +90,7 @@ export async function GET(req: Request) {
           );
           return {
             ...buildSignalFeed(db, { nowSec, windowHours }),
-            strategies: busTypeAllowed(access.busTypes, "strategy")
+            strategies: keyAllows(access.busTypes, "strategy")
               ? buildStrategyFeed(db, { nowSec })
               : { active: [], settled: [], recordByStrategy: {} },
             // 统一信号总线(大单/共识/发现…):既有字段只增不改。
@@ -99,7 +99,7 @@ export async function GET(req: Request) {
             bus: getBusSignals(db, {
               nowSec,
               windowSec: windowHours * 3600,
-            }).filter((r) => busTypeAllowed(access.busTypes, r.sourceType)),
+            }).filter((r) => keyAllows(access.busTypes, r.sourceType)),
             delayedMin: delaySec / 60,
             healthy: health.ok,
             staleLoops: health.staleLoops,

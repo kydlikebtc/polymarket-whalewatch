@@ -6,7 +6,10 @@ import {
   revokeApiKey,
   verifyApiKey,
   parseBusTypes,
-  busTypeAllowed,
+  keyAllows,
+  endpointPushes,
+  KEY_SCOPES,
+  PUSHABLE_TYPES,
 } from "./apiKeys";
 
 // 对外信号批次 2:多租户只读密钥。明文只在签发瞬间存在(库里只有 sha256),
@@ -115,11 +118,47 @@ describe("订阅范围(bus_types)", () => {
     ]);
   });
 
-  it("busTypeAllowed:不限放行一切,指定则只放行列内", () => {
-    expect(busTypeAllowed(null, "large")).toBe(true);
-    expect(busTypeAllowed([], "large")).toBe(true);
-    expect(busTypeAllowed(["large"], "large")).toBe(true);
-    expect(busTypeAllowed(["large"], "consensus")).toBe(false);
-    expect(busTypeAllowed(["strategy"], "strategy")).toBe(true);
+  it("keyAllows:不限放行一切,指定则只放行列内", () => {
+    expect(keyAllows(null, "large")).toBe(true);
+    expect(keyAllows([], "large")).toBe(true);
+    expect(keyAllows(["large"], "large")).toBe(true);
+    expect(keyAllows(["large"], "consensus")).toBe(false);
+    expect(keyAllows(["strategy"], "strategy")).toBe(true);
+  });
+
+  it("endpointPushes:与 keyAllows 同一判断,但域不同", () => {
+    expect(endpointPushes(null, "large")).toBe(true);
+    expect(endpointPushes(["large"], "consensus")).toBe(false);
+  });
+});
+
+// --- 两个域必须分开(2026-08-21)---------------------------------------------
+//
+// 「这把 key 能访问什么」与「这个 webhook 端点推什么事件」实现恰好相同(列表包含
+// 判断),于是长期共用一个函数。但域早就分叉了:深度卡是 key 能访问的能力,却
+// **没有事件可推** —— 当初把 market 塞进来时的别扭、以及 /manage 里范围清单被迫
+// 拆成两份,根源都在这里。
+
+describe("权限域", () => {
+  it("market 是 key 范围,但不是可推送事件类型", () => {
+    expect(KEY_SCOPES).toContain("market");
+    expect(PUSHABLE_TYPES).not.toContain("market");
+  });
+
+  it("可推送类型全部也是 key 范围 —— 反过来不成立", () => {
+    // key 能授予的 ⊇ 能推送的:能推给你的,必然得先允许你拿。
+    for (const t of PUSHABLE_TYPES) {
+      expect(KEY_SCOPES).toContain(t);
+    }
+    expect(KEY_SCOPES.length).toBeGreaterThan(PUSHABLE_TYPES.length);
+  });
+
+  it("可推送类型 = bus 三类 + 策略信号 —— 与 webhook 端点的实际值域对齐", () => {
+    expect([...PUSHABLE_TYPES].sort()).toEqual([
+      "consensus",
+      "discovery",
+      "large",
+      "strategy",
+    ]);
   });
 });

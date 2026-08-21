@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { checkWriteAccess, guardExpensive } from "../../../../lib/apiGuard";
-import { busTypeAllowed, parseBusTypes } from "../../../../lib/apiKeys";
+import { keyAllows, parseBusTypes } from "../../../../lib/apiKeys";
 import { listBusDefs } from "../../../../lib/busDefs";
 import { openDb } from "../../../../lib/db";
 import {
@@ -230,7 +230,7 @@ export async function POST(req: Request) {
       }
     }
     const outOfScope = resolved
-      .filter((r) => !busTypeAllowed(keyScope, r.type))
+      .filter((r) => !keyAllows(keyScope, r.type))
       .map((r) => r.raw);
     if (outOfScope.length > 0) {
       return Response.json(

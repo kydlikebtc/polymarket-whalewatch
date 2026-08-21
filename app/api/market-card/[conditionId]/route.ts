@@ -1,6 +1,6 @@
 import { openDb } from "../../../../lib/db";
 import { checkFeedAccess } from "../../../../lib/feedAuth";
-import { busTypeAllowed } from "../../../../lib/apiKeys";
+import { keyAllows } from "../../../../lib/apiKeys";
 import { getEngineStart, getHeartbeats } from "../../../../lib/heartbeat";
 import { evaluateHealth } from "../../../../lib/health";
 import { budgetFor, takeCardToken } from "../../../../lib/cardBudget";
@@ -50,7 +50,7 @@ export async function GET(
     if (!access.ok) {
       return Response.json({ error: access.error }, { status: access.status });
     }
-    if (!busTypeAllowed(access.busTypes, "market")) {
+    if (!keyAllows(access.busTypes, "market")) {
       return Response.json(
         { error: "scope 'market' not granted for this key" },
         { status: 403 },
