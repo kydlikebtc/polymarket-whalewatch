@@ -1,6 +1,7 @@
 import type { DB } from "./db";
 import { DIGEST_DAY_KEY, DIGEST_PREV_KEY } from "./signalDigest";
 import { gradeRows, type SignalRecord } from "./signalRecord";
+import { strategyCode } from "./strategyCodes";
 import { sourceOf } from "./strategyFeed";
 
 // 对外信号批次 3:/record 公开战绩页的数据层(零上游调用,全部持久化状态)。
@@ -25,6 +26,8 @@ export interface RecordSettledRow {
 
 export interface RecordFeedStrategy {
   id: number;
+  /** 跨部署稳定的档位码;null = 未登记(运营手工建的档)。 */
+  code: string | null;
   name: string;
   source: string;
   /** 已发布(sent entry)的信号总数,含未结算。 */
@@ -115,6 +118,7 @@ export function buildRecordFeed(
     }));
     return {
       id: st.id,
+      code: strategyCode(st.name),
       name: st.name,
       source: sourceOf(st.params_json),
       pushedCount,

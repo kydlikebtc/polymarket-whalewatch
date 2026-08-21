@@ -296,34 +296,39 @@ interface StrategyFeed {
   active: StrategyFeedSignal[]; // 事件：近 48h 触发、未结算
   settled: StrategyFeedSettled[]; // 事件：近 3 天结算，最多 20 条
   recordByStrategy: Record<
-    string, // 键 = strategy id 字符串（如 "6"），不是档名
-    { name: string; source: string; record: SignalRecord } // 视图：30d 汇总
+    string, // 键 = strategy id 字符串（部署本地，别写死；认档用 code，见 §8.3）
+    {
+      code: string | null; // 跨部署稳定的档位码 ← 认档用它
+      name: string;
+      source: string;
+      record: SignalRecord; // 视图：30d 汇总
+    }
   >;
 }
 ```
 
 ### 8.1 `active[]` 字段
 
-| 字段             | 类型           | 中文名     | 说明                                       |
-| ---------------- | -------------- | ---------- | ------------------------------------------ |
-| `id`             | number         | 事件 ID    | webhook 去重键的一半                       |
-| `strategy`       | object         | 档位       | `{id, name, source}`；分组用 `id` 不用档名 |
-| `conditionId`    | string         | 市场 ID    | —                                          |
-| `title`          | string         | 市场问题   | 英文原文                                   |
-| `slug`           | string         | 市场短名   | 拼**单市场**页链接                         |
-| `eventSlug`      | string         | 事件短名   | 拼事件页链接（一个事件下可挂几十个市场）   |
-| `category`       | string \| null | 一级分类   | 如 `Sports`                                |
-| `subcategory`    | string \| null | 二级分类   | 如 `NBA`；无为 null                        |
-| `outcome`        | string         | 买入方向   | 反向档已是翻转后的方向                     |
-| `outcomeIndex`   | number \| null | 方向序号   | —                                          |
-| `asset`          | string \| null | 代币 ID    | 用它订实时价（§12）                        |
-| `formationTs`    | number         | 形成时刻   | 语义随 `source`，见 §8.3                   |
-| `referencePrice` | number \| null | 聪明钱成本 | —                                          |
-| `walletCount`    | number \| null | 钱包数     | heavy 恒 1                                 |
-| `totalNetUsd`    | number \| null | 总净买     | USD                                        |
-| `entryPrice`     | number \| null | 纸面进场价 | 我们的模拟买入价                           |
-| `sizeUsd`        | number \| null | 纸面额     | 默认 500                                   |
-| `emittedAt`      | number         | 发布时刻   | 减 `formationTs` = 检测延迟                |
+| 字段             | 类型           | 中文名     | 说明                                      |
+| ---------------- | -------------- | ---------- | ----------------------------------------- |
+| `id`             | number         | 事件 ID    | webhook 去重键的一半                      |
+| `strategy`       | object         | 档位       | `{id, code, name, source}`；认档用 `code` |
+| `conditionId`    | string         | 市场 ID    | —                                         |
+| `title`          | string         | 市场问题   | 英文原文                                  |
+| `slug`           | string         | 市场短名   | 拼**单市场**页链接                        |
+| `eventSlug`      | string         | 事件短名   | 拼事件页链接（一个事件下可挂几十个市场）  |
+| `category`       | string \| null | 一级分类   | 如 `Sports`                               |
+| `subcategory`    | string \| null | 二级分类   | 如 `NBA`；无为 null                       |
+| `outcome`        | string         | 买入方向   | 反向档已是翻转后的方向                    |
+| `outcomeIndex`   | number \| null | 方向序号   | —                                         |
+| `asset`          | string \| null | 代币 ID    | 用它订实时价（§12）                       |
+| `formationTs`    | number         | 形成时刻   | 语义随 `source`，见 §8.3                  |
+| `referencePrice` | number \| null | 聪明钱成本 | —                                         |
+| `walletCount`    | number \| null | 钱包数     | heavy 恒 1                                |
+| `totalNetUsd`    | number \| null | 总净买     | USD                                       |
+| `entryPrice`     | number \| null | 纸面进场价 | 我们的模拟买入价                          |
+| `sizeUsd`        | number \| null | 纸面额     | 默认 500                                  |
+| `emittedAt`      | number         | 发布时刻   | 减 `formationTs` = 检测延迟               |
 
 `entryPrice − referencePrice` = 追价成本（实测红线 10¢）。
 
@@ -332,8 +337,9 @@ interface StrategyFeed {
 | 字段           | 类型            | 中文名     | 说明                      |
 | -------------- | --------------- | ---------- | ------------------------- |
 | `id`           | number          | 事件 ID    | 与 active 同一台账        |
-| `strategyId`   | number          | 档位 ID    | —                         |
-| `strategyName` | string          | 档位名     | —                         |
+| `strategyId`   | number          | 档位 ID    | 部署本地，见 §8.3         |
+| `strategyCode` | string \| null  | 档位码     | 跨部署稳定 ← 认档用它     |
+| `strategyName` | string          | 档位名     | 中文展示名                |
 | `conditionId`  | string          | 市场 ID    | —                         |
 | `title`        | string          | 市场问题   | —                         |
 | `outcome`      | string          | 买入方向   | —                         |
@@ -359,24 +365,59 @@ interface StrategyFeed {
 | `lone_wolf`    | 高分独狼   | 高评分钱包净买达标          | 净买跨线时刻       |
 | `early_winner` | 早期赢家   | 早期赢家渠道钱包净买达标    | 净买跨线时刻       |
 
-| #     | 档名         | source         | 触发条件                               | 反向 |
-| ----- | ------------ | -------------- | -------------------------------------- | ---- |
-| 1     | 保守         | `consensus`    | ≥3 钱包，每个净买 ≥$10k                | —    |
-| 2     | 激进         | `consensus`    | ≥2 钱包，每个净买 ≥$5k                 | —    |
-| 3     | 精英共识     | `consensus`    | ≥2 钱包（仅 score≥80 计入），每个 ≥$5k | —    |
-| 4     | 重仓共识     | `consensus`    | ≥2 钱包且总净买 ≥$100k                 | —    |
-| 5     | 首发共识     | `consensus`    | 同 1 且形成 ≤300 秒                    | —    |
-| 6     | 巨鲸         | `heavy`        | 单笔 BUY ≥$50k                         | —    |
-| 7     | 超级巨鲸     | `heavy`        | 单笔 BUY ≥$150k                        | —    |
-| 8     | 巨鲸精英     | `heavy`        | 单笔 ≥$50k 且 score≥80                 | —    |
-| 9     | 一边倒分歧   | `lopsided`     | 主导边 ≥70%，跟主导边                  | —    |
-| 10    | 分歧解除     | `resolved`     | 少数边认输，跟主导边                   | —    |
-| 11    | 高分独狼     | `lone_wolf`    | score≥90 且净买 ≥$10k                  | —    |
-| 12    | 早期赢家跟投 | `early_winner` | 渠道钱包净买 ≥$5k                      | —    |
-| 13    | 逆势少数边   | `lopsided`     | 同 9 的市场，跟少数边                  | 对照 |
-| 14-19 | 反巨鲸 等    | 同被镜像档     | 同参数买相反边（对照组）               | ✓    |
+| `code`（认档用它）             | 档名         | source         | 触发条件                               | 反向 |
+| ------------------------------ | ------------ | -------------- | -------------------------------------- | ---- |
+| `conservative_consensus`       | 保守         | `consensus`    | ≥3 钱包，每个净买 ≥$10k                | —    |
+| `aggressive_consensus`         | 激进         | `consensus`    | ≥2 钱包，每个净买 ≥$5k                 | —    |
+| `elite_consensus`              | 精英共识     | `consensus`    | ≥2 钱包（仅 score≥80 计入），每个 ≥$5k | —    |
+| `heavy_consensus`              | 重仓共识     | `consensus`    | ≥2 钱包且总净买 ≥$100k                 | —    |
+| `first_mover_consensus`        | 首发共识     | `consensus`    | 同「保守」且形成 ≤300 秒               | —    |
+| `whale_follow`                 | 巨鲸         | `heavy`        | 单笔 BUY ≥$50k                         | —    |
+| `mega_whale`                   | 超级巨鲸     | `heavy`        | 单笔 BUY ≥$150k                        | —    |
+| `elite_whale`                  | 巨鲸精英     | `heavy`        | 单笔 ≥$50k 且 score≥80                 | —    |
+| `lopsided_majority`            | 一边倒分歧   | `lopsided`     | 主导边 ≥70%，跟主导边                  | —    |
+| `standoff_resolved`            | 分歧解除     | `resolved`     | 少数边认输，跟主导边                   | —    |
+| `high_score_lone_wolf`         | 高分独狼     | `lone_wolf`    | score≥90 且净买 ≥$10k                  | —    |
+| `early_winner_follow`          | 早期赢家跟投 | `early_winner` | 渠道钱包净买 ≥$5k                      | —    |
+| `contrarian_minority`          | 逆势少数边   | `lopsided`     | 同「一边倒分歧」的市场，跟少数边       | 对照 |
+| `inverse_whale_follow`         | 反巨鲸       | `heavy`        | 同「巨鲸」，买相反边                   | ✓    |
+| `inverse_mega_whale`           | 反超级巨鲸   | `heavy`        | 同「超级巨鲸」，买相反边               | ✓    |
+| `inverse_elite_whale`          | 反巨鲸精英   | `heavy`        | 同「巨鲸精英」，买相反边               | ✓    |
+| `inverse_standoff_resolved`    | 反分歧解除   | `resolved`     | 同「分歧解除」，买相反边               | ✓    |
+| `inverse_high_score_lone_wolf` | 反高分独狼   | `lone_wolf`    | 同「高分独狼」，买相反边               | ✓    |
+| `inverse_early_winner_follow`  | 反早期赢家   | `early_winner` | 同「早期赢家跟投」，买相反边           | ✓    |
 
 各档持仓会重叠，**战绩不可跨档相加**。当前对外放开的档见 §4 实时状态表。
+
+#### ⚠️ 认档请用 `code`，别用 `id`
+
+三个字段能标识一档，但**只有 `code` 该被写进你的代码**：
+
+| 字段     | 跨部署稳定 | 可硬编码        | 说明                                        |
+| -------- | ---------- | --------------- | ------------------------------------------- |
+| `code`   | ✅         | ✅ **就用它**   | ASCII、每档唯一、**冻结**（发布后永不改名） |
+| `name`   | ✅         | ⚠️ 可但不建议   | 中文展示名；运营改一次文案你就断了          |
+| `id`     | ❌         | ❌ **绝对不要** | 数据库自增行号，换个部署就是另一档          |
+| `source` | ✅         | ❌ 不唯一       | 检测器族，一族挂多档（`heavy` 下有 6 档）   |
+
+`id` 为什么不能用：它是自增行号，取决于这个库在哪个种子版本上建起来的。
+全新安装的库里「超级巨鲸」是 `7`；而从早期版本一路升级上来的库里，同一档
+可能是 `9`，`7` 反倒是「首发共识」。硬编码 `strategyId === 7` 不会报错，
+只会**静默地把另一档的信号当成你要的那档**——这两档分属不同检测器族
+（`heavy` 与 `consensus`），触发条件毫不相干。
+
+`id` 唯一的正当用途是**同一次响应内**的分组键（`recordByStrategy` 的键就是
+它）；出了这次响应就别留着它。
+
+`code` 可能为 `null`——那是运营手工建的、尚未登记档位码的档。此时只能退回
+`name` 认，或干脆跳过：上表 19 档都有 `code`。
+
+下面这张表是本部署此刻的 `id` ↔ `code` ↔ 档名对照，`/api-docs` 页面按当前库
+实时生成（源文件里为空）。排查「我收到的 id 是哪一档」时看它：
+
+```strategy_ids
+（此表由 /api-docs 渲染时按当前库实时生成；直接阅读源文件时此处为空。）
+```
 
 ---
 
@@ -486,7 +527,13 @@ interface SignalEventV1 {
   id: number; // strategy_signals.id
   event: "entry" | "settle";
   emittedAt: number;
-  strategy: { id: number; name: string; source: string };
+  // 按 code 分派；id 是部署本地行号、name 是中文展示名（§8.3）
+  strategy: {
+    id: number;
+    code: string | null;
+    name: string;
+    source: string;
+  };
   market: {
     conditionId: string;
     title: string;
@@ -520,6 +567,23 @@ interface SignalEventV1 {
   notice: string;
 }
 ```
+
+⚠️ **handler 里请按 `strategy.code` 分派。** `strategy.id` 与 §8 的是同一个
+值，同样是**部署本地**的自增行号——`switch (ev.strategy.id)` 写成数字的话，
+换一个部署、或本部署重建过库，同一个 `case` 就会静默地接到另一档的信号。
+
+```javascript
+switch (ev.strategy.code) {
+  case "mega_whale":
+    /* 单笔 BUY ≥$150k */ break;
+  case "inverse_mega_whale":
+    /* 同一笔单，买对面 */ break;
+  default: /* 未知档位码 = 我们新加了档；忽略即可，别抛错 */
+}
+```
+
+连通性测试事件（§10 的 `action:"test"`）的 `id`、`strategy.id` 均为 `0`，
+`strategy.code` 为 `null`——三个哨兵任取其一都能识别并丢弃。
 
 ① 原始事件 `BusEventV1`（`event: "bus"`）：
 
@@ -609,7 +673,8 @@ WhaleWatch ──1 次/分钟──▶ 你的后端（缓存+你的鉴权）─�
 interface RecordFeed {
   updatedAt: number;
   strategies: {
-    id: number;
+    id: number; // 部署本地自增行号，别硬编码（§8.3）
+    code: string | null; // 跨部署稳定的档位码 ← 认档用它
     name: string;
     source: string;
     pushedCount: number; // 已发布总数（含未结算）
@@ -773,8 +838,9 @@ Polymarket 自己的持仓接口返回空，而按买卖推算出来的敞口是
 **`implied` 是 1051.3，是百分比吗？** 不是，`record` 五件套全是条数
 （§9.3）。
 
-**`recordByStrategy` 用档名取不到？** 键是 strategy id 字符串（`"6"`），
-档名在 `.name`。
+**`recordByStrategy` 用档名取不到？** 键是 strategy id 字符串。想按档位索引
+就遍历一遍自己转成 `code → record`（值里有 `.code`）——**别把某个具体 id
+数字写进代码**，它是部署本地的（§8.3）。
 
 **想用 webhook 收聪明钱动向？** 订 ① 的 `consensus`/`large` 类型——
 `active[]` 是折叠视图，没有稳定逐事件 id，不作为推送对象。
@@ -790,6 +856,8 @@ Polymarket 自己的持仓接口返回空，而按买卖推算出来的敞口是
 
 | 日期       | 变更                                                                                                                                        |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-21 | ② `strategy` 增 **`code`**：跨部署稳定的 ASCII 档位码（如 `mega_whale`），认档改用它。`id` 是部署本地行号、`name` 是中文名，都别硬编码      |
+| 2026-08-21 | ② `strategy.id` 澄清为**部署本地**自增行号、跨部署会变：§8.3 删掉会被误读成 id 的行序号列并增实时对照表，§8.2/§10/§13/§15 同步补认档口径    |
 | 2026-08-21 | 新增 `/api/market-card/{cid}` 市场深度卡——本文首个**会打上游**的端点，自成「按需查询」一类（`realtime` + `market` 范围），含 `429` 背压语义 |
 | 2026-08-21 | ① `bus[]` 增 `wallets` 钱包明细（与 `active[]` 同名同义；`discovery` 恒 `null`）——webhook 同步生效                                          |
 | 2026-08-19 | 文档重写为使用者参考版（理由与修订史移至内部契约）。信号=事件（①原始/②策略）与视图分立为本文骨架                                            |

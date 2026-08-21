@@ -174,4 +174,39 @@ describe("buildStrategyFeed", () => {
     expect(live.active).toHaveLength(1);
     db.close();
   });
+
+  // 档位码是订阅方唯一该硬编码的标识(id 部署本地、name 中文、source 不唯一,
+  // 见 lib/strategyCodes)。三个出口都得带上它 —— 漏一个,那条路径的消费方
+  // 就被迫退回去认 id 或中文名。
+  it("三个出口(active / settled / recordByStrategy)都带 code", () => {
+    const db = openDb(":memory:");
+    const sid = enablePush(db, "超级巨鲸");
+    seed(db, { strategyId: sid, cid: "a1" });
+    seed(db, {
+      strategyId: sid,
+      cid: "s1",
+      settled: { ts: NOW - 100, exit: 1, pnl: 100 },
+    });
+    const feed = buildStrategyFeed(db, { nowSec: NOW });
+
+    expect(feed.active[0].strategy.code).toBe("mega_whale");
+    expect(feed.settled[0].strategyCode).toBe("mega_whale");
+    expect(feed.recordByStrategy[String(sid)].code).toBe("mega_whale");
+    // id 仍在(同一次响应内的分组键),只是不再是唯一可用的标识。
+    expect(feed.active[0].strategy.id).toBe(sid);
+    db.close();
+  });
+
+  it("未登记档位码的档(运营手工建的)取 null,不回退成档名", () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO follow_strategies (name, enabled, push_enabled, params_json, created_at) VALUES (?,1,1,?,?)",
+    ).run("运营手工档", JSON.stringify({ source: "heavy" }), NOW);
+    const sid = idOf(db, "运营手工档");
+    seed(db, { strategyId: sid, cid: "m1" });
+    const feed = buildStrategyFeed(db, { nowSec: NOW });
+    expect(feed.active[0].strategy.code).toBeNull();
+    expect(feed.active[0].strategy.name).toBe("运营手工档");
+    db.close();
+  });
 });

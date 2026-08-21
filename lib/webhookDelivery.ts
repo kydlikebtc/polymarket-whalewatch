@@ -5,6 +5,7 @@ import type { DB } from "./db";
 import type { PushSignalRow } from "./signalPush";
 import { SIGNAL_DISCLAIMER } from "./signalPush";
 import type { SignalRecord } from "./signalRecord";
+import { strategyCode } from "./strategyCodes";
 import { endpointPushes, parseBusTypes } from "./apiKeys";
 
 // 对外信号批次 3:webhook 通道(结构化 SignalEvent 直投订户后端)。
@@ -33,6 +34,8 @@ export const SignalEventV1Schema = z.object({
   emittedAt: z.number(),
   strategy: z.object({
     id: z.number(),
+    // 跨部署稳定的档位码;null = 未登记(运营手工建的档)。订户按它分派。
+    code: z.string().nullable(),
     name: z.string(),
     source: z.string(),
   }),
@@ -131,6 +134,8 @@ export function buildSignalEvent(
     emittedAt: row.emitted_at,
     strategy: {
       id: row.strategy_id,
+      // 订户请按 code 分派 —— id 是部署本地自增行号(见 lib/strategyCodes)。
+      code: strategyCode(ctx.strategyName),
       name: ctx.strategyName,
       source: ctx.source,
     },

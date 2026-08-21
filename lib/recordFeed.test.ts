@@ -154,4 +154,14 @@ describe("buildRecordFeed", () => {
     expect(d.tail).toBe("ab".repeat(32));
     db.close();
   });
+
+  it("每档带 code —— 公开战绩页是第三方对账入口,不能只给部署本地的 id", () => {
+    const db = openDb(":memory:");
+    seed(db, { strategy: "超级巨鲸", cid: "c1" });
+    const s = buildRecordFeed(db, { nowSec: NOW }).strategies;
+    expect(s.map((x) => [x.name, x.code])).toEqual([
+      ["超级巨鲸", "mega_whale"],
+    ]);
+    db.close();
+  });
 });

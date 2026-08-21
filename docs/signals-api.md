@@ -247,6 +247,17 @@ active 条目对上号，也可复用同一个卡片渲染。差别只在末尾�
 > 档位数随种子演进：v2 写作时 13 档，`follow_seed_v=4`（2026-08-13 的 6 个反向
 > 对照档）后为 19 档。消费方**不应把档位数写死**——`recordByStrategy` 的键就是
 > 当前放开推送的全部档位。
+>
+> **`strategy.id` 同样不能写死**（下面示例里的 `6` 只是占位）。它是
+> `follow_strategies` 的自增行号，而种子块按版本门控整体重播、`INSERT OR IGNORE`
+> 命中 UNIQUE 时照样消耗自增号——于是每次 bump 都在 id 上打洞，同一档在
+> 「全新安装的库」与「从早期版本升上来的库」里是不同数字。
+>
+> 认档请用 **`strategy.code`**（2026-08-21 新增）：ASCII、snake_case、每档
+> 唯一且**冻结**，如 `mega_whale` / `inverse_mega_whale`。它刻意不从英文展示名
+> 派生（那是文案，润色会误伤契约），映射表在 `lib/strategyCodes.ts`，golden
+> 快照测试钉死。对外口径见
+> [`api-access.md` §8.3](./api-access.md#-认档请用-code别用-id)。
 
 ```jsonc
 "strategies": {
@@ -254,7 +265,8 @@ active 条目对上号，也可复用同一个卡片渲染。差别只在末尾�
     // 近 48h 内触发、尚未结算的策略买入信号(只含运营已放开推送的档位)
     {
       "id": 123,                      // strategy_signals.id,稳定引用
-      "strategy": { "id": 6, "name": "巨鲸", "source": "heavy" },
+      // id 是部署本地行号(占位);认档用 code
+      "strategy": { "id": 6, "code": "whale_follow", "name": "巨鲸", "source": "heavy" },
       "conditionId": "0x…", "title": "…", "slug": "…", "eventSlug": "…",
       "category": "Sports", "subcategory": "NBA",   // 可 null
       "outcome": "Yes", "outcomeIndex": 0, "asset": "7201…",
@@ -267,7 +279,7 @@ active 条目对上号，也可复用同一个卡片渲染。差别只在末尾�
     }
   ],
   "settled": [ /* 近 3 天认账,最多 20 条,新在前:
-    { id, strategyId, strategyName, conditionId, title, outcome,
+    { id, strategyId, strategyCode, strategyName, conditionId, title, outcome,
       entryPrice, exitPrice, won, realizedPnl, settledAt } */ ],
   "recordByStrategy": {
     "6": { "name": "巨鲸", "source": "heavy",
@@ -295,6 +307,7 @@ active 条目对上号，也可复用同一个卡片渲染。差别只在末尾�
 - 端点运维（同一 `POST`，带 `action` 字段；不带 `action` 即上面的登记，老契约不变）：
   - `{"action":"test","id":N}` —— 向端点投一条**连通性测试事件**：形状是合法 `SignalEventV1`
     （订户按真信号 schema 解析不会 4xx），但 `id` 与 `strategy.id` 为 `0`（真信号 id 自增从 1 起）、
+    `strategy.code` 为 `null`（「连通性测试」不在 STRATEGY_CODE 里）、
     价格/金额/钱包数全为 `null`、`notice` 写明这不是信号请勿跟单，并额外带头 `X-Signal-Test: 1`。
     **订户侧建议按 `X-Signal-Test` 头或 `id===0` 直接丢弃。** 响应 `{ok,status,ms,detail}`
     恒为 HTTP 200（`ok` 才是结论）。测试是只读探针，不计入 `consecutive_failures`、不改 `active`。

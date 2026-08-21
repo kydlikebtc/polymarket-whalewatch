@@ -2,6 +2,7 @@ import type { DB } from "./db";
 import { listBusDefs } from "./busDefs";
 import { BUS_TYPES, type BusSourceType } from "./signalBus";
 import { DIGEST_DAY_KEY } from "./signalDigest";
+import { strategyCode } from "./strategyCodes";
 
 // /api-docs 的「当前开放状态」数据层。
 //
@@ -20,6 +21,8 @@ import { DIGEST_DAY_KEY } from "./signalDigest";
 
 export interface PublishedStrategy {
   id: number;
+  /** 跨部署稳定的档位码;null = 未登记(运营手工建的档)。 */
+  code: string | null;
   name: string;
 }
 
@@ -43,11 +46,16 @@ export interface ApiDocsStatus {
 const SUBSCRIBABLE_BUS: BusSourceType[] = ["large", "consensus", "discovery"];
 
 export function buildApiDocsStatus(db: DB): ApiDocsStatus {
-  const strategies = db
+  const rows = db
     .prepare(
       "SELECT id, name FROM follow_strategies WHERE push_enabled = 1 ORDER BY id",
     )
-    .all() as PublishedStrategy[];
+    .all() as { id: number; name: string }[];
+  const strategies: PublishedStrategy[] = rows.map((r) => ({
+    id: r.id,
+    code: strategyCode(r.name),
+    name: r.name,
+  }));
 
   // 2026-08-19 起类型「开」= 存在 ≥1 个启用的信号定义(lib/busDefs)。
   const defs = listBusDefs(db);

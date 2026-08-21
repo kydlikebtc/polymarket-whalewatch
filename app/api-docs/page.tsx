@@ -30,6 +30,18 @@ import {
 // 「截至 2026-08-19…」的表)在开关一拨之后就开始骗人,而没有任何机制会提醒
 // 谁去改它。markdown 因此只保留**系统能力的全集**(永不过期),此刻开着什么
 // 由 lib/apiDocsStatus 回答(永不撒谎)。文档里用 ```status 围栏块占位。
+//
+// §8.3 的 ```strategy_ids 是同一条纪律的第二次应用,起因是一次真实误读:
+// 原文那张 19 档表带一列 `#`(1…19 的行序),读者顺理成章把它当成
+// `strategy.id`。但 id 是 follow_strategies 的自增行号,而种子块按版本门控
+// 整体重播、`INSERT OR IGNORE` 命中 UNIQUE 时**照样消耗 AUTOINCREMENT 号**
+// —— 于是每次 bump 都在 id 上打一排洞,id 图谱变成「这个库是哪个种子版本
+// 建的」的函数。同一个「超级巨鲸」在全新库是 7,在本服务的库(v1 时代建的)
+// 是 9,而 7 在本服务上是「首发共识」。照 `#` 硬编码 strategyId===7 不报错,
+// 只是静默地读了另一档。行序列因此从 markdown 里删掉(它对订阅方零用处、
+// 一个陷阱),真实映射改由本模块查库回答。
+// 数据仍复用 buildApiDocsStatus.strategies(push_enabled=1,按 id 升序)——
+// 订阅方本来也只会收到已放开推送的档,不必也不该多列。
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -205,6 +217,67 @@ function LiveStatus({ status }: { status: ApiDocsStatus | null }) {
   );
 }
 
+/** 文档 §8.3 里 ```strategy_ids 围栏块的替身:本部署此刻真实的 id↔档名。 */
+function LiveStrategyIds({ status }: { status: ApiDocsStatus | null }) {
+  if (!status) {
+    return (
+      <div className="ds-callout ds-callout--warn">
+        本部署的 id↔档名对照表暂时读不到（数据库不可用）。请改用{" "}
+        <code className="doc-code">name</code> 认档，或调一次{" "}
+        <code className="doc-code">/api/record</code>
+        （公开、无需 key）拿当下的对照。
+      </div>
+    );
+  }
+  if (status.strategies.length === 0) {
+    return (
+      <div className="ds-callout">
+        当前没有任何档位对外发布，因此本部署暂无 id↔档名对照。放开推送后此表
+        自动出现。
+      </div>
+    );
+  }
+  return (
+    <div className="ds-table-wrap">
+      <table className="ds-table">
+        <thead>
+          <tr>
+            <th>
+              本部署的 <code className="doc-code">id</code>
+            </th>
+            <th>
+              <code className="doc-code">code</code>（认档用它）
+            </th>
+            <th>
+              档名（<code className="doc-code">name</code>）
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {status.strategies.map((s) => (
+            <tr key={s.id}>
+              <td className="mono">{s.id}</td>
+              <td>
+                {s.code ? (
+                  <code className="doc-code">{s.code}</code>
+                ) : (
+                  <span className="muted">—（未登记）</span>
+                )}
+              </td>
+              <td>{s.name}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+        只列已对外发布的档——你收不到未发布档的信号。左列的
+        <strong>数字只对本部署有效</strong>，别写进代码或配置；要硬编码请用
+        中间那列的 <code className="doc-code">code</code>。
+      </div>
+    </div>
+  );
+}
+
 function Block({
   block,
   id,
@@ -214,9 +287,12 @@ function Block({
   id: string;
   status: ApiDocsStatus | null;
 }) {
-  // ```status 是占位符,不是代码 —— 换成实时表格。
+  // ```status / ```strategy_ids 是占位符,不是代码 —— 换成实时表格。
   if (block.kind === "code" && block.lang === "status") {
     return <LiveStatus status={status} />;
+  }
+  if (block.kind === "code" && block.lang === "strategy_ids") {
+    return <LiveStrategyIds status={status} />;
   }
   switch (block.kind) {
     case "heading": {

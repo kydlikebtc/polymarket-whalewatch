@@ -182,6 +182,15 @@ export default function SignalsSection({
                         {!s.enabled && (
                           <span className="ds-hint">(策略停用)</span>
                         )}
+                        {/* 订阅方按 code 认档,答疑时要能一眼看到它对应哪档。 */}
+                        {s.code && (
+                          <div
+                            className="ds-hint mono"
+                            style={{ fontWeight: 400 }}
+                          >
+                            {s.code}
+                          </div>
+                        )}
                       </td>
                       <td>
                         <Tag>{SOURCE_LABEL[s.source] ?? s.source}</Tag>

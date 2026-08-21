@@ -1,5 +1,6 @@
 import type { DB } from "./db";
 import type { SignalRecord } from "./signalRecord";
+import { strategyCode } from "./strategyCodes";
 import { strategyRecord30d } from "./strategySignals";
 
 // 对外信号批次 2:/api/signals 的 strategies 段。
@@ -19,7 +20,13 @@ const SETTLED_LIMIT = 20;
 
 export interface StrategyFeedSignal {
   id: number;
-  strategy: { id: number; name: string; source: string };
+  /** `code` = 跨部署稳定的档位码(lib/strategyCodes);`id` 只在本部署内有效。 */
+  strategy: {
+    id: number;
+    code: string | null;
+    name: string;
+    source: string;
+  };
   conditionId: string;
   title: string;
   slug: string;
@@ -41,6 +48,7 @@ export interface StrategyFeedSignal {
 export interface StrategyFeedSettled {
   id: number;
   strategyId: number;
+  strategyCode: string | null;
   strategyName: string;
   conditionId: string;
   title: string;
@@ -55,10 +63,10 @@ export interface StrategyFeedSettled {
 export interface StrategyFeed {
   active: StrategyFeedSignal[];
   settled: StrategyFeedSettled[];
-  /** strategy_id(字符串键,JSON 对象)→ 档位名 + source + 30d 战绩。 */
+  /** strategy_id(字符串键,JSON 对象)→ 档位码 + 档位名 + source + 30d 战绩。 */
   recordByStrategy: Record<
     string,
-    { name: string; source: string; record: SignalRecord }
+    { code: string | null; name: string; source: string; record: SignalRecord }
   >;
 }
 
@@ -143,6 +151,9 @@ export function buildStrategyFeed(
   }[];
   const nameOf = new Map(strategies.map((s) => [s.id, s.name]));
   const srcOf = new Map(strategies.map((s) => [s.id, sourceOf(s.params_json)]));
+  // 未登记档位码的档(运营手工建的)取 null —— 不回退成档名,理由见
+  // lib/strategyCodes.ts 的 strategyCode 注释。
+  const codeOf = new Map(strategies.map((s) => [s.id, strategyCode(s.name)]));
   if (strategies.length === 0) {
     return { active: [], settled: [], recordByStrategy: {} };
   }
@@ -173,6 +184,7 @@ export function buildStrategyFeed(
     id: r.id,
     strategy: {
       id: r.strategy_id,
+      code: codeOf.get(r.strategy_id) ?? null,
       name: nameOf.get(r.strategy_id) ?? `#${r.strategy_id}`,
       source: srcOf.get(r.strategy_id) ?? "consensus",
     },
@@ -205,6 +217,7 @@ export function buildStrategyFeed(
   const settled: StrategyFeedSettled[] = settledRows.map((r) => ({
     id: r.id,
     strategyId: r.strategy_id,
+    strategyCode: codeOf.get(r.strategy_id) ?? null,
     strategyName: nameOf.get(r.strategy_id) ?? `#${r.strategy_id}`,
     conditionId: r.condition_id,
     title: r.title ?? "",
@@ -219,6 +232,7 @@ export function buildStrategyFeed(
   const recordByStrategy: StrategyFeed["recordByStrategy"] = {};
   for (const s of strategies) {
     recordByStrategy[String(s.id)] = {
+      code: strategyCode(s.name),
       name: s.name,
       source: srcOf.get(s.id) ?? "consensus",
       record: strategyRecord30d(db, s.id, nowSec),

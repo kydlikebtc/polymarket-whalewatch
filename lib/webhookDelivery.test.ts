@@ -71,6 +71,8 @@ describe("signPayload / buildSignalEvent", () => {
     expect(parsed.v).toBe(1);
     expect(parsed.event).toBe("entry");
     expect(parsed.strategy.name).toBe("巨鲸");
+    // 订户按 code 分派(id 是部署本地行号、name 是中文)——推送路径必须带上它。
+    expect(parsed.strategy.code).toBe("whale_follow");
     expect(parsed.paper.chaseCents).toBeCloseTo(2, 6);
     expect(parsed.paper.latencySec).toBe(47);
     expect(parsed.settle).toBeNull();
@@ -478,7 +480,12 @@ describe("端点推送类型(2026-08-19)", () => {
     const key = issueApiKey(db, { label: "订户", tier: "realtime" }, 1000);
     registerWebhook(
       db,
-      { apiKeyId: key.id, url: "https://a/h", secret: "s".repeat(16), busTypes: ["strategy", "large"] },
+      {
+        apiKeyId: key.id,
+        url: "https://a/h",
+        secret: "s".repeat(16),
+        busTypes: ["strategy", "large"],
+      },
       1234,
     );
     const [ep] = listActiveWebhooks(db);
@@ -489,7 +496,11 @@ describe("端点推送类型(2026-08-19)", () => {
   it("省略勾选 → 存 NULL(仅策略信号的历史默认)", () => {
     const db = openDb(":memory:");
     const key = issueApiKey(db, { label: "订户", tier: "realtime" }, 1000);
-    registerWebhook(db, { apiKeyId: key.id, url: "https://a/h", secret: "s".repeat(16) }, 1234);
+    registerWebhook(
+      db,
+      { apiKeyId: key.id, url: "https://a/h", secret: "s".repeat(16) },
+      1234,
+    );
     const [ep] = listActiveWebhooks(db);
     expect(ep.selectedTypes).toBeNull();
   });
@@ -502,7 +513,10 @@ describe("端点推送类型(2026-08-19)", () => {
     expect(webhookWantsType(picked, "large")).toBe(true);
     expect(webhookWantsType(picked, "strategy")).toBe(false);
     // key 只授权 strategy —— 勾了 large 也不放行(交集)
-    const capped = { busTypes: ["strategy"], selectedTypes: ["strategy", "large"] };
+    const capped = {
+      busTypes: ["strategy"],
+      selectedTypes: ["strategy", "large"],
+    };
     expect(webhookWantsType(capped, "large")).toBe(false);
     expect(webhookWantsType(capped, "strategy")).toBe(true);
   });

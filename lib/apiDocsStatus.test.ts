@@ -30,6 +30,9 @@ describe("buildApiDocsStatus", () => {
       const s = buildApiDocsStatus(db);
       expect(s.strategies.map((x) => x.name)).toEqual(["激进"]);
       expect(s.strategies[0].id).toBeGreaterThan(0);
+      // /api-docs 的实时对照表要三列(id/code/档名),code 缺了那张表就只剩
+      // 部署本地的数字,等于没解决订阅方「该认哪个字段」的问题。
+      expect(s.strategies[0].code).toBe("aggressive_consensus");
     } finally {
       db.close();
     }

@@ -2,6 +2,7 @@ import type { DB } from "./db";
 import { ENTRY_MAX_AGE_SEC } from "./signalDelivery";
 import { DIGEST_DAY_KEY, DIGEST_PREV_KEY } from "./signalDigest";
 import type { SignalRecord } from "./signalRecord";
+import { strategyCode } from "./strategyCodes";
 import { sourceOf } from "./strategyFeed";
 import { strategyRecord30d } from "./strategySignals";
 import { getTelegramHealth, type TelegramHealth } from "./telegramHealth";
@@ -12,6 +13,8 @@ import { getTelegramHealth, type TelegramHealth } from "./telegramHealth";
 
 export interface StrategyPushRow {
   id: number;
+  /** 对外档位码 —— 订阅方按它认档,运营答疑时要看得见(null = 未登记)。 */
+  code: string | null;
   name: string;
   source: string;
   /** 策略本身是否参与开仓(follow_strategies.enabled)。 */
@@ -74,10 +77,7 @@ export interface SmartLedgerRow {
   bus: { projected: boolean; channels: { channel: string; status: string }[] };
 }
 
-function smartSummary(
-  type: string,
-  payload: Record<string, unknown>,
-): string {
+function smartSummary(type: string, payload: Record<string, unknown>): string {
   const num = (v: unknown): number | null =>
     typeof v === "number" && Number.isFinite(v) ? v : null;
   if (type === "consensus") {
@@ -120,9 +120,7 @@ export function buildSmartLedger(db: DB, limit = 20): SmartLedgerRow[] {
   const xStmt = db.prepare(
     "SELECT status FROM x_posts WHERE alert_id = ? ORDER BY id DESC LIMIT 1",
   );
-  const busStmt = db.prepare(
-    "SELECT id FROM bus_signals WHERE dedup_key = ?",
-  );
+  const busStmt = db.prepare("SELECT id FROM bus_signals WHERE dedup_key = ?");
   const chStmt = db.prepare(
     "SELECT channel, status FROM bus_deliveries WHERE bus_signal_id = ? ORDER BY channel",
   );
@@ -230,7 +228,10 @@ export interface BusLedgerRow {
 }
 
 /** payload → 一行人话。坏载荷/缺字段一律降级成空串,不抛。 */
-function busSummary(sourceType: string, payload: Record<string, unknown>): string {
+function busSummary(
+  sourceType: string,
+  payload: Record<string, unknown>,
+): string {
   const num = (v: unknown): number | null =>
     typeof v === "number" && Number.isFinite(v) ? v : null;
   const str = (v: unknown): string | null =>
@@ -388,6 +389,7 @@ export function buildAdminSignalOverview(
       ).n;
     return {
       id: st.id,
+      code: strategyCode(st.name),
       name: st.name,
       source: sourceOf(st.params_json),
       enabled: st.enabled === 1,
