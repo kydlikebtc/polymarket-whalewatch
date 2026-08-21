@@ -219,6 +219,8 @@ interface BusSignal {
   netUsd: number | null; // large=名义额，consensus=总净买
   avgPrice: number | null; // large=成交价
   walletCount: number | null; // large 恒 1（一笔成交=一个钱包）
+  // ——— 谁买的（与 walletCount 同源，数字与列表不打架）———
+  wallets: { wallet: string; netUsd: number; avgPrice: number }[] | null;
 
   payload: Record<string, unknown>; // 原始载荷，形状随 sourceType，见下
   emittedAt: number;
@@ -228,18 +230,31 @@ interface BusSignal {
 **这些顶层字段与 `active[]` 的 `Signal`（§9）同名同义** —— 同一套解析器可以
 同时吃 `bus[]` 和 `active[]`，不必先 `switch (sourceType)` 再决定读哪个键。
 
+`wallets` 的三种取值，按类型：
+
+| `sourceType` | `wallets`                                                   |
+| ------------ | ----------------------------------------------------------- |
+| `large`      | 单元素——一笔成交就是一个钱包，金额/价即该笔的名义额与成交价 |
+| `consensus`  | 全量参与钱包，**按净买降序**（顺序即信息，勿重排）          |
+| `discovery`  | `null`——没有仓位，地址在 `payload.address`                  |
+
+> `null` 而非 `[]`：空数组会把「不知道」谎报成「零个钱包」。2026-08-21 之前
+> 入账的 `consensus` 事件载荷里没有这份明细，同样为 `null`——与
+> `outcomeIndex`/`asset` 一样，一天之后全量数据都齐。
+
 `payload` 保留原始载荷，字段一个没少（**additive**，既有消费方零改动）：
 
-| `sourceType` | 事件含义                           | `payload` 字段（中文名）                                                                                                                               |
-| ------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `large`      | 单笔大额成交（含白名单与非白名单） | `usd` 名义额 · `side` 买卖向（`"BUY"\|"SELL"\|null`）· `outcome` 方向 · `outcomeIndex` · `asset` · `price` 成交价 · `wallet` 钱包 · `slug`/`eventSlug` |
-| `consensus`  | ≥N 个白名单钱包同向共识            | `outcome` 方向 · `outcomeIndex` · `asset` · `walletCount` 钱包数 · `totalNetUsd` 总净买 · `slug`/`eventSlug`                                           |
-| `discovery`  | 新钱包通过准入进白名单池           | `address` 地址 · `score` 评分(0-100) · `source` 发现渠道                                                                                               |
+| `sourceType` | 事件含义                           | `payload` 字段（中文名）                                                                                                                                            |
+| ------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `large`      | 单笔大额成交（含白名单与非白名单） | `usd` 名义额 · `side` 买卖向（`"BUY"\|"SELL"\|null`）· `outcome` 方向 · `outcomeIndex` · `asset` · `price` 成交价 · `wallet` 钱包 · `slug`/`eventSlug`              |
+| `consensus`  | ≥N 个白名单钱包同向共识            | `outcome` 方向 · `outcomeIndex` · `asset` · `walletCount` 钱包数 · `totalNetUsd` 总净买 · `wallets` 钱包明细（`wallet`/`netUsd`/`avgBuyPrice`）· `slug`/`eventSlug` |
+| `discovery`  | 新钱包通过准入进白名单池           | `address` 地址 · `score` 评分(0-100) · `source` 发现渠道                                                                                                            |
 
 > `payload.usd`（large）与 `payload.totalNetUsd`（consensus）是同一语义的两个
-> 历史名字，顶层的 `netUsd` 已统一。新接入请读顶层字段。
-> `outcomeIndex`/`asset` 自 2026-08-19 起写入载荷，此前入账的事件为 `null`；
-> `bus[]` 窗口最长 48h，一天之后全量数据都齐。
+> 历史名字，顶层的 `netUsd` 已统一；`payload.wallets[].avgBuyPrice` 同理，顶层
+> `wallets[].avgPrice` 才是归一后的名字。新接入请读顶层字段。
+> `outcomeIndex`/`asset` 自 2026-08-19 起、`wallets` 自 2026-08-21 起写入载荷，
+> 此前入账的事件为 `null`；`bus[]` 窗口最长 48h，一天之后全量数据都齐。
 
 要点：
 
@@ -633,6 +648,7 @@ interface RecordFeed {
 
 | 日期       | 变更                                                                                                                   |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-21 | ① `bus[]` 增 `wallets` 钱包明细（与 `active[]` 同名同义；`discovery` 恒 `null`）——webhook 同步生效                     |
 | 2026-08-19 | 文档重写为使用者参考版（理由与修订史移至内部契约）。信号=事件（①原始/②策略）与视图分立为本文骨架                       |
 | 2026-08-19 | ① 支持多档信号定义（同类型不同阈值），webhook 可按档订阅；`settled[]` 补齐与 `active[]` 同构字段；`active[]` 增 `slug` |
 | 2026-08-18 | webhook 支持 ① 类型；失败响应字段集合与成功一致；`record` 量纲修正（条数）；开放状态改实时生成                         |

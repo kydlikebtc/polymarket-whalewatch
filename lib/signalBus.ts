@@ -143,6 +143,17 @@ export function setBusSettings(db: DB, s: BusSettings): void {
 }
 
 /**
+ * 单个钱包的仓位明细。字段名与 active[] 的 `SignalWallet` 逐字对齐
+ * (lib/signalFeed.ts)—— 源侧的历史名 `avgBuyPrice` 在这里归一为 `avgPrice`,
+ * 否则「一套解析器吃两个 feed」在最后一格上又断掉。
+ */
+export const BusWalletSchema = z.object({
+  wallet: z.string(),
+  netUsd: z.number(),
+  avgPrice: z.number(),
+});
+
+/**
  * `bus[]` 单条的**唯一定义** —— 拉取 API 与 webhook 推送共用这一份
  * (lib/busWebhook.ts 直接嵌它)。此前两处各手抄一份字段表,「推拉同形」
  * 只靠注释和记性维持:加个字段要改三处,漏一处就静默分叉。
@@ -153,6 +164,9 @@ export function setBusSettings(db: DB, s: BusSettings): void {
  *   - 补齐身份:slug/eventSlug/category/subcategory/outcomeIndex/asset,
  *     其中分类此前完全没有,按赛道过滤事件根本做不到;
  *   - `payload` **原样保留**:additive,读 payload.usd 的老消费方零改动。
+ *
+ * 2026-08-21 补 `wallets`:上一批停在了「谁买的」前面 —— 视图早有明细,
+ * 这里只有一个 walletCount 数字。
  *
  * discovery 没有市场,市场类字段一律 null —— 结构统一,消费方一套解析走到底。
  */
@@ -176,6 +190,12 @@ export const BusSignalSchema = z.object({
   avgPrice: z.number().nullable(),
   /** 参与钱包数;large 恒 1(一笔成交就是一个钱包)。 */
   walletCount: z.number().nullable(),
+  /**
+   * 谁买的、各买了多少、成本多少 —— 与 walletCount 同源,数字与列表不打架。
+   * `null` 而非 `[]`:discovery 没有仓位、2026-08-21 前入账的 consensus 老行
+   * 载荷里没有这份明细,空数组会把「不知道」谎报成「零个钱包」。
+   */
+  wallets: z.array(BusWalletSchema).nullable(),
   /** 原始载荷,形状随 sourceType —— 保留以兼容既有消费方。 */
   payload: z.record(z.string(), z.unknown()),
   emittedAt: z.number(),
@@ -187,6 +207,44 @@ export type BusSignalRow = z.infer<typeof BusSignalSchema>;
 // 就是 null(不是 undefined:对外契约里「没有」只有一种写法)。
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
+
+/**
+ * 钱包明细的归一。两条来路,一个出口:
+ *  - consensus:载荷里的 `wallets[]`(源侧就是 ConsensusGroup.wallets,已按净买
+ *    降序)—— 只改字段名不改顺序,顺序本身是信息;
+ *  - large:一笔成交就是一个钱包,拿 `wallet` + 本条的金额/成交价合成单元素,
+ *    与 active[] 里 heavy 的处理逐字对齐(lib/signalFeed.ts foldHeavy)。
+ *
+ * 拿不到就是 `null`,包括「过滤后一个都不剩」—— 见 schema 上的注释。
+ */
+function walletsOf(
+  sourceType: string,
+  payload: Record<string, unknown>,
+  netUsd: number | null,
+  avgPrice: number | null,
+): z.infer<typeof BusWalletSchema>[] | null {
+  if (sourceType === "large") {
+    const wallet = str(payload.wallet);
+    if (!wallet) return null;
+    return [{ wallet, netUsd: netUsd ?? 0, avgPrice: avgPrice ?? 0 }];
+  }
+  if (!Array.isArray(payload.wallets)) return null;
+  const out = payload.wallets.flatMap((w) => {
+    if (typeof w !== "object" || w === null) return [];
+    const e = w as Record<string, unknown>;
+    const wallet = str(e.wallet);
+    if (!wallet) return [];
+    return [
+      {
+        wallet,
+        netUsd: num(e.netUsd) ?? 0,
+        // 源侧的历史名。归一到 active[] 用的那个名字。
+        avgPrice: num(e.avgBuyPrice) ?? num(e.avgPrice) ?? 0,
+      },
+    ];
+  });
+  return out.length > 0 ? out : null;
+}
 
 export function getBusSignals(
   db: DB,
@@ -233,6 +291,10 @@ export function getBusSignals(
       category: null,
       subcategory: null,
     };
+    // 归一命名:large 写 usd、consensus 写 totalNetUsd,同一个语义两个名字
+    // 逼着消费方先 switch(sourceType) 才知道读哪个键。
+    const netUsd = num(payload.usd) ?? num(payload.totalNetUsd);
+    const avgPrice = num(payload.price);
     return {
       id: r.id,
       sourceType: r.source_type,
@@ -246,17 +308,38 @@ export function getBusSignals(
       outcome: str(payload.outcome),
       outcomeIndex: num(payload.outcomeIndex),
       asset: str(payload.asset),
-      // 归一命名:large 写 usd、consensus 写 totalNetUsd,同一个语义两个名字
-      // 逼着消费方先 switch(sourceType) 才知道读哪个键。
-      netUsd: num(payload.usd) ?? num(payload.totalNetUsd),
-      avgPrice: num(payload.price),
+      netUsd,
+      avgPrice,
       // 一笔成交就是一个钱包 —— 给 1 而不是 null,消费方不必为 large 写特例。
       walletCount:
         num(payload.walletCount) ?? (r.source_type === "large" ? 1 : null),
+      wallets: walletsOf(r.source_type, payload, netUsd, avgPrice),
       payload,
       emittedAt: r.emitted_at,
     };
   });
+}
+
+/**
+ * 源告警的 `wallets[]` → 投影载荷里的三字段版本。保留源侧的名字
+ * (`avgBuyPrice`)与顺序:载荷是「原始载荷」,归一在读取侧做(walletsOf)——
+ * 这与 usd/totalNetUsd 保留原名、顶层才归一为 netUsd 是同一条纪律。
+ */
+function consensusWallets(v: unknown): unknown[] | null {
+  if (!Array.isArray(v)) return null;
+  const out = v.flatMap((w) => {
+    if (typeof w !== "object" || w === null) return [];
+    const e = w as Record<string, unknown>;
+    if (typeof e.wallet !== "string") return [];
+    return [
+      {
+        wallet: e.wallet,
+        netUsd: e.netUsd ?? null,
+        avgBuyPrice: e.avgBuyPrice ?? null,
+      },
+    ];
+  });
+  return out.length > 0 ? out : null;
 }
 
 /**
@@ -349,6 +432,14 @@ export function projectBusSignals(
             asset: p.asset ?? null,
             walletCount,
             totalNetUsd: p.totalNetUsd ?? null,
+            // 钱包明细:源告警载荷平铺了整个 ConsensusGroup(lib/consensus.ts
+            // 的 `{...g}`),`wallets` 一直都在,此前这把白名单钥匙没带上它 ——
+            // 于是 bus[] 只有一个 walletCount 数字,而 active[] 早有明细。
+            //
+            // 逐字段挑而非原样 spread:ConsensusWallet 还带着 score/winRate/
+            // buyCount/qualifiedTs,原样带走等于把内部类型的未来字段预先许诺
+            // 给订阅方 —— 白名单挑选正是这一层存在的理由,补字段不能拆锁。
+            wallets: consensusWallets(p.wallets),
             slug: p.slug ?? null,
             eventSlug: p.eventSlug ?? null,
           },

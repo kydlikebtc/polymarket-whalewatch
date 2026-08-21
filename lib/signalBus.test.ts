@@ -40,6 +40,9 @@ function whaleAlert(
   );
 }
 
+// 源告警的载荷是 `JSON.stringify({...g, params})`(lib/consensus.ts)——
+// 整个 ConsensusGroup 平铺进去,`wallets` 一直都在。这里照着它的真实形状造,
+// 包括 `avgBuyPrice` 这个只在源侧存在的历史字段名。
 function consensusAlert(db: DB, n: number, ts: number) {
   recordAlert(
     db,
@@ -51,6 +54,10 @@ function consensusAlert(db: DB, n: number, ts: number) {
       outcome: "Yes",
       walletCount: n,
       totalNetUsd: 92000,
+      wallets: [
+        { wallet: "0xbb", netUsd: 60000, avgBuyPrice: 0.4, score: 91 },
+        { wallet: "0xcc", netUsd: 32000, avgBuyPrice: 0.44, score: 83 },
+      ],
     }),
     ts,
   );
@@ -126,7 +133,11 @@ describe("projectBusSignals", () => {
 
   it("大单:按各自阈值投影,低于阈值的不进总线", () => {
     const db = openDb(":memory:");
-    createBusDef(db, { sourceType: "large", label: "默认", threshold: 100_000 });
+    createBusDef(db, {
+      sourceType: "large",
+      label: "默认",
+      threshold: 100_000,
+    });
     whaleAlert(db, "big", 200_000, NOW - 60);
     whaleAlert(db, "small", 20_000, NOW - 50);
     expect(projectBusSignals(db, NOW).written).toBe(1);
@@ -297,6 +308,91 @@ describe("bus[] 顶层字段与 active[] 同名同义", () => {
     expect(r.payload.usd).toBe(200_000);
     expect(r.payload.price).toBe(1);
     expect(r.payload.slug).toBe("chiefs");
+    db.close();
+  });
+});
+
+// --- wallets:钱包明细补齐(2026-08-21)---------------------------------------
+//
+// 上一批把身份/方向/金额三组字段对齐了 active[],停在了「谁买的」前面:视图
+// (§9.1)早有 `wallets`,bus[] 却只给一个 walletCount 数字 —— 消费方想知道
+// 是哪几个钱包、各自成本多少,只能回头再查一次。
+//
+// 而数据一直都在:large 的 `payload.wallet` 从批次 A 起就写着(历史行全有),
+// consensus 的源告警载荷平铺了整个 ConsensusGroup(含 wallets[])—— 只是投影
+// 时那把白名单钥匙没带上它。
+
+describe("bus[] 的 wallets —— 与 active[] 的钱包明细同名同义", () => {
+  it("large:一笔成交合成单元素明细,与 active[] 的 heavy 同一形状", () => {
+    const db = seedAllTypes();
+    const r = pick(db, "large");
+    // walletCount 恒 1 的那条纪律在这里长出对应的明细:数字与列表不能打架。
+    expect(r.wallets).toEqual([
+      { wallet: "0xa", netUsd: 200_000, avgPrice: 1 },
+    ]);
+    db.close();
+  });
+
+  it("consensus:源告警的 wallets[] 全量透出,avgBuyPrice 归一为 avgPrice", () => {
+    const db = seedAllTypes();
+    const r = pick(db, "consensus");
+    // 同一个「他的成本」在源侧叫 avgBuyPrice、在 active[] 里叫 avgPrice ——
+    // 归一到 active[] 那个名字,一套解析器才吃得下两个 feed。
+    expect(r.wallets).toEqual([
+      { wallet: "0xbb", netUsd: 60_000, avgPrice: 0.4 },
+      { wallet: "0xcc", netUsd: 32_000, avgPrice: 0.44 },
+    ]);
+    // 顺序即信息:源侧已按净买降序,透出时不得重排。
+    expect(r.wallets![0].netUsd).toBeGreaterThan(r.wallets![1].netUsd);
+    db.close();
+  });
+
+  it("discovery 没有仓位:wallets 为 null,不拿地址合成假条目", () => {
+    const db = seedAllTypes();
+    const r = pick(db, "discovery");
+    // 它只有「谁进池了」,没有净买没有均价 —— 合成一条两字段恒 null 的明细
+    // 是在编造语义。地址仍在 payload.address 里,一个不少。
+    expect(r.wallets).toBeNull();
+    expect(r.payload.address).toBe("0xdead");
+    db.close();
+  });
+
+  it("投影只带走三个字段 —— 源侧 ConsensusWallet 的其余字段不进载荷", () => {
+    const db = seedAllTypes();
+    const r = pick(db, "consensus");
+    // 投影层是白名单挑选而非原样 spread:内部类型加字段不该静默变成 API 变化
+    // (这正是当初 wallets 被漏掉的那把锁,补的时候不能把锁拆了)。
+    const raw = (r.payload.wallets as Record<string, unknown>[])[0];
+    expect(Object.keys(raw).sort()).toEqual([
+      "avgBuyPrice",
+      "netUsd",
+      "wallet",
+    ]);
+    expect(raw.score).toBeUndefined();
+    db.close();
+  });
+
+  it("载荷里没有钱包信息的老事件给 null —— 空数组会谎称「零个钱包」", () => {
+    const db = openDb(":memory:");
+    createBusDef(db, { sourceType: "consensus", label: "默认", threshold: 2 });
+    // 2026-08-21 之前投影入账的 consensus 行:载荷里没有 wallets。
+    recordAlert(
+      db,
+      "consensus",
+      "consensus:0xold:Yes:2",
+      JSON.stringify({
+        conditionId: "0xold",
+        title: "老事件",
+        outcome: "Yes",
+        walletCount: 2,
+        totalNetUsd: 50_000,
+      }),
+      NOW - 30,
+    );
+    projectBusSignals(db, NOW);
+    const r = pick(db, "consensus");
+    expect(r.walletCount).toBe(2);
+    expect(r.wallets).toBeNull();
     db.close();
   });
 });

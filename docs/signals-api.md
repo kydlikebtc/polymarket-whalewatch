@@ -334,12 +334,19 @@ signal, paper, record, settle, notice}`，zod schema 见 `lib/webhookDelivery.ts
   `category` / `subcategory`
 - 方向：`outcome` / `outcomeIndex` / `asset`
 - 金额：`netUsd` / `avgPrice` / `walletCount`
+- 钱包：`wallets`（`{wallet, netUsd, avgPrice}[] | null`）
 - `payload`：原始载荷原样保留 + `emittedAt`
 
 2026-08-19 起顶层字段与 `active[]` 的 `Signal` **同名同义**（此前只有 6 个顶层字段 + 一个
 形状随 `sourceType` 变的 `payload`：同一个「这笔多少钱」在 large 里叫 `usd`、consensus 里叫
 `totalNetUsd`，消费方必须先分支才知道读哪个键；分类字段则完全没有）。归一是 additive ——
 `payload` 一字未改，既有消费方零改动。
+
+2026-08-21 补上 `wallets`（上一批停在了「谁买的」前面：视图早有明细，`bus[]` 只有一个
+`walletCount` 数字）。`large` 由该笔成交合成单元素、`consensus` 取源告警的全量明细并保持
+净买降序、`discovery` 恒 `null`（没有仓位）。同批把 `consensus` 的投影载荷从原样 spread
+收成三字段白名单——`ConsensusWallet` 还带着 `score`/`winRate`/`buyCount`/`qualifiedTs`，
+原样带走等于把内部类型的未来字段预先许诺给订阅方，而白名单挑选正是投影层存在的理由。
 
 ### key 绑定订阅范围
 

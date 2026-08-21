@@ -11,7 +11,7 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 379 commits, 2026-06-23 → 2026-08-19. Test suite at the end of that range: 1505 tests across
+Scope: 379 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1510 tests across
 112 files (`npm test`).
 
 ## Corrections that changed reported numbers
@@ -35,6 +35,39 @@ Scope: 379 commits, 2026-06-23 → 2026-08-19. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                  |
 
 ## Batches
+
+### 2026-08-21 — `bus[]` finally says who bought
+
+The parity pass two days earlier aligned identity, direction and money, and stopped one field short
+of the interesting one. `active[]` has carried `wallets` — who bought, how much each, at what cost —
+since long before the bus existed; `bus[]` offered a single `walletCount` integer, so a consumer who
+wanted the names had to go ask somewhere else. The data was never missing: a `large` event has
+carried `payload.wallet` since the bus shipped, and a `consensus` alert's payload is the whole
+`ConsensusGroup` flattened, wallet list included. The projection's field whitelist simply never
+picked it up.
+
+`wallets` now sits at the top level with the same three keys `active[]` uses. A `large` event
+synthesises the single element its `walletCount: 1` already implied, so the number and the list
+can't disagree. A `consensus` event carries every participant in the source's net-buy-descending
+order, since the order is itself information. `discovery` reports `null`: a wallet entering the pool
+has no position, no net buy and no cost basis, and inventing a two-null entry to keep the shape
+uniform would be inventing meaning — the address stays in `payload.address`, as before. `null`
+rather than `[]` throughout, because an empty array claims zero wallets where the truth is that we
+don't know; consensus events booked before this change read `null` and the 48h window flushes them
+within a day.
+
+One thing got tightened on the way in. The obvious projection is to copy the source list verbatim,
+and the first cut did — which would have shipped `score`, `winRate`, `buyCount` and `qualifiedTs` to
+subscribers as a side effect, and would have shipped every future field of an internal type the same
+way. The projection layer whitelists fields precisely so that internal changes don't silently become
+API changes; that whitelist is what dropped `wallets` in the first place, and adding the field is no
+reason to remove the lock. Three keys go in, pinned by a test.
+
+The webhook needed no work: `BusEventV1` embeds the same zod schema and passes the row through, so
+the field appeared on both routes at once — the payoff from collapsing three hand-copied field lists
+into one definition in the previous batch.
+
+Commits: this batch.
 
 ### 2026-08-19 — `bus[]` reaches parity with `active[]`
 
