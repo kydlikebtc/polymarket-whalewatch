@@ -151,6 +151,10 @@ export interface MarketWindowDeps {
    * 纯单元测试不该被迫开一个库。
    */
   db?: DB;
+  /** 窗口新鲜期,缺省用常量。运营可调(lib/cardSettings)。 */
+  ttlSec?: number;
+  /** 工作集上限,缺省用常量。 */
+  lruMax?: number;
 }
 
 /**
@@ -163,7 +167,14 @@ export async function getMarketWindow(
   conditionId: string,
   deps: MarketWindowDeps,
 ): Promise<MarketWindowResult> {
-  const { nowSec, takeToken, fetchWindow = fetchMarketWindow, db } = deps;
+  const {
+    nowSec,
+    takeToken,
+    fetchWindow = fetchMarketWindow,
+    db,
+    ttlSec = WINDOW_TTL_SEC,
+    lruMax = WINDOW_LRU_MAX,
+  } = deps;
   // 归一化键:0xAB… 与 0xab… 是同一个市场,不该占两份工作集与两次预算。
   const cid = conditionId.toLowerCase();
   let prev = windows.get(cid);
@@ -175,11 +186,11 @@ export async function getMarketWindow(
     if (archived) {
       prev = { ...archived, touchedAt: nowSec };
       windows.set(cid, prev);
-      evictLru();
+      evictLru(lruMax);
     }
   }
 
-  if (prev && nowSec - prev.builtAt < WINDOW_TTL_SEC) {
+  if (prev && nowSec - prev.builtAt < ttlSec) {
     prev.touchedAt = nowSec;
     stats.hit++;
     return { ...toResult(prev), degraded: false };
@@ -223,7 +234,7 @@ export async function getMarketWindow(
       touchedAt: nowSec,
     };
     windows.set(cid, next);
-    evictLru();
+    evictLru(lruMax);
     if (db) {
       // 落盘失败绝不能影响出卡:存档只是重启优化,没有它一切照常(冷启一次)。
       try {
@@ -248,8 +259,8 @@ function toResult(e: WindowEntry) {
   return { trades: e.trades, truncated: e.truncated, builtAt: e.builtAt };
 }
 
-function evictLru(): void {
-  while (windows.size > WINDOW_LRU_MAX) {
+function evictLru(lruMax: number = WINDOW_LRU_MAX): void {
+  while (windows.size > lruMax) {
     let oldestKey: string | null = null;
     let oldest = Infinity;
     for (const [k, v] of windows) {

@@ -1,6 +1,7 @@
 import { openDb } from "../../../../lib/db";
 import { guardExpensive } from "../../../../lib/apiGuard";
 import { budgetFor, takeCardToken } from "../../../../lib/cardBudget";
+import { getCardSettings } from "../../../../lib/cardSettings";
 import { serveMarketCard } from "../../../../lib/marketCardService";
 import { getEngineStart, getHeartbeats } from "../../../../lib/heartbeat";
 import { evaluateHealth } from "../../../../lib/health";
@@ -50,9 +51,13 @@ export async function GET(
       nowSec,
       getEngineStart(db),
     );
+    const cfg = getCardSettings(db);
     const out = await serveMarketCard(db, conditionId, {
       nowSec,
-      takeToken: (cost) => takeCardToken(budgetFor(health), cost),
+      staleGateSec: cfg.staleGateSec,
+      ttlSec: cfg.windowTtlSec,
+      lruMax: cfg.lruMax,
+      takeToken: (cost) => takeCardToken(budgetFor(health, cfg.budgetPerMin), cost),
     });
     if (!out.ok) {
       return Response.json(

@@ -4,6 +4,7 @@ import { busTypeAllowed } from "../../../../../lib/apiKeys";
 import { getEngineStart, getHeartbeats } from "../../../../../lib/heartbeat";
 import { evaluateHealth } from "../../../../../lib/health";
 import { budgetFor, takeCardToken } from "../../../../../lib/cardBudget";
+import { getCardSettings } from "../../../../../lib/cardSettings";
 import { serveMarketCard } from "../../../../../lib/marketCardService";
 import { SIGNAL_DISCLAIMER } from "../../../../../lib/signalPush";
 
@@ -60,9 +61,13 @@ export async function GET(
       nowSec,
       getEngineStart(db),
     );
-    const limit = budgetFor(health);
+    const cfg = getCardSettings(db);
+    const limit = budgetFor(health, cfg.budgetPerMin);
     const out = await serveMarketCard(db, conditionId, {
       nowSec,
+      staleGateSec: cfg.staleGateSec,
+      ttlSec: cfg.windowTtlSec,
+      lruMax: cfg.lruMax,
       takeToken: (cost) => takeCardToken(limit, cost),
     });
     if (!out.ok) {

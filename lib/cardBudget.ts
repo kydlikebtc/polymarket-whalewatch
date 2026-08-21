@@ -28,7 +28,10 @@ export interface BudgetHealth {
 }
 
 /** 本刻允许的每分钟续抓次数。0 = 只发降级。 */
-export function budgetFor(health: BudgetHealth): number {
+export function budgetFor(
+  health: BudgetHealth,
+  full: number = CARD_BUDGET_PER_MIN,
+): number {
   if (health.staleLoops.length > 0) return 0;
   // 最坏的那个循环说了算,不是平均 —— 一个循环喘不过气就够了。
   // ageSec 为 null 的循环不参与:没数据不等于在漂移。
@@ -37,9 +40,9 @@ export function budgetFor(health: BudgetHealth): number {
     return Math.max(m, l.ageSec / l.staleAfterSec);
   }, 0);
   if (worst >= DRIFT_RATIO) {
-    return Math.floor(CARD_BUDGET_PER_MIN * DRIFT_BUDGET_FACTOR);
+    return Math.floor(full * DRIFT_BUDGET_FACTOR);
   }
-  return CARD_BUDGET_PER_MIN;
+  return full;
 }
 
 /**

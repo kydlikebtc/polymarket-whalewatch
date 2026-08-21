@@ -42,6 +42,10 @@ export interface CardServiceDeps {
   fetchWindow?: typeof fetchMarketWindow;
   agesFetcher?: typeof getWalletAges;
   metaFetcher?: typeof fetchMarketMeta;
+  /** 硬陈旧闸,缺省用常量。运营可调(lib/cardSettings)。 */
+  staleGateSec?: number;
+  ttlSec?: number;
+  lruMax?: number;
 }
 
 /** 降级时顶掉元信息抓取:只读 market_meta 缓存,未命中就当没有。 */
@@ -52,7 +56,16 @@ export async function serveMarketCard(
   conditionId: string,
   deps: CardServiceDeps,
 ): Promise<CardOutcome> {
-  const { nowSec, takeToken, fetchWindow, agesFetcher, metaFetcher } = deps;
+  const {
+    nowSec,
+    takeToken,
+    fetchWindow,
+    agesFetcher,
+    metaFetcher,
+    staleGateSec = STALE_GATE_SEC,
+    ttlSec,
+    lruMax,
+  } = deps;
   let win;
   try {
     win = await getMarketWindow(conditionId, {
@@ -67,7 +80,7 @@ export async function serveMarketCard(
     throw e;
   }
   const staleSec = Math.max(0, nowSec - win.builtAt);
-  if (staleSec > STALE_GATE_SEC) {
+  if (staleSec > staleGateSec) {
     return { ok: false, status: 429, retryAfterSec: RETRY_AFTER_SEC };
   }
   // 卡片每次现合成 —— 纯 CPU(composeMarketBrief)+ 本地 SQL(告警命中史)+
