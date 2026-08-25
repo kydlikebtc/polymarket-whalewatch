@@ -616,3 +616,45 @@ describe("承诺行与结算补发窗的联动不变量", () => {
     );
   });
 });
+
+describe("日上限覆盖(whaleDailyCap/consensusDailyCap,/manage 可配)", () => {
+  function statusCounts(db: DB): Record<string, number> {
+    return Object.fromEntries(
+      (
+        db
+          .prepare("SELECT status, COUNT(*) AS n FROM x_posts GROUP BY status")
+          .all() as { status: string; n: number }[]
+      ).map((r) => [r.status, r.n]),
+    );
+  }
+
+  it("whaleDailyCap=1:两条大单只发金额较大的一条,第二条落 skipped", async () => {
+    const db = openDb(":memory:");
+    recordAlert(db, "large", "w1", whalePayload({ size: 200_000 }), NOW - 120);
+    recordAlert(
+      db,
+      "large",
+      "w2",
+      whalePayload({ size: 150_000, transactionHash: "0xt2" }),
+      NOW - 60,
+    );
+    const client = fakeClient();
+    expect(
+      await runXBroadcastCycle(deps(db, client, { whaleDailyCap: 1 })),
+    ).toBe(1);
+    expect(client.posts).toHaveLength(1);
+    // 被 cap 拦下的那条落 skipped 台账(时效性决定跳过即永弃,不能下轮重扫)。
+    expect(statusCounts(db)).toEqual({ posted: 1, skipped: 1 });
+  });
+
+  it("consensusDailyCap=1:出厂不限的共识被覆盖后同样受限", async () => {
+    const db = openDb(":memory:");
+    recordAlert(db, "consensus", "c1", consensusPayload(), NOW - 120);
+    recordAlert(db, "consensus", "c2", consensusPayload(), NOW - 60);
+    const client = fakeClient();
+    expect(
+      await runXBroadcastCycle(deps(db, client, { consensusDailyCap: 1 })),
+    ).toBe(1);
+    expect(statusCounts(db)).toEqual({ posted: 1, skipped: 1 });
+  });
+});

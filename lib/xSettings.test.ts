@@ -4,6 +4,7 @@ import {
   DEFAULT_X_KINDS,
   X_KINDS,
   getXKindSwitches,
+  getXPostHistogram,
   getXPostHistory,
   setXKindSwitches,
 } from "./xSettings";
@@ -181,5 +182,48 @@ describe("getXPostHistory", () => {
   it("空库不炸", () => {
     const h = getXPostHistory(openDb(":memory:"), NOW);
     expect(h).toEqual({ posts: [], spentThisMonthUsd: 0, counts: {} });
+  });
+});
+
+describe("getXPostHistogram(天 × UTC 小时 × 类型)", () => {
+  it("posted 落进正确的天/小时/类型桶;skipped 与窗外不计;新在前", () => {
+    const db = openDb(":memory:");
+    // NOW = 2026-08-17 12:00 UTC。
+    insertPost(db, { kind: "whale", dedup: "a", status: "posted", ts: NOW });
+    insertPost(db, {
+      kind: "pregame",
+      dedup: "b",
+      status: "posted",
+      ts: NOW - 5 * 3600, // 同日 07:xx
+    });
+    insertPost(db, { kind: "whale", dedup: "sk", status: "skipped", ts: NOW });
+    insertPost(db, {
+      kind: "consensus",
+      dedup: "c",
+      status: "posted",
+      ts: NOW - 13 * 3600, // 昨日 23:00
+    });
+    insertPost(db, {
+      kind: "whale",
+      dedup: "old",
+      status: "posted",
+      ts: NOW - 15 * 86400, // 窗外(>14 天)
+    });
+    const h = getXPostHistogram(db, NOW);
+    expect(h).toHaveLength(14);
+    expect(h[0].day).toBe("08-17");
+    expect(h[0].total).toBe(2); // skipped 不计
+    expect(h[0].hours[12]).toEqual({ whale: 1 });
+    expect(h[0].hours[7]).toEqual({ pregame: 1 });
+    expect(h[1].day).toBe("08-16");
+    expect(h[1].hours[23]).toEqual({ consensus: 1 });
+    // 窗外那条不出现在任何桶。
+    expect(h.reduce((a, d) => a + d.total, 0)).toBe(3);
+  });
+
+  it("空库:14 天全零网格(UI 据此隐藏分布图)", () => {
+    const h = getXPostHistogram(openDb(":memory:"), NOW);
+    expect(h).toHaveLength(14);
+    expect(h.every((d) => d.total === 0)).toBe(true);
   });
 });

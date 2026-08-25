@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Tag } from "../ui";
 import { SectionHead } from "./bits";
 import { agoText, authHeaders, timeText } from "./shared";
@@ -31,6 +31,29 @@ interface XPostRow {
   createdAt: number;
 }
 
+// 数字参数(镜像 lib/xParams.XBroadcastParams;客户端组件不能 import 碰 DB
+// 的模块)。params = 生效值,defaults = 出厂值(含 env 派生的预算/阈值)。
+interface XParams {
+  budgetUsd: number;
+  dailySpendCapUsd: number | null;
+  weeklySpendCapUsd: number | null;
+  whaleMinTradeUsd: number;
+  whaleDailyCap: number;
+  whaleSirenUsd: number;
+  consensusDailyCap: number | null;
+  pregameDailyCap: number;
+  pregameMinH: number;
+  pregameMaxH: number;
+  settledDailyCap: number;
+  weeklyUtcHour: number;
+}
+
+interface HistogramDay {
+  day: string;
+  total: number;
+  hours: Record<string, number>[];
+}
+
 interface Payload {
   accounts: XAccountRow[];
   kinds: Record<string, boolean>;
@@ -39,6 +62,14 @@ interface Payload {
     spentThisMonthUsd: number;
     counts: Record<string, number>;
   };
+  params: XParams;
+  defaults: XParams;
+  /** 各 kind 的文案模板;null = 内置文案。 */
+  templates: Record<string, string | null>;
+  /** 各 kind 可用的 {占位符} 词表(服务端 TEMPLATE_VOCAB,图例用)。 */
+  templateVocab: Record<string, string[]>;
+  /** 近 14 天,天 × UTC 小时 × 类型的 posted 计数。 */
+  histogram: HistogramDay[];
   budgetUsd: number;
   appConfigured: boolean;
   envFallback: boolean;
@@ -47,33 +78,107 @@ interface Payload {
 
 // 各类内容的展示元数据(与 lib/xSettings.X_KINDS 同源语义;这里是客户端
 // 组件,不能 import 那个碰 DB 的模块,故就近镜像一份最小集)。
-const KINDS: { kind: string; label: string; hint: string }[] = [
-  {
-    kind: "whale",
-    label: "🐳 巨鲸大单",
-    hint: "量最大,最容易吃满日配额(上限 20 条/天)",
-  },
-  {
-    kind: "consensus",
-    label: "🔥 聪明钱共识",
-    hint: "稀有且独家,优先级最高,不设日上限",
-  },
-  {
-    kind: "pregame",
-    label: "⏰ 赛前聚合",
-    hint: "结算前 1-6h 热门市场汇总,至多 3 条/天",
-  },
-  {
-    kind: "weekly",
-    label: "📊 周报成绩单",
-    hint: "每周一图卡 + 链接,唯一的 $0.20 帖",
-  },
-  {
-    kind: "settled",
-    label: "✅ 结算战报",
-    hint: "回复自己发过的信号帖,补上结果(赢输都发),至多 5 条/天。默认关",
-  },
+// hint 不再写死数字 —— 由生效参数动态生成(kindHint),页面永不说旧话。
+const KINDS: { kind: string; label: string }[] = [
+  { kind: "whale", label: "🐳 巨鲸大单" },
+  { kind: "consensus", label: "🔥 聪明钱共识" },
+  { kind: "pregame", label: "⏰ 赛前聚合" },
+  { kind: "weekly", label: "📊 周报成绩单" },
+  { kind: "settled", label: "✅ 结算战报" },
 ];
+
+function kindHint(kind: string, p: XParams): string {
+  switch (kind) {
+    case "whale":
+      return `单笔 ≥ $${p.whaleMinTradeUsd.toLocaleString("en-US")} 即发,≥ $${p.whaleSirenUsd.toLocaleString("en-US")} 升 🚨 警报抬头。量最大,最容易吃满日配额(上限 ${p.whaleDailyCap} 条/天)`;
+    case "consensus":
+      return p.consensusDailyCap == null
+        ? "稀有且独家,优先级最高,不设日上限"
+        : `稀有且独家,优先级最高,至多 ${p.consensusDailyCap} 条/天`;
+    case "pregame":
+      return `结算前 ${p.pregameMinH}-${p.pregameMaxH}h 热门市场汇总,至多 ${p.pregameDailyCap} 条/天`;
+    case "weekly":
+      return `每周一 ${String(p.weeklyUtcHour).padStart(2, "0")}:00 UTC 后图卡 + 链接,唯一的 $0.20 帖`;
+    case "settled":
+      return `回复自己发过的信号帖,补上结果(赢输都发),至多 ${p.settledDailyCap} 条/天。默认关`;
+    default:
+      return "";
+  }
+}
+
+// 每张卡片下渲染的参数输入。suffix 是输入框后的单位字;width 给长数字留位。
+const PARAM_FIELDS: Record<
+  string,
+  { key: keyof XParams; label: string; suffix?: string; width?: number }[]
+> = {
+  whale: [
+    { key: "whaleDailyCap", label: "日上限", suffix: "条" },
+    { key: "whaleMinTradeUsd", label: "单笔 ≥ $", width: 88 },
+    { key: "whaleSirenUsd", label: "🚨 级 ≥ $", width: 88 },
+  ],
+  consensus: [{ key: "consensusDailyCap", label: "日上限", suffix: "条" }],
+  pregame: [
+    { key: "pregameDailyCap", label: "日上限", suffix: "条" },
+    { key: "pregameMinH", label: "窗口 ≥", suffix: "h" },
+    { key: "pregameMaxH", label: "≤", suffix: "h" },
+  ],
+  weekly: [{ key: "weeklyUtcHour", label: "周一", suffix: "点(UTC)后发" }],
+  settled: [{ key: "settledDailyCap", label: "日上限", suffix: "条" }],
+};
+
+// 客户端预检的字段名(拦「不是数」;规则校验由服务端 zod 说了算)。
+const PARAM_LABELS: Record<keyof XParams, string> = {
+  budgetUsd: "月花费上限",
+  dailySpendCapUsd: "日花费上限",
+  weeklySpendCapUsd: "周花费上限",
+  whaleMinTradeUsd: "巨鲸金额阈值",
+  whaleDailyCap: "巨鲸日上限",
+  whaleSirenUsd: "巨鲸警报级阈值",
+  consensusDailyCap: "共识日上限",
+  pregameDailyCap: "赛前日上限",
+  pregameMinH: "赛前窗口下限",
+  pregameMaxH: "赛前窗口上限",
+  settledDailyCap: "战报日上限",
+  weeklyUtcHour: "周报发帖时刻",
+};
+
+// 空串合法(= 不限)的可空参数;其余字段空串是校验错误。
+const NULLABLE_PARAMS = new Set<keyof XParams>([
+  "consensusDailyCap",
+  "dailySpendCapUsd",
+  "weeklySpendCapUsd",
+]);
+
+// 表单以字符串保存(数字输入的中间态如「1.」必须可存在);可空参数空串
+// = 不限。
+type ParamForm = Record<keyof XParams, string>;
+
+function toForm(p: XParams): ParamForm {
+  const s = (v: number | null) => (v == null ? "" : String(v));
+  return {
+    budgetUsd: String(p.budgetUsd),
+    dailySpendCapUsd: s(p.dailySpendCapUsd),
+    weeklySpendCapUsd: s(p.weeklySpendCapUsd),
+    whaleMinTradeUsd: String(p.whaleMinTradeUsd),
+    whaleDailyCap: String(p.whaleDailyCap),
+    whaleSirenUsd: String(p.whaleSirenUsd),
+    consensusDailyCap: s(p.consensusDailyCap),
+    pregameDailyCap: String(p.pregameDailyCap),
+    pregameMinH: String(p.pregameMinH),
+    pregameMaxH: String(p.pregameMaxH),
+    settledDailyCap: String(p.settledDailyCap),
+    weeklyUtcHour: String(p.weeklyUtcHour),
+  };
+}
+
+// 文案模板表单:kind → 模板字符串("" = 内置)。
+type TplForm = Record<string, string>;
+
+function toTplForm(t: Record<string, string | null>): TplForm {
+  const out: TplForm = {};
+  for (const k of KINDS) out[k.kind] = t[k.kind] ?? "";
+  return out;
+}
 
 const STATUS_TONE: Record<string, "up" | "down" | "warn" | "default"> = {
   posted: "up",
@@ -110,6 +215,12 @@ export default function XAccountsSection({ token }: { token: string }) {
     text: string;
     tone: "ok" | "err";
   } | null>(null);
+  const [form, setForm] = useState<ParamForm | null>(null);
+  const [tplForm, setTplForm] = useState<TplForm | null>(null);
+  // 表单的种子快照:kinds 开关等无关操作也会触发重载,不能冲掉尚未保存的
+  // 数字/文案输入 —— 只有服务端对应值真变了(保存成功)才重置表单。
+  const seededFrom = useRef<string>("");
+  const seededTpl = useRef<string>("");
 
   const load = useCallback(async () => {
     setError(null);
@@ -124,6 +235,16 @@ export default function XAccountsSection({ token }: { token: string }) {
         return;
       }
       setData(j);
+      const pj = JSON.stringify(j.params);
+      if (seededFrom.current !== pj) {
+        seededFrom.current = pj;
+        setForm(toForm(j.params));
+      }
+      const tj = JSON.stringify(j.templates);
+      if (seededTpl.current !== tj) {
+        seededTpl.current = tj;
+        setTplForm(toTplForm(j.templates));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -158,6 +279,50 @@ export default function XAccountsSection({ token }: { token: string }) {
       window.location.pathname + (rest ? `?${rest}` : ""),
     );
   }, []);
+
+  // 数字参数整表提交。客户端只拦「不是数」,范围/跨键规则由服务端 zod
+  // 说了算(读写两侧同规,错误信息原样展示)。
+  const saveParams = () => {
+    if (!form) return;
+    const params: Record<string, number | null> = {};
+    for (const key of Object.keys(PARAM_LABELS) as (keyof XParams)[]) {
+      const raw = form[key].trim();
+      if (NULLABLE_PARAMS.has(key) && raw === "") {
+        params[key] = null; // 空 = 明确的「不限」
+        continue;
+      }
+      const n = Number(raw);
+      if (raw === "" || !Number.isFinite(n)) {
+        setError(`「${PARAM_LABELS[key]}」不是有效数字:${raw || "(空)"}`);
+        return;
+      }
+      params[key] = n;
+    }
+    void post({ action: "params", params });
+  };
+
+  // 文案模板整表提交:空串 = 恢复内置。词表/长度/URL 校验都在服务端
+  // (lib/xTemplates),错误信息原样展示。
+  const saveTemplates = () => {
+    if (!tplForm) return;
+    const templates: Record<string, string | null> = {};
+    for (const k of KINDS) {
+      const v = tplForm[k.kind].trim();
+      templates[k.kind] = v === "" ? null : v;
+    }
+    void post({ action: "templates", templates });
+  };
+
+  // 有未保存的改动时才点亮对应保存钮。字符串级比较即可:格式化差异
+  // (如 "020")造成的假 dirty 只是让按钮可点,保存后即归位。
+  const dirty =
+    !!data &&
+    !!form &&
+    JSON.stringify(form) !== JSON.stringify(toForm(data.params));
+  const dirtyTpl =
+    !!data &&
+    !!tplForm &&
+    JSON.stringify(tplForm) !== JSON.stringify(toTplForm(data.templates));
 
   const post = async (body: Record<string, unknown>) => {
     setBusy(true);
@@ -337,8 +502,67 @@ export default function XAccountsSection({ token }: { token: string }) {
           <div style={{ marginTop: "var(--s-6)" }}>
             <SectionHead
               title="播报内容类型"
-              hint="关掉的类型不再发帖也不占预算；改完引擎下一轮（≤60s）生效，无需重启。重新开启不会补发关闭期间的旧内容。"
+              hint="关掉的类型不再发帖也不占预算；数字参数（日上限/阈值/窗口/预算）改完点「保存参数」。开关与参数都在引擎下一轮（≤60s）生效，无需重启。重新开启不会补发关闭期间的旧内容。"
+              aside={
+                <button
+                  className="ds-btn ds-btn--primary ds-btn--sm"
+                  disabled={busy || !token || !dirty}
+                  onClick={saveParams}
+                >
+                  保存参数
+                </button>
+              }
             />
+            {form ? (
+              <div
+                className="ds-hint"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  flexWrap: "wrap",
+                  marginBottom: "var(--s-2)",
+                }}
+              >
+                💰 花费上限(全类型共享)：日 $
+                <input
+                  className="ds-input mono"
+                  style={{ width: 56, padding: "2px 6px" }}
+                  value={form.dailySpendCapUsd}
+                  placeholder="不限"
+                  title="UTC 日花费上限(claimed+posted 台账口径)。留空 = 不限"
+                  disabled={busy || !token}
+                  onChange={(e) =>
+                    setForm({ ...form, dailySpendCapUsd: e.target.value })
+                  }
+                />
+                · 周 $
+                <input
+                  className="ds-input mono"
+                  style={{ width: 56, padding: "2px 6px" }}
+                  value={form.weeklySpendCapUsd}
+                  placeholder="不限"
+                  title="UTC 周(周一起)花费上限。留空 = 不限"
+                  disabled={busy || !token}
+                  onChange={(e) =>
+                    setForm({ ...form, weeklySpendCapUsd: e.target.value })
+                  }
+                />
+                · 月 $
+                <input
+                  className="ds-input mono"
+                  style={{ width: 56, padding: "2px 6px" }}
+                  value={form.budgetUsd}
+                  title={`月硬熔断,必填。默认 $${data.defaults.budgetUsd}(来自 .env X_MONTHLY_BUDGET_USD)`}
+                  disabled={busy || !token}
+                  onChange={(e) =>
+                    setForm({ ...form, budgetUsd: e.target.value })
+                  }
+                />
+                —— 月上限是硬熔断(必填,默认来自
+                .env，保存后以后台值为准)；日/周留空 = 不限。
+              </div>
+            ) : null}
             <div
               style={{
                 display: "grid",
@@ -349,40 +573,152 @@ export default function XAccountsSection({ token }: { token: string }) {
               {KINDS.map((k) => {
                 const on = data.kinds[k.kind] !== false;
                 return (
-                  <label
+                  <div
                     key={k.kind}
                     className="ds-card"
                     style={{
                       padding: "var(--s-3)",
-                      display: "flex",
+                      display: "grid",
                       gap: "var(--s-2)",
-                      alignItems: "flex-start",
-                      cursor: busy ? "default" : "pointer",
+                      alignContent: "start",
                     }}
                   >
-                    <input
-                      type="checkbox"
-                      checked={on}
-                      disabled={busy || !token}
-                      onChange={(e) =>
-                        void post({
-                          action: "kinds",
-                          kinds: { [k.kind]: e.target.checked },
-                        })
-                      }
-                      style={{ marginTop: 3 }}
-                    />
-                    <span style={{ display: "grid", gap: 2 }}>
-                      <span style={{ fontWeight: 500 }}>
-                        {k.label}{" "}
-                        {!on ? <Tag variant="warn">已关闭</Tag> : null}
+                    {/* 开关独占内层 label:参数输入不能进 label,否则点
+                        输入框会误触 checkbox。 */}
+                    <label
+                      style={{
+                        display: "flex",
+                        gap: "var(--s-2)",
+                        alignItems: "flex-start",
+                        cursor: busy ? "default" : "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        disabled={busy || !token}
+                        onChange={(e) =>
+                          void post({
+                            action: "kinds",
+                            kinds: { [k.kind]: e.target.checked },
+                          })
+                        }
+                        style={{ marginTop: 3 }}
+                      />
+                      <span style={{ display: "grid", gap: 2 }}>
+                        <span style={{ fontWeight: 500 }}>
+                          {k.label}{" "}
+                          {!on ? <Tag variant="warn">已关闭</Tag> : null}
+                        </span>
+                        <span className="ds-hint">
+                          {kindHint(k.kind, data.params)}
+                        </span>
                       </span>
-                      <span className="ds-hint">{k.hint}</span>
-                    </span>
-                  </label>
+                    </label>
+                    {form ? (
+                      <span
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          alignItems: "center",
+                          gap: "var(--s-2)",
+                          paddingLeft: 24,
+                        }}
+                      >
+                        {(PARAM_FIELDS[k.kind] ?? []).map((f) => (
+                          <label
+                            key={f.key}
+                            className="ds-hint"
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                            }}
+                          >
+                            {f.label}
+                            <input
+                              className="ds-input mono"
+                              style={{
+                                width: f.width ?? 52,
+                                padding: "2px 6px",
+                              }}
+                              value={form[f.key]}
+                              placeholder={
+                                f.key === "consensusDailyCap" ? "不限" : ""
+                              }
+                              title={
+                                f.key === "consensusDailyCap"
+                                  ? "默认不限(留空)"
+                                  : `默认 ${String(data.defaults[f.key])}`
+                              }
+                              disabled={busy || !token}
+                              onChange={(e) =>
+                                setForm({ ...form, [f.key]: e.target.value })
+                              }
+                            />
+                            {f.suffix}
+                          </label>
+                        ))}
+                      </span>
+                    ) : null}
+                  </div>
                 );
               })}
             </div>
+          </div>
+
+          {/* ---- 文案模板 ---- */}
+          <div style={{ marginTop: "var(--s-6)" }}>
+            <SectionHead
+              title="✍️ 文案模板"
+              hint="留空 = 内置英文文案。{占位符} 替换为实时数据，数据缺失的段渲染为空并自动收行。保存时校验：未知占位符/缺 {title}/夹带链接/固定部分超长都会被拒；运行时超 280 加权字符自动截标题，模板不可用则回退内置 —— 怎么都不会发出折叠帖或带链接帖。"
+              aside={
+                <button
+                  className="ds-btn ds-btn--primary ds-btn--sm"
+                  disabled={busy || !token || !dirtyTpl}
+                  onClick={saveTemplates}
+                >
+                  保存文案
+                </button>
+              }
+            />
+            {tplForm ? (
+              <div style={{ display: "grid", gap: "var(--s-3)" }}>
+                {KINDS.map((k) => (
+                  <div key={k.kind} style={{ display: "grid", gap: 4 }}>
+                    <span className="ds-hint">
+                      <b>{k.label}</b>
+                      {data.templates[k.kind] ? (
+                        <Tag variant="up">自定义中</Tag>
+                      ) : (
+                        <span className="muted">（内置）</span>
+                      )}
+                      {" · 可用占位符:"}
+                      <code>
+                        {(data.templateVocab[k.kind] ?? [])
+                          .map((v) => `{${v}}`)
+                          .join(" ")}
+                      </code>
+                    </span>
+                    <textarea
+                      className="ds-input mono"
+                      rows={3}
+                      style={{
+                        width: "100%",
+                        resize: "vertical",
+                        fontSize: "var(--t-sm)",
+                      }}
+                      value={tplForm[k.kind]}
+                      placeholder="留空 = 内置文案"
+                      disabled={busy || !token}
+                      onChange={(e) =>
+                        setTplForm({ ...tplForm, [k.kind]: e.target.value })
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           {/* ---- 发帖历史 ---- */}
@@ -405,6 +741,94 @@ export default function XAccountsSection({ token }: { token: string }) {
                 </span>
               }
             />
+            {data.histogram.some((d2) => d2.total > 0) ? (
+              <div style={{ margin: "var(--s-2) 0", overflowX: "auto" }}>
+                <div className="ds-hint" style={{ marginBottom: 4 }}>
+                  时间分布 · 近 14 天 × UTC
+                  小时，仅统计已发布。悬停格子看类型明细。
+                </div>
+                <table
+                  className="ds-table ds-table--compact"
+                  style={{ width: "auto" }}
+                >
+                  <thead>
+                    <tr>
+                      <th />
+                      {Array.from({ length: 24 }, (_, h) => (
+                        <th
+                          key={h}
+                          className="mono muted"
+                          style={{ padding: "2px 4px", fontSize: 10 }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                      <th
+                        className="mono muted"
+                        style={{ padding: "2px 4px", fontSize: 10 }}
+                      >
+                        Σ
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.histogram.map((d2) => (
+                      <tr key={d2.day}>
+                        <td
+                          className="mono muted"
+                          style={{ padding: "2px 6px", fontSize: 11 }}
+                        >
+                          {d2.day}
+                        </td>
+                        {d2.hours.map((cell, h) => {
+                          const total = Object.values(cell).reduce(
+                            (a, b) => a + b,
+                            0,
+                          );
+                          const tip = Object.entries(cell)
+                            .map(
+                              ([kk, n]) =>
+                                `${KINDS.find((x) => x.kind === kk)?.label ?? kk} ×${n}`,
+                            )
+                            .join("\n");
+                          return (
+                            <td
+                              key={h}
+                              className="mono is-right"
+                              title={tip || undefined}
+                              style={{
+                                padding: "2px 4px",
+                                fontSize: 11,
+                                background:
+                                  total > 0 ? "var(--up-50)" : undefined,
+                                // 量级一眼可辨:≥5 加粗(接近日 cap 的时段)。
+                                fontWeight: total >= 5 ? 700 : undefined,
+                              }}
+                            >
+                              {total > 0 ? (
+                                total
+                              ) : (
+                                <span className="muted">·</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td
+                          className="mono is-right"
+                          style={{
+                            padding: "2px 6px",
+                            fontSize: 11,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {d2.total}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
             {data.history.posts.length === 0 ? (
               <div className="ds-empty">
                 还没有播报记录 —— 授权账号并等待信号触发后，这里会出现每条帖子

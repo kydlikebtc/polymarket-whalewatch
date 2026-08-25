@@ -59,6 +59,8 @@ import { buildMarketCard, resolveMarketInput } from "../lib/marketCard";
 import { createXClient } from "../lib/xPublisher";
 import { markPosted, resolveXCreds } from "../lib/xAccounts";
 import { getXKindSwitches } from "../lib/xSettings";
+import { getXBroadcastParams } from "../lib/xParams";
+import { getXTemplates } from "../lib/xTemplates";
 import { projectBusSignals } from "../lib/signalBus";
 import { runXBroadcastCycle } from "../lib/xBroadcast";
 import { runPregameCycle } from "../lib/xPregame";
@@ -393,9 +395,14 @@ export function startAlertEngine(): void {
       // 市场数无限涨。超过 24h 的行整个窗口都已滚出下界,读回来也是骗人。
       // 由引擎做而非请求侧:清理是运维动作,不该让某个倒霉的用户请求付这笔钱。
       try {
-        const dropped = prunePersistedWindows(db, Math.floor(Date.now() / 1000));
+        const dropped = prunePersistedWindows(
+          db,
+          Math.floor(Date.now() / 1000),
+        );
         if (dropped > 0) {
-          console.log(`[marketWindow] pruned ${dropped} stale window archive(s)`);
+          console.log(
+            `[marketWindow] pruned ${dropped} stale window archive(s)`,
+          );
         }
       } catch (e) {
         console.error("[marketWindow] prune failed", e);
@@ -616,14 +623,29 @@ export function startAlertEngine(): void {
           );
         }
         const xClient = cached.client;
-        // 内容类型开关每轮读一次(与凭据同款即时性):/manage 上关掉某类,
-        // 下一轮就不再发,无需重启。
+        // 内容类型开关、数字参数与文案模板每轮读一次(与凭据同款即时性):
+        // /manage 上关掉某类/改了上限、预算或文案,下一轮就按新值执行,
+        // 无需重启。
         const kinds = getXKindSwitches(db);
+        const params = getXBroadcastParams(db, {
+          budgetUsd: cfg.xMonthlyBudgetUsd,
+          whaleMinTradeUsd: cfg.xMinTradeUsd,
+        });
+        const templates = getXTemplates(db);
+        const spendCaps = {
+          dailySpendCapUsd: params.dailySpendCapUsd,
+          weeklySpendCapUsd: params.weeklySpendCapUsd,
+        };
         const posted = await runXBroadcastCycle({
           db,
           client: xClient,
-          budgetUsd: cfg.xMonthlyBudgetUsd,
-          minTradeUsd: cfg.xMinTradeUsd,
+          budgetUsd: params.budgetUsd,
+          minTradeUsd: params.whaleMinTradeUsd,
+          whaleDailyCap: params.whaleDailyCap,
+          consensusDailyCap: params.consensusDailyCap,
+          whaleSirenUsd: params.whaleSirenUsd,
+          templates,
+          ...spendCaps,
           kinds,
         });
         if (kinds.pregame && Date.now() - lastPregameAt >= PREGAME_GAP_MS) {
@@ -632,7 +654,12 @@ export function startAlertEngine(): void {
             db,
             client: xClient,
             getMeta: (cids) => getMarketMeta(db, cids),
-            budgetUsd: cfg.xMonthlyBudgetUsd,
+            budgetUsd: params.budgetUsd,
+            dailyCap: params.pregameDailyCap,
+            minH: params.pregameMinH,
+            maxH: params.pregameMaxH,
+            template: templates.pregame,
+            ...spendCaps,
           });
         }
         const weekly = kinds.weekly
@@ -641,7 +668,10 @@ export function startAlertEngine(): void {
               client: xClient,
               ogOrigin: cfg.xOgOrigin,
               publicUrl: cfg.publicUrl,
-              budgetUsd: cfg.xMonthlyBudgetUsd,
+              budgetUsd: params.budgetUsd,
+              postUtcHour: params.weeklyUtcHour,
+              template: templates.weekly,
+              ...spendCaps,
             })
           : false;
         // 结算战报(默认关):给已发过的信号帖 self-reply 补结果。放在
@@ -650,7 +680,10 @@ export function startAlertEngine(): void {
           ? await runSettledCycle({
               db,
               client: xClient,
-              budgetUsd: cfg.xMonthlyBudgetUsd,
+              budgetUsd: params.budgetUsd,
+              dailyCap: params.settledDailyCap,
+              template: templates.settled,
+              ...spendCaps,
             })
           : 0;
         // 账号活跃度打点(/manage 据此显示「最近发帖」)。只对库里的授权
@@ -672,8 +705,14 @@ export function startAlertEngine(): void {
     }
     // 错峰启动:consensus 30s / evidence 60s / backfill 90s 之间。
     setTimeout(xLoop, 45_000);
+    // 启动日志打的是**生效值**(库里的后台配置优先,env 只是默认):值本身
+    // 每轮可变,这行只描述开工时刻的状态。
+    const bootParams = getXBroadcastParams(db, {
+      budgetUsd: cfg.xMonthlyBudgetUsd,
+      whaleMinTradeUsd: cfg.xMinTradeUsd,
+    });
     console.log(
-      `[engine] X broadcast enabled · 60s cadence · budget $${cfg.xMonthlyBudgetUsd}/mo · whale floor $${cfg.xMinTradeUsd}`,
+      `[engine] X broadcast enabled · 60s cadence · budget $${bootParams.budgetUsd}/mo · whale floor $${bootParams.whaleMinTradeUsd} · params live-tunable via /manage`,
     );
   }
 

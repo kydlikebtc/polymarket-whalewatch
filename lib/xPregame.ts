@@ -5,9 +5,9 @@
 // 已经在找的话题。数据全部来自 alerts 表(近 24h)+ gamma 缓存 meta,
 // 零新增上游调用。
 //
-// 与 whale 帖不同的跳过语义:quota 拒绝(日 cap 3/预算)时不落台账行 ——
-// 落 skipped 会让该市场当日永久出局,而 cap 是"今天最多 3 条"不是
-// "这 3 个市场以外都不配发";10 分钟后重试的成本只是一次内存聚合。
+// 与 whale 帖不同的跳过语义:quota 拒绝(日 cap/预算)时不落台账行 ——
+// 落 skipped 会让该市场当日永久出局,而 cap 是"今天最多 N 条"不是
+// "这 N 个市场以外都不配发";10 分钟后重试的成本只是一次内存聚合。
 import type { DB } from "./db";
 import type { MarketMeta } from "./gamma";
 import { readEventCategories } from "./gamma";
@@ -29,6 +29,16 @@ export interface PregameDeps {
   client: XClient;
   getMeta: (cids: string[]) => Promise<Record<string, MarketMeta>>;
   budgetUsd: number;
+  /** 日上限覆盖(/manage 可配):省略 = 出厂 DAILY_CAP.pregame(3);null = 不限。 */
+  dailyCap?: number | null;
+  /** 结算窗口覆盖(小时,/manage 可配):省略 = 出厂 PREGAME_MIN_H..MAX_H(1-6)。 */
+  minH?: number;
+  maxH?: number;
+  /** 日/周花费上限($,/manage 可配):省略/null = 不限。 */
+  dailySpendCapUsd?: number | null;
+  weeklySpendCapUsd?: number | null;
+  /** 自定义文案模板(/manage 可配):null/省略 = 内置文案。 */
+  template?: string | null;
   nowSec?: number;
 }
 
@@ -120,6 +130,8 @@ function utcDay(nowSec: number): number {
 /** 一轮赛前扫描。返回成功发帖数;瞬态发帖错误 rethrow(下轮重试)。 */
 export async function runPregameCycle(d: PregameDeps): Promise<number> {
   const nowSec = d.nowSec ?? Math.floor(Date.now() / 1000);
+  const minH = d.minH ?? PREGAME_MIN_H;
+  const maxH = d.maxH ?? PREGAME_MAX_H;
   const byCid = aggregateRecentAlerts(d.db, nowSec);
   if (byCid.size === 0) return 0;
 
@@ -132,7 +144,7 @@ export async function runPregameCycle(d: PregameDeps): Promise<number> {
     const endMs = Date.parse(meta.endDate);
     if (!Number.isFinite(endMs)) continue;
     const hoursToEnd = (endMs / 1000 - nowSec) / 3600;
-    if (hoursToEnd < PREGAME_MIN_H || hoursToEnd > PREGAME_MAX_H) continue;
+    if (hoursToEnd < minH || hoursToEnd > maxH) continue;
     candidates.push({ ...agg, hoursToEnd, meta });
   }
   candidates.sort(
@@ -163,6 +175,9 @@ export async function runPregameCycle(d: PregameDeps): Promise<number> {
       hasLink: false,
       budgetUsd: d.budgetUsd,
       nowSec,
+      dailyCap: d.dailyCap,
+      dailySpendCapUsd: d.dailySpendCapUsd,
+      weeklySpendCapUsd: d.weeklySpendCapUsd,
     });
     if (!decision.ok) {
       // 不落行:cap/预算是全局闸,不是这个市场的罪(见文件头)。
@@ -202,6 +217,7 @@ export async function runPregameCycle(d: PregameDeps): Promise<number> {
       alertCount: c.alertCount,
       sides,
       topSidePriceCents,
+      template: d.template,
       // 赛道标签走本地 event_category(只读,零上游请求)。原先取
       // meta.category,但 gamma 的该字段实测恒为空(745/745),标签因此
       // 一直只有根标签 —— 与 xBroadcast 同一处修复。

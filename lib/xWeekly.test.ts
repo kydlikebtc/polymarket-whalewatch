@@ -169,4 +169,20 @@ describe("maybeWeeklyPost", () => {
         .n,
     ).toBe(0);
   });
+
+  it("postUtcHour 覆盖(/manage 可配):周一 09:05 默认 13 点闸拦下,配成 8 点即放行", async () => {
+    const db = openDb(":memory:");
+    const monday9 = Math.floor(Date.UTC(2026, 7, 17, 9, 5) / 1000);
+    seedPosition(db, "巨鲸", 100, monday9 - 86400);
+    const client = fakeClient();
+    expect(await maybeWeeklyPost(deps(db, client, { nowSec: monday9 }))).toBe(
+      false,
+    );
+    expect(
+      await maybeWeeklyPost(
+        deps(db, client, { nowSec: monday9, postUtcHour: 8 }),
+      ),
+    ).toBe(true);
+    expect(client.pngPosts).toHaveLength(1);
+  });
 });

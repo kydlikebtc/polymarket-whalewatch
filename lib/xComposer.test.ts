@@ -11,6 +11,7 @@ import {
   STRATEGY_EN,
   weightedLength,
   fitPost,
+  TEMPLATE_VOCAB,
 } from "./xComposer";
 
 // ---- 底座:格式化 / 计数 / 限长 / 标签 --------------------------------
@@ -775,5 +776,178 @@ describe("composeWeeklyPost", () => {
     expect(t).toContain("💰 PnL -$310");
     expect(t).not.toContain("win rate");
     expect(t).toContain("🏆 Best: Whale Follow -2.5% ROI");
+  });
+});
+
+// ---- 可配置文案模板 ------------------------------------------------------
+
+describe("文案模板(template)", () => {
+  // 每个 kind 的「富输入」:让全部占位符都渲染出非空值 —— 词表与 compose
+  // 内部 vars 构建的漂移守卫(renderTemplate 对未知键静默置空,普通断言
+  // 抓不到漂移,必须逐 token 断非空)。
+  const RICH = {
+    whale: () => ({
+      usd: 300_000,
+      side: "BUY" as const,
+      outcome: "Yes",
+      title: "Will Bitcoin hit $150,000 by Dec 31?",
+      priceCents: 67,
+      pct24h: 120,
+      liquidityUsd: 186_000,
+      hoursToEnd: 30,
+      smart: { winRate: 0.74, netPnl: 1_200_000 },
+      promiseSettled: true,
+      category: "Crypto",
+    }),
+    consensus: () => ({
+      walletCount: 2,
+      outcome: "Nongshim Red Force",
+      title: "LoL: NRF vs DNS — Game 2 Winner",
+      totalUsd: 33_900,
+      priceCents: 49,
+      spanSec: 840,
+      wallets: [
+        { netUsd: 12_500, avgPriceCents: 64, winRate: 0.74 },
+        { netUsd: 9_600, avgPriceCents: 45, winRate: 0.57 },
+      ],
+      category: "Esports",
+    }),
+    pregame: () => ({
+      title: "Lakers vs Celtics",
+      hoursToEnd: 3,
+      alertCount: 12,
+      topSidePriceCents: 61,
+      sides: [
+        { name: "Lakers", usd: 310_000 },
+        { name: "Celtics", usd: 42_000 },
+      ],
+      category: "Sports",
+    }),
+    settled: () => ({
+      title: "Baltimore Orioles vs. Tampa Bay Rays",
+      outcome: "Baltimore Orioles",
+      entryCents: 40,
+      side: "BUY" as const,
+      won: false, // 输帖才有 stance 行
+      signalKind: "consensus" as const,
+      postedAgoSec: 2 * 86400,
+      category: "Sports",
+    }),
+    weekly: () => ({
+      weekLabel: "Aug 10–16",
+      settled: 42,
+      winRatePct: 55,
+      pnlUsd: 1200,
+      bestName: "超级巨鲸",
+      bestRoiPct: 12.3,
+      url: "https://whalewatch.wired.fund/follow?utm_source=x",
+    }),
+  };
+
+  const compose = (kind: keyof typeof RICH, template: string): string => {
+    const input = { ...RICH[kind](), template };
+    switch (kind) {
+      case "whale":
+        return composeWhalePost(input as never);
+      case "consensus":
+        return composeConsensusPost(input as never);
+      case "pregame":
+        return composePregamePost(input as never);
+      case "settled":
+        return composeSettlementPost(input as never);
+      case "weekly":
+        return composeWeeklyPost(input as never);
+    }
+  };
+
+  it("词表逐 token 非空:TEMPLATE_VOCAB 与 compose 内部 vars 不漂移", () => {
+    // renderTemplate 对未知键静默置空,整版模板断言抓不到漂移;且全词表
+    // 拼一版会超 280 触发回退。故逐 token 渲染:每次一个短模板。
+    for (const kind of Object.keys(RICH) as (keyof typeof RICH)[]) {
+      for (const v of TEMPLATE_VOCAB[kind]) {
+        const tpl =
+          kind === "weekly"
+            ? `[${v}={${v}}]`
+            : v === "title"
+              ? `[title={title}]`
+              : `[${v}={${v}}]\n{title}`;
+        const out = compose(kind, tpl);
+        // [token=非空] —— 值里不含 "]"(receipts 多行也成立)。
+        expect(out, `${kind}.{${v}} 应渲染出非空值`).toMatch(
+          new RegExp(`\\[${v}=[^\\]]+\\]`),
+        );
+      }
+    }
+  });
+
+  it("whale:自定义文案生效,数据占位符替换正确", () => {
+    const out = compose(
+      "whale",
+      "{icon} {amount} smashed {outcome} @ {price}\n\n{title}\n\n{track}\n\n{tags}",
+    );
+    expect(out).toContain("🏆 $300K smashed YES @ 67¢");
+    expect(out).toContain("Track record: 74% win rate · +$1.2M PnL");
+    expect(out).not.toContain("WHALE:"); // 内置抬头没出现
+  });
+
+  it("数据缺失的占位符渲染为空并收行(匿名大单无 track)", () => {
+    const input = { ...RICH.whale(), smart: null, promiseSettled: false };
+    const out = composeWhalePost({
+      ...input,
+      template: "{icon} {amount}\n\n{track}\n\n{promise}\n\n{title}\n\n{tags}",
+    } as never);
+    expect(out).toContain("🚨 $300K"); // 300k ≥ 出厂 250k → 🚨
+    expect(out).not.toContain("Track record");
+    // 空段收行:不允许三连换行残留。
+    expect(out).not.toMatch(/\n{3,}/);
+  });
+
+  it("sirenUsd 可配:同一笔金额,分档线不同图标不同", () => {
+    const base = { ...RICH.whale(), smart: null, promiseSettled: false };
+    expect(composeWhalePost({ ...base, sirenUsd: 500_000 } as never)).toContain(
+      "🐳 WHALE",
+    );
+    expect(composeWhalePost({ ...base, sirenUsd: 100_000 } as never)).toContain(
+      "🚨 WHALE",
+    );
+  });
+
+  it("模板安全网:缺 {title}/夹带 URL → 回退内置;超长标题被截且 ≤280", () => {
+    const noTitle = compose("whale", "{icon} {amount} {tags}");
+    expect(noTitle).toContain("SMART MONEY:"); // 内置抬头 = 回退发生
+    const withUrl = compose("whale", "{title} see https://spam.example {tags}");
+    expect(withUrl).toContain("SMART MONEY:");
+    expect(withUrl).not.toContain("spam.example");
+    const long = composeWhalePost({
+      ...RICH.whale(),
+      title: "A".repeat(400),
+      template: "{icon} {amount} on {outcome}\n\n{title}\n\n{tags}",
+    } as never);
+    expect(weightedLength(long)).toBeLessThanOrEqual(280);
+    expect(long).toContain("…");
+  });
+
+  it("consensus/pregame/settled 模板路径各自生效", () => {
+    expect(
+      compose(
+        "consensus",
+        "{walletCount} wallets → {outcome}\n{title}\n{receipts}",
+      ),
+    ).toContain("2 wallets → Nongshim Red Force");
+    expect(
+      compose("pregame", "T-{countdown}: {stance}\n{title}\n{money}"),
+    ).toContain("T-3H: smart money is 7-to-1 on Lakers");
+    expect(
+      compose("settled", "{result} {priceMove}\n{title}\n{stance}"),
+    ).toContain("❌ MISSED 40¢ → $0");
+  });
+
+  it("weekly 模板:允许 {url};渲染超 280 回退内置", () => {
+    const out = compose("weekly", "📊 {week} · {settled} settled\n{url}");
+    expect(out).toBe(
+      "📊 Aug 10–16 · 42 settled\nhttps://whalewatch.wired.fund/follow?utm_source=x",
+    );
+    const fat = compose("weekly", `${"long weekly copy ".repeat(30)}{url}`);
+    expect(fat).toContain("WEEKLY REPORT"); // 回退内置
   });
 });

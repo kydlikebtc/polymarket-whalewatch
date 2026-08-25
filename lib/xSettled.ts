@@ -38,6 +38,13 @@ export interface XSettledDeps {
   db: DB;
   client: XClient;
   budgetUsd: number;
+  /** 日上限覆盖(/manage 可配):省略 = 出厂 DAILY_CAP.settled(5);null = 不限。 */
+  dailyCap?: number | null;
+  /** 日/周花费上限($,/manage 可配):省略/null = 不限。 */
+  dailySpendCapUsd?: number | null;
+  weeklySpendCapUsd?: number | null;
+  /** 自定义文案模板(/manage 可配):null/省略 = 内置文案。 */
+  template?: string | null;
   nowSec?: number;
 }
 
@@ -134,6 +141,7 @@ export async function runSettledCycle(d: XSettledDeps): Promise<number> {
       postedAgoSec: nowSec - r.posted_at,
       category: t?.category ?? null,
       subcategory: t?.subcategory ?? null,
+      template: d.template,
     });
 
     const decision = quotaDecision(d.db, {
@@ -141,6 +149,9 @@ export async function runSettledCycle(d: XSettledDeps): Promise<number> {
       hasLink: false,
       budgetUsd: d.budgetUsd,
       nowSec,
+      dailyCap: d.dailyCap,
+      dailySpendCapUsd: d.dailySpendCapUsd,
+      weeklySpendCapUsd: d.weeklySpendCapUsd,
     });
     if (!decision.ok) {
       // 不落 skipped:配额是全局闸,不是这条信号的罪 —— 明天还该补发

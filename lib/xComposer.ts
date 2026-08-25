@@ -236,6 +236,43 @@ export function fitPost(
   return lean(chars.slice(0, keep).join("") + "…");
 }
 
+// ---- 可配置文案模板(/manage「文案模板」区) ------------------------------
+//
+// {var} 占位符替换;值缺失渲染成空串,随后折叠多余空行 —— 操作者的模板不必
+// 关心某段数据缺失。保存侧(lib/xTemplates.validateXTemplate)已做词表/
+// 结构/URL/底座长度校验;这里仍留运行时安全网(手改库可绕过保存校验):
+//   · {title} 必须恰好出现一次(fitPost 截断保护的前提),否则回退内置;
+//   · 非 weekly 渲染出 URL → 回退内置($0.20 成本口子在模板层焊死);
+//   · 渲染结果仍超 280 加权 → 回退内置(宁可用内置文案也不发折叠帖)。
+export function renderTemplate(
+  tpl: string,
+  vars: Record<string, string>,
+): string {
+  return tpl.replace(/\{([A-Za-z0-9_]+)\}/g, (_m, k: string) => vars[k] ?? "");
+}
+
+export function collapseBlank(s: string): string {
+  return s
+    .replace(/[ \t]+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function renderCustom(
+  tpl: string,
+  vars: Record<string, string>,
+  title: string,
+  allowUrl: boolean,
+): string | null {
+  if ((tpl.match(/\{title\}/g) ?? []).length !== 1) return null;
+  const build = (t: string) =>
+    collapseBlank(renderTemplate(tpl, { ...vars, title: t }));
+  const out = fitPost([build], sanitizeTitle(title));
+  if (!allowUrl && /https?:\/\//i.test(out)) return null;
+  if (weightedLength(out) > X_POST_MAX_CHARS) return null;
+  return out;
+}
+
 export interface WhalePostInput {
   usd: number;
   side: "BUY" | "SELL";
@@ -258,9 +295,71 @@ export interface WhalePostInput {
    * (xSettled 只补发 7 天内原帖,超过就是空头支票)且 settled 功能开着。
    */
   promiseSettled?: boolean;
+  /** 🚨 警报级抬头分档线覆盖(/manage 可配):省略 = 出厂 WHALE_SIREN_USD。 */
+  sirenUsd?: number;
+  /** 自定义文案模板(/manage 可配):null/省略 = 内置文案。 */
+  template?: string | null;
 }
 
 export const SETTLE_PROMISE_LINE = "Result posted at settlement — win or lose.";
+
+const IMPACT_CLAIM = "more than this market's entire 24h volume";
+
+/**
+ * 模板词表:各 kind 的 {占位符} 全集(title 是特殊位,fitPost 截断保护的
+ * 锚点)。保存侧用它拦未知占位符;composer 测试用「全词表模板」钉住
+ * vars 构建与词表不漂移。值语义:数据缺失的段渲染为空串,模板不必设防。
+ */
+export const TEMPLATE_VOCAB: Record<
+  "whale" | "consensus" | "pregame" | "settled" | "weekly",
+  readonly string[]
+> = {
+  whale: [
+    "title",
+    "icon",
+    "label",
+    "amount",
+    "verb",
+    "outcome",
+    "price",
+    "impact",
+    "track",
+    "facts",
+    "promise",
+    "tags",
+  ],
+  consensus: [
+    "title",
+    "walletCount",
+    "outcome",
+    "avgPrice",
+    "money",
+    "receipts",
+    "rates",
+    "tags",
+  ],
+  pregame: ["title", "countdown", "stance", "lean", "signals", "money", "tags"],
+  settled: [
+    "title",
+    "result",
+    "priceMove",
+    "signal",
+    "outcome",
+    "ago",
+    "stance",
+    "tags",
+  ],
+  weekly: [
+    "week",
+    "settled",
+    "winRate",
+    "pnl",
+    "best",
+    "bestRoi",
+    "url",
+    "tags",
+  ],
+};
 
 /**
  * 断言式抬头(v2):`$200K says NO @ 80¢` 是一句有立场的人话 —— quote-tweet
@@ -282,14 +381,15 @@ export const SETTLE_PROMISE_LINE = "Result posted at settlement — win or lose.
  */
 export function composeWhalePost(i: WhalePostInput): string {
   const isSmart = i.smart != null;
-  const icon = isSmart ? "🏆" : i.usd >= WHALE_SIREN_USD ? "🚨" : "🐳";
+  const siren = i.sirenUsd ?? WHALE_SIREN_USD;
+  const icon = isSmart ? "🏆" : i.usd >= siren ? "🚨" : "🐳";
   const label = isSmart ? "SMART MONEY" : "WHALE";
   const verb = i.side === "SELL" ? "sells" : "says";
   const headline = i.pct24h != null && i.pct24h >= IMPACT_HEADLINE_PCT;
   const head =
     `${icon} ${label}: ${usdCompact(i.usd)} ${verb} ` +
     `${outcomeDisplay(i.outcome)} @ ${i.priceCents}¢` +
-    (headline ? " — more than this market's entire 24h volume" : "");
+    (headline ? ` — ${IMPACT_CLAIM}` : "");
   // Track record 凭证行(仅聪明钱)。
   const cred: string[] = [];
   if (isSmart) {
@@ -315,6 +415,28 @@ export function composeWhalePost(i: WhalePostInput): string {
     subcategory: i.subcategory,
     title: i.title,
   });
+  if (i.template) {
+    const out = renderCustom(
+      i.template,
+      {
+        icon,
+        label,
+        amount: usdCompact(i.usd),
+        verb,
+        outcome: outcomeDisplay(i.outcome),
+        price: `${i.priceCents}¢`,
+        impact: headline ? IMPACT_CLAIM : "",
+        track: cred.join("\n"),
+        facts: facts.join(" · "),
+        promise: i.promiseSettled === true ? SETTLE_PROMISE_LINE : "",
+        tags,
+      },
+      i.title,
+      false,
+    );
+    if (out != null) return out;
+    // 模板不可用(结构坏/渲染出 URL/超长):回退内置,拒绝哑火。
+  }
   const variant =
     (o: { facts?: boolean; cred?: boolean; promise?: boolean }) =>
     (title: string) => {
@@ -356,6 +478,8 @@ export interface ConsensusPostInput {
   wallets?: ConsensusWalletReceipt[];
   category?: string | null;
   subcategory?: string | null;
+  /** 自定义文案模板(/manage 可配):null/省略 = 内置文案。 */
+  template?: string | null;
 }
 
 /**
@@ -402,6 +526,23 @@ export function composeConsensusPost(i: ConsensusPostInput): string {
     subcategory: i.subcategory,
     title: i.title,
   });
+  if (i.template) {
+    const out = renderCustom(
+      i.template,
+      {
+        walletCount: String(i.walletCount),
+        outcome: outcomeDisplay(i.outcome),
+        avgPrice: i.priceCents != null ? `${i.priceCents}¢` : "",
+        money,
+        receipts: receipts.join("\n"),
+        rates: rates.join(" · "),
+        tags,
+      },
+      i.title,
+      false,
+    );
+    if (out != null) return out;
+  }
   // 恒定部分:抬头 + 标题 + 叙事 └ 行 —— 每个梯级都以它开场。
   const story = (title: string) =>
     `🔥 SMART-MONEY CONSENSUS\n\n${title}\n` +
@@ -439,6 +580,8 @@ export interface PregamePostInput {
   sides?: PregameSide[];
   category?: string | null;
   subcategory?: string | null;
+  /** 自定义文案模板(/manage 可配):null/省略 = 内置文案。 */
+  template?: string | null;
 }
 
 /**
@@ -453,7 +596,8 @@ export function composePregamePost(i: PregamePostInput): string {
   const hh = settleShort(i.hoursToEnd).replace(" to settle", "").toUpperCase();
   const s0 = i.sides?.[0];
   const s1 = i.sides?.[1];
-  let stance = "";
+  // 干净片段(无前缀/接缝),内置拼装与模板 vars 同源。
+  let stanceClean = "";
   let leanPrefix = "";
   if (s0 && s0.usd > 0) {
     if (s1 && s1.usd > 0) {
@@ -461,32 +605,51 @@ export function composePregamePost(i: PregamePostInput): string {
       if (ratio >= 2) {
         // floor 不是 round:2.5 说 3-to-1 是凭空夸大 20%,floor 永不夸大 ——
         // 「不编数字」是这个账号的品牌立场。
-        stance = ` — smart money is ${Math.floor(ratio)}-to-1 on ${outcomeDisplay(s0.name)}`;
+        stanceClean = `smart money is ${Math.floor(ratio)}-to-1 on ${outcomeDisplay(s0.name)}`;
       } else {
-        stance = " — smart money is SPLIT on this one";
+        stanceClean = "smart money is SPLIT on this one";
         leanPrefix = "Slight lean ";
       }
     } else {
-      stance = ` — every signal is on ${outcomeDisplay(s0.name)}`;
+      stanceClean = `every signal is on ${outcomeDisplay(s0.name)}`;
     }
   }
-  const head = `⏰ SETTLES IN ${hh}${stance}`;
-  const lean = s0
-    ? `\n└ ${leanPrefix}${outcomeDisplay(s0.name)}` +
+  const head = `⏰ SETTLES IN ${hh}${stanceClean ? ` — ${stanceClean}` : ""}`;
+  const leanClean = s0
+    ? `${leanPrefix}${outcomeDisplay(s0.name)}` +
       (i.topSidePriceCents != null ? ` @ ${i.topSidePriceCents}¢` : "")
     : "";
-  const sig = `📡 ${i.alertCount} signal${i.alertCount === 1 ? "" : "s"} in 24h`;
-  const moneyClause =
+  const lean = leanClean ? `\n└ ${leanClean}` : "";
+  const sigClean = `${i.alertCount} signal${i.alertCount === 1 ? "" : "s"} in 24h`;
+  const sig = `📡 ${sigClean}`;
+  const moneyClean =
     s0 && s0.usd > 0
       ? s1 && s1.usd > 0
-        ? ` · ${usdCompact(s0.usd)} on ${outcomeDisplay(s0.name)} vs ${usdCompact(s1.usd)} on ${outcomeDisplay(s1.name)}`
-        : ` · all ${usdCompact(s0.usd)} on one side`
+        ? `${usdCompact(s0.usd)} on ${outcomeDisplay(s0.name)} vs ${usdCompact(s1.usd)} on ${outcomeDisplay(s1.name)}`
+        : `all ${usdCompact(s0.usd)} on one side`
       : "";
+  const moneyClause = moneyClean ? ` · ${moneyClean}` : "";
   const tags = buildTags({
     category: i.category,
     subcategory: i.subcategory,
     title: i.title,
   });
+  if (i.template) {
+    const out = renderCustom(
+      i.template,
+      {
+        countdown: hh,
+        stance: stanceClean,
+        lean: leanClean,
+        signals: sigClean,
+        money: moneyClean,
+        tags,
+      },
+      i.title,
+      false,
+    );
+    if (out != null) return out;
+  }
   const variant = (withMoney: boolean) => (title: string) =>
     `${head}\n\n${title}${lean}\n\n${sig}${withMoney ? moneyClause : ""}\n\n${tags}`;
   return fitPost(
@@ -513,6 +676,8 @@ export interface SettlementPostInput {
   postedAgoSec?: number | null;
   category?: string | null;
   subcategory?: string | null;
+  /** 自定义文案模板(/manage 可配):null/省略 = 内置文案。 */
+  template?: string | null;
 }
 
 // 佐证行的 posted-ago 短格式:阈值与 settleShort 同一套(<1h / <48h 小时 /
@@ -556,7 +721,8 @@ export function composeSettlementPost(i: SettlementPostInput): string {
   // 信息凭空消失。只排 ≤0 与 >100 这种脏值。
   const priced = c != null && Number.isFinite(c) && c > 0 && c <= 100;
   const isSell = i.side === "SELL";
-  let head = i.won ? "✅ CALLED IT" : "❌ MISSED";
+  const result = i.won ? "✅ CALLED IT" : "❌ MISSED";
+  let priceMove = "";
   if (priced) {
     const entry = c as number;
     // 二元结算:赢的那边归 $1,输的那边归 $0。
@@ -569,32 +735,51 @@ export function composeSettlementPost(i: SettlementPostInput): string {
       // 统一口径 —— 与其编一个,不如只给两个可核对的价格。
       // 卖了、归零 = 赢。
       const settle = i.won ? "$0.00" : "$1.00";
-      head += ` · sold ${entry}¢ → ${settle}`;
+      priceMove = `sold ${entry}¢ → ${settle}`;
     } else if (i.won) {
       // 买入并持有到结算的名义回报:每份额从 entry¢ 变 $1。
       const pct = Math.round((100 / entry - 1) * 100);
-      head += ` · ${entry}¢ → $1.00 (+${pct}%)`;
+      priceMove = `${entry}¢ → $1.00 (+${pct}%)`;
     } else {
       // 输 = 归零,"-100%" 是废话 —— → $0 已经把损失说尽了。
-      head += ` · ${entry}¢ → $0`;
+      priceMove = `${entry}¢ → $0`;
     }
   }
+  const head = priceMove ? `${result} · ${priceMove}` : result;
   const kindLabel =
     i.signalKind === "consensus"
       ? "Consensus signal"
       : i.signalKind === "whale"
         ? "Whale signal"
         : "Signal";
-  const ago =
-    i.postedAgoSec != null ? `, posted ${agoShort(i.postedAgoSec)}` : "";
+  const agoClean = i.postedAgoSec != null ? agoShort(i.postedAgoSec) : "";
+  const ago = agoClean ? `, posted ${agoClean}` : "";
   const line = `└ ${kindLabel} on ${outcomeDisplay(i.outcome)}${ago}`;
   // 输帖才带立场行:见设计立场第 4 点。
-  const stance = i.won ? "" : `\n\nWe post every result, wins and losses.`;
+  const stanceClean = i.won ? "" : "We post every result, wins and losses.";
+  const stance = stanceClean ? `\n\n${stanceClean}` : "";
   const tags = buildTags({
     category: i.category,
     subcategory: i.subcategory,
     title: i.title,
   });
+  if (i.template) {
+    const out = renderCustom(
+      i.template,
+      {
+        result,
+        priceMove,
+        signal: kindLabel,
+        outcome: outcomeDisplay(i.outcome),
+        ago: agoClean,
+        stance: stanceClean,
+        tags,
+      },
+      i.title,
+      false,
+    );
+    if (out != null) return out;
+  }
   return fitPost(
     [(title) => `${head}\n\n${title}\n${line}${stance}\n\n${tags}`],
     sanitizeTitle(i.title),
@@ -609,6 +794,8 @@ export interface WeeklyPostInput {
   bestName: string;
   bestRoiPct: number;
   url: string;
+  /** 自定义文案模板(/manage 可配):null/省略 = 内置文案。 */
+  template?: string | null;
 }
 
 /**
@@ -633,6 +820,23 @@ export function composeWeeklyPost(i: WeeklyPostInput): string {
       ? `✅ ${i.settled} settled · ${Math.round(i.winRatePct)}% win rate`
       : `✅ ${i.settled} settled`;
   const roi = `${i.bestRoiPct >= 0 ? "+" : ""}${Math.round(i.bestRoiPct * 10) / 10}%`;
+  if (i.template) {
+    // weekly 无 title(不走 fitPost 截断),URL 合法(唯一的 $0.20 帖)。
+    // 渲染超 280 → 回退内置(内置由测试钉住恒不超)。
+    const out = collapseBlank(
+      renderTemplate(i.template, {
+        week: i.weekLabel,
+        settled: String(i.settled),
+        winRate: i.winRatePct != null ? `${Math.round(i.winRatePct)}%` : "",
+        pnl,
+        best: strategyEn(i.bestName),
+        bestRoi: roi,
+        url: i.url,
+        tags: "#Polymarket #PredictionMarkets",
+      }),
+    );
+    if (weightedLength(out) <= X_POST_MAX_CHARS) return out;
+  }
   return (
     `📊 WEEKLY REPORT · ${i.weekLabel}\n\n` +
     `19 paper strategies tracking Polymarket smart money\n\n` +

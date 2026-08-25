@@ -48,6 +48,19 @@ export interface XBroadcastDeps {
    * 所以不印。
    */
   kinds?: { whale?: boolean; consensus?: boolean; settled?: boolean };
+  /**
+   * 日上限覆盖(/manage 可配,lib/xParams):省略 = 出厂默认
+   * (whale 20 / consensus 不限,见 xQuota.DAILY_CAP);null = 明确不限。
+   */
+  whaleDailyCap?: number | null;
+  consensusDailyCap?: number | null;
+  /** 日/周花费上限($,/manage 可配):省略/null = 不限。 */
+  dailySpendCapUsd?: number | null;
+  weeklySpendCapUsd?: number | null;
+  /** 巨鲸 🚨 抬头分档线覆盖($,/manage 可配)。 */
+  whaleSirenUsd?: number;
+  /** 自定义文案模板(/manage 可配):null/省略 = 内置文案。 */
+  templates?: { whale?: string | null; consensus?: string | null };
   nowSec?: number;
 }
 
@@ -101,12 +114,23 @@ function walletReceipts(raw: unknown) {
     }));
 }
 
+// 解析期选项:金额闸 + 承诺行闸门 + 文案参数(全部来自 /manage 可配的
+// deps,一次打包传进解析链,免得每加一个参数就改三层签名)。
+interface ParseOpts {
+  minTradeUsd: number;
+  settledOn: boolean;
+  sirenUsd?: number;
+  whaleTemplate?: string | null;
+  consensusTemplate?: string | null;
+}
+
 // 共识告警 → 候选。payload = 完整 ConsensusGroup;老告警行缺的字段
 // (均价/回执/时间跨度)传 null/空,模板缺哪段就省哪段。
 function parseConsensusCandidate(
   db: DB,
   row: AlertRow,
   p: Record<string, unknown>,
+  opts: ParseOpts,
 ): Candidate | null {
   const walletCount = p.walletCount;
   const outcome = p.outcome;
@@ -141,6 +165,7 @@ function parseConsensusCandidate(
         typeof avg === "number" && avg > 0 ? Math.round(avg * 100) : null,
       wallets: walletReceipts(p.wallets),
       spanSec,
+      template: opts.consensusTemplate,
       ...taxonomyOf(db, p.eventSlug),
     }),
   };
@@ -174,8 +199,7 @@ function parseWhaleCandidate(
   db: DB,
   row: AlertRow,
   p: Record<string, unknown>,
-  minTradeUsd: number,
-  settledOn: boolean,
+  opts: ParseOpts,
 ): Candidate | null | "below_floor" {
   const size = p.size;
   const price = p.price;
@@ -192,7 +216,7 @@ function parseWhaleCandidate(
     return null;
   }
   const usd = notionalUsd({ size, price });
-  if (usd < minTradeUsd) return "below_floor";
+  if (usd < opts.minTradeUsd) return "below_floor";
   const ctx = (p.marketCtx ?? null) as WhaleMarketCtx | null;
   const hoursToEnd = ctx?.hoursToEnd ?? null;
   return {
@@ -212,7 +236,11 @@ function parseWhaleCandidate(
       smart: smartCredential(db, row.type, p),
       // 承诺行双闸门:settled 功能开着 × 结算足够近(否则承诺必然落空)。
       promiseSettled:
-        settledOn && hoursToEnd != null && hoursToEnd <= SETTLE_PROMISE_MAX_H,
+        opts.settledOn &&
+        hoursToEnd != null &&
+        hoursToEnd <= SETTLE_PROMISE_MAX_H,
+      sirenUsd: opts.sirenUsd,
+      template: opts.whaleTemplate,
       // 赛道标签走 event_category(见 taxonomyOf 上方注释);Trade 的
       // eventSlug 缺失时退到 market slug,两者都没有就只出根标签。
       ...taxonomyOf(db, p.eventSlug ?? p.slug),
@@ -221,12 +249,10 @@ function parseWhaleCandidate(
 }
 
 // 容错解析一行告警 → 候选。返回 null = 结构不可用(记 skipped,原因进日志)。
-// settledOn:结算战报功能是否开着(承诺行双闸门之一,见 SETTLE_PROMISE_MAX_H)。
 function parseCandidate(
   db: DB,
   row: AlertRow,
-  minTradeUsd: number,
-  settledOn: boolean,
+  opts: ParseOpts,
 ): Candidate | null | "below_floor" {
   let p: Record<string, unknown>;
   try {
@@ -235,8 +261,8 @@ function parseCandidate(
     return null;
   }
   return row.type === "consensus"
-    ? parseConsensusCandidate(db, row, p)
-    : parseWhaleCandidate(db, row, p, minTradeUsd, settledOn);
+    ? parseConsensusCandidate(db, row, p, opts)
+    : parseWhaleCandidate(db, row, p, opts);
 }
 
 /**
@@ -276,13 +302,16 @@ export async function runXBroadcastCycle(d: XBroadcastDeps): Promise<number> {
   // 解析并排序:consensus 独家信号优先,再按金额降序 —— 配额吃紧时大新闻先走。
   const candidates: Candidate[] = [];
   let skipped = 0;
+  const parseOpts: ParseOpts = {
+    minTradeUsd: d.minTradeUsd,
+    // settledOn:结算战报功能是否开着(承诺行双闸门之一,见 SETTLE_PROMISE_MAX_H)。
+    settledOn: d.kinds?.settled === true,
+    sirenUsd: d.whaleSirenUsd,
+    whaleTemplate: d.templates?.whale,
+    consensusTemplate: d.templates?.consensus,
+  };
   for (const row of rows) {
-    const c = parseCandidate(
-      d.db,
-      row,
-      d.minTradeUsd,
-      d.kinds?.settled === true,
-    );
+    const c = parseCandidate(d.db, row, parseOpts);
     const dedup = `alert:${row.id}`;
     if (c === null) {
       skip.run(
@@ -324,6 +353,9 @@ export async function runXBroadcastCycle(d: XBroadcastDeps): Promise<number> {
       hasLink: false,
       budgetUsd: d.budgetUsd,
       nowSec,
+      dailyCap: c.kind === "whale" ? d.whaleDailyCap : d.consensusDailyCap,
+      dailySpendCapUsd: d.dailySpendCapUsd,
+      weeklySpendCapUsd: d.weeklySpendCapUsd,
     });
     if (!decision.ok) {
       skip.run(c.kind, dedup, c.alertId, c.text, nowSec);

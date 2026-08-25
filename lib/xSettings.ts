@@ -9,11 +9,7 @@
 import type { DB } from "./db";
 
 export type XPostKind =
-  | "whale"
-  | "consensus"
-  | "pregame"
-  | "weekly"
-  | "settled";
+  "whale" | "consensus" | "pregame" | "weekly" | "settled";
 
 export const X_KINDS: { kind: XPostKind; label: string; hint: string }[] = [
   {
@@ -29,7 +25,7 @@ export const X_KINDS: { kind: XPostKind; label: string; hint: string }[] = [
   {
     kind: "pregame",
     label: "赛前聚合(市场汇总,非信号线)",
-    hint: "结算前 1-6 小时的高热市场汇总,蹭事件峰值流量。每日至多 3 条",
+    hint: "结算窗口内的高热市场汇总,蹭事件峰值流量。窗口与日上限在 /manage 可配",
   },
   {
     kind: "weekly",
@@ -168,4 +164,65 @@ export function getXPostHistory(
   }
 
   return { posts, spentThisMonthUsd: spent.s, counts };
+}
+
+// --- 时间分布(天 × 小时 × 类型) ------------------------------------------
+//
+// 运营者要回答的问题是「什么时段在发什么」:日上限吃满在几点、赛前聚合
+// 是否押中了赛事时段、周报是否准点。只统计 status='posted'(真发出去的)
+// —— skipped/failed 是闸门与故障的问题,在状态计数里看,混进分布只会糊图。
+
+export interface XPostHistogramDay {
+  /** UTC 日期标签,如 "08-25"。 */
+  day: string;
+  /** 当日 posted 总数。 */
+  total: number;
+  /** hours[0..23]:该 UTC 小时各 kind 的 posted 数;空对象 = 该小时无帖。 */
+  hours: Record<string, number>[];
+}
+
+export const HISTOGRAM_DAYS = 14;
+
+export function getXPostHistogram(
+  db: DB,
+  nowSec: number,
+  days = HISTOGRAM_DAYS,
+): XPostHistogramDay[] {
+  const todayIdx = Math.floor(nowSec / 86400);
+  const fromSec = (todayIdx - (days - 1)) * 86400;
+  // SQLite 整数除法即向下取整(created_at 恒为正),天/小时桶一步到位。
+  const rows = db
+    .prepare(
+      `SELECT created_at / 86400 AS d,
+              (created_at % 86400) / 3600 AS h,
+              kind,
+              COUNT(*) AS n
+         FROM x_posts
+        WHERE status = 'posted' AND created_at >= ? AND created_at < ?
+        GROUP BY d, h, kind`,
+    )
+    .all(fromSec, (todayIdx + 1) * 86400) as {
+    d: number;
+    h: number;
+    kind: string;
+    n: number;
+  }[];
+
+  const byDay = new Map<number, XPostHistogramDay>();
+  for (let idx = todayIdx; idx > todayIdx - days; idx--) {
+    const dt = new Date(idx * 86400 * 1000);
+    byDay.set(idx, {
+      day: `${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`,
+      total: 0,
+      hours: Array.from({ length: 24 }, () => ({})),
+    });
+  }
+  for (const r of rows) {
+    const day = byDay.get(r.d);
+    if (!day) continue; // from/to 已界定,防御性跳过
+    day.hours[r.h][r.kind] = (day.hours[r.h][r.kind] ?? 0) + r.n;
+    day.total += r.n;
+  }
+  // 新在前(与发帖历史列表同序)。
+  return [...byDay.values()];
 }
