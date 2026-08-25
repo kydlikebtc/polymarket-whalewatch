@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 415 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that range: 1604 tests across
-122 files (`npm test`).
+Scope: 419 commits, 2026-06-23 → 2026-08-26. Test suite at the end of that range: 1678 tests across
+127 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -36,6 +36,48 @@ Scope: 415 commits, 2026-06-23 → 2026-08-21. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-26 — Every broadcast knob moves behind /manage
+
+`626ff1c` `90f559f` (PR #4)
+
+The 𝕏 broadcast section could already toggle its five content kinds from /manage, but every
+number governing them was frozen elsewhere: daily caps (20/3/5) in `lib/xQuota.DAILY_CAP`, the
+pregame window (1–6h) and the weekly post hour (13:00 UTC) as module constants, and the monthly
+budget and whale floor in `.env` — where a change means rebuilding the container. That broke the
+promise the page itself makes ("switch accounts, next cycle ≤60s, no restart") for exactly the
+values an operator most wants to tune on a big sports day.
+
+One batch moves all of it into the `config`-table discipline the kind switches already use: one
+JSON row per concern, per-key validation with fall-back-to-default on bad values, `config_history`
+only on real change, engine re-reads every cycle. `lib/xParams` carries the numbers — daily caps,
+whale floor, the 🚨 siren tier, the pregame window (inverted windows are a 400 on write and a
+both-ends fallback on read, because an empty window silently kills the pregame line), the weekly
+hour, and a new day/week/month spend-cap trio where day and week are optional gates under the
+mandatory monthly fuse, all three sharing one ledger query with the week bounded at UTC Monday
+like the weekly report's dedup. `.env` keeps supplying the defaults, so a deployment that never
+touches the new UI behaves byte-for-byte as before.
+
+Copy went configurable too, without surrendering either hard invariant. `lib/xTemplates` stores
+one optional `{placeholder}` template per kind; the vocabulary lives in a single exported table in
+the composer, values are pre-formatted fragments that render empty (and collapse) when data is
+missing. The write side rejects unknown placeholders, templates without exactly one `{title}`
+(the anchor `fitPost` truncates through), any URL outside weekly, and bases that can't fit 280
+weighted chars. The runtime keeps its own net: a structurally broken template, one that renders a
+URL, or one that still overflows falls back to the built-in copy and posts anyway — a template can
+change how a post reads, never make it fold, cost $0.20 by accident, or go silent. The drift
+guard is the interesting test: `renderTemplate` blanks unknown keys silently, so vocabulary drift
+is asserted per-token against rich inputs rather than by eyeballing whole renders.
+
+The history panel gained a day × UTC-hour × kind heat grid (posted only — skipped and failed are
+gate and failure stories, and mixing them in just blurs the picture), and the budget figure in
+its header now shows the effective value instead of parroting `.env`.
+
+One regression class got retired on the way. The route's params merge was a hand-copied
+key-by-key whitelist, and adding the spend-cap keys missed one — the same disease as the `bus[]`
+projection dropping fields, caught this time by the new route test. The merge is now a generic
+`Object.entries` loop over the zod-validated body; a whitelist that has to be maintained by hand
+in step with a schema has no reason to exist.
 
 ### 2026-08-21 — A position that had already been cashed out
 
