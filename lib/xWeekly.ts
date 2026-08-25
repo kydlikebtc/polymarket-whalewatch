@@ -109,6 +109,13 @@ export interface WeeklyPostDeps {
   ogOrigin: string;
   publicUrl: string;
   budgetUsd: number;
+  /** 发帖时刻覆盖(周一的 UTC 整点,/manage 可配):省略 = 出厂 13:00。 */
+  postUtcHour?: number;
+  /** 日/周花费上限($,/manage 可配):省略/null = 不限。 */
+  dailySpendCapUsd?: number | null;
+  weeklySpendCapUsd?: number | null;
+  /** 自定义文案模板(/manage 可配):null/省略 = 内置文案。 */
+  template?: string | null;
   nowSec?: number;
   fetchImpl?: typeof fetch;
 }
@@ -118,7 +125,8 @@ export async function maybeWeeklyPost(d: WeeklyPostDeps): Promise<boolean> {
   const nowSec = d.nowSec ?? Math.floor(Date.now() / 1000);
   const fetchImpl = d.fetchImpl ?? fetch;
   const now = new Date(nowSec * 1000);
-  if (now.getUTCDay() !== 1 || now.getUTCHours() < WEEKLY_POST_UTC_HOUR) {
+  const postHour = d.postUtcHour ?? WEEKLY_POST_UTC_HOUR;
+  if (now.getUTCDay() !== 1 || now.getUTCHours() < postHour) {
     return false;
   }
   const dedup = `week:${utcWeekStart(nowSec)}`;
@@ -142,6 +150,8 @@ export async function maybeWeeklyPost(d: WeeklyPostDeps): Promise<boolean> {
     hasLink: true,
     budgetUsd: d.budgetUsd,
     nowSec,
+    dailySpendCapUsd: d.dailySpendCapUsd,
+    weeklySpendCapUsd: d.weeklySpendCapUsd,
   });
   if (!decision.ok) {
     console.log(`[xWeekly] quota rejected: ${decision.reason}`);
@@ -176,6 +186,7 @@ export async function maybeWeeklyPost(d: WeeklyPostDeps): Promise<boolean> {
     bestName: best.name,
     bestRoiPct: best.roiPct ?? 0,
     url: `${d.publicUrl}/follow?utm_source=x`,
+    template: d.template,
   });
 
   const claimed = d.db

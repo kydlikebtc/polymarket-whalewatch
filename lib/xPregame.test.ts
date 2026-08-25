@@ -206,3 +206,46 @@ describe("runPregameCycle", () => {
     ).toBe(3);
   });
 });
+
+describe("窗口与日上限覆盖(minH/maxH/dailyCap,/manage 可配)", () => {
+  it("默认窗口外(T-10h)不发;maxH=12 后进窗", async () => {
+    const db = openDb(":memory:");
+    whaleAlert(db, "a1", "0xc1", 60_000, "Yes", NOW - 600);
+    const client = fakeClient();
+    const metas = { "0xc1": meta("0xc1", 10) };
+    expect(await runPregameCycle(deps(db, client, metas))).toBe(0);
+    expect(
+      await runPregameCycle({ ...deps(db, client, metas), maxH: 12 }),
+    ).toBe(1);
+    expect(client.posts).toHaveLength(1);
+  });
+
+  it("默认下限内(T-0.5h)不发;minH=0 允许贴近结算", async () => {
+    const db = openDb(":memory:");
+    whaleAlert(db, "a1", "0xc1", 60_000, "Yes", NOW - 600);
+    const client = fakeClient();
+    const metas = { "0xc1": meta("0xc1", 0.5) };
+    expect(await runPregameCycle(deps(db, client, metas))).toBe(0);
+    expect(await runPregameCycle({ ...deps(db, client, metas), minH: 0 })).toBe(
+      1,
+    );
+  });
+
+  it("dailyCap=1:两个进窗市场只发热度第一的,被拦的不落台账(下轮再试)", async () => {
+    const db = openDb(":memory:");
+    whaleAlert(db, "a1", "0xc1", 90_000, "Yes", NOW - 600);
+    whaleAlert(db, "a2", "0xc1", 80_000, "Yes", NOW - 500);
+    whaleAlert(db, "b1", "0xc2", 60_000, "Yes", NOW - 400);
+    const client = fakeClient();
+    const metas = { "0xc1": meta("0xc1", 3), "0xc2": meta("0xc2", 4) };
+    expect(
+      await runPregameCycle({ ...deps(db, client, metas), dailyCap: 1 }),
+    ).toBe(1);
+    expect(client.posts).toHaveLength(1);
+    // 只有发出的那条有台账行;被 cap 拦的市场没有行,明天还有机会。
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM x_posts").get() as { n: number })
+        .n,
+    ).toBe(1);
+  });
+});

@@ -280,4 +280,22 @@ describe("卖单方向不被写反", () => {
     expect(client.replies[0].text).toContain("sold 90¢ → $0.00");
     expect(client.replies[0].text).not.toContain("%");
   });
+
+  it("dailyCap 覆盖(/manage 可配):第二条被配额拦下且不落台账(明天补发)", async () => {
+    const db = openDb(":memory:");
+    seedSignal(db, { alertKey: "s1", xPostId: "111", won: true });
+    seedSignal(db, { alertKey: "s2", xPostId: "222", won: false });
+    const client = fakeClient();
+    expect(await runSettledCycle(deps(db, client, { dailyCap: 1 }))).toBe(1);
+    expect(client.replies).toHaveLength(1);
+    // 只有发出的那条有 settled 台账行;被 cap 拦的没有行 —— 配额是全局闸,
+    // 不是这条信号的罪,明天还该补发。
+    expect(
+      (
+        db
+          .prepare("SELECT COUNT(*) AS n FROM x_posts WHERE kind = 'settled'")
+          .get() as { n: number }
+      ).n,
+    ).toBe(1);
+  });
 });
