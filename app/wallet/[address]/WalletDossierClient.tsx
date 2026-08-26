@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   AgeBadge,
@@ -95,7 +95,8 @@ type WalletResponse = {
   tags?: WalletTag[];
   // Live PUSD (Polymarket cash) balance in USD; null = RPC unavailable.
   pusdBalance: number | null;
-  profile: Profile;
+  // null = 降级响应里没有实时画像(内存缓存也不温)。本地区块照常渲染。
+  profile: Profile | null;
   // Current live (unresolved) positions — the wallet's active book.
   holdings: HoldingsSummary;
   categories: { category: string; usd: number; share: number }[];
@@ -103,6 +104,10 @@ type WalletResponse = {
   // Coverage window of alertHits in days (the API bounds the LIKE scan).
   alertHitsWindowDays?: number;
   recent: RecentTrade[];
+  // 降级标志(见 route.localOnlyDossier):被限流/上游故障时仍回 200 + 本地
+  // 档案,客户端按 retryAfterSec 倒计时自动重试实时层。
+  degraded?: "rate_limited" | "upstream_error";
+  retryAfterSec?: number;
   error?: string;
 };
 
@@ -140,26 +145,77 @@ export default function WalletPage() {
     return sub === primary ? primary : `${primary}·${sub}`;
   };
 
+  // ---- 加载与自动重试 ----------------------------------------------------
+  // 死端是这个页面此前最大的失败模式:限流/上游故障 → 一条红字,用户只能
+  // 手动刷新。现在:降级响应(本地档案)照常渲染 + 按服务端给的
+  // retryAfterSec 倒计时自动重试;硬错误(网络断等)走 10→20→40→60s 阶梯,
+  // 同样自动重试。重试期间**不清空屏上已有数据**,实时层到货后静默升级。
+  const [retryAt, setRetryAt] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const attemptRef = useRef(0);
+  const mountedRef = useRef(true);
   useEffect(() => {
-    if (!address) return;
-    let active = true;
-    (async () => {
-      try {
-        const res = await fetch(`/api/wallet/${address}`, {
-          cache: "no-store",
-        });
-        const json = (await res.json()) as WalletResponse;
-        if (!active) return;
-        if (json.error) setError(json.error);
-        else setData(json);
-      } catch (e) {
-        if (active) setError(e instanceof Error ? e.message : String(e));
-      }
-    })();
+    mountedRef.current = true;
     return () => {
-      active = false;
+      mountedRef.current = false;
     };
+  }, []);
+
+  const load = useCallback(async () => {
+    if (!address) return;
+    setRetryAt(null);
+    const scheduleLadder = () => {
+      const delay = Math.min(60, 10 * 2 ** Math.min(attemptRef.current, 3));
+      attemptRef.current++;
+      setRetryAt(Date.now() + delay * 1000);
+    };
+    try {
+      const res = await fetch(`/api/wallet/${address}`, {
+        cache: "no-store",
+      });
+      const json = (await res.json()) as WalletResponse;
+      if (!mountedRef.current) return;
+      if (json.error) {
+        setError(json.error);
+        scheduleLadder();
+        return;
+      }
+      setError("");
+      setData(json);
+      if (json.degraded) {
+        attemptRef.current++;
+        setRetryAt(Date.now() + (json.retryAfterSec ?? 60) * 1000);
+      } else {
+        attemptRef.current = 0;
+      }
+    } catch (e) {
+      if (!mountedRef.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+      scheduleLadder();
+    }
   }, [address]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // 到点触发重试;倒计时显示走每秒 tick(只在有排期时跑)。
+  useEffect(() => {
+    if (retryAt == null) return;
+    const timer = setTimeout(
+      () => void load(),
+      Math.max(0, retryAt - Date.now()),
+    );
+    const tick = setInterval(() => setNowMs(Date.now()), 1000);
+    setNowMs(Date.now());
+    return () => {
+      clearTimeout(timer);
+      clearInterval(tick);
+    };
+  }, [retryAt, load]);
+
+  const retrySecsLeft =
+    retryAt != null ? Math.max(0, Math.ceil((retryAt - nowMs) / 1000)) : null;
 
   const p = data?.profile;
   const maxBandUsd = p ? Math.max(1, ...p.priceBands.map((b) => b.buyUsd)) : 1;
@@ -242,12 +298,40 @@ export default function WalletPage() {
         </div>
       </header>
 
+      {data?.degraded && !error ? (
+        <div className="ds-callout" style={{ marginBottom: "var(--s-4)" }}>
+          {data.degraded === "rate_limited"
+            ? t("⏳ 实时档案被限流（公共接口预算已满）——先展示本地留存数据。")
+            : t("⚠️ 上游接口暂时不可用——先展示本地留存数据。")}
+          {retrySecsLeft != null ? (
+            <> {t("{n}s 后自动重试", { n: retrySecsLeft })}</>
+          ) : null}
+          <button
+            className="ds-btn ds-btn--sm"
+            style={{ marginLeft: 8 }}
+            onClick={() => void load()}
+          >
+            {t("立即重试")}
+          </button>
+        </div>
+      ) : null}
+
       {error ? (
         <div
           className="ds-callout ds-callout--error"
           style={{ marginBottom: "var(--s-4)" }}
         >
           {t("加载失败")}: {error}
+          {retrySecsLeft != null ? (
+            <> · {t("{n}s 后自动重试", { n: retrySecsLeft })}</>
+          ) : null}
+          <button
+            className="ds-btn ds-btn--sm"
+            style={{ marginLeft: 8 }}
+            onClick={() => void load()}
+          >
+            {t("立即重试")}
+          </button>
         </div>
       ) : null}
 
@@ -255,9 +339,10 @@ export default function WalletPage() {
         <div className="ds-empty">{t("档案加载中…")}</div>
       ) : null}
 
-      {data && p ? (
+      {data ? (
         <>
-          {/* KPI: settled record + window flow */}
+          {/* KPI: settled record + window flow。stats/PUSD 卡自带空态;
+              近窗流量与拆单只有实时画像(p)在场才渲。 */}
           <section className="kpi" style={{ marginBottom: "var(--s-5)" }}>
             <StatCard label={t("已结算胜率")}>
               <div
@@ -337,24 +422,28 @@ export default function WalletPage() {
                   : t("RPC 暂不可用")}
               </div>
             </StatCard>
-            <StatCard label={t("近窗买入 / 卖出")}>
-              <div className="kpi-value" style={{ fontSize: 18 }}>
-                <span className="up">${fmtUsd(p.buyUsd)}</span>
-                <span className="muted"> / </span>
-                <span className="down">${fmtUsd(p.sellUsd)}</span>
-              </div>
-              <div className="kpi-sub">
-                {t("平均每笔 ${n}", { n: fmtUsd(p.avgTradeUsd) })}
-              </div>
-            </StatCard>
-            <StatCard label={t("拆单倾向")}>
-              <div className="kpi-value">
-                {p.smallBuyShare != null
-                  ? `${Math.round(p.smallBuyShare * 100)}%`
-                  : "—"}
-              </div>
-              <div className="kpi-sub">{t("买单中 <$1k 的占比")}</div>
-            </StatCard>
+            {p ? (
+              <>
+                <StatCard label={t("近窗买入 / 卖出")}>
+                  <div className="kpi-value" style={{ fontSize: 18 }}>
+                    <span className="up">${fmtUsd(p.buyUsd)}</span>
+                    <span className="muted"> / </span>
+                    <span className="down">${fmtUsd(p.sellUsd)}</span>
+                  </div>
+                  <div className="kpi-sub">
+                    {t("平均每笔 ${n}", { n: fmtUsd(p.avgTradeUsd) })}
+                  </div>
+                </StatCard>
+                <StatCard label={t("拆单倾向")}>
+                  <div className="kpi-value">
+                    {p.smallBuyShare != null
+                      ? `${Math.round(p.smallBuyShare * 100)}%`
+                      : "—"}
+                  </div>
+                  <div className="kpi-sub">{t("买单中 <$1k 的占比")}</div>
+                </StatCard>
+              </>
+            ) : null}
           </section>
 
           {/* Current holdings (live positions) */}
@@ -449,7 +538,9 @@ export default function WalletPage() {
                 </table>
               </div>
             </section>
-          ) : data.holdings ? (
+          ) : data.holdings && !data.degraded ? (
+            // 降级响应里的空持仓只是「没查」,不是「没有」—— 顶部横幅已交代,
+            // 这里不渲染会撒谎的空态。
             <section style={{ marginBottom: "var(--s-5)" }}>
               <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
                 {t("当前持仓")}
@@ -482,124 +573,149 @@ export default function WalletPage() {
             </section>
           ) : null}
 
-          {/* Price-band histogram */}
-          <section
-            className="ds-card"
-            style={{ padding: "var(--s-4)", marginBottom: "var(--s-5)" }}
-          >
-            <div className="ds-label" style={{ marginBottom: "var(--s-3)" }}>
-              {t("买入赔率带分布（近 {n} 笔）", { n: p.tradeCount })}
-            </div>
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "var(--s-1)",
-              }}
-            >
-              {p.priceBands.map((b) => (
+          {/* Price-band histogram + top markets:实时画像(p)专属区块 */}
+          {p ? (
+            <>
+              <section
+                className="ds-card"
+                style={{ padding: "var(--s-4)", marginBottom: "var(--s-5)" }}
+              >
                 <div
-                  key={b.from}
+                  className="ds-label"
+                  style={{ marginBottom: "var(--s-3)" }}
+                >
+                  {t("买入赔率带分布（近 {n} 笔）", { n: p.tradeCount })}
+                </div>
+                <div
                   style={{
                     display: "flex",
-                    alignItems: "center",
-                    gap: "var(--s-2)",
+                    flexDirection: "column",
+                    gap: "var(--s-1)",
                   }}
                 >
-                  <span
-                    className="mono muted"
-                    style={{
-                      width: 86,
-                      flexShrink: 0,
-                      fontSize: "var(--t-sm)",
-                    }}
-                  >
-                    {b.from.toFixed(1)}–{b.to.toFixed(1)}
-                  </span>
-                  <div
-                    style={{
-                      flex: 1,
-                      height: 14,
-                      background: "var(--n-100)",
-                      borderRadius: 3,
-                      overflow: "hidden",
-                    }}
-                  >
+                  {p.priceBands.map((b) => (
                     <div
+                      key={b.from}
                       style={{
-                        width: `${(b.buyUsd / maxBandUsd) * 100}%`,
-                        height: "100%",
-                        background: "var(--up-500)",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "var(--s-2)",
                       }}
-                    />
-                  </div>
-                  <span
-                    className="mono muted"
-                    style={{ width: 120, flexShrink: 0, textAlign: "right" }}
-                  >
-                    ${fmtUsd(b.buyUsd)} · {t("{n}笔", { n: b.buyCount })}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          {/* Top markets */}
-          <section style={{ marginBottom: "var(--s-5)" }}>
-            <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-              {t("头部市场（按成交额）")}
-            </div>
-            <div className="ds-table-wrap">
-              <table className="ds-table">
-                <thead>
-                  <tr>
-                    <th>{t("市场")}</th>
-                    <th>{t("类别")}</th>
-                    <th className="is-right">{t("买入")}</th>
-                    <th className="is-right">{t("卖出")}</th>
-                    <th className="is-right">{t("净买入")}</th>
-                    <th className="is-right">{t("笔数")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {p.topMarkets.map((m) => (
-                    <tr key={m.conditionId}>
-                      <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
-                        {m.eventSlug ? (
-                          <a
-                            href={`https://polymarket.com/event/${m.eventSlug}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {m.title}
-                          </a>
-                        ) : (
-                          m.title
-                        )}
-                      </td>
-                      <td className="muted" data-label={t("类别")}>
-                        {m.category ? catFineT(m.category, m.subcategory) : "—"}
-                      </td>
-                      <td className="mono is-right up" data-label={t("买入")}>
-                        ${fmtUsd(m.buyUsd)}
-                      </td>
-                      <td className="mono is-right down" data-label={t("卖出")}>
-                        ${fmtUsd(m.sellUsd)}
-                      </td>
-                      <td className="mono is-right" data-label={t("净买入")}>
-                        ${fmtUsd(m.netUsd)}
-                      </td>
-                      <td className="mono is-right" data-label={t("笔数")}>
-                        {m.trades}
-                      </td>
-                    </tr>
+                    >
+                      <span
+                        className="mono muted"
+                        style={{
+                          width: 86,
+                          flexShrink: 0,
+                          fontSize: "var(--t-sm)",
+                        }}
+                      >
+                        {b.from.toFixed(1)}–{b.to.toFixed(1)}
+                      </span>
+                      <div
+                        style={{
+                          flex: 1,
+                          height: 14,
+                          background: "var(--n-100)",
+                          borderRadius: 3,
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${(b.buyUsd / maxBandUsd) * 100}%`,
+                            height: "100%",
+                            background: "var(--up-500)",
+                          }}
+                        />
+                      </div>
+                      <span
+                        className="mono muted"
+                        style={{
+                          width: 120,
+                          flexShrink: 0,
+                          textAlign: "right",
+                        }}
+                      >
+                        ${fmtUsd(b.buyUsd)} · {t("{n}笔", { n: b.buyCount })}
+                      </span>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                </div>
+              </section>
 
-          {/* This tool's alert history for the wallet */}
+              {/* Top markets */}
+              <section style={{ marginBottom: "var(--s-5)" }}>
+                <div
+                  className="ds-label"
+                  style={{ marginBottom: "var(--s-2)" }}
+                >
+                  {t("头部市场（按成交额）")}
+                </div>
+                <div className="ds-table-wrap">
+                  <table className="ds-table">
+                    <thead>
+                      <tr>
+                        <th>{t("市场")}</th>
+                        <th>{t("类别")}</th>
+                        <th className="is-right">{t("买入")}</th>
+                        <th className="is-right">{t("卖出")}</th>
+                        <th className="is-right">{t("净买入")}</th>
+                        <th className="is-right">{t("笔数")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {p.topMarkets.map((m) => (
+                        <tr key={m.conditionId}>
+                          <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
+                            {m.eventSlug ? (
+                              <a
+                                href={`https://polymarket.com/event/${m.eventSlug}`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                {m.title}
+                              </a>
+                            ) : (
+                              m.title
+                            )}
+                          </td>
+                          <td className="muted" data-label={t("类别")}>
+                            {m.category
+                              ? catFineT(m.category, m.subcategory)
+                              : "—"}
+                          </td>
+                          <td
+                            className="mono is-right up"
+                            data-label={t("买入")}
+                          >
+                            ${fmtUsd(m.buyUsd)}
+                          </td>
+                          <td
+                            className="mono is-right down"
+                            data-label={t("卖出")}
+                          >
+                            ${fmtUsd(m.sellUsd)}
+                          </td>
+                          <td
+                            className="mono is-right"
+                            data-label={t("净买入")}
+                          >
+                            ${fmtUsd(m.netUsd)}
+                          </td>
+                          <td className="mono is-right" data-label={t("笔数")}>
+                            {m.trades}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </>
+          ) : null}
+
+          {/* This tool's alert history for the wallet(本地台账,降级也在) */}
           <section style={{ marginBottom: "var(--s-5)" }}>
             <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
               {t("本工具历史命中（近 {d} 天 · {n}）", {
@@ -668,57 +784,59 @@ export default function WalletPage() {
             )}
           </section>
 
-          {/* Recent trades */}
-          <section>
-            <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-              {t("最近成交（20）")}
-            </div>
-            <div className="ds-table-wrap">
-              <table className="ds-table">
-                <thead>
-                  <tr>
-                    <th>{t("时间")}</th>
-                    <th>{t("市场 / 结果")}</th>
-                    <th>{t("方向")}</th>
-                    <th className="is-right">{t("金额")}</th>
-                    <th className="is-right">{t("价格")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.recent.map((r, i) => (
-                    <tr key={`${r.timestamp}-${i}`}>
-                      <td className="mono muted" data-label={t("时间")}>
-                        {fmtDateTime(r.timestamp, dtLocale)}
-                      </td>
-                      <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
-                        {r.eventSlug ? (
-                          <a
-                            href={`https://polymarket.com/event/${r.eventSlug}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {r.title}
-                          </a>
-                        ) : (
-                          r.title
-                        )}
-                        <div className="kpi-sub">{r.outcome}</div>
-                      </td>
-                      <td data-label={t("方向")}>
-                        <SideTag side={r.side} />
-                      </td>
-                      <td className="mono is-right" data-label={t("金额")}>
-                        ${fmtUsd(r.usdcSize)}
-                      </td>
-                      <td className="mono is-right" data-label={t("价格")}>
-                        {r.price.toFixed(3)}
-                      </td>
+          {/* Recent trades(实时画像专属) */}
+          {p ? (
+            <section>
+              <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+                {t("最近成交（20）")}
+              </div>
+              <div className="ds-table-wrap">
+                <table className="ds-table">
+                  <thead>
+                    <tr>
+                      <th>{t("时间")}</th>
+                      <th>{t("市场 / 结果")}</th>
+                      <th>{t("方向")}</th>
+                      <th className="is-right">{t("金额")}</th>
+                      <th className="is-right">{t("价格")}</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                  </thead>
+                  <tbody>
+                    {data.recent.map((r, i) => (
+                      <tr key={`${r.timestamp}-${i}`}>
+                        <td className="mono muted" data-label={t("时间")}>
+                          {fmtDateTime(r.timestamp, dtLocale)}
+                        </td>
+                        <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
+                          {r.eventSlug ? (
+                            <a
+                              href={`https://polymarket.com/event/${r.eventSlug}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {r.title}
+                            </a>
+                          ) : (
+                            r.title
+                          )}
+                          <div className="kpi-sub">{r.outcome}</div>
+                        </td>
+                        <td data-label={t("方向")}>
+                          <SideTag side={r.side} />
+                        </td>
+                        <td className="mono is-right" data-label={t("金额")}>
+                          ${fmtUsd(r.usdcSize)}
+                        </td>
+                        <td className="mono is-right" data-label={t("价格")}>
+                          {r.price.toFixed(3)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
         </>
       ) : null}
     </main>

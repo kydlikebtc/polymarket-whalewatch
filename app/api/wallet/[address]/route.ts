@@ -1,4 +1,4 @@
-import { openDb } from "../../../../lib/db";
+import { openDb, type DB } from "../../../../lib/db";
 import {
   ALERT_HITS_WINDOW_DAYS,
   parseAlertHit,
@@ -12,7 +12,11 @@ import { createBoundedCache } from "../../../../lib/boundedCache";
 import { fetchPusdBalance } from "../../../../lib/pusdBalance";
 import { getSmartTags } from "../../../../lib/smartWallets";
 import { getWalletTags } from "../../../../lib/walletTags";
-import { getEventCategories } from "../../../../lib/gamma";
+import {
+  getEventCategories,
+  readEventCategories,
+  type EventTaxonomy,
+} from "../../../../lib/gamma";
 import {
   analyzeTrades,
   fetchRecentTrades,
@@ -105,6 +109,113 @@ async function loadHoldings(address: string): Promise<HoldingsSummary> {
   }
 }
 
+// Category focus via EVENT TAGS over the top markets — the market-level
+// category field is null for most modern markets. Shared by the live and the
+// degraded path (they differ only in WHERE the taxonomy comes from: live may
+// backfill upstream, degraded reads the local cache only).
+function decorateWithTaxonomy(
+  profile: WalletProfile,
+  eventCats: Record<string, EventTaxonomy>,
+) {
+  const catUsd = new Map<string, number>();
+  const topMarkets = profile.topMarkets.map((m) => {
+    const tax = eventCats[m.eventSlug];
+    const category = tax?.category ?? null;
+    // 类别集中度聚合保持一级口径(评分/画像的既有键不动,见二级分类
+    // 设计文档 §2 红线);市场行额外带上二级,展示层合成「体育·NBA」。
+    const subcategory = tax?.subcategory ?? null;
+    if (category) {
+      catUsd.set(category, (catUsd.get(category) ?? 0) + m.buyUsd + m.sellUsd);
+    }
+    return { ...m, category, subcategory };
+  });
+  const catTotal = [...catUsd.values()].reduce((s, v) => s + v, 0);
+  const categories = [...catUsd.entries()]
+    .map(([category, usd]) => ({
+      category,
+      usd,
+      share: catTotal > 0 ? usd / catTotal : 0,
+    }))
+    .sort((a, b) => b.usd - a.usd);
+  return { topMarkets, categories };
+}
+
+/**
+ * 降级档案:**零上游请求**,只回本地/内存缓存里现成的东西。
+ *
+ * 「被限流」和「上游故障」都不等于「无数据」—— alerts 台账、战绩/年龄的
+ * SQLite 缓存、smart 标签、以及可能还温着的 profile/holdings 内存缓存,
+ * 全都不花任何上游预算。此前这些跟着 429/error 一起消失,整页只剩一条
+ * 红字;现在客户端拿到 degraded 响应先渲染本地档案,再倒计时重试实时层。
+ *
+ * 纪律:此函数内**严禁触发上游**(与 SEO 层同一条红线)。stats/age 用
+ * 抛错 fetcher + 超长 TTL 实现「只读缓存、绝不回源」:命中(哪怕过期)
+ * 即返回,miss 时 fetcher 立刻拒绝 → null 且不污染缓存(两个模块对失败
+ * 的既有语义都是 uncached,见 lib/walletStats / lib/walletAge)。
+ */
+async function localOnlyDossier(
+  db: DB,
+  address: string,
+  degraded: "rate_limited" | "upstream_error",
+  retryAfterSec: number,
+) {
+  const localOnly = () =>
+    Promise.reject(new Error("degraded dossier reads local cache only"));
+  const [ages, stats] = await Promise.all([
+    getWalletAges(db, [address], { fetcher: localOnly }),
+    getWalletStats(db, [address], {
+      ttlSec: Number.MAX_SAFE_INTEGER,
+      fetcher: localOnly,
+    }),
+  ]);
+  const firstTs = ages[address] ?? null;
+  const smart = getSmartTags(db, [address])[address] ?? null;
+  const tags = getWalletTags(db, address);
+  const alertHits = queryAlertHitRows(db, address)
+    .map(parseAlertHit)
+    .filter((h): h is AlertHit => h !== null);
+
+  // 内存缓存还温着就白拿(profile 10min / holdings 60s TTL 内),分类装饰
+  // 走只读的 readEventCategories —— 缓存里没有的 slug 只是缺标签,不回源。
+  const warm = profileCache.get(address) ?? null;
+  const holdings = holdingsCache.get(address) ?? EMPTY_HOLDINGS;
+  const decorated = warm
+    ? decorateWithTaxonomy(
+        warm.profile,
+        readEventCategories(
+          db,
+          warm.profile.topMarkets.map((m) => m.eventSlug),
+        ),
+      )
+    : null;
+
+  console.log(
+    `[/api/wallet] degraded(${degraded}) ${address} — local-only dossier ` +
+      `(stats ${stats[address] ? "cached" : "none"}, profile ${warm ? "warm" : "none"}, ${alertHits.length} alert hits)`,
+  );
+  return Response.json({
+    address,
+    firstTs,
+    ageDays: firstTs != null ? (Date.now() / 1000 - firstTs) / 86400 : null,
+    stats: stats[address],
+    smart,
+    tags,
+    // RPC 也是外部依赖,降级模式一并跳过(客户端本就把 null 显示成暂不可用)。
+    pusdBalance: null,
+    profile:
+      warm && decorated
+        ? { ...warm.profile, topMarkets: decorated.topMarkets }
+        : null,
+    holdings,
+    categories: decorated?.categories ?? [],
+    alertHits,
+    alertHitsWindowDays: ALERT_HITS_WINDOW_DAYS,
+    recent: warm?.recent ?? [],
+    degraded,
+    retryAfterSec,
+  });
+}
+
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ address: string }> },
@@ -114,20 +225,25 @@ export async function GET(
   if (!ADDRESS_RE.test(address)) {
     return Response.json({ error: "invalid address" }, { status: 400 });
   }
-  // Same getWalletStats fanout as POST /api/wallet-stats (plus activity pages,
-  // holdings and an RPC call), so it shares that route's "wallet-profile"
-  // budget — otherwise enumerating public leaderboard addresses one GET at a
-  // time would walk straight around the batch route's ceiling. Cost 3: a cold
-  // profile is worth several batch wallets.
-  const limited = guardExpensive(
-    req,
-    "wallet-profile",
-    { perIp: 120, global: 400, cost: 3 },
-    { error: "rate limited" },
-  );
-  if (limited) return limited;
+  const db = openDb(process.env.DASH_DB ?? "data.sqlite");
   try {
-    const db = openDb(process.env.DASH_DB ?? "data.sqlite");
+    // Same getWalletStats fanout as POST /api/wallet-stats (plus activity
+    // pages, holdings and an RPC call), so it shares that route's
+    // "wallet-profile" budget — otherwise enumerating public leaderboard
+    // addresses one GET at a time would walk straight around the batch route's
+    // ceiling. Cost 3: a cold profile is worth several batch wallets.
+    const limited = guardExpensive(
+      req,
+      "wallet-profile",
+      { perIp: 120, global: 400, cost: 3 },
+      { error: "rate limited" },
+    );
+    if (limited) {
+      // 限流 ≠ 无数据:计费照收(枚举者刷不动上游 —— 他们只能反复拿到
+      // 本地缓存),但把本地能给的全给出去,客户端 60s 后自动重试实时层。
+      // 窗口定长 1 分钟(lib/apiGuard),retryAfterSec 与之对齐。
+      return await localOnlyDossier(db, address, "rate_limited", 60);
+    }
     try {
       // Still fetched concurrently, but each half now hits its OWN cache and
       // its own TTL — a warm profile no longer forces a stale holdings book.
@@ -149,35 +265,14 @@ export async function GET(
       // same model the /discovery funnel shows — lib/walletTags.
       const tags = getWalletTags(db, address);
 
-      // Category focus via EVENT TAGS over the top markets (cheap, cached) —
-      // the market-level category field is null for most modern markets.
       const eventCats = await getEventCategories(
         db,
         profile.topMarkets.map((m) => m.eventSlug),
       );
-      const catUsd = new Map<string, number>();
-      const topMarkets = profile.topMarkets.map((m) => {
-        const tax = eventCats[m.eventSlug];
-        const category = tax?.category ?? null;
-        // 类别集中度聚合保持一级口径(评分/画像的既有键不动,见二级分类
-        // 设计文档 §2 红线);市场行额外带上二级,展示层合成「体育·NBA」。
-        const subcategory = tax?.subcategory ?? null;
-        if (category) {
-          catUsd.set(
-            category,
-            (catUsd.get(category) ?? 0) + m.buyUsd + m.sellUsd,
-          );
-        }
-        return { ...m, category, subcategory };
-      });
-      const catTotal = [...catUsd.values()].reduce((s, v) => s + v, 0);
-      const categories = [...catUsd.entries()]
-        .map(([category, usd]) => ({
-          category,
-          usd,
-          share: catTotal > 0 ? usd / catTotal : 0,
-        }))
-        .sort((a, b) => b.usd - a.usd);
+      const { topMarkets, categories } = decorateWithTaxonomy(
+        profile,
+        eventCats,
+      );
 
       // This tool's own history with the wallet, bounded to the recent window
       // (see lib/alertHits for the LIKE-probe and lower-bound rationale).
@@ -201,14 +296,20 @@ export async function GET(
         alertHitsWindowDays: ALERT_HITS_WINDOW_DAYS,
         recent,
       });
-    } finally {
-      db.close();
+    } catch (e) {
+      // 上游故障走与限流同一条降级路:本地档案 + 客户端稍后重试。
+      // (此前这里直接回 {error},整页跟着变成一条红字。)
+      console.error("[/api/wallet] live dossier failed, degrading:", e);
+      return await localOnlyDossier(db, address, "upstream_error", 30);
     }
   } catch (e) {
-    console.error("[/api/wallet] profile failed:", e);
+    // 连本地组装都失败(SQLite 故障等)才是真·错误,保留旧错误信封。
+    console.error("[/api/wallet] dossier failed:", e);
     return Response.json(
       { error: e instanceof Error ? e.message : String(e) },
       { status: 200 },
     );
+  } finally {
+    db.close();
   }
 }
