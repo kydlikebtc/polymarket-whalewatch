@@ -12,6 +12,14 @@ export const DICT_WALLET: Record<string, string> = {
   加载失败: "Failed to load",
   "档案加载中…": "Loading dossier…",
 
+  // -------- 降级横幅与自动重试(限流/上游故障 ≠ 无数据)
+  "⏳ 实时档案被限流（公共接口预算已满）——先展示本地留存数据。":
+    "⏳ Live dossier rate-limited (public API budget exhausted) — showing locally stored data first.",
+  "⚠️ 上游接口暂时不可用——先展示本地留存数据。":
+    "⚠️ Upstream API temporarily unavailable — showing locally stored data first.",
+  "{n}s 后自动重试": "Auto-retrying in {n}s",
+  立即重试: "Retry now",
+
   // -------- KPI 五卡
   已结算胜率: "Settled win rate",
   "高频做市/机器人(交易过大量不同市场):做市赚点差、非定向下注,胜率不适用":
