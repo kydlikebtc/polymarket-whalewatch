@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 430 commits, 2026-06-23 → 2026-08-27. Test suite at the end of that range: 1748 tests across
-135 files (`npm test`).
+Scope: 430 commits, 2026-06-23 → 2026-08-27. Test suite at the end of that range: 1771 tests across
+138 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -36,6 +36,44 @@ Scope: 430 commits, 2026-06-23 → 2026-08-27. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-27 — The content engine: a daily aggregation base and three readings of it
+
+Everything here talks about the MARKET's own facts, not this site's edge — which is exactly why
+none of it waits for the 30-day gate. One new base, three products on top, and on its very first
+real day the divergence detector produced the kind of line this batch exists for: small orders
+buying Under +$33.7k while whales bought Over +$473k on the same Real Madrid total.
+
+**The base: `market_daily`.** A new engine loop rebuilds yesterday's 24h deep window once after
+UTC close ($2k floor, the scanner's own fetch) and aggregates per market: volume, wallet count,
+top outcome, one-sidedness, size-bucket flows (small $2k–10k / whale ≥$50k, the whale line pinned
+to `HEAVY_MIN_USD` by a test), first→last price on the top outcome. Deliberately NOT an
+accumulator on the 5-minute consensus cycle — overlapping windows demand cross-cycle dedup that
+dies on every restart; a once-daily rebuild is idempotent by construction. Truncation honesty
+travels with each row (`covered_from_sec`), and a failed fetch does NOT claim the day marker —
+the opposite of Telegram's claim-first, because here retrying beats "one failure silences a day
+forever". History is not back-filled: the board thickens from deploy day and says so.
+
+**`/pulse` — anomaly board + small-vs-whale divergence.** Scores are computed at read time (the
+formula will evolve; persisting it would mean backfills) from four inspectable components —
+volume surge (own 14-day baseline when ≥3 days, else cross-sectional percentile, labeled),
+one-sidedness, whale share, intraday move — because a composite score that cannot be unfolded is
+exactly what the strategy roadmap forbids. A $10k materiality floor keeps one-fill markets out.
+Divergence rows demand a positive net direction on BOTH buckets ($5k/$50k floors) and never say
+"retail": below the fetch floor true retail is invisible, so the copy says "small orders".
+
+**`/calibration` — is Polymarket itself well-priced?** Per 10¢ band: market-implied mean vs
+realized frequency, overall and per category, with intervals from the existing
+`clusteredInterval` — one market's many alerts are copies of one random draw, the August
+correction's lesson reused wholesale (the demo showed it live: 8 observations on 1 market got a
+21–100% interval). The selection-bias disclosure is rendered as a standing callout, not a
+footnote: observations are alert moments on covered markets, and conclusions extend exactly that
+far. This page states plainly it is NOT the site's signal record.
+
+Both pages are bilingual, sit in the 市场 nav group and the sitemap, and are served by two new
+public zero-upstream endpoints (`/api/pulse`, `/api/calibration`). X-broadcast wiring for the
+board is deliberately a separate batch — a new post kind touches quota, templates and /manage at
+once.
 
 ### 2026-08-27 — Three new outlets: an MCP server, embeddable cards, a public dataset
 

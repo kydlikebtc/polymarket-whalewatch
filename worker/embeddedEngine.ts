@@ -32,6 +32,7 @@ import { runFollowCycle } from "../lib/follow";
 import { fetchAskBook } from "../lib/orderBook";
 import { fetchPriceAt, fetchPriceSeries } from "../lib/priceHistory";
 import { runExitSimBackfill } from "../lib/exitCounterfactual";
+import { runMarketDailyCycle, SMALL_MIN_USD } from "../lib/marketDaily";
 import { wrapSendWithHealth } from "../lib/telegramHealth";
 import {
   createBackfillState,
@@ -510,6 +511,30 @@ export function startAlertEngine(): void {
   // also carries firehose + follow on its shared window) and the evidence
   // backfill (60s) so startup doesn't stack fetches.
   setTimeout(outcomeBackfillLoop, 90_000);
+
+  // --- Market-daily aggregation (内容引擎共享底座) ------------------------
+  // UTC 午夜后把昨天的 24h 窗口一次性聚合进 market_daily(/pulse 的数据层)。
+  // 30min 轮询只是「查一下昨天做了没」,真正的抓取每天至多一次;抓取失败不写
+  // 日标记、下一轮重试(lib/marketDaily.ts 的裁决)。刻意不 beat 心跳:日节拍
+  // 配 1h 默认停跳阈值必然假警报,新鲜度由 /api/pulse 的 latestDay 自述。
+  const MARKET_DAILY_INTERVAL_MS = 30 * 60_000;
+  async function marketDailyLoop() {
+    try {
+      await runMarketDailyCycle(db, {
+        fetchWindow: (sinceSec) =>
+          getTradesWindowDeep({
+            minUsd: SMALL_MIN_USD,
+            sinceSec,
+            maxPages: 20,
+          }),
+      });
+    } catch (e) {
+      console.error("[engine] market-daily aggregation failed", e);
+    }
+    setTimeout(marketDailyLoop, MARKET_DAILY_INTERVAL_MS);
+  }
+  // 150s 首跑:错峰在共识(30s)/证据回填(60s)/结算回填(90s)之后。
+  setTimeout(marketDailyLoop, 150_000);
 
   // --- Bot query loop (🎯 市场信号卡) ------------------------------------
   // DM the bot a Polymarket link / slug / conditionId → the market signal

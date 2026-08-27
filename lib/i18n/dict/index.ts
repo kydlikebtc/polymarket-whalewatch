@@ -13,6 +13,8 @@ import { DICT_MARKET } from "./market";
 import { DICT_GLOSSARY } from "./glossary";
 import { DICT_MISC } from "./misc";
 import { DICT_STATUS } from "./status";
+import { DICT_PULSE } from "./pulse";
+import { DICT_CALIBRATION } from "./calibration";
 
 export const DICT: Record<string, string> = {
   ...DICT_COMMON,
@@ -28,4 +30,6 @@ export const DICT: Record<string, string> = {
   ...DICT_GLOSSARY,
   ...DICT_MISC,
   ...DICT_STATUS,
+  ...DICT_PULSE,
+  ...DICT_CALIBRATION,
 };

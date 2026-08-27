@@ -81,6 +81,8 @@ const NAV: NavEntry[] = [
     items: [
       { href: "/accumulation", label: "拆单累计" },
       { href: "/market", label: "市场卡" },
+      { href: "/pulse", label: "市场脉搏" },
+      { href: "/calibration", label: "市场校准" },
     ],
   },
   {
