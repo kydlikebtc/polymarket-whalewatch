@@ -73,6 +73,7 @@ describe("GET params/defaults", () => {
       pregameMaxH: 6,
       settledDailyCap: DAILY_CAP.settled,
       weeklyUtcHour: 13,
+      pulseUtcHour: 14,
     });
     expect(j.defaults).toEqual(j.params);
     expect(j.budgetUsd).toBe(15);
@@ -86,6 +87,8 @@ describe("GET params/defaults", () => {
       pregame: null,
       weekly: null,
       settled: null,
+      pulse: null,
+      divergence: null,
     });
     expect((j.templateVocab as Record<string, string[]>).whale).toContain(
       "title",

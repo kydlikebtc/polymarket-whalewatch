@@ -16,6 +16,7 @@ import type { DB } from "./db";
 import { DAILY_CAP } from "./xQuota";
 import { PREGAME_MIN_H, PREGAME_MAX_H } from "./xPregame";
 import { WEEKLY_POST_UTC_HOUR } from "./xWeekly";
+import { PULSE_POST_UTC_HOUR } from "./xPulse";
 import { WHALE_SIREN_USD } from "./xComposer";
 
 export interface XBroadcastParams {
@@ -42,6 +43,8 @@ export interface XBroadcastParams {
   settledDailyCap: number;
   /** 周报发帖时刻(周一的 UTC 整点,0-23)。 */
   weeklyUtcHour: number;
+  /** 市场脉搏日帖时刻(每日的 UTC 整点,0-23;日榜与分歧两类共用)。 */
+  pulseUtcHour: number;
 }
 
 /** env 派生的两个默认值(lib/config 解析后传入,本模块不碰 process.env)。 */
@@ -64,6 +67,7 @@ export function defaultXParams(env: XParamEnvDefaults): XBroadcastParams {
     pregameMaxH: PREGAME_MAX_H,
     settledDailyCap: DAILY_CAP.settled,
     weeklyUtcHour: WEEKLY_POST_UTC_HOUR,
+    pulseUtcHour: PULSE_POST_UTC_HOUR,
   };
 }
 
@@ -123,6 +127,7 @@ export function getXBroadcastParams(
   }
   if (isCap(p.settledDailyCap)) out.settledDailyCap = p.settledDailyCap;
   if (isUtcHour(p.weeklyUtcHour)) out.weeklyUtcHour = p.weeklyUtcHour;
+  if (isUtcHour(p.pulseUtcHour)) out.pulseUtcHour = p.pulseUtcHour;
 
   // 窗口倒挂(手改库才可能出现):两端一起回落 —— 空窗口会让赛前线静默
   // 消失,比参数被重置更难察觉。

@@ -25,6 +25,8 @@ export const DEFAULT_X_TEMPLATES: XTemplates = {
   pregame: null,
   weekly: null,
   settled: null,
+  pulse: null,
+  divergence: null,
 };
 
 const CONFIG_KEY = "x_broadcast_templates";
@@ -124,6 +126,21 @@ const SAMPLE_VARS: Record<XPostKind, Record<string, string>> = {
     bestRoi: "+12.3%",
     url: "https://whalewatch.wired.fund/follow?utm_source=x",
     tags: "#Polymarket #PredictionMarkets",
+  },
+  pulse: {
+    day: "Aug 26 (UTC)",
+    score: "84",
+    why: "10.7× its volume baseline · 70% one-sided · whales 56% of flow",
+    runners: "#2 Fed cuts in September? (45) · #3 US Open WTA qualifier (41)",
+    tags: "#Polymarket #Sports #NBA",
+  },
+  divergence: {
+    smallOutcome: "UNDER",
+    smallUsd: "$33.7K",
+    whaleOutcome: "OVER",
+    whaleUsd: "$473K",
+    kicker: "One side is wrong.",
+    tags: "#Polymarket #Sports",
   },
 };
 

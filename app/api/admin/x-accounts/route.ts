@@ -54,6 +54,8 @@ const Body = z.discriminatedUnion("action", [
       pregame: z.boolean().optional(),
       weekly: z.boolean().optional(),
       settled: z.boolean().optional(),
+      pulse: z.boolean().optional(),
+      divergence: z.boolean().optional(),
     }),
   }),
   z.object({
@@ -75,6 +77,7 @@ const Body = z.discriminatedUnion("action", [
       pregameMaxH: z.number().finite().positive().max(168).optional(),
       settledDailyCap: z.number().int().min(1).optional(),
       weeklyUtcHour: z.number().int().min(0).max(23).optional(),
+      pulseUtcHour: z.number().int().min(0).max(23).optional(),
     }),
   }),
   z.object({
@@ -87,6 +90,8 @@ const Body = z.discriminatedUnion("action", [
       pregame: z.string().max(2000).nullable().optional(),
       weekly: z.string().max(2000).nullable().optional(),
       settled: z.string().max(2000).nullable().optional(),
+      pulse: z.string().max(2000).nullable().optional(),
+      divergence: z.string().max(2000).nullable().optional(),
     }),
   }),
 ]);
