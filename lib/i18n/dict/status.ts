@@ -29,8 +29,38 @@ export const DICT_STATUS: Record<string, string> = {
 
   更新于: "Updated at",
   "每 30 秒自动刷新": "auto-refreshes every 30s",
-  "本页只呈现当前状态：心跳表按循环留存当日计数，没有跨日的历史时间序列，因此不提供 uptime 曲线与事件时间线。":
-    "This page shows current state only: heartbeats are stored per loop with same-day counters and no cross-day time series, so no uptime chart or incident timeline is offered.",
+  "心跳表按循环只留存当日计数；跨日历史由共识循环逐轮落库的实测时间戳重建（上方连续性区）——每一格都有原始行背书，不做推测式 uptime。":
+    "Heartbeats keep same-day counters only; cross-day history is rebuilt from the consensus loop's per-cycle measured timestamps (the continuity section above) — every cell is backed by raw rows, never inferred uptime.",
+
+  // 数据连续性(30 天起算时钟)
+  "数据连续性 · 30 天起算时钟": "Data continuity · the 30-day clock",
+  "攒满 {n} 个不间断 UTC 日后重推所有策略阈值 —— 这是全站 edge 数字的前置闸门。":
+    "After {n} uninterrupted UTC days every strategy threshold gets re-derived — the gate in front of every edge figure on this site.",
+  天: "days",
+  "尚无循环记录 —— 引擎从未在这个库上跑过共识循环。":
+    "No cycle records yet — the engine has never run its consensus loop against this database.",
+  "已达标 · 自 {d} 起连续覆盖":
+    "Gate reached · covered without interruption since {d}",
+  "起算日 {d}（UTC）· 距 30 天闸门还差 {n} 天":
+    "Clock started {d} (UTC) · {n} day(s) to the 30-day gate",
+  "连续覆盖尚未形成 —— 从下一个完整 UTC 日重新起算":
+    "No unbroken run yet — the clock restarts with the next full UTC day",
+  "今天进行中 · 暂无断档": "Today in progress · no interruption so far",
+  "今天进行中 · 已出现断档，今天将不计入":
+    "Today in progress · already interrupted; today will not count",
+  "{d} · 覆盖 · {n} 轮": "{d} · covered · {n} cycles",
+  "{d} · 断档 · 最长停顿 {t}": "{d} · interrupted · longest stall {t}",
+  "{d} · 记录起点日（从中途开始，不计入）":
+    "{d} · first recorded day (started mid-day; not counted)",
+  "{d} · 早于记录起点": "{d} · before records began",
+  "{d} · 今天 · 进行中": "{d} · today · in progress",
+  覆盖: "Covered",
+  断档: "Interrupted",
+  起点日: "First day",
+  无记录: "No records",
+  今天: "Today",
+  "判定：共识循环每 5 分钟落一轮实测时间戳，相邻两轮间隔超过 {t} 即记断档 —— 与下表判停跳同一把尺；跨午夜的断档两天都不计入；按 UTC 日历日。记录始于 {d}。":
+    "Verdict rule: the consensus loop writes one measured timestamp every 5 minutes; any inter-cycle gap over {t} counts as an interruption — the same yardstick the table below uses for stalls. A gap crossing midnight disqualifies both days; days are UTC calendar days. Records begin {d}.",
 
   // 循环名与停跳影响(app/loopMeta.ts)
   大额成交告警: "Large-fill alerts",

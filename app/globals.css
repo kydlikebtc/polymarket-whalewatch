@@ -1268,6 +1268,109 @@ tr:hover .copy-btn,
   white-space: normal;
 }
 
+/* ---- 数据连续性（30 天起算时钟，/status） ----
+   条带的每一格背后都是 cycle_metrics 的原始行——配色只区分「计入/不计入/
+   未知」三种叙事：绿=覆盖、红=断档、灰系=不计入（起点日/起点前）、
+   虚线=今天（未结束，不参与判定）。 */
+.cont-card {
+  border: 1px solid var(--n-150);
+  background: var(--n-0);
+  border-radius: var(--r-md);
+  padding: var(--s-5);
+  margin-bottom: var(--s-5);
+}
+.cont-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--s-4);
+  margin-bottom: var(--s-3);
+}
+.cont-title {
+  font-size: var(--t-lg);
+  font-weight: 600;
+  color: var(--n-900);
+}
+.cont-streak {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-1);
+  white-space: nowrap;
+}
+.cont-streak__num {
+  font-size: var(--t-2xl);
+  font-weight: 600;
+  color: var(--n-900);
+}
+.cont-streak__unit {
+  font-size: var(--t-sm);
+  color: var(--n-600);
+}
+.cont-gate {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--s-3);
+}
+.cont-progress {
+  flex: 1 1 120px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--n-100);
+  overflow: hidden;
+}
+.cont-progress__fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--up-500);
+}
+.cont-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-bottom: var(--s-2);
+}
+.cont-cell {
+  display: inline-block;
+  width: 8px;
+  height: 22px;
+  border-radius: 2px;
+  background: var(--n-150);
+}
+.cont-cell--covered {
+  background: var(--up-500);
+}
+.cont-cell--gap {
+  background: var(--down-500);
+}
+.cont-cell--partial {
+  background: var(--n-300);
+}
+.cont-cell--pre {
+  background: var(--n-100);
+}
+.cont-cell--pending {
+  background: var(--n-0);
+  border: 1px dashed var(--n-400);
+}
+.cont-legend {
+  display: flex;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--s-2);
+  font-size: var(--t-xs);
+  color: var(--n-600);
+}
+.cont-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+.cont-legend .cont-cell {
+  height: 10px;
+}
+
 @media (max-width: 640px) {
   .status-banner {
     padding: var(--s-4);

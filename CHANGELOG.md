@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 419 commits, 2026-06-23 → 2026-08-26. Test suite at the end of that range: 1678 tests across
-127 files (`npm test`).
+Scope: 427 commits, 2026-06-23 → 2026-08-27. Test suite at the end of that range: 1719 tests across
+132 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -36,6 +36,44 @@ Scope: 419 commits, 2026-06-23 → 2026-08-26. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-27 — The 30-day clock goes public, and the bus[] whitelist gets its lock
+
+Two pieces, one theme: promises that used to live in someone's head now live in tests and on a
+public page.
+
+**The continuity clock.** The README has long carried one unchecked item ahead of all others:
+"30 uninterrupted trading days of data, then re-derive every threshold". The August edge audit
+showed why it gates everything — two months live, yet only ~10 usable trading days around a
+43-day outage. But the clock itself was invisible: its start date would have had to be announced
+by hand, an outage left no public trace, and /status refused on principle to draw an uptime bar
+("one invented number poisons every real one on the page") because heartbeats only keep same-day
+counters. The unlock was noticing that `cycle_metrics` — the P0.9 signal-density dial — already
+IS a real cross-day series: one timestamped row per consensus cycle, every 5 minutes, written
+only when the trade-window fetch succeeded, never pruned.
+
+New public endpoint `GET /api/continuity` plus a continuity section on /status: a 61-day strip
+(green covered · red interrupted · grey not counted · dashed today), headlined by the streak of
+complete covered UTC days — the clock's reading. The start date is **derived** (first day of the
+current unbroken run), never declared. Verdict rules are deliberately conservative and reuse the
+exact /api/health stall yardstick (20 min): a within-tolerance restart leaves no trace; a gap
+crossing midnight disqualifies both days it touches; the first recorded day only counts if it
+started within tolerance of midnight; today never counts until it is over. The query carries a
+two-day margin plus a synthetic boundary pair, so an outage longer than the fetch window cannot
+masquerade as coverage on the strip's left edge. `docs/api-access.md` picked the endpoint up in
+all three places, and the /status footnote that used to say "no cross-day series exists" now
+says why every cell is backed by raw rows.
+
+**The parity lock.** `bus[]` projects alerts through a field whitelist — the right lock (it keeps
+`ConsensusWallet` internals out of the public contract), but one that had missed fields three
+batches running: categories (2026-08-19), `wallets` (`73c3abd`), `avgPrice` (`0edf02f`). Nothing
+compared the two schemas, so nothing went red. `lib/busFeedParity.test.ts` now pins them from
+both ends: `Signal`'s keys sit in a runtime list whose completeness tsc itself enforces
+(`Record<Exclude<keyof Signal, listed>, never>`), the shared set must equal `BusSignalSchema`
+minus an explicitly documented diff, and a fully-rich fixture is projected then swept
+field-by-field for null — the exact shape of the `avgPrice` miss, which schema comparison alone
+would not have caught. Counterfactual check: reintroducing that bug fails the guard by name;
+adding a field to `Signal` without deciding its `bus[]` fate no longer compiles.
 
 ### 2026-08-26 — Every broadcast knob moves behind /manage
 
