@@ -311,7 +311,13 @@ const IMPACT_CLAIM = "more than this market's entire 24h volume";
  * vars 构建与词表不漂移。值语义:数据缺失的段渲染为空串,模板不必设防。
  */
 export const TEMPLATE_VOCAB: Record<
-  "whale" | "consensus" | "pregame" | "settled" | "weekly",
+  | "whale"
+  | "consensus"
+  | "pregame"
+  | "settled"
+  | "weekly"
+  | "pulse"
+  | "divergence",
   readonly string[]
 > = {
   whale: [
@@ -357,6 +363,16 @@ export const TEMPLATE_VOCAB: Record<
     "best",
     "bestRoi",
     "url",
+    "tags",
+  ],
+  pulse: ["title", "day", "score", "why", "runners", "tags"],
+  divergence: [
+    "title",
+    "smallOutcome",
+    "smallUsd",
+    "whaleOutcome",
+    "whaleUsd",
+    "kicker",
     "tags",
   ],
 };
@@ -852,6 +868,169 @@ export function composeWeeklyPost(i: WeeklyPostInput): string {
 
 // 19 档种子名 → 英文(与 lib/db.ts seeds v4 一一对应;新档缺映射时回退原名,
 // 宁可中文名出现在英文帖里也不显示错误翻译)。
+// ---- 市场脉搏日帖(内容引擎,2026-08-27) ------------------------------------
+
+const PULSE_MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/** "2026-08-26" → "Aug 26 (UTC)"。解析失败原样返回 —— 日期串坏了也不炸帖。 */
+function pulseDayLabel(day: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!m) return day;
+  return `${PULSE_MONTHS[Number(m[2]) - 1]} ${Number(m[3])} (UTC)`;
+}
+
+/** 榜单次名的标题短化:runners 不是 fitPost 的锚点,只能在数据侧预截。 */
+function shortTitle(title: string, max = 30): string {
+  const s = sanitizeTitle(title);
+  const chars = [...s];
+  return chars.length <= max ? s : chars.slice(0, max - 1).join("") + "…";
+}
+
+export interface PulsePostInput {
+  /** UTC 日(yyyy-mm-dd),即 /pulse 的 latestDay。 */
+  day: string;
+  title: string;
+  score: number;
+  /** 今日量 ÷ 自身基线均值;基线不足为 null(该段省略)。 */
+  volRatio: number | null;
+  oneSidedPct: number;
+  whaleSharePct: number;
+  /** 次名(≤2 条进帖,富梯级专属)。 */
+  runners: { title: string; score: number }[];
+  category?: string | null;
+  subcategory?: string | null;
+  /** 自定义文案模板(/manage 可配):null/省略 = 内置文案。 */
+  template?: string | null;
+}
+
+/**
+ * 异常市场日榜帖。与 /pulse 页同源同口径:异常分四分量,帖里给「为什么它
+ * 异常」的短句拆解 —— 一个不能解释的总分连一条推文都撑不起来。
+ * 降级阶梯:丢次名行 → 丢拆解行 → 只剩抬头+标题 → 截标题。
+ */
+export function composePulsePost(i: PulsePostInput): string {
+  const whyParts: string[] = [];
+  if (i.volRatio != null) {
+    whyParts.push(`${i.volRatio.toFixed(1)}× its volume baseline`);
+  }
+  if (i.oneSidedPct > 0) {
+    whyParts.push(`${Math.round(i.oneSidedPct)}% one-sided`);
+  }
+  if (i.whaleSharePct > 0) {
+    whyParts.push(`whales ${Math.round(i.whaleSharePct)}% of flow`);
+  }
+  const why = whyParts.join(" · ");
+  const runners = i.runners
+    .slice(0, 2)
+    .map((r, idx) => `#${idx + 2} ${shortTitle(r.title)} (${r.score})`)
+    .join(" · ");
+  const tags = buildTags({
+    category: i.category,
+    subcategory: i.subcategory,
+    title: i.title,
+  });
+  const head = `📊 MARKET PULSE — ${pulseDayLabel(i.day)}`;
+  if (i.template) {
+    const out = renderCustom(
+      i.template,
+      {
+        day: pulseDayLabel(i.day),
+        score: String(i.score),
+        why,
+        runners,
+        tags,
+      },
+      i.title,
+      false,
+    );
+    if (out != null) return out;
+  }
+  const story = (title: string) =>
+    `${head}\n\n${title}\n└ most abnormal market · ${i.score}/100`;
+  const variant = (withWhy: boolean, withRunners: boolean) => (title: string) =>
+    story(title) +
+    (withWhy && why ? `\n└ ${why}` : "") +
+    (withRunners && runners ? `\n\nAlso hot: ${runners}` : "") +
+    `\n\n${tags}`;
+  return fitPost(
+    [variant(true, true), variant(true, false), variant(false, false)],
+    sanitizeTitle(i.title),
+  );
+}
+
+export interface DivergencePostInput {
+  title: string;
+  smallOutcome: string;
+  smallNetUsd: number;
+  whaleOutcome: string;
+  whaleNetUsd: number;
+  category?: string | null;
+  subcategory?: string | null;
+  /** 自定义文案模板(/manage 可配):null/省略 = 内置文案。 */
+  template?: string | null;
+}
+
+const DIVERGENCE_KICKER = "One side is wrong.";
+
+/**
+ * 小单 vs 鲸鱼分歧帖。口径与 /pulse 页一致:双边都是**正向净买**且材料性
+ * 达标才成帖(数据侧已筛)——文案说 small orders,绝不说 retail(抓取
+ * 下限之下的真散户不可见)。降级阶梯:丢 kicker → 双行并一行 → 截标题。
+ */
+export function composeDivergencePost(i: DivergencePostInput): string {
+  const small = outcomeDisplay(i.smallOutcome);
+  const whale = outcomeDisplay(i.whaleOutcome);
+  const smallUsd = usdCompact(i.smallNetUsd);
+  const whaleUsd = usdCompact(i.whaleNetUsd);
+  const tags = buildTags({
+    category: i.category,
+    subcategory: i.subcategory,
+    title: i.title,
+  });
+  if (i.template) {
+    const out = renderCustom(
+      i.template,
+      {
+        smallOutcome: small,
+        smallUsd,
+        whaleOutcome: whale,
+        whaleUsd,
+        kicker: DIVERGENCE_KICKER,
+        tags,
+      },
+      i.title,
+      false,
+    );
+    if (out != null) return out;
+  }
+  const head = "⚔️ SPLIT TAPE — small money vs whales";
+  const twoLine = (title: string) =>
+    `${head}\n\n${title}\n└ small orders buying ${small} (+${smallUsd})\n└ whales buying ${whale} (+${whaleUsd})`;
+  const oneLine = (title: string) =>
+    `${head}\n\n${title}\n└ small: ${small} +${smallUsd} · whales: ${whale} +${whaleUsd}`;
+  return fitPost(
+    [
+      (t) => `${twoLine(t)}\n\n${DIVERGENCE_KICKER}\n\n${tags}`,
+      (t) => `${twoLine(t)}\n\n${tags}`,
+      (t) => `${oneLine(t)}\n\n${tags}`,
+    ],
+    sanitizeTitle(i.title),
+  );
+}
+
 export const STRATEGY_EN: Record<string, string> = {
   保守: "Conservative Consensus",
   激进: "Aggressive Consensus",

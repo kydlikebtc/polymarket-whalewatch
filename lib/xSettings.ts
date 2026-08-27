@@ -9,7 +9,13 @@
 import type { DB } from "./db";
 
 export type XPostKind =
-  "whale" | "consensus" | "pregame" | "weekly" | "settled";
+  | "whale"
+  | "consensus"
+  | "pregame"
+  | "weekly"
+  | "settled"
+  | "pulse"
+  | "divergence";
 
 export const X_KINDS: { kind: XPostKind; label: string; hint: string }[] = [
   {
@@ -37,6 +43,16 @@ export const X_KINDS: { kind: XPostKind; label: string; hint: string }[] = [
     label: "② 结算战报(策略事件)",
     hint: "对已发过的信号帖回复战果(赢输都发),形成「说了什么 → 后来怎样」的 thread。只回自己的帖",
   },
+  {
+    kind: "pulse",
+    label: "📊 异常市场日榜(市场汇总,非信号线)",
+    hint: "每日一帖:昨日最异常市场 + 四分量拆解(/pulse 同源)。数据就绪后在设定时刻发",
+  },
+  {
+    kind: "divergence",
+    label: "⚔️ 小单vs鲸鱼分歧(市场汇总,非信号线)",
+    hint: "每日至多一帖:小单与鲸鱼站在对立面的市场(双边材料性达标才有)。无分歧的日子静默",
+  },
 ];
 
 export type XKindSwitches = Record<XPostKind, boolean>;
@@ -50,6 +66,10 @@ export const DEFAULT_X_KINDS: XKindSwitches = {
   pregame: true,
   weekly: true,
   settled: false,
+  // 内容引擎两类(2026-08-27)同 settled 纪律:新能力默认关,运营者显式
+  // 打开才开始往时间线上发东西。
+  pulse: false,
+  divergence: false,
 };
 
 const CONFIG_KEY = "x_broadcast_kinds";

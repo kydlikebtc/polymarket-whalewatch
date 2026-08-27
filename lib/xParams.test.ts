@@ -9,6 +9,7 @@ import {
 import { DAILY_CAP } from "./xQuota";
 import { PREGAME_MIN_H, PREGAME_MAX_H } from "./xPregame";
 import { WEEKLY_POST_UTC_HOUR } from "./xWeekly";
+import { PULSE_POST_UTC_HOUR } from "./xPulse";
 import { WHALE_SIREN_USD } from "./xComposer";
 
 // env 派生的两个默认值(生产里来自 X_MONTHLY_BUDGET_USD / X_MIN_TRADE_USD)。
@@ -37,6 +38,7 @@ describe("defaultXParams", () => {
       pregameMaxH: PREGAME_MAX_H,
       settledDailyCap: DAILY_CAP.settled,
       weeklyUtcHour: WEEKLY_POST_UTC_HOUR,
+      pulseUtcHour: PULSE_POST_UTC_HOUR,
     });
   });
 
@@ -68,6 +70,7 @@ describe("getXBroadcastParams", () => {
       pregameMaxH: 12,
       settledDailyCap: 8,
       weeklyUtcHour: 9,
+      pulseUtcHour: 16,
     };
     setXBroadcastParams(db, p);
     expect(getXBroadcastParams(db, ENV)).toEqual(p);
