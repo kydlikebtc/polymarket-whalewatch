@@ -16,10 +16,11 @@ import { loopMeta } from "../loopMeta";
 // 数据源是既有的公开 /api/health(docker healthcheck 与外部 uptime 探针也
 // 用它),零新增接口。
 //
-// 刻意没有的东西:60 天 uptime 条与历史事件时间线。heartbeats 表以 loop 为
-// 主键,只存当前状态与**当日**计数(lib/heartbeat.ts),没有时间序列 ——
-// 画一条看起来很专业的 99.9% 柱状图,数据是编的。状态页一旦有一个编的数字,
-// 它剩下的每个数字都不值钱了。当日最长停顿是我们真有的那部分,就只给这个。
+// 历史连续性(60 天条带 + 30 天起算时钟,/api/continuity):数据来自共识
+// 循环逐轮落库的实测时间戳(cycle_metrics,每 5 分钟真实一行)—— 每一格
+// 都有原始行背书,不是推测式 uptime。heartbeats 仍只存当日计数,所以逐
+// 循环的 uptime 曲线依旧不提供:状态页一旦有一个编的数字,它剩下的每个
+// 数字都不值钱了 —— 只画有真序列背书的那一条。
 
 const REFRESH_MS = 30_000;
 
@@ -44,6 +45,25 @@ interface HealthReport {
   error?: string;
 }
 
+interface ContinuityDay {
+  day: string;
+  status: "covered" | "gap" | "partial" | "pre" | "pending";
+  cycles: number;
+  maxGapSec: number;
+}
+
+interface ContinuityReport {
+  gateDays: number;
+  tolSec: number;
+  recordStartDay: string | null;
+  days: ContinuityDay[];
+  streakDays: number;
+  streakStartDay: string | null;
+  streakClipped: boolean;
+  todayCoveredSoFar: boolean;
+  gateReached: boolean;
+}
+
 function durText(sec: number | null | undefined): string {
   if (sec == null) return "—";
   if (sec < 60) return `${sec}s`;
@@ -55,6 +75,7 @@ function durText(sec: number | null | undefined): string {
 export default function StatusPage() {
   const { t } = useLang();
   const [health, setHealth] = useState<HealthReport | null>(null);
+  const [cont, setCont] = useState<ContinuityReport | null>(null);
   // 网络失败与「引擎停跳」是两件事:前者是本页自己没拿到数据,后者是被
   // 监控的东西死了。混成一个红条会让读者以为服务挂了,而其实只是他断网。
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -70,6 +91,13 @@ export default function StatusPage() {
       setRefreshedAt(Math.floor(Date.now() / 1000));
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : String(e));
+    }
+    try {
+      // 连续性区独立取数:失败时保留上一次成功结果,不打扰主状态横幅。
+      const res = await fetch("/api/continuity");
+      if (res.ok) setCont((await res.json()) as ContinuityReport);
+    } catch {
+      /* 见上 —— 拿不到就先不渲染/保留旧值 */
     }
   }, []);
 
@@ -135,6 +163,126 @@ export default function StatusPage() {
           </div>
         </div>
       </section>
+
+      {cont && (
+        <section className="cont-card">
+          <div className="cont-head">
+            <div>
+              <div className="cont-title">
+                {t("数据连续性 · 30 天起算时钟")}
+              </div>
+              <div className="ds-hint">
+                {t(
+                  "攒满 {n} 个不间断 UTC 日后重推所有策略阈值 —— 这是全站 edge 数字的前置闸门。",
+                  { n: cont.gateDays },
+                )}
+              </div>
+            </div>
+            <div className="cont-streak">
+              <span className="cont-streak__num mono">
+                {cont.streakClipped ? "≥" : ""}
+                {cont.streakDays}
+              </span>
+              <span className="cont-streak__unit">{t("天")}</span>
+            </div>
+          </div>
+
+          {cont.recordStartDay == null ? (
+            <div className="ds-hint">
+              {t("尚无循环记录 —— 引擎从未在这个库上跑过共识循环。")}
+            </div>
+          ) : (
+            <>
+              <div className="cont-gate">
+                {cont.gateReached ? (
+                  <span className="status-pill status-pill--up">
+                    {t("已达标 · 自 {d} 起连续覆盖", {
+                      d: cont.streakStartDay ?? "—",
+                    })}
+                  </span>
+                ) : cont.streakDays > 0 ? (
+                  <>
+                    <div className="cont-progress" aria-hidden>
+                      <div
+                        className="cont-progress__fill"
+                        style={{
+                          width: `${Math.min(100, (cont.streakDays / cont.gateDays) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                    <span className="ds-hint" style={{ whiteSpace: "nowrap" }}>
+                      {t("起算日 {d}（UTC）· 距 30 天闸门还差 {n} 天", {
+                        d: cont.streakStartDay ?? "—",
+                        n: cont.gateDays - cont.streakDays,
+                      })}
+                    </span>
+                  </>
+                ) : (
+                  <span className="ds-hint">
+                    {t("连续覆盖尚未形成 —— 从下一个完整 UTC 日重新起算")}
+                  </span>
+                )}
+                <span
+                  className={`status-pill ${cont.todayCoveredSoFar ? "status-pill--up" : "status-pill--down"}`}
+                >
+                  {cont.todayCoveredSoFar
+                    ? t("今天进行中 · 暂无断档")
+                    : t("今天进行中 · 已出现断档，今天将不计入")}
+                </span>
+              </div>
+
+              <div className="cont-strip">
+                {cont.days.map((d) => (
+                  <span
+                    key={d.day}
+                    className={`cont-cell cont-cell--${d.status}`}
+                    title={
+                      d.status === "covered"
+                        ? t("{d} · 覆盖 · {n} 轮", { d: d.day, n: d.cycles })
+                        : d.status === "gap"
+                          ? t("{d} · 断档 · 最长停顿 {t}", {
+                              d: d.day,
+                              t: durText(d.maxGapSec),
+                            })
+                          : d.status === "partial"
+                            ? t("{d} · 记录起点日（从中途开始，不计入）", {
+                                d: d.day,
+                              })
+                            : d.status === "pre"
+                              ? t("{d} · 早于记录起点", { d: d.day })
+                              : t("{d} · 今天 · 进行中", { d: d.day })
+                    }
+                  />
+                ))}
+              </div>
+              <div className="cont-legend">
+                <span>
+                  <span className="cont-cell cont-cell--covered" /> {t("覆盖")}
+                </span>
+                <span>
+                  <span className="cont-cell cont-cell--gap" /> {t("断档")}
+                </span>
+                <span>
+                  <span className="cont-cell cont-cell--partial" />{" "}
+                  {t("起点日")}
+                </span>
+                <span>
+                  <span className="cont-cell cont-cell--pre" /> {t("无记录")}
+                </span>
+                <span>
+                  <span className="cont-cell cont-cell--pending" /> {t("今天")}
+                </span>
+              </div>
+              <div className="ds-hint">
+                {t(
+                  "判定：共识循环每 5 分钟落一轮实测时间戳，相邻两轮间隔超过 {t} 即记断档 —— 与下表判停跳同一把尺；跨午夜的断档两天都不计入；按 UTC 日历日。记录始于 {d}。",
+                  { t: durText(cont.tolSec), d: cont.recordStartDay },
+                )}
+              </div>
+            </>
+          )}
+        </section>
+      )}
 
       <div className="ds-table-wrap" style={{ marginBottom: "var(--s-4)" }}>
         <table className="ds-table">
@@ -226,7 +374,7 @@ export default function StatusPage() {
           </>
         )}
         {t(
-          "本页只呈现当前状态：心跳表按循环留存当日计数，没有跨日的历史时间序列，因此不提供 uptime 曲线与事件时间线。",
+          "心跳表按循环只留存当日计数；跨日历史由共识循环逐轮落库的实测时间戳重建（上方连续性区）——每一格都有原始行背书，不做推测式 uptime。",
         )}
       </div>
     </main>
