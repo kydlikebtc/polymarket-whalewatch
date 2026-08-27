@@ -1,0 +1,45 @@
+{
+  "name": "whalewatch-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for WhaleWatch — real-time Polymarket whale trades, smart-money consensus, data-continuity clock and the public track record, queryable by any Model Context Protocol client.",
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "bin": {
+    "whalewatch-mcp": "dist/server.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kydlikebtc/polymarket-whalewatch.git",
+    "directory": "mcp"
+  },
+  "homepage": "https://whalewatch.wired.fund",
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "polymarket",
+    "prediction-markets",
+    "whale-tracking",
+    "smart-money",
+    "claude"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}
