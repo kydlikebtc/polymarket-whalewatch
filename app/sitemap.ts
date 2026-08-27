@@ -16,6 +16,8 @@ const STATIC_PAGES: { path: string; priority: number }[] = [
   { path: "/consensus", priority: 0.8 },
   { path: "/accumulation", priority: 0.7 },
   { path: "/discovery", priority: 0.7 },
+  { path: "/pulse", priority: 0.7 },
+  { path: "/calibration", priority: 0.6 },
   { path: "/alerts", priority: 0.6 },
   { path: "/glossary", priority: 0.6 },
   // /status 不列入:它已从导航撤下,主动请搜索引擎收录一个不对外推的运维页

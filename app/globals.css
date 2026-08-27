@@ -1371,6 +1371,36 @@ tr:hover .copy-btn,
   height: 10px;
 }
 
+/* 市场脉搏（/pulse）——异常分构成 chips：每个分量一条微型条+数值，
+   「总分必须能看到组成」的最小可视化。 */
+.pulse-comps {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.pulse-comp {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: var(--t-xs);
+  color: var(--n-600);
+  white-space: nowrap;
+}
+.pulse-comp__bar {
+  display: inline-block;
+  width: 34px;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: var(--n-100);
+  overflow: hidden;
+}
+.pulse-comp__bar > span {
+  display: block;
+  height: 100%;
+  background: var(--acc-500, var(--up-500));
+  border-radius: var(--r-pill);
+}
+
 /* 嵌入代码片段（/record 与 /status 的「嵌入此卡」折叠块共用） */
 .embed-snippet {
   display: flex;
