@@ -1371,6 +1371,23 @@ tr:hover .copy-btn,
   height: 10px;
 }
 
+/* 嵌入代码片段（/record 与 /status 的「嵌入此卡」折叠块共用） */
+.embed-snippet {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: var(--s-2) 0;
+}
+.embed-snippet code {
+  flex: 1;
+  font-size: var(--t-xs);
+  background: var(--n-100);
+  padding: var(--s-2);
+  border-radius: var(--r-sm);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 640px) {
   .status-banner {
     padding: var(--s-4);

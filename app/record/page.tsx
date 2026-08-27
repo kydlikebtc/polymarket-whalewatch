@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { RecordFeed, RecordFeedStrategy } from "../../lib/recordFeed";
 import { formatRecordLine } from "../../lib/signalRecord";
+import { CopyButton } from "../ui";
 
 // 对外信号批次 3:公开信号战绩页。
 // 口径与 /follow 的区别是本页的存在理由:这里只统计**公开发出过**的信号
@@ -144,6 +145,10 @@ function StrategyCard({ s }: { s: RecordFeedStrategy }) {
 export default function RecordPage() {
   const [feed, setFeed] = useState<RecordFeed | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 嵌入代码要绝对地址,SSR 阶段没有 window —— 挂载后再补,避免水合错位。
+  const [origin, setOrigin] = useState("");
+  useEffect(() => setOrigin(window.location.origin), []);
+  const embedSnippet = `<iframe src="${origin}/embed/record" width="440" height="340" style="border:0" loading="lazy" title="WhaleWatch record"></iframe>`;
   useEffect(() => {
     fetch("/api/record")
       .then((r) => r.json())
@@ -200,6 +205,28 @@ export default function RecordPage() {
           ,链尾 <code>{feed.digest.tail?.slice(0, 16)}…</code> —— 任何人可按
           明细复算,事后删改任何一条信号,摘要必变。
         </div>
+      )}
+
+      <div className="ds-hint" style={{ marginTop: "var(--s-4)" }}>
+        ⬇ <a href="/api/dataset/record.csv">下载全量 CSV 数据集</a>
+        (已发布信号逐行台账,含未结算行 —— 分母诚实;CC BY 4.0,署名
+        whalewatch.wired.fund。防篡改校验走上方存证链,CSV 是便利导出不是
+        存证载体)
+      </div>
+
+      {origin && (
+        <details style={{ marginTop: "var(--s-3)" }}>
+          <summary className="ds-hint" style={{ cursor: "pointer" }}>
+            嵌入此战绩卡
+          </summary>
+          <div className="embed-snippet">
+            <code>{embedSnippet}</code>
+            <CopyButton text={embedSnippet} />
+          </div>
+          <div className="ds-hint">
+            嵌入卡 60 秒缓存、无脚本、自带署名回链;加 ?theme=dark 得深色版。
+          </div>
+        </details>
       )}
     </main>
   );

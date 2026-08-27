@@ -9,10 +9,12 @@
     "build": "next build",
     "start": "node scripts/dev-server.mjs start",
     "worker": "tsx worker/index.ts",
+    "mcp": "tsx mcp/server.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^12.11.1",
     "dotenv": "^17.4.2",
     "next": "^16.2.9",
