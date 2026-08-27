@@ -61,6 +61,9 @@ export const DICT_STATUS: Record<string, string> = {
   今天: "Today",
   "判定：共识循环每 5 分钟落一轮实测时间戳，相邻两轮间隔超过 {t} 即记断档 —— 与下表判停跳同一把尺；跨午夜的断档两天都不计入；按 UTC 日历日。记录始于 {d}。":
     "Verdict rule: the consensus loop writes one measured timestamp every 5 minutes; any inter-cycle gap over {t} counts as an interruption — the same yardstick the table below uses for stalls. A gap crossing midnight disqualifies both days; days are UTC calendar days. Records begin {d}.",
+  嵌入此徽章: "Embed this badge",
+  "嵌入卡 60 秒缓存、无脚本、自带署名回链；加 ?theme=dark 得深色版。":
+    "The embed is cached for 60s, script-free, and carries an attribution backlink; append ?theme=dark for the dark variant.",
 
   // 循环名与停跳影响(app/loopMeta.ts)
   大额成交告警: "Large-fill alerts",

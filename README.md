@@ -230,6 +230,8 @@ State lives in one SQLite file (31 tables). Most of it is **rebuildable cache** 
 - [x] Bilingual UI (中/EN) with coverage and term-conflict test gates
 - [x] Ops hardening: read-only guard, rate limits, daily snapshots, dead-man's switch
 - [x] Three-layer edge audit codified as a re-runnable script
+- [x] New outlets: MCP server (`npm run mcp`), embeddable record/status cards (`/embed/*`), public CSV dataset (CC BY 4.0)
+- [x] Content engine: daily market aggregates → anomaly board + small-vs-whale divergence (`/pulse`) + market calibration study (`/calibration`)
 - [ ] **30 uninterrupted trading days of data**, then re-derive every threshold — the blocker for everything below
 - [ ] Channel effectiveness scorecard (per-source forward hit-rate; the `source` column is the groundwork)
 - [ ] Accumulation → Telegram alerts (stateful, tier-crossing dedup)

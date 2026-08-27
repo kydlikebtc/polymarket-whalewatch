@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLang } from "../i18n";
 import { loopMeta } from "../loopMeta";
+import { CopyButton } from "../ui";
 
 // /status —— 公开状态页(参考 status.claude.com 的信息层次:整体横幅 →
 // 逐组件状态 → 事实脚注)。
@@ -80,6 +81,9 @@ export default function StatusPage() {
   // 监控的东西死了。混成一个红条会让读者以为服务挂了,而其实只是他断网。
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
+  // 嵌入代码要绝对地址,而 SSR 阶段没有 window —— 挂载后再补,避免水合错位。
+  const [origin, setOrigin] = useState("");
+  useEffect(() => setOrigin(window.location.origin), []);
 
   const load = useCallback(async () => {
     try {
@@ -279,6 +283,24 @@ export default function StatusPage() {
                   { t: durText(cont.tolSec), d: cont.recordStartDay },
                 )}
               </div>
+              {origin && (
+                <details style={{ marginTop: "var(--s-3)" }}>
+                  <summary className="ds-hint" style={{ cursor: "pointer" }}>
+                    {t("嵌入此徽章")}
+                  </summary>
+                  <div className="embed-snippet">
+                    <code>{`<iframe src="${origin}/embed/status" width="360" height="96" style="border:0" loading="lazy" title="WhaleWatch status"></iframe>`}</code>
+                    <CopyButton
+                      text={`<iframe src="${origin}/embed/status" width="360" height="96" style="border:0" loading="lazy" title="WhaleWatch status"></iframe>`}
+                    />
+                  </div>
+                  <div className="ds-hint">
+                    {t(
+                      "嵌入卡 60 秒缓存、无脚本、自带署名回链；加 ?theme=dark 得深色版。",
+                    )}
+                  </div>
+                </details>
+              )}
             </>
           )}
         </section>

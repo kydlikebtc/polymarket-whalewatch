@@ -1,3 +1,4 @@
+import type { DB } from "./db";
 import { LOOP_STALE_AFTER_SEC } from "./health";
 
 // 数据连续性重建(/status 的 30 天起算时钟)。README 路线图把「30 个不间断
@@ -166,4 +167,28 @@ export function computeContinuity(
     todayCoveredSoFar,
     gateReached: streakDays >= gate,
   };
+}
+
+/**
+ * 从 cycle_metrics 读取并重建连续性报告 —— /api/continuity 与 /embed/status
+ * 共用的取数层(两处各写一遍 SQL 迟早口径分叉)。取数窗比展示窗多 2 天,
+ * 理由见 computeContinuity 的 fetchStartSec 注释。
+ */
+export function readContinuity(
+  db: DB,
+  nowSec: number = Math.floor(Date.now() / 1000),
+): ContinuityReport {
+  const todayStart = nowSec - (nowSec % DAY);
+  const fetchStartSec = todayStart - (CONTINUITY_WINDOW_DAYS + 2) * DAY;
+  const ts = (
+    db
+      .prepare(
+        "SELECT ts FROM cycle_metrics WHERE loop = 'consensus' AND ts >= ? ORDER BY ts ASC",
+      )
+      .all(fetchStartSec) as { ts: number }[]
+  ).map((r) => r.ts);
+  const era = db
+    .prepare("SELECT MIN(ts) AS t FROM cycle_metrics WHERE loop = 'consensus'")
+    .get() as { t: number | null };
+  return computeContinuity(ts, { nowSec, eraFirstTs: era.t, fetchStartSec });
 }

@@ -7,22 +7,24 @@
 
 **基址**：`https://whalewatch.wired.fund`
 
-| 端点                     | 方法   | 鉴权          | 缓存 | 用途                                       |
-| ------------------------ | ------ | ------------- | ---- | ------------------------------------------ |
-| `/api/signals`           | `GET`  | API key       | 30s  | 主 feed：信号（事件）+ 视图                |
-| `/api/signals/list`      | `GET`  | API key       | 30s  | 名录：这把 key 实际收得到哪些信号（§4.1）  |
-| `/api/market-card/{cid}` | `GET`  | API key       | 30s  | 单市场深度卡（`realtime` + `market` 范围） |
-| `/api/record`            | `GET`  | 无（公开）    | 60s  | 已公开发布信号的战绩与存证链               |
-| `/api/health`            | `GET`  | 无（公开）    | 无   | 引擎存活探针（200 / 503）                  |
-| `/api/continuity`        | `GET`  | 无（公开）    | 无   | 数据连续性 · 30 天起算时钟（§13）          |
-| webhook（你的端点）      | `POST` | HMAC 签名验证 | —    | 事件推送（`realtime` tier 专属）           |
+| 端点                            | 方法   | 鉴权          | 缓存 | 用途                                       |
+| ------------------------------- | ------ | ------------- | ---- | ------------------------------------------ |
+| `/api/signals`                  | `GET`  | API key       | 30s  | 主 feed：信号（事件）+ 视图                |
+| `/api/signals/list`             | `GET`  | API key       | 30s  | 名录：这把 key 实际收得到哪些信号（§4.1）  |
+| `/api/market-card/{cid}`        | `GET`  | API key       | 30s  | 单市场深度卡（`realtime` + `market` 范围） |
+| `/api/record`                   | `GET`  | 无（公开）    | 60s  | 已公开发布信号的战绩与存证链               |
+| `/api/health`                   | `GET`  | 无（公开）    | 无   | 引擎存活探针（200 / 503）                  |
+| `/api/continuity`               | `GET`  | 无（公开）    | 无   | 数据连续性 · 30 天起算时钟（§13）          |
+| `/api/dataset/record.csv`       | `GET`  | 无（公开）    | 300s | 已发布信号全量台账 CSV 数据集（§13）       |
+| `/embed/record` `/embed/status` | `GET`  | 无（公开）    | 60s  | 可嵌入 HTML 卡片：战绩卡 / 状态徽章（§13） |
+| webhook（你的端点）             | `POST` | HMAC 签名验证 | —    | 事件推送（`realtime` tier 专属）           |
 
 本文的端点分两类，**它们的可靠性承诺不同**，别把一类的经验套到另一类上：
 
-| 类别         | 端点                                                                           | 承诺                                                                 |
-| ------------ | ------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| **信号**     | `/api/signals`、`/api/signals/list`、webhook、`/api/record`、`/api/continuity` | **零上游调用**——全部字段来自已持久化状态，你的请求不会失败于上游抖动 |
-| **按需查询** | `/api/market-card/{cid}`                                                       | **按需向 Polymarket 取数**——会背压（`429`），也会受上游波动影响      |
+| 类别         | 端点                                                                                                                                        | 承诺                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| **信号**     | `/api/signals`、`/api/signals/list`、webhook、`/api/record`、`/api/continuity`、`/api/dataset/record.csv`、`/api/pulse`、`/api/calibration` | **零上游调用**——全部字段来自已持久化状态，你的请求不会失败于上游抖动 |
+| **按需查询** | `/api/market-card/{cid}`                                                                                                                    | **按需向 Polymarket 取数**——会背压（`429`），也会受上游波动影响      |
 
 深度卡不是信号：它没有事件 id、不可被推送、也不是任何事件的折叠。它是你点名一个
 市场、我们现算一份答案。接入前请读完 §14。
@@ -784,6 +786,66 @@ interface ContinuityReport {
 }
 ```
 
+### `GET /api/dataset/record.csv`
+
+已发布信号的**全量**结算台账 CSV（与 `/api/record` 同一分母：存在 sent entry
+投递的信号；未结算行也导出，`won` 留空——分母诚实）。逐行字段：
+`emitted_at_utc, formation_at_utc, strategy_code, strategy_name, condition_id,
+outcome, title, entry_price, settled, won, exit_price, realized_pnl,
+settled_at_utc`。头三行是 `#` 注释（license / 生成时刻与行数 / 完整性说明），
+pandas 用 `pd.read_csv(url, comment="#")` 读。
+
+许可 **CC BY 4.0**，署名 whalewatch.wired.fund。防篡改校验走 `/api/record` 的
+逐日 sha256 存证链——CSV 是便利导出，不是存证载体。限流：每 IP 6 次/分钟。
+
+### `GET /embed/record` · `GET /embed/status`
+
+可嵌入 HTML 卡片（iframe 用）：`/embed/record` 是已发布信号记分卡（数据与
+`/record` 页同源），`/embed/status` 是引擎状态 + 连续性时钟徽章。自包含
+HTML、零脚本、60s 缓存、`noindex`，固定携带署名回链。`?theme=dark` 得深色版。
+复制即用的嵌入代码在 `/record` 与 `/status` 页的「嵌入此卡」折叠块里。
+
+```html
+<iframe
+  src="https://whalewatch.wired.fund/embed/status"
+  width="360"
+  height="96"
+  style="border:0"
+  loading="lazy"
+  title="WhaleWatch status"
+></iframe>
+```
+
+### `GET /api/pulse`
+
+市场脉搏：`market_daily` 每日聚合（UTC 收盘后重建昨日 24h 窗口）之上的两份
+读物——**异常市场日榜**（四个可解释分量：量能异动/单边度/鲸鱼占比/日内价移，
+加权合成 0–100 分，分量逐项返回）与**小单 vs 鲸鱼方向分歧**（$2k–10k 桶与
+≥$50k 桶的净买方向背离，双边材料性门槛 $5k/$50k）。`latestDay`/`dayCount`
+自述数据新鲜度与底座厚度；`truncated` 为真时该日数字是下界。口径细节见
+`/pulse` 页脚注。
+
+### `GET /api/calibration`
+
+市场校准研究：按 10¢ 赔率带对比「市场隐含概率」与「实际发生率」，整体 +
+一级分类分组（样本 ≥30 才成组）。**这不是本站信号的战绩**——样本是 alert
+时点的市场价格观察。置信区间按市场数聚簇（同市场多条 alert 是同一次随机
+事件的复制品）。选择偏差声明见 `/calibration` 页——引用本数据请带上它。
+
+### MCP Server（AI agent 接入）
+
+仓库自带 MCP（Model Context Protocol）server，把上述端点暴露给 Claude Code /
+Claude Desktop / 任何 MCP 客户端：
+
+```bash
+claude mcp add whalewatch -e WHALEWATCH_API_KEY=<你的key> -- npx tsx mcp/server.ts
+```
+
+公开工具（`get_health` / `get_continuity` / `get_record`）无需 key；信号工具
+（`get_signals` / `list_signals` / `get_market_card`）读 `WHALEWATCH_API_KEY`。
+自托管部署用 `WHALEWATCH_BASE_URL` 指向自己的基址。工具面与本文端点 1:1，
+不发明新语义。
+
 ---
 
 ## 14. 按需查询 · 市场深度卡
@@ -937,6 +999,10 @@ Polymarket 自己的持仓接口返回空，而按买卖推算出来的敞口是
 
 | 日期       | 变更                                                                                                                                                                               |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-27 | 新增公开端点 `GET /api/pulse` 与 `GET /api/calibration`（§13）：市场脉搏（异常日榜 + 小单vs鲸鱼分歧，market_daily 每日聚合）与市场校准（赔率带隐含 vs 实际，聚簇 CI）——零上游      |
+| 2026-08-27 | 新增公开数据集 `GET /api/dataset/record.csv`（§13）：已发布信号全量台账，CC BY 4.0，未结算行含（won 空）——分母与 `/api/record` 同一口径                                            |
+| 2026-08-27 | 新增可嵌入卡片 `GET /embed/record` `/embed/status`（§13）：自包含 HTML、零脚本、60s 缓存、noindex、带署名回链，`?theme=dark` 深色版                                                |
+| 2026-08-27 | 新增 MCP Server（§13）：`mcp/server.ts` 把全部端点 1:1 暴露给 MCP 客户端；公开工具免 key，信号工具读 `WHALEWATCH_API_KEY`                                                          |
 | 2026-08-27 | 新增公开端点 `/api/continuity`（§13）：数据连续性 · 30 天起算时钟——逐 UTC 日的覆盖/断档条带与当前连续覆盖读数，判定与 `/api/health` 停跳阈值同一把尺，零上游，起算日由数据自己说话 |
 | 2026-08-27 | 新增 `/api/signals/list` 信号名录（§4.1）：按 ①原始/②策略两大类列出**这把 key 实际收得到**的信号，全 ASCII（`type`+`threshold` / `code`+`source`），内部异常返 `503` 而非空名录    |
 | 2026-08-21 | ② `strategy` 增 **`code`**：跨部署稳定的 ASCII 档位码（如 `mega_whale`），认档改用它。`id` 是部署本地行号、`name` 是中文名，都别硬编码                                             |
