@@ -1,4 +1,5 @@
-// 文档渲染用的极小 markdown 解析器 —— 只服务 /api-docs（docs/api-access.md）。
+// 文档渲染用的极小 markdown 解析器 —— 服务 /api-docs（docs/api-access.md）的
+// 渲染,也被文档守卫测试复用(apiDocsContract / docsPlansIndexParity)。
 //
 // 为什么手写而不是装一个 markdown 库:
 //   1. 这份仓库的运行时依赖只有 6 个,为一个静态页引入解析器 + 其传递依赖,
