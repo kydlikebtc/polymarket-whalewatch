@@ -1,0 +1,235 @@
+POLYMARKET WHALEWATCH — SOURCE-AVAILABLE LICENSE (PERSONAL & RESEARCH USE)
+
+NOTICE: This is NOT an OSI-approved open source license, and it is NOT a free
+software license. GitHub cannot match it against a known license template and
+will therefore display it as "Other". That is a deliberate choice by the
+copyright holder, not an oversight. The source of this project is published so
+that it can be read, audited, learned from, and self-hosted — not so that it can
+be redistributed or commercialized. If you need open source terms, you do not
+have them here; see Section 7 (Commercial and Other Licensing).
+
+Copyright (c) 2026 kydlikebtc
+Project: https://github.com/kydlikebtc/polymarket-whalewatch
+
+All rights reserved except as expressly granted below.
+
+--------------------------------------------------------------------------------
+1. DEFINITIONS
+--------------------------------------------------------------------------------
+
+1.1 "Software" means the source code, configuration files, database schemas,
+    documentation, scripts, and any other material contained in this
+    repository, in whole or in part.
+
+1.2 "You" (or "Your") means the individual or legal entity exercising any
+    permission granted by this License.
+
+1.3 "Derivative Work" means any work that is based on, incorporates, adapts, or
+    is derived from the Software in whole or in substantial part, including
+    modified versions, translations, and ports to another programming language
+    or framework that copy the Software's source code.
+
+1.4 "Output" means any data produced by running the Software, including but not
+    limited to alerts, signals, scores, whitelists, rankings, strategy records,
+    feeds, digests, and exported datasets.
+
+1.5 "Commercial Use" means any use of the Software, a Derivative Work, or the
+    Output that is directed toward or results in commercial advantage, monetary
+    compensation, or the operation of a business or other revenue-generating
+    activity, whether or not a fee is actually charged.
+
+1.6 "Redistribute" means to publish, distribute, transmit, sublicense, sell,
+    rent, lend, host for third parties, or otherwise make available the
+    Software or a Derivative Work to any person other than You, in source or
+    compiled form, by any means.
+
+--------------------------------------------------------------------------------
+2. GRANT OF RIGHTS (WHAT YOU MAY DO)
+--------------------------------------------------------------------------------
+
+Subject to Your compliance with Sections 3 and 4, the copyright holder grants
+You a worldwide, royalty-free, non-exclusive, non-transferable, non-sublicensable
+and revocable license to:
+
+2.1 View, read, and study the Software for the purpose of personal learning or
+    non-commercial research.
+
+2.2 Reproduce copies of the Software for Your own personal or non-commercial
+    research use.
+
+2.3 Modify the Software and create Derivative Works for Your own personal or
+    non-commercial research use.
+
+2.4 Fork this repository on the code hosting platform on which it is published
+    (for example, a GitHub fork), provided that the fork remains publicly
+    subject to this License and retains the notices required by Section 3.
+    This is the ONLY form of making the Software available to others that is
+    permitted under this License.
+
+2.5 Run and deploy the Software for Your own personal or non-commercial
+    research use, including on a private server or in a container that You
+    control, and including running its background engine, dashboards, and
+    notification channels for Yourself.
+
+--------------------------------------------------------------------------------
+3. CONDITIONS (WHAT YOU MUST DO)
+--------------------------------------------------------------------------------
+
+3.1 You must retain, in every copy, fork, and Derivative Work, the copyright
+    notice above and a complete, unmodified copy of this License file.
+
+3.2 You must not misrepresent the origin of the Software. If You publish a fork
+    under Section 2.4, You must state prominently that it is a fork and, where
+    You have modified it, that it has been modified.
+
+3.3 Any permission granted by this License is conditioned on Your continued
+    compliance with Section 4.
+
+--------------------------------------------------------------------------------
+4. PROHIBITED USES (WHAT YOU MAY NOT DO)
+--------------------------------------------------------------------------------
+
+Except under a separate written agreement with the copyright holder (see
+Section 7), You may NOT:
+
+4.1 Make any Commercial Use of the Software, a Derivative Work, or the Output.
+    This includes, without limitation:
+      (a) offering the Software or a Derivative Work to others as a hosted,
+          managed, paid, subscription, freemium, or advertising-supported
+          service;
+      (b) selling, licensing, syndicating, or otherwise monetizing the Output,
+          including selling signals, alerts, scores, feeds, or data extracts,
+          and including doing so through an intermediary;
+      (c) using the Software, a Derivative Work, or the Output in the internal
+          operations of a company, trading firm, fund, proprietary trading
+          desk, market maker, or any other commercial entity;
+      (d) incorporating the Software or a Derivative Work into any product or
+          service that is sold, licensed, or otherwise commercially exploited;
+      (e) using the Software or the Output to solicit clients, subscribers, or
+          investment capital.
+
+4.2 Redistribute the Software or any Derivative Work, whether modified or
+    unmodified, whether or not for a fee, and whether in source or compiled
+    form. The platform fork permitted by Section 2.4 is the sole exception.
+
+4.3 Remove, alter, obscure, or render illegible any copyright notice, license
+    notice, attribution, or disclaimer contained in the Software, including the
+    disclaimers in Sections 9, 10, and 11.
+
+4.4 Use the name "polymarket-whalewatch", "WhaleWatch", the copyright holder's
+    name, or any associated logo or mark to endorse, promote, or imply
+    affiliation with any product, service, or publication, without prior
+    written permission. Factual references (for example, citing this project in
+    a paper or article) are permitted.
+
+4.5 Sublicense, assign, or transfer any right granted by this License.
+
+--------------------------------------------------------------------------------
+5. RESERVATION OF RIGHTS
+--------------------------------------------------------------------------------
+
+All rights not expressly granted in Section 2 are reserved by the copyright
+holder. No rights are granted by implication, estoppel, or otherwise. This
+License grants no patent rights and no trademark rights.
+
+--------------------------------------------------------------------------------
+6. TERMINATION
+--------------------------------------------------------------------------------
+
+6.1 This License and all rights granted under it terminate automatically and
+    immediately if You breach any of its terms.
+
+6.2 Upon termination You must cease all use of the Software and destroy all
+    copies, Derivative Works, and deployments in Your possession or control.
+
+6.3 The copyright holder may reinstate Your rights in writing at their sole
+    discretion. Sections 5 and 9 through 12 survive termination.
+
+--------------------------------------------------------------------------------
+7. COMMERCIAL AND OTHER LICENSING
+--------------------------------------------------------------------------------
+
+Commercial licenses, redistribution rights, and other terms may be granted
+separately. To request one, contact the copyright holder through the account
+listed at https://github.com/kydlikebtc. Only a signed or otherwise
+explicit written grant from the copyright holder modifies this License; nothing
+in a discussion thread, README, or issue comment does so by itself.
+
+--------------------------------------------------------------------------------
+8. THIRD-PARTY COMPONENTS AND THIRD-PARTY DATA
+--------------------------------------------------------------------------------
+
+8.1 The Software depends on third-party packages that are not covered by this
+    License. Those packages remain governed by their own licenses, and this
+    License grants You no rights in them.
+
+8.2 The Software reads data from third-party services. This License grants You
+    no rights in that data. You are solely responsible for complying with the
+    terms of service, rate limits, and applicable laws of any service the
+    Software contacts on Your behalf, and for any consequences of doing so.
+
+--------------------------------------------------------------------------------
+9. DISCLAIMER OF WARRANTY
+--------------------------------------------------------------------------------
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE, ACCURACY, AND NONINFRINGEMENT. THE
+COPYRIGHT HOLDER DOES NOT WARRANT THAT THE SOFTWARE WILL BE UNINTERRUPTED,
+ERROR-FREE, TIMELY, COMPLETE, OR THAT ANY DATA, SIGNAL, STATISTIC, OR OUTPUT IT
+PRODUCES IS CORRECT.
+
+--------------------------------------------------------------------------------
+10. LIMITATION OF LIABILITY
+--------------------------------------------------------------------------------
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR ANY CONTRIBUTOR BE LIABLE FOR ANY
+CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR
+OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE. THIS INCLUDES, WITHOUT LIMITATION, ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES, AND
+ANY TRADING LOSS, LOST PROFIT, LOST OPPORTUNITY, MISSED SIGNAL, FALSE SIGNAL,
+DATA LOSS, OR SERVICE INTERRUPTION, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+DAMAGE.
+
+--------------------------------------------------------------------------------
+11. NOT FINANCIAL ADVICE — NO TRADING — USE AT YOUR OWN RISK
+--------------------------------------------------------------------------------
+
+THIS SOFTWARE IS AN OBSERVATIONAL RESEARCH TOOL. IT READS PUBLICLY AVAILABLE
+MARKET DATA AND DISPLAYS OR FORWARDS WHAT IT OBSERVES. IT DOES NOT PLACE
+ORDERS, EXECUTE TRADES, CUSTODY FUNDS, OR MOVE ASSETS OF ANY KIND.
+
+NOTHING PRODUCED BY THIS SOFTWARE — NO ALERT, SIGNAL, SCORE, WHITELIST,
+RANKING, STRATEGY RECORD, BACKTEST, PAPER-TRADING RESULT, EQUITY CURVE, OR
+COMMENTARY — IS INVESTMENT, FINANCIAL, LEGAL, TAX, OR TRADING ADVICE, A
+RECOMMENDATION, A SOLICITATION, OR AN OFFER TO BUY OR SELL ANYTHING. THE
+COPYRIGHT HOLDER IS NOT A LICENSED BROKER, DEALER, INVESTMENT ADVISER, OR
+FINANCIAL ADVISER, AND NO ADVISORY OR FIDUCIARY RELATIONSHIP IS CREATED BY YOUR
+USE OF THIS SOFTWARE.
+
+ANY PERFORMANCE FIGURE PRODUCED BY THIS SOFTWARE IS A SIMULATION OR A
+HISTORICAL OBSERVATION. SIMULATED AND HISTORICAL RESULTS DO NOT PREDICT FUTURE
+RESULTS AND MAY DIFFER MATERIALLY FROM WHAT LIVE TRADING WOULD HAVE PRODUCED.
+
+PREDICTION MARKETS AND CRYPTOASSETS CARRY SUBSTANTIAL RISK, INCLUDING THE TOTAL
+LOSS OF CAPITAL, AND MAY BE RESTRICTED OR ILLEGAL IN YOUR JURISDICTION. YOU ARE
+SOLELY RESPONSIBLE FOR YOUR OWN DECISIONS, FOR VERIFYING ANY DATA BEFORE ACTING
+ON IT, AND FOR COMPLYING WITH ALL LAWS AND REGULATIONS THAT APPLY TO YOU. DO
+YOUR OWN RESEARCH. USE AT YOUR OWN RISK.
+
+--------------------------------------------------------------------------------
+12. GENERAL
+--------------------------------------------------------------------------------
+
+12.1 If any provision of this License is held unenforceable, that provision
+     shall be limited or severed to the minimum extent necessary, and the
+     remaining provisions remain in full force and effect.
+
+12.2 Failure by the copyright holder to enforce any provision is not a waiver
+     of that or any other provision.
+
+12.3 This License is the entire agreement concerning the Software between You
+     and the copyright holder, and supersedes any prior understanding.
+
+END OF LICENSE
