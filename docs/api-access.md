@@ -838,7 +838,7 @@ HTML、零脚本、60s 缓存、`noindex`，固定携带署名回链。`?theme=d
 Claude Desktop / 任何 MCP 客户端：
 
 ```bash
-claude mcp add whalewatch -e WHALEWATCH_API_KEY=<你的key> -- npx tsx mcp/server.ts
+claude mcp add whalewatch -e WHALEWATCH_API_KEY=<你的key> -- npx -y whalewatch-mcp
 ```
 
 公开工具（`get_health` / `get_continuity` / `get_record`）无需 key；信号工具

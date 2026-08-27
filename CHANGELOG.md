@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 430 commits, 2026-06-23 → 2026-08-27. Test suite at the end of that range: 1771 tests across
-138 files (`npm test`).
+Scope: 433 commits, 2026-06-23 → 2026-08-27. Test suite at the end of that range: 1785 tests across
+139 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -36,6 +36,34 @@ Scope: 430 commits, 2026-06-23 → 2026-08-27. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-27 — The pulse boards learn to tweet (default off)
+
+The content engine's deliberately-deferred X wiring, now wired: two new broadcast kinds —
+`pulse` (yesterday's most abnormal market, with its component breakdown) and `divergence`
+(the day's strongest small-orders-vs-whales split) — as their own switches, templates and
+knobs. **Both default OFF**, the same discipline as `settled` and the signal bus: a new
+capability must never start posting to a public timeline before the operator flips it on.
+
+They are time-driven daily posts modeled line-for-line on the weekly report card, behind
+three gates. A clock gate (a shared `pulseUtcHour`, factory 14:00 UTC — the data is ready
+just after midnight, but a dead-zone post burns budget for nobody). A data-readiness gate:
+`buildPulse().latestDay` must be exactly yesterday — a late aggregation just waits for the
+next tick, and a missed day is never back-posted as stale news (the same philosophy as the
+30-minute freshness window on whale posts). And one-post-per-day-per-kind enforced by the
+ledger dedup key itself rather than a `DAILY_CAP` entry — a structurally-once thing needs no
+second throttle, while the day/week/month spend fuses still apply through `quotaDecision`
+unchanged. A no-divergence day is silence, not a failure.
+
+Copy stays honest to the /pulse page: the anomaly post must carry its component breakdown
+("10.7× its volume baseline · 70% one-sided · whales 56% of flow") because an unexplainable
+composite can't hold up a single tweet, and the divergence post says **small orders**, never
+"retail" — below the fetch floor true retail is invisible. Both kinds join the template
+system with their own vocabularies; the 280-weighted-char and no-URL invariants hold through
+the same renderCustom safety net. /manage grew the two kind cards (hints generated from live
+params, so the page can never say stale numbers), the shared post-hour field, and two
+template editors with placeholder legends — verified live with both cards showing 已关闭 out
+of the box.
 
 ### 2026-08-27 — The content engine: a daily aggregation base and three readings of it
 

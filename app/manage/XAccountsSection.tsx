@@ -46,6 +46,7 @@ interface XParams {
   pregameMaxH: number;
   settledDailyCap: number;
   weeklyUtcHour: number;
+  pulseUtcHour: number;
 }
 
 interface HistogramDay {
@@ -85,6 +86,8 @@ const KINDS: { kind: string; label: string }[] = [
   { kind: "pregame", label: "⏰ 赛前聚合" },
   { kind: "weekly", label: "📊 周报成绩单" },
   { kind: "settled", label: "✅ 结算战报" },
+  { kind: "pulse", label: "📈 异常市场日榜" },
+  { kind: "divergence", label: "⚔️ 小单vs鲸鱼分歧" },
 ];
 
 function kindHint(kind: string, p: XParams): string {
@@ -101,6 +104,10 @@ function kindHint(kind: string, p: XParams): string {
       return `每周一 ${String(p.weeklyUtcHour).padStart(2, "0")}:00 UTC 后图卡 + 链接,唯一的 $0.20 帖`;
     case "settled":
       return `回复自己发过的信号帖,补上结果(赢输都发),至多 ${p.settledDailyCap} 条/天。默认关`;
+    case "pulse":
+      return `每日 ${String(p.pulseUtcHour).padStart(2, "0")}:00 UTC 后发昨日最异常市场(异常分四分量拆解,与 /pulse 页同源),每天至多 1 条。默认关`;
+    case "divergence":
+      return `每日 ${String(p.pulseUtcHour).padStart(2, "0")}:00 UTC 后发昨日「小单与鲸鱼对立」的市场(双边材料性达标才有),每天至多 1 条,无分歧的日子静默。默认关`;
     default:
       return "";
   }
@@ -124,6 +131,10 @@ const PARAM_FIELDS: Record<
   ],
   weekly: [{ key: "weeklyUtcHour", label: "周一", suffix: "点(UTC)后发" }],
   settled: [{ key: "settledDailyCap", label: "日上限", suffix: "条" }],
+  // 日榜与分歧共用同一发帖时刻(同一底座、同一节奏);字段挂在日榜卡下,
+  // 分歧卡 hint 里已写明共用。
+  pulse: [{ key: "pulseUtcHour", label: "每日", suffix: "点(UTC)后发" }],
+  divergence: [],
 };
 
 // 客户端预检的字段名(拦「不是数」;规则校验由服务端 zod 说了算)。
@@ -140,6 +151,7 @@ const PARAM_LABELS: Record<keyof XParams, string> = {
   pregameMaxH: "赛前窗口上限",
   settledDailyCap: "战报日上限",
   weeklyUtcHour: "周报发帖时刻",
+  pulseUtcHour: "脉搏日帖时刻",
 };
 
 // 空串合法(= 不限)的可空参数;其余字段空串是校验错误。
@@ -166,6 +178,7 @@ function toForm(p: XParams): ParamForm {
     pregameDailyCap: String(p.pregameDailyCap),
     pregameMinH: String(p.pregameMinH),
     pregameMaxH: String(p.pregameMaxH),
+    pulseUtcHour: String(p.pulseUtcHour),
     settledDailyCap: String(p.settledDailyCap),
     weeklyUtcHour: String(p.weeklyUtcHour),
   };

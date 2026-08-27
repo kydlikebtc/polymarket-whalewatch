@@ -1,7 +1,9 @@
+#!/usr/bin/env node
 // whalewatch MCP server —— 把只读 API 暴露给任何 MCP 客户端(Claude Code /
 // Claude Desktop / 其他 agent)。stdio 传输,跑在使用者机器上:
 //
-//   claude mcp add whalewatch -e WHALEWATCH_API_KEY=<key> -- npx tsx mcp/server.ts
+//   已发布包:claude mcp add whalewatch -- npx -y whalewatch-mcp
+//   仓库内跑:claude mcp add whalewatch -e WHALEWATCH_API_KEY=<key> -- npx tsx mcp/server.ts
 //
 // 工具面 = 现有端点 1:1(docs/api-access.md),不发明新语义。公开三件
 // (health/continuity/record)无需 key;信号三件走 x-feed-token。
@@ -9,25 +11,24 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+// .js 后缀:npm 包以 NodeNext ESM 发布(tsc 原样保留说明符);仓库内
+// tsx/vitest/根 tsc 同样接受该写法,两个世界一份源码。
 import {
   authHeaders,
   buildUrl,
   httpGetText,
   NEED_KEY_HINT,
   readEnv,
-} from "./lib";
+} from "./lib.js";
 
 const env = readEnv(process.env);
 
 const server = new McpServer({ name: "whalewatch", version: "0.1.0" });
 
-interface ToolText {
-  content: { type: "text"; text: string }[];
-  isError?: boolean;
-}
-
-const textResult = (text: string, isError = false): ToolText => ({
-  content: [{ type: "text", text }],
+// 刻意不写显式返回类型:SDK 的 CallToolResult 带索引签名,自定义窄接口在
+// NodeNext 严格模式下装不进去 —— 让结构推断自己对上。
+const textResult = (text: string, isError = false) => ({
+  content: [{ type: "text" as const, text }],
   ...(isError ? { isError: true } : {}),
 });
 
@@ -35,7 +36,7 @@ async function callApi(
   path: string,
   params?: Record<string, string | number | undefined>,
   needsKey = false,
-): Promise<ToolText> {
+) {
   if (needsKey && !env.apiKey) return textResult(NEED_KEY_HINT, true);
   const r = await httpGetText(
     buildUrl(env.baseUrl, path, params),

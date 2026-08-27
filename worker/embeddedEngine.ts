@@ -67,6 +67,7 @@ import { runXBroadcastCycle } from "../lib/xBroadcast";
 import { runPregameCycle } from "../lib/xPregame";
 import { runSettledCycle } from "../lib/xSettled";
 import { maybeWeeklyPost } from "../lib/xWeekly";
+import { runPulseCycle } from "../lib/xPulse";
 
 // Guarded singleton PER PROCESS: instrumentation may call this more than once
 // within a runtime, and the flag makes repeat calls no-ops. It does NOT guard
@@ -699,6 +700,23 @@ export function startAlertEngine(): void {
               ...spendCaps,
             })
           : false;
+        // 市场脉搏日帖(日榜/分歧,默认全关):昨日聚合就绪且到设定时刻后
+        // 各至多一帖。数据与 /pulse 页同源(buildPulse,零上游)。
+        const pulsePosted =
+          kinds.pulse || kinds.divergence
+            ? await runPulseCycle({
+                db,
+                client: xClient,
+                budgetUsd: params.budgetUsd,
+                postUtcHour: params.pulseUtcHour,
+                kinds: { pulse: kinds.pulse, divergence: kinds.divergence },
+                templates: {
+                  pulse: templates.pulse,
+                  divergence: templates.divergence,
+                },
+                ...spendCaps,
+              })
+            : 0;
         // 结算战报(默认关):给已发过的信号帖 self-reply 补结果。放在
         // 播报之后 —— 新信号的时效性永远优先于回顾旧信号。
         const settled = kinds.settled
@@ -716,7 +734,7 @@ export function startAlertEngine(): void {
         if (
           creds.source === "db" &&
           creds.userId &&
-          (posted > 0 || weekly || settled > 0)
+          (posted > 0 || weekly || settled > 0 || pulsePosted > 0)
         ) {
           markPosted(db, creds.userId, Math.floor(Date.now() / 1000));
         }
