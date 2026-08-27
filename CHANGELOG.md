@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 427 commits, 2026-06-23 → 2026-08-27. Test suite at the end of that range: 1719 tests across
-132 files (`npm test`).
+Scope: 430 commits, 2026-06-23 → 2026-08-27. Test suite at the end of that range: 1748 tests across
+135 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -36,6 +36,41 @@ Scope: 427 commits, 2026-06-23 → 2026-08-27. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-27 — Three new outlets: an MCP server, embeddable cards, a public dataset
+
+No new data, no new claims — the same persisted state pushed through three new doors, each a
+distribution channel this product did not have yesterday. All three inherit the /api/record
+posture: zero upstream calls, rate limits, caching.
+
+**MCP server** (`mcp/`, `npm run mcp`). The read-only API wrapped as a Model Context Protocol
+server, so Claude Code / Claude Desktop / any MCP client can query whale data directly —
+`claude mcp add whalewatch -- npx tsx mcp/server.ts`. Deliberately a stdio process talking to
+the public HTTPS API rather than an in-app `/api/mcp` endpoint: protocol session management
+inside the monitoring process would put the collection loops one SDK upgrade away from an
+outage, for no gain. Tool surface is the existing endpoints 1:1 (three public, three keyed via
+`WHALEWATCH_API_KEY` → `x-feed-token`); a keyed tool without a key answers with instructions
+instead of vanishing — "you lack the key" and "the capability does not exist" are different
+facts. `WHALEWATCH_BASE_URL` points self-hosters at their own deployment. Smoke-tested
+end-to-end against production over raw JSON-RPC.
+
+**Embeddable cards** (`/embed/record`, `/embed/status`). The scorecard and the status badge as
+self-contained iframe HTML — every embed is attributed distribution (fixed backlink), script-
+free, 60s-cached, `noindex` so fragments never outrank the pages they excerpt. Served from
+route handlers rather than app pages because the root layout force-wraps every page with
+nav/providers; a handler returns clean HTML and full header control. Data comes from the same
+`buildRecordFeed` / `readContinuity` the real pages use — one source, two skins, no drift.
+Copy-paste snippets live behind an「嵌入此卡」fold on /record and /status.
+
+**Public dataset** (`GET /api/dataset/record.csv`). The full published-signal ledger as CSV,
+CC BY 4.0: every signal that ever went out through a sent entry delivery, including unsettled
+rows with an empty `won` — the honest denominator is the product. Silent paper trades are
+excluded by the same `signal_deliveries` gate as /api/record, and a test pins that exclusion
+by name, because leaking the private ledger into the public dataset would be soft-form social
+proof. Tamper-evidence is not reinvented: the daily sha256 digest chain remains the carrier,
+and the CSV says so in its own header comments. One test-driven discovery along the way:
+`openDb(":memory:")` seeds the 19 production tiers, so a fixture selecting strategies by name
+prefix quietly binds to a seeded tier — exact-name selection only.
 
 ### 2026-08-27 — The 30-day clock goes public, and the bus[] whitelist gets its lock
 
