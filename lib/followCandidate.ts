@@ -69,6 +69,22 @@ export interface FollowCandidate {
   sourceKind: FollowSourceKind;
   walletCount: number;
   totalNetUsd: number;
+  /**
+   * 触发钱包快照(2026-08-28 向前落库,设计见 docs/plans/
+   * 2026-08-28-signal-forward-facts-design.md):地址 + 逐钱包净买 + 检测时
+   * 可见的评分(ctx.smart 本轮预取值;null=当时无分,诚实透传)。可选 ——
+   * 与 walletCount/totalNetUsd 同一条纪律:纯归因,绝不参与开仓判定;
+   * 落进 strategy_signals.wallets_json 供未来 walk-forward 回放 score 维
+   * 与真逐钱包阈值(这两样无法回填,只能从记录之日起向前攒)。
+   */
+  wallets?: CandidateWallet[];
+}
+
+/** 一个触发钱包的不可变快照。键名与 wallets_json 逐字一致,不缩写。 */
+export interface CandidateWallet {
+  wallet: string;
+  netUsd: number;
+  score: number | null;
 }
 
 /**

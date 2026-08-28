@@ -500,3 +500,38 @@ describe("runFollowCycle × strategy_signals 接线", () => {
     db.close();
   });
 });
+
+describe("wallets_json 向前落库(2026-08-28,walk-forward v2 前置)", () => {
+  it("新库自带 wallets_json 列;老库经幂等 ALTER 补列", () => {
+    const db = openDb(":memory:");
+    const cols = (
+      db.prepare("PRAGMA table_info(strategy_signals)").all() as {
+        name: string;
+      }[]
+    ).map((c) => c.name);
+    expect(cols).toContain("wallets_json");
+  });
+
+  it("带 wallets → 序列化落库,读回逐字段还原(含 score:null 的诚实态)", () => {
+    const db = openDb(":memory:");
+    const wallets = [
+      { wallet: "0xaaa", netUsd: 8_000, score: 71.5 },
+      { wallet: "0xbbb", netUsd: 4_000, score: null },
+    ];
+    const id = recordStrategySignal(db, input({ wallets }));
+    expect(id).not.toBeNull();
+    const row = db
+      .prepare("SELECT wallets_json FROM strategy_signals WHERE id = ?")
+      .get(id) as { wallets_json: string | null };
+    expect(JSON.parse(row.wallets_json ?? "")).toEqual(wallets);
+  });
+
+  it("不带 wallets → NULL(老行/未接 detector 的自描述覆盖窗)", () => {
+    const db = openDb(":memory:");
+    const id = recordStrategySignal(db, input());
+    const row = db
+      .prepare("SELECT wallets_json FROM strategy_signals WHERE id = ?")
+      .get(id) as { wallets_json: string | null };
+    expect(row.wallets_json).toBeNull();
+  });
+});

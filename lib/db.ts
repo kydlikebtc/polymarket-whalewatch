@@ -26,7 +26,7 @@ export function openDb(path = "data.sqlite") {
     CREATE INDEX IF NOT EXISTS idx_market_daily_day ON market_daily(day);
     CREATE TABLE IF NOT EXISTS follow_strategies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, enabled INTEGER DEFAULT 1, params_json TEXT, created_at INTEGER, push_enabled INTEGER DEFAULT 0);
     CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, formation_ts INTEGER, formation_price REAL, markout_30m REAL, markout_2h REAL, exec_price REAL, exec_best_ask REAL, exec_filled_usd REAL, fee_usd REAL, UNIQUE(strategy_id, condition_id, outcome));
-    CREATE TABLE IF NOT EXISTS strategy_signals (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER NOT NULL, position_id INTEGER, condition_id TEXT NOT NULL, outcome TEXT NOT NULL, outcome_index INTEGER, asset TEXT, title TEXT, slug TEXT, event_slug TEXT, formation_ts INTEGER NOT NULL, reference_price REAL, wallet_count INTEGER, total_net_usd REAL, entry_price REAL, size_usd REAL, emitted_at INTEGER NOT NULL, settled INTEGER DEFAULT 0, settled_ts INTEGER, exit_price REAL, won INTEGER, realized_pnl REAL, UNIQUE(strategy_id, condition_id, outcome));
+    CREATE TABLE IF NOT EXISTS strategy_signals (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER NOT NULL, position_id INTEGER, condition_id TEXT NOT NULL, outcome TEXT NOT NULL, outcome_index INTEGER, asset TEXT, title TEXT, slug TEXT, event_slug TEXT, formation_ts INTEGER NOT NULL, reference_price REAL, wallet_count INTEGER, total_net_usd REAL, entry_price REAL, size_usd REAL, emitted_at INTEGER NOT NULL, settled INTEGER DEFAULT 0, settled_ts INTEGER, exit_price REAL, won INTEGER, realized_pnl REAL, wallets_json TEXT, UNIQUE(strategy_id, condition_id, outcome));
     CREATE INDEX IF NOT EXISTS idx_strategy_signals_emitted ON strategy_signals(emitted_at);
     CREATE TABLE IF NOT EXISTS signal_deliveries (signal_id INTEGER NOT NULL, event TEXT NOT NULL, channel TEXT NOT NULL, delivered_at INTEGER, status TEXT NOT NULL, PRIMARY KEY (signal_id, event, channel));
     CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, key_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL, tier TEXT NOT NULL DEFAULT 'delayed', created_at INTEGER NOT NULL, revoked_at INTEGER, last_used_at INTEGER, bus_types TEXT);
@@ -143,6 +143,16 @@ export function openDb(path = "data.sqlite") {
     } catch {
       // column already present
     }
+  }
+  // strategy_signals gained wallets_json(2026-08-28,walk-forward v2 前置,
+  // 设计见 docs/plans/2026-08-28-signal-forward-facts-design.md):触发钱包 +
+  // 检测时评分 + 逐钱包金额的 JSON 快照 —— score 维与真逐钱包阈值只能向前记、
+  // 无法回填,这列就是可回放窗口的起点(NULL = 早于本批的行,自描述)。
+  // 红线:纯归因,不参与任何开仓判定,不进任何对外载荷(投影惰性有守卫测试)。
+  try {
+    db.prepare("ALTER TABLE strategy_signals ADD COLUMN wallets_json TEXT").run();
+  } catch {
+    // column already present
   }
   // follow_strategies gained push_enabled(对外信号批次 0):该档触发买入是否
   // 进对外投递总线。默认 0 —— 放开哪几档是「先静默测量一周、按战绩放开」的

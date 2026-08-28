@@ -1,4 +1,5 @@
 import type { DB } from "./db";
+import type { CandidateWallet } from "./followCandidate";
 import { gradeRows, type SignalRecord } from "./signalRecord";
 
 // 对外信号批次 0:strategy_signals 事实台账(设计:docs/plans/
@@ -39,6 +40,12 @@ export interface StrategySignalInput {
   sizeUsd: number;
   /** 发布时刻 = 开仓那一轮的 nowSec —— 存证锚点(先发布后结算)。 */
   emittedAt: number;
+  /**
+   * 触发钱包快照(FollowCandidate.wallets 原样透传,顺序不重排)。可选:
+   * 缺省落 NULL —— 老行/未接 detector 的行自描述「早于向前落库批次」,
+   * walk-forward v2 按 IS NOT NULL 划可回放窗口。
+   */
+  wallets?: CandidateWallet[];
 }
 
 /**
@@ -54,8 +61,8 @@ export function recordStrategySignal(
       `INSERT OR IGNORE INTO strategy_signals
          (strategy_id, position_id, condition_id, outcome, outcome_index, asset,
           title, slug, event_slug, formation_ts, reference_price, wallet_count,
-          total_net_usd, entry_price, size_usd, emitted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          total_net_usd, entry_price, size_usd, emitted_at, wallets_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.strategyId,
@@ -74,6 +81,7 @@ export function recordStrategySignal(
       input.entryPrice,
       input.sizeUsd,
       input.emittedAt,
+      input.wallets == null ? null : JSON.stringify(input.wallets),
     );
   return res.changes === 1 ? Number(res.lastInsertRowid) : null;
 }
