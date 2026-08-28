@@ -225,6 +225,15 @@ export default function PulsePage() {
                                 })}
                               </>
                             )}
+                            {m.washRatio != null && m.washRatio >= 0.1 && (
+                              <>
+                                {" "}
+                                ·{" "}
+                                {t("洗量占比 {p}%", {
+                                  p: Math.round(m.washRatio * 100),
+                                })}
+                              </>
+                            )}
                           </div>
                         </td>
                         <td
@@ -352,12 +361,134 @@ export default function PulsePage() {
             </section>
           )}
 
+          {report.ghosts.length > 0 && (
+            <section style={{ marginBottom: "var(--s-5)" }}>
+              <h2 style={{ fontSize: "var(--t-lg)", margin: "0 0 var(--s-3)" }}>
+                {t("无鲸异动 · 没人付大钱的剧烈价移")}
+              </h2>
+              <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+                {t(
+                  "价移 ≥10¢ 但当日没有任何一笔 ≥$10k —— 要么簿子薄到小单就能推，要么有人在蚂蚁搬家。",
+                )}
+              </div>
+              <div className="ds-table-wrap">
+                <table className="ds-table">
+                  <thead>
+                    <tr>
+                      <th>{t("市场")}</th>
+                      <th className="is-right">{t("价移")}</th>
+                      <th className="is-right">{t("首→末价")}</th>
+                      <th className="is-right">{t("量能")}</th>
+                      <th className="is-right">{t("单笔最大")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.ghosts.map((g) => (
+                      <tr key={g.conditionId}>
+                        <td>
+                          <div style={{ fontWeight: 500 }}>
+                            {g.title ?? g.conditionId}
+                            {g.slug && (
+                              <MarketSlugActions
+                                slug={g.slug}
+                                eventSlug={g.eventSlug ?? undefined}
+                              />
+                            )}
+                          </div>
+                          <div className="ds-hint">
+                            {catLabelFine(g.category, g.subcategory)}
+                            {g.washRatio != null && g.washRatio >= 0.1 && (
+                              <>
+                                {" "}
+                                ·{" "}
+                                {t("洗量占比 {p}%", {
+                                  p: Math.round(g.washRatio * 100),
+                                })}
+                              </>
+                            )}
+                          </div>
+                        </td>
+                        <td className="is-right num mono">
+                          {g.moveCents.toFixed(0)}¢
+                        </td>
+                        <td className="is-right num mono">
+                          {cents(g.priceFirst)} → {cents(g.priceLast)}
+                        </td>
+                        <td className="is-right num mono">
+                          {usd(g.volumeUsd)}
+                        </td>
+                        <td className="is-right num mono">
+                          {usd(g.maxFillUsd)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {report.washTop.length > 0 && (
+            <section style={{ marginBottom: "var(--s-5)" }}>
+              <h2 style={{ fontSize: "var(--t-lg)", margin: "0 0 var(--s-3)" }}>
+                {t("洗量榜 · 同钱包当日往返")}
+              </h2>
+              <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+                {t(
+                  "同一钱包在同一市场当日既买又卖的配对量占比（双腿口径）。是结构描述不是指控——做市、调仓也长这样；把它当「这个市场的量能里有多少不是方向性意见」来读。",
+                )}
+              </div>
+              <div className="ds-table-wrap">
+                <table className="ds-table">
+                  <thead>
+                    <tr>
+                      <th>{t("市场")}</th>
+                      <th className="is-right">{t("洗量占比")}</th>
+                      <th className="is-right">{t("配对量")}</th>
+                      <th className="is-right">{t("量能")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.washTop.map((w) => (
+                      <tr key={w.conditionId}>
+                        <td>
+                          <div style={{ fontWeight: 500 }}>
+                            {w.title ?? w.conditionId}
+                            {w.slug && <MarketSlugActions slug={w.slug} />}
+                          </div>
+                          <div className="ds-hint">
+                            {catLabelFine(w.category, w.subcategory)}
+                          </div>
+                        </td>
+                        <td
+                          className="is-right num mono"
+                          style={{ fontWeight: 600 }}
+                        >
+                          {Math.round(w.washRatio * 100)}%
+                        </td>
+                        <td className="is-right num mono">
+                          {usd(2 * w.washUsd)}
+                        </td>
+                        <td className="is-right num mono">
+                          {usd(w.volumeUsd)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
           <div className="ds-hint">
             {t(
               "口径：小单 = 单笔 $2k–10k（抓取下限之下的真散户不可见，因此只说「小单」）；鲸鱼 = 单笔 ≥$50k，与 heavy 信号同一把尺；异常分 = 0.35·量能异动 + 0.25·单边度 + 0.20·鲸鱼占比 + 0.20·日内价移，各分量 0–1 可逐项核对；量能异动在同市场基线不足 3 天时退化为当日横截面分位。",
             )}{" "}
             {t(
               "确信指数 = 0.30·阵营对峙（量能加权 1−单边度）+ 0.30·对立度（合格分歧市场量能占比，双边门槛与上表同尺）+ 0.20·价格动荡 + 0.20·量能异动；品类日总量 <$10k 不给分；量能异动在品类自身基线不足 3 天时退化为当日横截面分位。",
+            )}{" "}
+            {t(
+              "无鲸异动 = 价移 ≥10¢ 且当日单笔最大 <$10k（判定材料 2026-08-28 起采集，之前的日份不进榜）；洗量占比 = 同钱包当日买卖配对量 ×2 ÷ 总量，只统计单笔 ≥$2k 的抓取窗口。",
             )}
           </div>
         </>

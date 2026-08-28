@@ -35,6 +35,41 @@ export interface PulseMarket {
   volBaselineDays: number;
   /** 今日量 ÷ 基线均值;基线不足为 null。 */
   volRatio: number | null;
+  /**
+   * 洗量占比(2026-08-28 八件套):2·wash_usd/volume_usd(库存单腿配对量,
+   * 展示双腿口径)。列上线前的老日份为 null —— 不知道不显示 0。
+   */
+  washRatio: number | null;
+}
+
+/** 无鲸异动:价格大动却没有任何大单付账 = 薄簿或蚂蚁搬家。 */
+export interface GhostRow {
+  conditionId: string;
+  title: string | null;
+  slug: string | null;
+  eventSlug: string | null;
+  category: string | null;
+  subcategory: string | null;
+  volumeUsd: number;
+  priceFirst: number;
+  priceLast: number;
+  moveCents: number;
+  /** 当日单笔最大名义额(判定材料,≤ GHOST_MAX_FILL_USD 才算无鲸)。 */
+  maxFillUsd: number;
+  washRatio: number | null;
+}
+
+export interface WashRow {
+  conditionId: string;
+  title: string | null;
+  slug: string | null;
+  category: string | null;
+  subcategory: string | null;
+  volumeUsd: number;
+  /** 单腿配对量(库存口径)。 */
+  washUsd: number;
+  /** 双腿口径占比 = 2·washUsd/volumeUsd。 */
+  washRatio: number;
 }
 
 export interface DivergenceRow {
@@ -59,12 +94,21 @@ export interface PulseReport {
   coveredFromSec: number | null;
   top: PulseMarket[];
   divergences: DivergenceRow[];
+  /** 无鲸异动榜(2026-08-28 起,老日份缺判定材料不进榜)。按价移降序。 */
+  ghosts: GhostRow[];
+  /** 洗量榜:占比 ≥20% 且量 ≥$10k,占比降序。中性结构描述,非指控。 */
+  washTop: WashRow[];
 }
 
 /** 材料性门槛:总量低于它的市场不进日榜(1 笔 $2k 单边度也是 1.0)。 */
 export const PULSE_MIN_VOLUME_USD = 10_000;
 export const DIVERGENCE_SMALL_MIN_USD = 5_000;
 export const DIVERGENCE_WHALE_MIN_USD = 50_000;
+/** 无鲸判定:价移下限(¢)与「没有任何一笔够大」的单笔上限。 */
+export const GHOST_MIN_MOVE_CENTS = 10;
+export const GHOST_MAX_FILL_USD = 10_000;
+/** 洗量榜入榜占比下限(双腿口径)。 */
+export const WASH_MIN_RATIO = 0.2;
 const BASELINE_DAYS = 14;
 const MIN_BASELINE_DAYS = 3;
 
@@ -90,7 +134,15 @@ interface DailyRow {
   price_last: number | null;
   covered_from_sec: number | null;
   truncated: number | null;
+  wash_usd: number | null;
+  max_fill_usd: number | null;
 }
+
+/** 双腿口径洗量占比;原料缺失(老日份)或零量 → null。 */
+const washRatioOf = (r: DailyRow): number | null =>
+  r.wash_usd != null && r.volume_usd > 0
+    ? clamp01((2 * r.wash_usd) / r.volume_usd)
+    : null;
 
 const clamp01 = (n: number): number => Math.max(0, Math.min(1, n));
 
@@ -120,6 +172,8 @@ export function buildPulse(
       coveredFromSec: null,
       top: [],
       divergences: [],
+      ghosts: [],
+      washTop: [],
     };
   }
 
@@ -201,6 +255,7 @@ export function buildPulse(
         components,
         volBaselineDays,
         volRatio,
+        washRatio: washRatioOf(r),
       };
     })
     .sort((a, b) => b.score - a.score || b.volumeUsd - a.volumeUsd)
@@ -229,6 +284,54 @@ export function buildPulse(
     }))
     .sort((a, b) => b.strength - a.strength);
 
+  // 无鲸异动:价移剧烈 + 当日没有任何一笔够大。max_fill_usd 为 null 的老
+  // 日份不进榜 —— 「不知道有没有鲸」不等于「无鲸」。
+  const ghosts: GhostRow[] = rows
+    .filter(
+      (r) =>
+        r.volume_usd >= PULSE_MIN_VOLUME_USD &&
+        r.price_first != null &&
+        r.price_last != null &&
+        Math.abs(r.price_last - r.price_first) * 100 >= GHOST_MIN_MOVE_CENTS &&
+        r.max_fill_usd != null &&
+        r.max_fill_usd < GHOST_MAX_FILL_USD,
+    )
+    .map((r) => ({
+      conditionId: r.condition_id,
+      title: r.title,
+      slug: r.slug,
+      eventSlug: r.event_slug,
+      category: r.category,
+      subcategory: r.subcategory,
+      volumeUsd: r.volume_usd,
+      priceFirst: r.price_first!,
+      priceLast: r.price_last!,
+      moveCents: Math.abs(r.price_last! - r.price_first!) * 100,
+      maxFillUsd: r.max_fill_usd!,
+      washRatio: washRatioOf(r),
+    }))
+    .sort((a, b) => b.moveCents - a.moveCents);
+
+  const washTop: WashRow[] = rows
+    .map((r) => ({ r, ratio: washRatioOf(r) }))
+    .filter(
+      (x): x is { r: DailyRow; ratio: number } =>
+        x.ratio != null &&
+        x.ratio >= WASH_MIN_RATIO &&
+        x.r.volume_usd >= PULSE_MIN_VOLUME_USD,
+    )
+    .map(({ r, ratio }) => ({
+      conditionId: r.condition_id,
+      title: r.title,
+      slug: r.slug,
+      category: r.category,
+      subcategory: r.subcategory,
+      volumeUsd: r.volume_usd,
+      washUsd: r.wash_usd!,
+      washRatio: ratio,
+    }))
+    .sort((a, b) => b.washRatio - a.washRatio);
+
   const truncated = rows.some((r) => (r.truncated ?? 0) === 1);
   const coveredFromSec = rows.length > 0 ? rows[0].covered_from_sec : null;
 
@@ -239,5 +342,7 @@ export function buildPulse(
     coveredFromSec,
     top: scored,
     divergences,
+    ghosts,
+    washTop,
   };
 }

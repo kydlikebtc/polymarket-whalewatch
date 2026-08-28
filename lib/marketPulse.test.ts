@@ -34,6 +34,8 @@ function put(
     price_last: 0.5,
     covered_from_sec: 0,
     truncated: 0,
+    wash_usd: null,
+    max_fill_usd: null,
     ...over,
   };
   db.prepare(
@@ -42,12 +44,14 @@ function put(
         trades, volume_usd, wallet_count, top_outcome, one_sided,
         small_usd, small_net_usd, small_top_outcome,
         whale_usd, whale_net_usd, whale_top_outcome,
-        price_first, price_last, covered_from_sec, truncated)
+        price_first, price_last, covered_from_sec, truncated,
+        wash_usd, max_fill_usd)
      VALUES (@day, @cid, @title, @slug, @event_slug, @category, @subcategory,
         @trades, @volume_usd, @wallet_count, @top_outcome, @one_sided,
         @small_usd, @small_net_usd, @small_top_outcome,
         @whale_usd, @whale_net_usd, @whale_top_outcome,
-        @price_first, @price_last, @covered_from_sec, @truncated)`,
+        @price_first, @price_last, @covered_from_sec, @truncated,
+        @wash_usd, @max_fill_usd)`,
   ).run({ day, cid, ...base });
 }
 
@@ -182,5 +186,65 @@ describe("buildPulse — 散户 vs 鲸鱼分歧", () => {
     const r = buildPulse(db);
     expect(r.divergences).toEqual([]);
     db.close();
+  });
+});
+
+
+// --- 第二梯队八件套(2026-08-28):无鲸异动 + 洗量榜 ---
+
+describe("buildPulse — ghosts(无鲸异动)", () => {
+  it("价移 ≥10¢ 且单笔最大 <$10k 才进榜;max_fill 未知(老日份)不进 —— 不知道不等于没有鲸", () => {
+    const db = openDb(":memory:");
+    put(db, "2026-08-27", "g1", {
+      volume_usd: 50_000,
+      price_first: 0.4,
+      price_last: 0.55,
+      max_fill_usd: 8_000,
+    });
+    put(db, "2026-08-27", "g2", {
+      volume_usd: 50_000,
+      price_first: 0.4,
+      price_last: 0.55,
+      max_fill_usd: 12_000, // 有大单付账,不是无鲸
+    });
+    put(db, "2026-08-27", "g3", {
+      volume_usd: 50_000,
+      price_first: 0.5,
+      price_last: 0.54, // 4¢,不够剧烈
+      max_fill_usd: 5_000,
+    });
+    put(db, "2026-08-27", "g4", {
+      volume_usd: 50_000,
+      price_first: 0.4,
+      price_last: 0.6,
+      max_fill_usd: null, // 老日份
+    });
+    const r = buildPulse(db);
+    expect(r.ghosts.map((g) => g.conditionId)).toEqual(["g1"]);
+    expect(r.ghosts[0].moveCents).toBeCloseTo(15);
+    expect(r.ghosts[0].maxFillUsd).toBe(8_000);
+  });
+});
+
+describe("buildPulse — washRatio 与 washTop", () => {
+  it("日榜行带 washRatio = 2·wash_usd/volume(单腿存库,双腿口径展示);老行 null", () => {
+    const db = openDb(":memory:");
+    put(db, "2026-08-27", "w1", { volume_usd: 60_000, wash_usd: 6_000 });
+    put(db, "2026-08-27", "w2", { volume_usd: 60_000, wash_usd: null });
+    const r = buildPulse(db);
+    const w1 = r.top.find((m) => m.conditionId === "w1")!;
+    const w2 = r.top.find((m) => m.conditionId === "w2")!;
+    expect(w1.washRatio).toBeCloseTo(0.2);
+    expect(w2.washRatio).toBeNull();
+  });
+
+  it("washTop:占比 ≥20% 且量 ≥$10k,按占比降序", () => {
+    const db = openDb(":memory:");
+    put(db, "2026-08-27", "w1", { volume_usd: 60_000, wash_usd: 6_000 }); // 20%
+    put(db, "2026-08-27", "w2", { volume_usd: 40_000, wash_usd: 12_000 }); // 60%
+    put(db, "2026-08-27", "w3", { volume_usd: 60_000, wash_usd: 3_000 }); // 10%,不进
+    const r = buildPulse(db);
+    expect(r.washTop.map((w) => w.conditionId)).toEqual(["w2", "w1"]);
+    expect(r.washTop[0].washRatio).toBeCloseTo(0.6);
   });
 });

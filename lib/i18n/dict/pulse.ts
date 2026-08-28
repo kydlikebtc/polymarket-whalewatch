@@ -45,4 +45,19 @@ export const DICT_PULSE: Record<string, string> = {
   对立: "Opposition",
   "确信指数 = 0.30·阵营对峙（量能加权 1−单边度）+ 0.30·对立度（合格分歧市场量能占比，双边门槛与上表同尺）+ 0.20·价格动荡 + 0.20·量能异动；品类日总量 <$10k 不给分；量能异动在品类自身基线不足 3 天时退化为当日横截面分位。":
     "Conviction index = 0.30·contest (volume-weighted 1−one-sidedness) + 0.30·opposition (volume share of qualifying divergence markets, same two-sided floors as the table above) + 0.20·price churn + 0.20·volume surge; category-days under $10k total get no score; volume surge falls back to same-day cross-sectional percentile when the category has fewer than 3 baseline days.",
+  // 无鲸异动 + 洗量榜(第二梯队八件套,2026-08-28)
+  "无鲸异动 · 没人付大钱的剧烈价移": "Ghost moves · big swings nobody paid big for",
+  "价移 ≥10¢ 但当日没有任何一笔 ≥$10k —— 要么簿子薄到小单就能推，要么有人在蚂蚁搬家。":
+    "Price moved ≥10¢ with no single fill ≥$10k all day — either the book is thin enough for small orders to push, or someone is accumulating ant-style.",
+  "洗量榜 · 同钱包当日往返": "Wash board · same-wallet round trips",
+  "同一钱包在同一市场当日既买又卖的配对量占比（双腿口径）。是结构描述不是指控——做市、调仓也长这样；把它当「这个市场的量能里有多少不是方向性意见」来读。":
+    "Share of volume matched between buys and sells by the same wallet in the same market that day (both legs counted). A structural description, not an accusation — market making and rebalancing look the same; read it as \"how much of this market's volume is not a directional opinion\".",
+  // 「价移」沿用本分片既有 chip 键;「单笔最大」沿用 accumulation 分片
+  // 既有译文("Max Single")—— 跨分片同键必须同值。
+  "首→末价": "First→last",
+  "洗量占比": "Wash share",
+  "配对量": "Matched",
+  "洗量占比 {p}%": "wash {p}%",
+  "无鲸异动 = 价移 ≥10¢ 且当日单笔最大 <$10k（判定材料 2026-08-28 起采集，之前的日份不进榜）；洗量占比 = 同钱包当日买卖配对量 ×2 ÷ 总量，只统计单笔 ≥$2k 的抓取窗口。":
+    "Ghost move = ≥10¢ move with max single fill <$10k that day (the material is collected from 2026-08-28; earlier days never chart); wash share = same-wallet matched buy/sell volume ×2 ÷ total, within the ≥$2k fetch window.",
 };
