@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 500 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that range: 1958 tests across
-153 files (`npm test`).
+Scope: 509 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that range: 1986 tests across
+154 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -36,6 +36,27 @@ Scope: 500 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-28 — Smart-money self-test: hand the visitor their own verdict
+
+Round-3 brainstorm #9 (`docs/plans/2026-08-28-smart-money-selftest-design.md`), the outreach hook
+the cost table filed under "ship with a budget gate": paste any wallet address on `/selftest` and
+get a verdict against the exact pool-admission gate (`evaluateAdmission` reused verbatim —
+recurrence evidence stays a discovery-channel candidacy requirement, explicitly out of scope and
+said so on the page), three midrank percentiles against the current pool (win rate / net P/L /
+score, the score on the same vol-free construction the admission path uses), and a shareable
+zero-JS embed card (`/embed/selftest`). "Below bar" and "unjudgeable" are strictly separate
+verdicts: a truncated record (win rate/ROI already null by walletStats discipline) degrades to
+unjudgeable rather than showing a wrong number, as do sub-5-market samples and unavailable net
+P/L. The wallet dossier gains a click-to-load verdict block (the market-replay precedent — no
+budget spent on passive page views).
+
+The cost gates shipped with the feature, not after it: a 24-hour per-address verdict cache above
+getWalletStats's own 24h SQLite layer; the same "wallet-profile" rate-limit bucket as the wallet
+dossier (cost 3 — a separate bucket would hand enumerators a way around that budget); rate-limit
+and upstream failures return the locally cached verdict instead of an error; and the embed card
+never touches upstream (cached rows only — an untested address gets a "not tested yet" card
+instead of costing ~42 upstream calls per iframe impression).
 
 ### 2026-08-28 — Tier-two octet: the wallet becomes a character, the market gets a risk layer
 
