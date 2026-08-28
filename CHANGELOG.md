@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 509 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that range: 1986 tests across
-154 files (`npm test`).
+Scope: 514 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that range: 1993 tests across
+155 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -36,6 +36,20 @@ Scope: 509 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-28 — Feature guide: the per-section manual, with honesty machine-checked
+
+A public `/guide` page documenting all 17 sections of the site — what it is, how to use it, how to
+read it (`docs/plans/2026-08-28-feature-guide-design.md`). The reading blocks are the point: every
+section carries its basis, sample and a "don't read it this way", and a test enforces that (a
+section whose reading block contains no basis/red-line language fails the suite). Two coverage
+gates keep the manual from rotting: NAV ⊆ guide and sitemap ⊆ guide (adding a page without
+documenting it turns the build red), plus a translation gate that closes the dynamic-`t()`
+blind spot the site-wide i18n coverage scan can't see. Content follows the glossary pattern —
+Chinese single-source data (`app/guide.ts`), rendered through `t()`, fully translated. The page
+stays out of NAV and the sitemap for now; its entry points sit on `/manage` (both locked and
+unlocked states, the `/status` precedent). NAV itself moved to a pure-data module (`app/nav.ts`)
+so tests can consume it.
 
 ### 2026-08-28 — Smart-money self-test: hand the visitor their own verdict
 
