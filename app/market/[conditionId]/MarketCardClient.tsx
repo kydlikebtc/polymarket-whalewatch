@@ -514,6 +514,226 @@ export default function MarketCard() {
           </div>
         )}
       </section>
+
+      {/* 🕰 复盘(2026-08-28 八件套):点击才拉曲线 —— 市场卡自身零上游的
+          纪律不被稀释;曲线不可变,服务端 10 分钟缓存按市场去重。 */}
+      <ReplaySection conditionId={conditionId} />
     </main>
+  );
+}
+
+type ReplayMarkerView = {
+  ts: number;
+  type: string;
+  side: "BUY" | "SELL";
+  price: number;
+  usd: number;
+  outcome: string | null;
+  mappedFromOtherSide: boolean;
+};
+type ReplayData = {
+  outcome: string | null;
+  binary: boolean;
+  closed: boolean;
+  resolutionPrice: number | null;
+  startTs: number;
+  endTs: number;
+  series: { t: number; p: number }[];
+  markers: ReplayMarkerView[];
+  error?: string;
+};
+
+const MARKER_COLOR: Record<string, string> = {
+  large: "#8a8a8a",
+  smart: "#d99a2b",
+  consensus: "#d0454c",
+  cohort: "#3f9d63",
+};
+
+function ReplaySection({ conditionId }: { conditionId: string }) {
+  const { t } = useLang();
+  const [state, setState] = useState<{
+    loading: boolean;
+    data: ReplayData | null;
+    error: string | null;
+  }>({ loading: false, data: null, error: null });
+
+  const load = async () => {
+    setState({ loading: true, data: null, error: null });
+    try {
+      const res = await fetch(`/api/market/${conditionId}/replay`);
+      const json = (await res.json()) as ReplayData;
+      if (!res.ok || json.error) {
+        setState({
+          loading: false,
+          data: null,
+          error: json.error ?? `HTTP ${res.status}`,
+        });
+        return;
+      }
+      setState({ loading: false, data: json, error: null });
+    } catch (e) {
+      setState({
+        loading: false,
+        data: null,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  const d = state.data;
+  return (
+    <section style={{ marginTop: "var(--s-5)" }}>
+      <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+        {t("🕰 复盘（价格曲线 × 本站告警 × 结算）")}
+      </div>
+      {!d && (
+        <div>
+          <button
+            className="ds-btn ds-btn--sm"
+            disabled={state.loading}
+            onClick={() => void load()}
+          >
+            {state.loading ? t("加载中…") : t("加载复盘（拉一次价格曲线）")}
+          </button>
+          {state.error && (
+            <span
+              className="ds-hint"
+              style={{ marginLeft: "var(--s-3)", color: "var(--warn-700)" }}
+            >
+              {t("加载失败：{err}", { err: state.error })}
+            </span>
+          )}
+        </div>
+      )}
+      {d && d.series.length > 0 && (
+        <>
+          <ReplayChart d={d} />
+          <div className="ds-hint muted" style={{ marginTop: "var(--s-2)" }}>
+            {t("曲线为 {o} 一侧的价格。", { o: d.outcome ?? "index 0" })}{" "}
+            {d.binary
+              ? t("另一侧的告警按 1−p 精确映射到同一坐标（标记带 ↔）。")
+              : t(
+                  "非二元市场：只显示第一结果一侧的告警，其余边无等价映射。",
+                )}{" "}
+            {d.closed && d.resolutionPrice != null ? t("虚线为结算价。") : ""}
+            {t("标记色：💰大单 🏆聪明钱 🔥共识 🐣同批新钱包。")}
+          </div>
+        </>
+      )}
+      {d && d.series.length === 0 && (
+        <div className="ds-hint">
+          {t("该区间没有价格历史点（市场太新或曲线不可用）。")}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ReplayChart({ d }: { d: ReplayData }) {
+  const W = 720;
+  const H = 220;
+  const PAD = { l: 42, r: 10, t: 10, b: 22 };
+  const t0 = d.startTs;
+  const t1 = Math.max(d.endTs, t0 + 1);
+  const ys = [
+    ...d.series.map((s) => s.p),
+    ...d.markers.map((m) => m.price),
+    ...(d.resolutionPrice != null ? [d.resolutionPrice] : []),
+  ];
+  const yMin = Math.max(0, Math.min(...ys) - 0.05);
+  const yMax = Math.min(1, Math.max(...ys) + 0.05);
+  const x = (ts: number) =>
+    PAD.l + ((ts - t0) / (t1 - t0)) * (W - PAD.l - PAD.r);
+  const y = (p: number) =>
+    PAD.t +
+    (1 - (p - yMin) / Math.max(1e-9, yMax - yMin)) * (H - PAD.t - PAD.b);
+  const points = d.series
+    .map((s) => `${x(s.t).toFixed(1)},${y(s.p).toFixed(1)}`)
+    .join(" ");
+  const dayLabel = (ts: number) => {
+    const dt = new Date(ts * 1000);
+    return `${dt.getUTCMonth() + 1}/${dt.getUTCDate()}`;
+  };
+  const ticks = [t0, t0 + (t1 - t0) / 3, t0 + (2 * (t1 - t0)) / 3, t1];
+  return (
+    <div className="ds-table-wrap">
+      <svg
+        width="100%"
+        viewBox={`0 0 ${W} ${H}`}
+        role="img"
+        aria-label="market replay"
+      >
+        {[yMin, (yMin + yMax) / 2, yMax].map((p) => (
+          <g key={p}>
+            <line
+              x1={PAD.l}
+              y1={y(p)}
+              x2={W - PAD.r}
+              y2={y(p)}
+              stroke="currentColor"
+              opacity={0.12}
+            />
+            <text
+              x={PAD.l - 6}
+              y={y(p) + 4}
+              textAnchor="end"
+              fontSize={11}
+              fill="currentColor"
+              opacity={0.6}
+            >
+              {(p * 100).toFixed(0)}¢
+            </text>
+          </g>
+        ))}
+        {ticks.map((ts) => (
+          <text
+            key={ts}
+            x={x(ts)}
+            y={H - 6}
+            textAnchor="middle"
+            fontSize={11}
+            fill="currentColor"
+            opacity={0.6}
+          >
+            {dayLabel(ts)}
+          </text>
+        ))}
+        {d.resolutionPrice != null && (
+          <line
+            x1={PAD.l}
+            y1={y(d.resolutionPrice)}
+            x2={W - PAD.r}
+            y2={y(d.resolutionPrice)}
+            stroke="currentColor"
+            strokeDasharray="4 4"
+            opacity={0.5}
+          />
+        )}
+        <polyline
+          points={points}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.5}
+          strokeLinejoin="round"
+          opacity={0.85}
+        />
+        {d.markers.map((m, i) => (
+          <circle
+            key={i}
+            cx={x(Math.min(Math.max(m.ts, t0), t1))}
+            cy={y(m.price)}
+            r={4}
+            fill={MARKER_COLOR[m.type] ?? "#8a8a8a"}
+            stroke="white"
+            strokeWidth={1}
+          >
+            <title>
+              {`${m.type} · ${m.side} · ${(m.price * 100).toFixed(1)}¢ · $${Math.round(m.usd).toLocaleString("en-US")}${m.mappedFromOtherSide ? " · ↔" : ""}`}
+            </title>
+          </circle>
+        ))}
+      </svg>
+    </div>
   );
 }
