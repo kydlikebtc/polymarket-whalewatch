@@ -132,4 +132,16 @@ export const DICT_WALLET: Record<string, string> = {
   "中位初动 +{a}¢ → 24h {b}¢": "Median initial move +{a}¢ → 24h {b}¢",
   "口径：初动 = 告警后 10 分钟的方向化价移（≥2¢ 才可测），留住 = 24h 后保住初动一半以上；区间按市场聚簇。这是市场对他的反应的描述统计，不是任何跟随建议。":
     "Definitions: initial move = direction-signed price change 10 minutes after the alert (≥2¢ to count), retained = 24h later at least half the move survives; CI clustered by market. Descriptive statistics of how the market reacted — never a suggestion to follow anyone.",
+  // 交易风格(第二梯队八件套,2026-08-28;词表与 discovery 页共用)
+  "交易风格（池内 · 近 90 天告警样本 {n} 条）":
+    "Trading style (pool member · {n} alert samples in 90d)",
+  "风格最像的池内钱包：": "Most similar pool wallets: ",
+  "🎯 冷门猎手": "🎯 Longshot hunter",
+  "⚖️ 中盘": "⚖️ Midrange",
+  "🛡️ 热门守卫": "🛡️ Favorite guard",
+  "⏱️ 临场": "⏱️ Last-call",
+  "📅 隔日": "📅 Intraday-to-day",
+  "🗓️ 长线": "🗓️ Long-haul",
+  "🔨 重锤": "🔨 Hammer",
+  "↔️ 双向": "↔️ Two-way",
 };

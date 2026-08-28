@@ -57,8 +57,36 @@ interface MemberRow {
   netPnl: number | null;
   updatedAt: number | null;
   tags: WalletTag[];
+  styleTags?: string[];
   evidence: EvidenceDetail[];
 }
+
+// 交易风格标签译名(lib/walletFingerprint 的 ASCII 键;lib 中文常量不被
+// coverage 闸看见,页面逐键写死 —— scorecardLabel 同一原因)。
+function styleLabel(key: string, t: TFn2): string {
+  switch (key) {
+    case "longshot":
+      return t("🎯 冷门猎手");
+    case "midrange":
+      return t("⚖️ 中盘");
+    case "favorite":
+      return t("🛡️ 热门守卫");
+    case "lastcall":
+      return t("⏱️ 临场");
+    case "intraday":
+      return t("📅 隔日");
+    case "longhaul":
+      return t("🗓️ 长线");
+    case "hammer":
+      return t("🔨 重锤");
+    case "twoway":
+      return t("↔️ 双向");
+    default:
+      return key;
+  }
+}
+type TFn2 = (zh: string, params?: Record<string, string | number>) => string;
+
 interface DiscoveryPayload {
   candidates: CandidateRow[];
   members: MemberRow[];
@@ -964,6 +992,16 @@ export default function DiscoveryPage() {
                     <td>{walletCell(a.address)}</td>
                     <td>
                       <WalletTagChips tags={a.tags} max={4} />
+                      {(a.styleTags ?? []).length > 0 && (
+                        <span
+                          className="ds-hint"
+                          style={{ display: "block", marginTop: 2 }}
+                        >
+                          {(a.styleTags ?? [])
+                            .map((k) => styleLabel(k, t))
+                            .join(" · ")}
+                        </span>
+                      )}
                     </td>
                     <td className="mono is-right">
                       {a.score != null ? Math.round(a.score) : "—"}
