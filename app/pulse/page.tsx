@@ -9,7 +9,14 @@ import { MarketSlugActions } from "../ui";
 
 // /api/pulse 的完整 payload:PulseReport + additive 的确信指数键(服务端
 // 现算失败会降级 null,页面必须能在没有它的情况下照常渲染前两个 section)。
-type PulsePayload = PulseReport & { conviction?: ConvictionReport | null };
+// ghosts/washTop 标为可选:部署后 5 分钟内(max-age=300)浏览器/中间缓存可能
+// 把旧 payload 喂给新页面 JS,必须与 conviction 同一套渲染侧防御 —— 缓存
+// 世界里「同一次部署所以键必在」不成立。
+type PulsePayload = Omit<PulseReport, "ghosts" | "washTop"> & {
+  conviction?: ConvictionReport | null;
+  ghosts?: PulseReport["ghosts"];
+  washTop?: PulseReport["washTop"];
+};
 
 // /pulse 市场脉搏:①异常市场日榜(四个可解释分量合成,总分必须能看到组成)
 // ②散户 vs 鲸鱼分歧(小单与鲸鱼桶的方向背离)。数据 = market_daily 每日聚合,
@@ -361,7 +368,7 @@ export default function PulsePage() {
             </section>
           )}
 
-          {report.ghosts.length > 0 && (
+          {(report.ghosts ?? []).length > 0 && (
             <section style={{ marginBottom: "var(--s-5)" }}>
               <h2 style={{ fontSize: "var(--t-lg)", margin: "0 0 var(--s-3)" }}>
                 {t("无鲸异动 · 没人付大钱的剧烈价移")}
@@ -383,7 +390,7 @@ export default function PulsePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {report.ghosts.map((g) => (
+                    {(report.ghosts ?? []).map((g) => (
                       <tr key={g.conditionId}>
                         <td>
                           <div style={{ fontWeight: 500 }}>
@@ -428,7 +435,7 @@ export default function PulsePage() {
             </section>
           )}
 
-          {report.washTop.length > 0 && (
+          {(report.washTop ?? []).length > 0 && (
             <section style={{ marginBottom: "var(--s-5)" }}>
               <h2 style={{ fontSize: "var(--t-lg)", margin: "0 0 var(--s-3)" }}>
                 {t("洗量榜 · 同钱包当日往返")}
@@ -449,7 +456,7 @@ export default function PulsePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {report.washTop.map((w) => (
+                    {(report.washTop ?? []).map((w) => (
                       <tr key={w.conditionId}>
                         <td>
                           <div style={{ fontWeight: 500 }}>
