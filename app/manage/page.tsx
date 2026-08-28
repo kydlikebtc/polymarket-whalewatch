@@ -321,6 +321,8 @@ export default function ManagePage() {
         <div className="ds-hint" style={{ marginTop: "var(--s-4)" }}>
           想确认引擎是否在正常运行？这不需要令牌 ——{" "}
           <Link href="/status">查看系统状态 →</Link>
+          <span className="muted"> · </span>
+          各板块怎么用怎么读？<Link href="/guide">📚 功能说明书 →</Link>
         </div>
       </main>
     );
@@ -365,10 +367,14 @@ export default function ManagePage() {
         {/* /status 不在全站导航里,/manage 是它唯一的常规入口 —— 所以这条
             链接放在页头而不是只放在健康度区块内:运维在别的 tab 上发现数字
             不对劲时,不该还要先切回健康度才找得到去处。 */}
+        {/* /guide 与 /status 同款「公开但不进导航」页面,/manage 页头是
+            它们的常规入口 —— 说明书没有秘密,锁定态也放同一条。 */}
         <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
           无入口页面(不在导航栏)。令牌只存本浏览器,与 /alerts 配置面板共用。
           <span className="muted"> · </span>
           <Link href="/status">🩺 系统状态页 →</Link>
+          <span className="muted"> · </span>
+          <Link href="/guide">📚 功能说明书 →</Link>
         </div>
       </header>
 

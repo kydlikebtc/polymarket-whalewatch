@@ -16,6 +16,7 @@ import { DICT_STATUS } from "./status";
 import { DICT_PULSE } from "./pulse";
 import { DICT_CALIBRATION } from "./calibration";
 import { DICT_SELFTEST } from "./selftest";
+import { DICT_GUIDE } from "./guide";
 
 export const DICT: Record<string, string> = {
   ...DICT_COMMON,
@@ -34,4 +35,5 @@ export const DICT: Record<string, string> = {
   ...DICT_PULSE,
   ...DICT_CALIBRATION,
   ...DICT_SELFTEST,
+  ...DICT_GUIDE,
 };

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { NAV } from "./nav";
 import { STATIC_PAGES } from "./sitemap";
 import { GUIDE_SECTIONS } from "./guide";
+import { DICT } from "../lib/i18n/dict";
 
 // 功能说明书防漏闸(设计文档 2026-08-28-feature-guide-design.md):
 // 说明书的最大风险不是写错而是**漏写** —— 新页面进了导航/站点地图,
@@ -48,6 +49,21 @@ describe("guide 结构卫生", () => {
         for (const line of block) expect(line.trim(), s.id).not.toBe("");
       }
     }
+  });
+
+  it("数据层每段文案都有英文译文(页面 t(动态值) 逃过 coverage 闸,这里补上)", () => {
+    // coverage.test.ts 只扫 t("字面量");/guide 渲染的是 t(section.字段),
+    // 属于它明说管不到的动态调用。glossary 靠属主分片人工保证,这里升级成
+    // 机器闸:GUIDE_SECTIONS 的每一段中文都必须在合并字典里有键。
+    const missing: string[] = [];
+    for (const s of GUIDE_SECTIONS) {
+      for (const text of [s.title, s.tagline, ...s.what, ...s.how, ...s.read]) {
+        if (/[一-鿿]/.test(text) && !(text in DICT)) {
+          missing.push(`${s.id}: ${text.slice(0, 30)}…`);
+        }
+      }
+    }
+    expect(missing).toEqual([]);
   });
 
   it("「怎么读」是灵魂:每节 read 至少一条含口径/红线措辞", () => {
