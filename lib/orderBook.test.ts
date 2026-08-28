@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseAskBook, simulateBookBuy } from "./orderBook";
+import { parseAskBook, simulateBookBuy, bookCapacityUsd } from "./orderBook";
 
 // 实测事实(2026-07-31 live curl):CLOB GET /book 返回的 bids/asks 是
 // {price:string,size:string}[],且**由外向内排序 —— 最优档在数组末尾**
@@ -95,5 +95,44 @@ describe("simulateBookBuy", () => {
     expect(simulateBookBuy([], 500)).toBeNull();
     expect(simulateBookBuy([{ price: 0.5, size: 10 }], 0)).toBeNull();
     expect(simulateBookBuy([{ price: 0.5, size: 10 }], -5)).toBeNull();
+  });
+});
+
+// 容量标尺(第一梯队五件套):带内深度 = 「跟随资金在把价格推出 bestAsk+band
+// 之前最多能吃多少美元」。带宽用绝对 cents 而非相对百分比 —— 本仓执行/markout
+// 口径全是 cents,且 0-1 概率价上相对带宽在低价端会塌缩。
+describe("bookCapacityUsd", () => {
+  it("带内深度:只累计 price ≤ bestAsk + band 的档位名义额", () => {
+    const asks = [
+      { price: 0.5, size: 1000 }, // $500
+      { price: 0.51, size: 2000 }, // $1020
+      { price: 0.53, size: 500 }, // $265
+      { price: 0.56, size: 100 }, // 带外
+    ];
+    expect(bookCapacityUsd(asks, 1)).toBeCloseTo(1520); // ≤0.51
+    expect(bookCapacityUsd(asks, 3)).toBeCloseTo(1785); // ≤0.53
+  });
+
+  it("边界档恰在 bestAsk+band 上必须计入(浮点容差)", () => {
+    // 0.1 + 1¢ = 0.11,浮点下 0.1+0.01=0.11000000000000001,朴素比较会漏档。
+    const asks = [
+      { price: 0.1, size: 100 },
+      { price: 0.11, size: 100 },
+    ];
+    expect(bookCapacityUsd(asks, 1)).toBeCloseTo(10 + 11);
+  });
+
+  it("band=0 → 仅最优价档(含同价多档)", () => {
+    const asks = [
+      { price: 0.5, size: 100 },
+      { price: 0.5, size: 200 },
+      { price: 0.51, size: 100 },
+    ];
+    expect(bookCapacityUsd(asks, 0)).toBeCloseTo(150);
+  });
+
+  it("空簿 / 负带宽 → null(容量未知,不是 0 —— 0 会被当成「真没深度」)", () => {
+    expect(bookCapacityUsd([], 1)).toBeNull();
+    expect(bookCapacityUsd([{ price: 0.5, size: 10 }], -1)).toBeNull();
   });
 });

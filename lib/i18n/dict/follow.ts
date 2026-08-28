@@ -345,4 +345,11 @@ export const DICT_FOLLOW: Record<string, string> = {
   反分歧解除: "Inverse Standoff Resolved",
   反高分独狼: "Inverse Lone Wolf",
   反早期赢家: "Inverse Early Winner",
+  // 容量标尺(第一梯队五件套,2026-08-28)
+  "容量(+1¢) ~${a}": "Depth(+1¢) ~${a}",
+  "容量(+1¢ · +3¢)": "Capacity (+1¢ · +3¢)",
+  "开仓瞬间盘口 +1¢ 带内深度的中位数 —— 跟随资金把成交价推高 1¢ 之前最多能吃的金额。详情面板有 +3¢ 档与覆盖率":
+    "Median in-band book depth (+1¢) at entry — the most follower money could absorb before pushing the fill 1¢ past best ask. The detail panel adds the +3¢ band and coverage",
+  "开仓瞬间 ask 簿的带内深度中位数:把成交价推出最优价 +1¢/+3¢ 之前,跟随资金最多能吃的美元额。回答「这个信号能装下多少钱」—— 信号是真的但只有 $3k 深,跟随者必须知道。中位数抗离群(一次厚簿会把均值拉爆);盘口无历史,2026-08-28 前的老仓无此快照,故带 n= 覆盖率。纯归因展示,不参与开仓与盈亏":
+    "Median in-band ask-book depth at entry: the max USD follower money could absorb before pushing the fill past best ask +1¢/+3¢. Answers \"how much money fits this signal\" — a real signal that is only $3k deep is something a follower must know. Median resists outliers (one thick book would blow up the mean); books have no history, so positions before 2026-08-28 carry no snapshot — hence the n= coverage. Attribution display only, never enters entries or P&L",
 };

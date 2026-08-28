@@ -100,6 +100,11 @@ type StrategyMetrics = {
   feeCost: number;
   feeSamples: number;
   feeUnknown: number;
+  // 容量标尺(2026-08-28 起采集):开仓瞬间 +1¢/+3¢ 带内深度中位数。老仓无
+  // 快照不回填,bookCapSamples 是覆盖率 —— 数字必须带 n= 一起读。
+  bookCap1cMedian: number | null;
+  bookCap3cMedian: number | null;
+  bookCapSamples: number;
   equityCurve: { ts: number; cum: number }[];
   byCategory: Record<string, { realized: number; settledCount: number }>;
 };
@@ -1713,6 +1718,17 @@ function StrategyCard({
         {fund?.runDays != null ? (
           <span>{t("运行 {n} 天", { n: Math.floor(fund.runDays) })}</span>
         ) : null}
+        {/* 容量标尺:+1¢ 带内深度中位数。信号真不真是一回事,能装下多少跟随
+            资金是另一回事 —— 这里给最紧的一档,+3¢ 与覆盖率在详情面板。 */}
+        {m.bookCapSamples > 0 && m.bookCap1cMedian != null ? (
+          <span
+            title={t(
+              "开仓瞬间盘口 +1¢ 带内深度的中位数 —— 跟随资金把成交价推高 1¢ 之前最多能吃的金额。详情面板有 +3¢ 档与覆盖率",
+            )}
+          >
+            {t("容量(+1¢) ~${a}", { a: fmtUsd0(m.bookCap1cMedian) })}
+          </span>
+        ) : null}
       </div>
       <CardActions s={s} />
     </div>
@@ -1870,6 +1886,32 @@ function StrategyFullMetrics({
                     ? t(" · {n} 仓未知", { n: m.feeUnknown })
                     : null}
                 </div>
+              </>
+            )
+          }
+        />
+        <Metric
+          label={t("容量(+1¢ · +3¢)")}
+          title={t(
+            "开仓瞬间 ask 簿的带内深度中位数:把成交价推出最优价 +1¢/+3¢ 之前,跟随资金最多能吃的美元额。回答「这个信号能装下多少钱」—— 信号是真的但只有 $3k 深,跟随者必须知道。中位数抗离群(一次厚簿会把均值拉爆);盘口无历史,2026-08-28 前的老仓无此快照,故带 n= 覆盖率。纯归因展示,不参与开仓与盈亏",
+          )}
+          value={
+            m.bookCapSamples === 0 ||
+            m.bookCap1cMedian == null ||
+            m.bookCap3cMedian == null ? (
+              <>
+                <span className="muted">—</span>
+                <div className="kpi-sub mono">n=0</div>
+              </>
+            ) : (
+              <>
+                {/* 配色中性:容量是盘口事实,不是盈亏。 */}
+                <span className="mono">
+                  ${fmtUsd0(m.bookCap1cMedian)}
+                  <span className="muted"> · </span>$
+                  {fmtUsd0(m.bookCap3cMedian)}
+                </span>
+                <div className="kpi-sub mono">n={m.bookCapSamples}</div>
               </>
             )
           }

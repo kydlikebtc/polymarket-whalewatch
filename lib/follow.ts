@@ -15,7 +15,7 @@ import type {
 } from "./followCandidate";
 import type { MarketMeta } from "./gamma";
 import type { AskBook } from "./orderBook";
-import { simulateBookBuy } from "./orderBook";
+import { simulateBookBuy, bookCapacityUsd } from "./orderBook";
 import { wilsonInterval } from "./outcomeStats";
 import { createPromiseCache } from "./promiseCache";
 import { reverseCandidate } from "./reverse";
@@ -647,8 +647,8 @@ export async function runFollowCycle(
          (strategy_id, condition_id, outcome, asset, outcome_index, title, event_slug,
           entry_ts, entry_price, smart_avg_price, size_usd, shares, status,
           formation_ts, formation_price, exec_price, exec_best_ask, exec_filled_usd,
-          fee_usd)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
+          fee_usd, book_cap_1c, book_cap_3c)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const s of strategies) {
       for (const c0 of candidatesByStrategy.get(s.id) ?? []) {
@@ -771,6 +771,10 @@ export async function runFollowCycle(
         let execPrice: number | null = null;
         let execBestAsk: number | null = null;
         let execFilledUsd: number | null = null;
+        // 容量标尺(同一份簿快照顺手算,零额外抓取):+1¢/+3¢ 带内深度 =
+        // 跟随资金把成交价推出该带之前的最大美元容量。空簿/无簿恒 null。
+        let bookCap1c: number | null = null;
+        let bookCap3c: number | null = null;
         if (fetchBook) {
           try {
             const book = await bookCache(`book:${c.asset}`, () =>
@@ -783,6 +787,8 @@ export async function runFollowCycle(
                 execPrice = fill.avgPrice;
                 execFilledUsd = fill.filledUsd;
               }
+              bookCap1c = bookCapacityUsd(book.asks, 1);
+              bookCap3c = bookCapacityUsd(book.asks, 3);
             }
           } catch (e) {
             console.warn(`[follow] fetchBook failed for ${c.asset}:`, e);
@@ -822,6 +828,8 @@ export async function runFollowCycle(
           execBestAsk,
           execFilledUsd,
           feeUsd,
+          bookCap1c,
+          bookCap3c,
         );
         // changes===0 说明 UNIQUE 命中(并发/竞态下已被开出),不重复计数。
         if (res.changes === 1) {
@@ -1018,6 +1026,12 @@ export interface FollowPositionRow {
    * 0 = 该市场确实免费。红线同 markout/exec_*:归因列,不参与 realized_pnl。
    */
   fee_usd: number | null;
+  /**
+   * 容量标尺:开仓瞬间 ask 簿的 +1¢/+3¢ 带内深度(USD)。null = 未知(老仓/
+   * 无簿)。可选仅为兼容既有测试夹具;红线同 fee_usd。
+   */
+  book_cap_1c?: number | null;
+  book_cap_3c?: number | null;
 }
 
 export interface StrategyMetrics {
@@ -1053,6 +1067,22 @@ export interface StrategyMetrics {
   netAfterCostsCovered: number;
   equityCurve: { ts: number; cum: number }[];
   byCategory: Record<string, { realized: number; settledCount: number }>;
+  /**
+   * 容量标尺:开仓时 +1¢/+3¢ 带内深度的中位数(USD,open+settled 一视同仁,
+   * 容量在进场即产生)。中位数抗离群 —— 一次厚簿会把均值拉到没人信的量级。
+   * null = 零样本(页面留白,不显示 $0);bookCapSamples 是覆盖率,必须同展。
+   */
+  bookCap1cMedian: number | null;
+  bookCap3cMedian: number | null;
+  bookCapSamples: number;
+}
+
+/** 中位数;空数组返回 null。偶数样本取中间两数均值。 */
+function medianOf(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const s = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
 /**
@@ -1157,6 +1187,17 @@ export function computeStrategyMetrics(
     0,
   );
 
+  // 容量标尺:open+settled 一视同仁(容量在进场即产生),只统计已知值。
+  const cap1s = positions
+    .map((p) => p.book_cap_1c)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  const cap3s = positions
+    .map((p) => p.book_cap_3c)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  const bookCap1cMedian = medianOf(cap1s);
+  const bookCap3cMedian = medianOf(cap3s);
+  const bookCapSamples = cap1s.length;
+
   // 按赛道分解:仅 settled,categoryByCid 缺失/null 归「未分类」。
   const byCategory: Record<string, { realized: number; settledCount: number }> =
     {};
@@ -1186,6 +1227,9 @@ export function computeStrategyMetrics(
     netAfterCostsCovered,
     equityCurve,
     byCategory,
+    bookCap1cMedian,
+    bookCap3cMedian,
+    bookCapSamples,
   };
 }
 

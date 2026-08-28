@@ -46,6 +46,10 @@ type PositionRow = FollowPositionRow & {
   exec_price: number | null;
   exec_best_ask: number | null;
   exec_filled_usd: number | null;
+  // 容量标尺:开仓瞬间 +1¢/+3¢ 带内深度(USD)。metrics 聚合成中位数供卡片
+  // 与详情面板展示;老仓 null。
+  book_cap_1c: number | null;
+  book_cap_3c: number | null;
 };
 
 // Read-only: strategies + their paper positions + per-strategy metrics. No live
@@ -66,7 +70,8 @@ export async function GET() {
                   entry_price, smart_avg_price, shares, status, entry_ts,
                   exit_ts, exit_price, realized_pnl,
                   formation_ts, formation_price, markout_30m, markout_2h,
-                  exec_price, exec_best_ask, exec_filled_usd, fee_usd
+                  exec_price, exec_best_ask, exec_filled_usd, fee_usd,
+                  book_cap_1c, book_cap_3c
              FROM follow_positions`,
         )
         .all() as PositionRow[];

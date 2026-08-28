@@ -57,6 +57,28 @@ export async function fetchAskBook(tokenId: string): Promise<AskBook | null> {
   return parseAskBook(await res.json());
 }
 
+/**
+ * 容量标尺(带内深度):自最优档起,累计所有 price ≤ bestAsk + bandCents/100
+ * 档位的美元名义额 —— 即「跟随资金在把成交价推出该带之前最多能吃多少钱」。
+ * 带宽用绝对 cents(与 markout/mae 同口径);相对百分比在 0-1 概率价的低价端
+ * 会塌缩,弃用。空簿/负带宽返回 null:容量未知与「实测 $0 深度」是两种事实。
+ * 红线同 exec_*:纯归因展示,不参与开仓判定与 realized_pnl。
+ */
+export function bookCapacityUsd(
+  asks: BookLevel[],
+  bandCents: number,
+): number | null {
+  if (asks.length === 0 || bandCents < 0) return null;
+  // 1e-9 浮点容差:0.1+0.01 在二进制下略大于 0.11,朴素 ≤ 会把恰在带缘的档漏掉。
+  const limit = asks[0].price + bandCents / 100 + 1e-9;
+  let usd = 0;
+  for (const lv of asks) {
+    if (lv.price > limit) break; // 升序簿(parseAskBook 保证),越界即可停
+    usd += lv.price * lv.size;
+  }
+  return usd;
+}
+
 export interface BookFill {
   avgPrice: number; // 成交均价 = 总耗资 ÷ 总份额
   shares: number; // 吃到的总份额

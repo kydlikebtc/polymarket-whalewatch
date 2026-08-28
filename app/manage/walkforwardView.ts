@@ -5,7 +5,8 @@ import type { WfTierReport, WalkforwardReport } from "../../lib/walkforward";
 // (设计 §6.2:能力可达即可,一键化留给验证过报告价值之后)。
 
 const day = (ts: number) => new Date(ts * 1000).toISOString().slice(0, 10);
-const pts = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(2)}`;
+const pts = (v: number) =>
+  `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(2)}`;
 
 /** 卡头:跑于/窗口/网格/G/折。 */
 export function reportMeta(r: {
