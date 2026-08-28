@@ -87,6 +87,8 @@ export function detectHeavyCandidates(
       sourceKind: "heavy",
       walletCount: 1,
       totalNetUsd: usd,
+      // 向前落库快照:那一笔的钱包与检测时可见评分(纯归因,不参与判定)。
+      wallets: [{ wallet, netUsd: usd, score: tag.score }],
     });
   }
   if (scoreGated > 0) {

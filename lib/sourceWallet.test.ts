@@ -527,3 +527,17 @@ describe("detectEarlyWinnerCandidates", () => {
     logSpy.mockRestore();
   });
 });
+
+describe("wallets 快照(向前落库)", () => {
+  it("lone_wolf:单钱包单元素,netUsd=聚合净买,score=检测时评分", () => {
+    const trades = [
+      mk({ proxyWallet: "0xA", size: 16_000, price: 0.5 }), // $8k
+      mk({ proxyWallet: "0xA", size: 8_000, price: 0.5 }), // $4k → 净 $12k
+    ];
+    const c = detectLoneWolfCandidates(trades, loneWolfParams(), ctx())[0];
+    expect(c.wallets).toEqual([
+      { wallet: "0xa", netUsd: c.totalNetUsd, score: 95 },
+    ]);
+    expect(c.totalNetUsd).toBeCloseTo(12_000, 6);
+  });
+});
