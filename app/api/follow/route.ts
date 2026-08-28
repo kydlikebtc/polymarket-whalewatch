@@ -1,4 +1,5 @@
 import { openDb } from "../../../lib/db";
+import { decayVerdict } from "../../../lib/decaySentinel";
 import { withExitCounterfactual } from "../../../lib/exitCounterfactual";
 import { getEventCategories, type EventTaxonomy } from "../../../lib/gamma";
 import {
@@ -100,14 +101,28 @@ export async function GET() {
       const view = buildFollowView(strategies, positions, taxByCid);
       // 反事实退出摘要:bulk 读已回填的模拟结果附到每档视图上。任何失败只
       // 降级为"无摘要"(面板省略该块),绝不拖垮整个接口。
+      let out = view.strategies;
       try {
-        return Response.json({
-          strategies: withExitCounterfactual(db, view.strategies),
-        });
+        out = withExitCounterfactual(db, out);
       } catch (e) {
         console.warn("[/api/follow] exitCounterfactual 附加失败,降级省略:", e);
-        return Response.json(view);
       }
+      // 衰变哨兵:同款降级纪律 —— 序贯监控挂不上就整块省略,主 payload 不陪葬。
+      try {
+        const byStrategy = new Map<number, PositionRow[]>();
+        for (const p of positions) {
+          const arr = byStrategy.get(p.strategy_id) ?? [];
+          arr.push(p);
+          byStrategy.set(p.strategy_id, arr);
+        }
+        out = out.map((v) => ({
+          ...v,
+          decay: decayVerdict(byStrategy.get(v.id) ?? []),
+        }));
+      } catch (e) {
+        console.warn("[/api/follow] 衰变哨兵现算失败,降级省略:", e);
+      }
+      return Response.json({ strategies: out });
     } finally {
       db.close();
     }

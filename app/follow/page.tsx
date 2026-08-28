@@ -20,6 +20,7 @@ import {
 import { Icon, Modal, Segmented, Tag } from "../ui";
 import { useLang } from "../i18n";
 import { DeepAnalysisPanel, EdgeMatrixTable } from "./DeepAnalysis";
+import type { DecayVerdict } from "../../lib/decaySentinel";
 import type { ExitCounterfactualSummary } from "../../lib/exitCounterfactual";
 import { buildEdgeMatrix } from "../../lib/followInsights";
 import { BUCKET_LOW_SAMPLE_N } from "../../lib/followAnalysis";
@@ -143,6 +144,8 @@ type FollowStrategyView = {
   enabled: boolean;
   /** 反事实退出摘要(服务端算好;null/缺失 = 回填中,面板第⑧块省略)。 */
   exitCounterfactual?: ExitCounterfactualSummary | null;
+  /** 衰变哨兵(服务端序贯监控;缺失 = 现算降级,徽章与哨兵 Metric 省略)。 */
+  decay?: DecayVerdict | null;
   params: {
     minWallets: number;
     minPerWalletUsd: number;
@@ -1541,6 +1544,14 @@ function StrategyCard({
         {s.params.reverse === true ? <Tag>{t("反向对照")}</Tag> : null}
         {leading ? <Tag variant="brand">{t("本窗口领先")}</Tag> : null}
         {!s.enabled ? <Tag variant="warn">{t("已停用")}</Tag> : null}
+        {/* 衰变哨兵徽章:只亮 watch/degraded 两态 —— ok 不发奖章(健康是
+            默认预期),insufficient 不装懂(样本不足连「健康」都不敢说)。
+            证据在详情面板的哨兵 Metric。 */}
+        {s.decay?.state === "degraded" ? (
+          <Tag variant="warn">{t("⚠ 疑似衰变")}</Tag>
+        ) : s.decay?.state === "watch" ? (
+          <Tag>{t("衰变观察")}</Tag>
+        ) : null}
       </div>
       {/* 精简参数提示(见 cardParamsHint 注释):只留跨档差异化门槛,压到
           1 行——12 档统一的三项(单价/偏离护栏/退出规则)挪进了详情弹窗,
@@ -1912,6 +1923,46 @@ function StrategyFullMetrics({
                   {fmtUsd0(m.bookCap3cMedian)}
                 </span>
                 <div className="kpi-sub mono">n={m.bookCapSamples}</div>
+              </>
+            )
+          }
+        />
+        <Metric
+          label={t("衰变哨兵")}
+          title={t(
+            "序贯监控这档策略是否在失效:已结算仓折成市场级观察点(同市场多仓共享同一次结算,只算一点),前段做基线,后段跑单侧 CUSUM 盯下行漂移。观察线 2.5σ、报警线 4σ;逐仓贡献与 walk-forward 同口径((已实现−协议费)÷份额,概率点)。哨兵只亮牌,不自动停用任何档 —— 生产参数永不自动改",
+          )}
+          value={
+            !s.decay || s.decay.state === "insufficient" ? (
+              <>
+                <span className="muted">{t("样本不足")}</span>
+                <div className="kpi-sub mono">
+                  {t("市场点 {n}(需 ≥15)", { n: s.decay?.marketPoints ?? 0 })}
+                </div>
+              </>
+            ) : (
+              <>
+                <span
+                  className="mono"
+                  style={
+                    s.decay.state === "degraded"
+                      ? { color: "var(--warn-700)", fontWeight: 600 }
+                      : undefined
+                  }
+                >
+                  {s.decay.state === "degraded"
+                    ? t("⚠ 疑似衰变")
+                    : s.decay.state === "watch"
+                      ? t("衰变观察")
+                      : t("健康")}
+                </span>
+                <div className="kpi-sub mono">
+                  {t("基线 {a}¢ → 近端 {b}¢ · 市场点 {n}", {
+                    a: ((s.decay.baselinePoint ?? 0) * 100).toFixed(1),
+                    b: ((s.decay.recentPoint ?? 0) * 100).toFixed(1),
+                    n: s.decay.marketPoints,
+                  })}
+                </div>
               </>
             )
           }
@@ -3016,6 +3067,12 @@ function StrategyListRow({
           {leading ? <Tag variant="brand">{t("领先")}</Tag> : null}
           {empty ? (
             <Tag>{m.openCount > 0 ? t("等待结算") : t("等待命中")}</Tag>
+          ) : null}
+          {/* 与卡片视图同一判定:哨兵只亮 watch/degraded。 */}
+          {s.decay?.state === "degraded" ? (
+            <Tag variant="warn">{t("⚠ 疑似衰变")}</Tag>
+          ) : s.decay?.state === "watch" ? (
+            <Tag>{t("衰变观察")}</Tag>
           ) : null}
         </span>
       </td>
