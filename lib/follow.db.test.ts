@@ -94,6 +94,9 @@ const FORMATION_COLS = [
   "exec_best_ask",
   "exec_filled_usd",
   "fee_usd",
+  // 容量标尺(第一梯队五件套):开仓瞬间的 +1¢/+3¢ 带内深度(USD)。同为纯归因列。
+  "book_cap_1c",
+  "book_cap_3c",
 ];
 
 const positionCols = (db: ReturnType<typeof openDb>): string[] =>

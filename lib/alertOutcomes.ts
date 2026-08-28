@@ -36,7 +36,10 @@ function parseTrackable(
   if (!payload) return null;
   try {
     const p = JSON.parse(payload) as Record<string, unknown>;
-    if (type === "consensus") {
+    // cohort(同批出生,2026-08-28)payload 字段名与 ConsensusGroup 对齐,
+    // trackable 语义完全同款:组级合成 BUY,按 USD 加权均价、计时于最后一笔
+    // 成员成交。共用 consensus 分支即是契约 —— 两类组告警不发明两套字段学。
+    if (type === "consensus" || type === "cohort") {
       // Every member trade of a (conditionId, outcome) group shares the same
       // token, so the group-level asset/outcomeIndex identify it. Pre-upgrade
       // payloads (before detectConsensus carried these fields) skip gracefully.

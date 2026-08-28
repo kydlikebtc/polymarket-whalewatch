@@ -1,4 +1,5 @@
 import { guardExpensive } from "../../../lib/apiGuard";
+import { buildConvictionIndex } from "../../../lib/convictionIndex";
 import { openDb } from "../../../lib/db";
 import { buildPulse } from "../../../lib/marketPulse";
 import { createPromiseCache } from "../../../lib/promiseCache";
@@ -18,7 +19,16 @@ export async function GET(req: Request) {
     const body = await cache("pulse", async () => {
       const db = openDb(process.env.DASH_DB ?? "data.sqlite");
       try {
-        return buildPulse(db);
+        const pulse = buildPulse(db);
+        // 确信指数(additive 键):品类×日激辩度。任何失败只降级为 null ——
+        // 日榜/分歧是本端点的主产品,新增指数不得拖垮整个 payload。
+        let conviction = null;
+        try {
+          conviction = buildConvictionIndex(db);
+        } catch (e) {
+          console.warn("[/api/pulse] conviction 现算失败,降级 null:", e);
+        }
+        return { ...pulse, conviction };
       } finally {
         db.close();
       }

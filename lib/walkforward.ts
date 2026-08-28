@@ -229,10 +229,7 @@ export interface WfPosition {
 }
 
 /** true=进子集,false=被阈值筛出,null=缺该维事实(剔除并计数)。 */
-export function entryMatches(
-  spec: EntrySpec,
-  p: WfPosition,
-): boolean | null {
+export function entryMatches(spec: EntrySpec, p: WfPosition): boolean | null {
   switch (spec.kind) {
     case "base":
       return true;
@@ -249,7 +246,9 @@ export function entryMatches(
     case "minWallets":
       return p.walletCount == null ? null : p.walletCount >= spec.min;
     case "minAvgPerWalletUsd":
-      return p.walletCount == null || p.totalNetUsd == null || p.walletCount <= 0
+      return p.walletCount == null ||
+        p.totalNetUsd == null ||
+        p.walletCount <= 0
         ? null
         : p.totalNetUsd / p.walletCount >= spec.min;
     case "maxStalenessSec":
@@ -266,9 +265,7 @@ export function categoryMatches(
 ): boolean | null {
   if (cat === "all") return true;
   if (p.category == null) return null;
-  return cat === "sports"
-    ? p.category === "Sports"
-    : p.category !== "Sports";
+  return cat === "sports" ? p.category === "Sports" : p.category !== "Sports";
 }
 
 export interface WfSubset {
@@ -566,11 +563,7 @@ interface CellEval {
   pooledRows: { p: WfPosition; contrib: number }[] | null;
 }
 
-function foldGate(
-  n: number,
-  markets: number,
-  opts: WfOptions,
-): string | null {
+function foldGate(n: number, markets: number, opts: WfOptions): string | null {
   if (n < opts.minFoldSettled) return `样本不足(${n} 仓)`;
   if (markets < opts.minFoldMarkets) return `市场不足(${markets} 个)`;
   return null;
@@ -755,7 +748,9 @@ export function runWalkforward(
   const tiersOut: WfTierReport[] = works.map((w) => {
     const holdContribs = w.input.positions
       .map((p) => ({ p, contrib: contribOf(p, "hold") }))
-      .filter((r): r is { p: WfPosition; contrib: number } => r.contrib != null);
+      .filter(
+        (r): r is { p: WfPosition; contrib: number } => r.contrib != null,
+      );
     const currentStat = statOf(holdContribs);
     const baselineReport = w.baseline ? toVariantReport(w.baseline) : null;
     const survivors: string[] = [];

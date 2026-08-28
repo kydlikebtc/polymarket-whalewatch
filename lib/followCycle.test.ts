@@ -1321,6 +1321,41 @@ describe("runFollowCycle 执行滑点归因(fetchBook)", () => {
     expect(row.exec_price).toBeCloseTo(500 / shares);
   });
 
+  it("容量标尺:开仓时按 +1¢/+3¢ 带内深度落 book_cap_1c/book_cap_3c", async () => {
+    const db = openDb(":memory:");
+    await runFollowCycle({
+      ...baseDeps(db),
+      fetchBook: async () => ({
+        asks: [
+          { price: 0.64, size: 500 }, // $320,+1¢ 带(≤0.65)仅此档
+          { price: 0.66, size: 100000 }, // $66000,+3¢ 带(≤0.67)含此档
+        ],
+      }),
+    });
+    const row = db
+      .prepare(
+        "SELECT book_cap_1c, book_cap_3c FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as { book_cap_1c: number; book_cap_3c: number };
+    expect(row.book_cap_1c).toBeCloseTo(320);
+    expect(row.book_cap_3c).toBeCloseTo(66320);
+  });
+
+  it("空簿 → book_cap 列 null(容量未知不是 0)", async () => {
+    const db = openDb(":memory:");
+    await runFollowCycle({
+      ...baseDeps(db),
+      fetchBook: async () => ({ asks: [] }),
+    });
+    const row = db
+      .prepare(
+        "SELECT book_cap_1c, book_cap_3c FROM follow_positions WHERE condition_id='c1'",
+      )
+      .get() as { book_cap_1c: number | null; book_cap_3c: number | null };
+    expect(row.book_cap_1c).toBeNull();
+    expect(row.book_cap_3c).toBeNull();
+  });
+
   it("薄簿吃穿:exec_filled_usd < size_usd 如实落库(部分成交)", async () => {
     const db = openDb(":memory:");
     await runFollowCycle({

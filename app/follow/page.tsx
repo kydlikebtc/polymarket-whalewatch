@@ -20,6 +20,7 @@ import {
 import { Icon, Modal, Segmented, Tag } from "../ui";
 import { useLang } from "../i18n";
 import { DeepAnalysisPanel, EdgeMatrixTable } from "./DeepAnalysis";
+import type { DecayVerdict } from "../../lib/decaySentinel";
 import type { ExitCounterfactualSummary } from "../../lib/exitCounterfactual";
 import { buildEdgeMatrix } from "../../lib/followInsights";
 import { BUCKET_LOW_SAMPLE_N } from "../../lib/followAnalysis";
@@ -100,6 +101,11 @@ type StrategyMetrics = {
   feeCost: number;
   feeSamples: number;
   feeUnknown: number;
+  // 容量标尺(2026-08-28 起采集):开仓瞬间 +1¢/+3¢ 带内深度中位数。老仓无
+  // 快照不回填,bookCapSamples 是覆盖率 —— 数字必须带 n= 一起读。
+  bookCap1cMedian: number | null;
+  bookCap3cMedian: number | null;
+  bookCapSamples: number;
   equityCurve: { ts: number; cum: number }[];
   byCategory: Record<string, { realized: number; settledCount: number }>;
 };
@@ -138,6 +144,8 @@ type FollowStrategyView = {
   enabled: boolean;
   /** 反事实退出摘要(服务端算好;null/缺失 = 回填中,面板第⑧块省略)。 */
   exitCounterfactual?: ExitCounterfactualSummary | null;
+  /** 衰变哨兵(服务端序贯监控;缺失 = 现算降级,徽章与哨兵 Metric 省略)。 */
+  decay?: DecayVerdict | null;
   params: {
     minWallets: number;
     minPerWalletUsd: number;
@@ -1536,6 +1544,14 @@ function StrategyCard({
         {s.params.reverse === true ? <Tag>{t("反向对照")}</Tag> : null}
         {leading ? <Tag variant="brand">{t("本窗口领先")}</Tag> : null}
         {!s.enabled ? <Tag variant="warn">{t("已停用")}</Tag> : null}
+        {/* 衰变哨兵徽章:只亮 watch/degraded 两态 —— ok 不发奖章(健康是
+            默认预期),insufficient 不装懂(样本不足连「健康」都不敢说)。
+            证据在详情面板的哨兵 Metric。 */}
+        {s.decay?.state === "degraded" ? (
+          <Tag variant="warn">{t("⚠ 疑似衰变")}</Tag>
+        ) : s.decay?.state === "watch" ? (
+          <Tag>{t("衰变观察")}</Tag>
+        ) : null}
       </div>
       {/* 精简参数提示(见 cardParamsHint 注释):只留跨档差异化门槛,压到
           1 行——12 档统一的三项(单价/偏离护栏/退出规则)挪进了详情弹窗,
@@ -1713,6 +1729,17 @@ function StrategyCard({
         {fund?.runDays != null ? (
           <span>{t("运行 {n} 天", { n: Math.floor(fund.runDays) })}</span>
         ) : null}
+        {/* 容量标尺:+1¢ 带内深度中位数。信号真不真是一回事,能装下多少跟随
+            资金是另一回事 —— 这里给最紧的一档,+3¢ 与覆盖率在详情面板。 */}
+        {m.bookCapSamples > 0 && m.bookCap1cMedian != null ? (
+          <span
+            title={t(
+              "开仓瞬间盘口 +1¢ 带内深度的中位数 —— 跟随资金把成交价推高 1¢ 之前最多能吃的金额。详情面板有 +3¢ 档与覆盖率",
+            )}
+          >
+            {t("容量(+1¢) ~${a}", { a: fmtUsd0(m.bookCap1cMedian) })}
+          </span>
+        ) : null}
       </div>
       <CardActions s={s} />
     </div>
@@ -1869,6 +1896,72 @@ function StrategyFullMetrics({
                   {m.feeUnknown > 0
                     ? t(" · {n} 仓未知", { n: m.feeUnknown })
                     : null}
+                </div>
+              </>
+            )
+          }
+        />
+        <Metric
+          label={t("容量(+1¢ · +3¢)")}
+          title={t(
+            "开仓瞬间 ask 簿的带内深度中位数:把成交价推出最优价 +1¢/+3¢ 之前,跟随资金最多能吃的美元额。回答「这个信号能装下多少钱」—— 信号是真的但只有 $3k 深,跟随者必须知道。中位数抗离群(一次厚簿会把均值拉爆);盘口无历史,2026-08-28 前的老仓无此快照,故带 n= 覆盖率。纯归因展示,不参与开仓与盈亏",
+          )}
+          value={
+            m.bookCapSamples === 0 ||
+            m.bookCap1cMedian == null ||
+            m.bookCap3cMedian == null ? (
+              <>
+                <span className="muted">—</span>
+                <div className="kpi-sub mono">n=0</div>
+              </>
+            ) : (
+              <>
+                {/* 配色中性:容量是盘口事实,不是盈亏。 */}
+                <span className="mono">
+                  ${fmtUsd0(m.bookCap1cMedian)}
+                  <span className="muted"> · </span>$
+                  {fmtUsd0(m.bookCap3cMedian)}
+                </span>
+                <div className="kpi-sub mono">n={m.bookCapSamples}</div>
+              </>
+            )
+          }
+        />
+        <Metric
+          label={t("衰变哨兵")}
+          title={t(
+            "序贯监控这档策略是否在失效:已结算仓折成市场级观察点(同市场多仓共享同一次结算,只算一点),前段做基线,后段跑单侧 CUSUM 盯下行漂移。观察线 2.5σ、报警线 4σ;逐仓贡献与 walk-forward 同口径((已实现−协议费)÷份额,概率点)。哨兵只亮牌,不自动停用任何档 —— 生产参数永不自动改",
+          )}
+          value={
+            !s.decay || s.decay.state === "insufficient" ? (
+              <>
+                <span className="muted">{t("样本不足")}</span>
+                <div className="kpi-sub mono">
+                  {t("市场点 {n}(需 ≥15)", { n: s.decay?.marketPoints ?? 0 })}
+                </div>
+              </>
+            ) : (
+              <>
+                <span
+                  className="mono"
+                  style={
+                    s.decay.state === "degraded"
+                      ? { color: "var(--warn-700)", fontWeight: 600 }
+                      : undefined
+                  }
+                >
+                  {s.decay.state === "degraded"
+                    ? t("⚠ 疑似衰变")
+                    : s.decay.state === "watch"
+                      ? t("衰变观察")
+                      : t("健康")}
+                </span>
+                <div className="kpi-sub mono">
+                  {t("基线 {a}¢ → 近端 {b}¢ · 市场点 {n}", {
+                    a: ((s.decay.baselinePoint ?? 0) * 100).toFixed(1),
+                    b: ((s.decay.recentPoint ?? 0) * 100).toFixed(1),
+                    n: s.decay.marketPoints,
+                  })}
                 </div>
               </>
             )
@@ -2974,6 +3067,12 @@ function StrategyListRow({
           {leading ? <Tag variant="brand">{t("领先")}</Tag> : null}
           {empty ? (
             <Tag>{m.openCount > 0 ? t("等待结算") : t("等待命中")}</Tag>
+          ) : null}
+          {/* 与卡片视图同一判定:哨兵只亮 watch/degraded。 */}
+          {s.decay?.state === "degraded" ? (
+            <Tag variant="warn">{t("⚠ 疑似衰变")}</Tag>
+          ) : s.decay?.state === "watch" ? (
+            <Tag>{t("衰变观察")}</Tag>
           ) : null}
         </span>
       </td>

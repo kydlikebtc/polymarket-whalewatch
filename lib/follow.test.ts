@@ -233,6 +233,46 @@ describe("computeStrategyMetrics 协议费", () => {
   });
 });
 
+describe("computeStrategyMetrics 容量标尺", () => {
+  it("中位数只在容量已知的仓上算,并报出样本数 —— 覆盖率必须随数字一起呈现", () => {
+    // 中位数而非均值:一次厚簿(如临近结算的巨量市场)会把均值拉到没人信的
+    // 数量级;容量列是开仓瞬间快照,open+settled 一视同仁(容量在进场即产生)。
+    const m = computeStrategyMetrics(
+      [
+        pos({ book_cap_1c: 100, book_cap_3c: 1000 }),
+        pos({
+          status: "open",
+          realized_pnl: null,
+          book_cap_1c: 300,
+          book_cap_3c: 3000,
+        }),
+        pos({ book_cap_1c: 500, book_cap_3c: 9000 }),
+        pos({ book_cap_1c: null, book_cap_3c: null }), // 老仓,容量未知不进样本
+      ],
+      {},
+    );
+    expect(m.bookCap1cMedian).toBeCloseTo(300);
+    expect(m.bookCap3cMedian).toBeCloseTo(3000);
+    expect(m.bookCapSamples).toBe(3);
+  });
+
+  it("偶数样本取中间两数均值;零样本 → null(页面留白,不显示 $0)", () => {
+    const even = computeStrategyMetrics(
+      [
+        pos({ book_cap_1c: 100, book_cap_3c: 200 }),
+        pos({ book_cap_1c: 200, book_cap_3c: 400 }),
+      ],
+      {},
+    );
+    expect(even.bookCap1cMedian).toBeCloseTo(150);
+    expect(even.bookCap3cMedian).toBeCloseTo(300);
+    const none = computeStrategyMetrics([pos({})], {});
+    expect(none.bookCap1cMedian).toBeNull();
+    expect(none.bookCap3cMedian).toBeNull();
+    expect(none.bookCapSamples).toBe(0);
+  });
+});
+
 describe("computeStrategyMetrics", () => {
   it("空仓 → 全零/空,winRate/roi 为 null", () => {
     const m = computeStrategyMetrics([], {});

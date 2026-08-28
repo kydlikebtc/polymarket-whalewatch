@@ -104,9 +104,11 @@ describe("resolveTargets · env 向后兼容", () => {
     const alert = t.find((x) => x.chatId === "@public")!;
     const vip = t.find((x) => x.chatId === "@vip")!;
     // 告警频道收大单/共识/运维,外加延迟版策略信号(现网的公开延迟通道)。
+    // cohort 不进 env 回退 —— 新能力默认关的纪律贯穿零配置路径。
     expect(alert.kinds).toEqual({
       large: true,
       consensus: true,
+      cohort: false,
       strategy: true,
       ops: true,
     });
@@ -336,5 +338,19 @@ describe("deliveryKey · 防重投", () => {
     const t = resolveTargets(db, ENV);
     expect(t[0].deliveryKey).toBe(`tg:${id}`);
     expect(t[0].deliveryKey).not.toBe("tg_public");
+  });
+});
+
+// --- 同批出生(第一梯队五件套):cohort kind ---
+
+describe("cohort kind(同批出生告警)", () => {
+  it("默认关(新能力一律默认关的纪律)—— 老目标行不合并出 cohort 推送", () => {
+    expect(DEFAULT_TG_KINDS.cohort).toBe(false);
+  });
+
+  it("TG_KINDS 元数据登记(管理页复选框随它自动出现)", () => {
+    const entry = TG_KINDS.find((k) => k.kind === "cohort");
+    expect(entry).toBeTruthy();
+    expect(entry!.label).toContain("同批新钱包");
   });
 });

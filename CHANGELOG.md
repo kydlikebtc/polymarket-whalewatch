@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 473 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that range: 1862 tests across
-143 files (`npm test`).
+Scope: 489 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that range: 1922 tests across
+148 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -36,6 +36,46 @@ Scope: 473 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-28 — Tier-one quintet: capacity, conviction, decay, calendar, cohort
+
+Five features from the round-3 brainstorm's user verdict
+(`docs/plans/2026-08-28-tier1-quintet-design.md`), picked for one shared property: **zero new
+upstream calls and KB-scale storage** — each one is existing data asked a new question.
+
+- **Capacity gauge** (`/follow`). The ask-book snapshot already taken at paper entry now also
+  yields the +1¢/+3¢ in-band depth in USD — how much follower money fits before the fill is
+  pushed past best ask. Stored per position (`book_cap_1c/3c`, attribution-only, same red line
+  as `exec_*`), surfaced as per-tier medians with an `n=` coverage badge. A real signal that is
+  only $3k deep is something the site now says out loud.
+- **Conviction index** (`/pulse`, additive `conviction` key on `/api/pulse`). Per-category
+  daily contention 0–100 (VIX semantics: high = contested/fearful) from four `market_daily`
+  components — volume-weighted 1−one-sidedness, small-vs-whale opposition share, price churn,
+  volume surge (cross-sectional percentile fallback under 3 baseline days). Computed on read,
+  never stored; ≤30-day per-category series with inline trend lines.
+- **Decay sentinel** (`/follow`). Per-tier sequential monitoring: settled positions fold into
+  market-level observation points (one settlement = one observation, the clustering lesson
+  again), the earliest stretch forms a self-baseline, and a one-sided CUSUM watches for
+  downward drift — 2.5σ watch line, 4σ alarm line, per-position contribution in the
+  walk-forward `(realized − fee) / shares` currency. Badges only raise flags; nothing is ever
+  auto-disabled.
+- **Walk-forward calendar** (`/manage` 🧪). A monthly due line (30 days, matching the
+  in-product "节律:月度" note — the design doc's quarterly 90d was corrected same-day) and a
+  structural diff between the latest two reports: survivor-set and watchlist changes plus
+  thin-tier flips count as reversals, point drift deliberately does not. `?list=1` and
+  `?diff=1` on the admin route; runs stay operator-triggered.
+- **Cohort-birth detector**. N freshly-created wallets (verified age ≤7d, births within a 48h
+  window) net-buying the same outcome — the coordination fingerprint no single-fill alert can
+  see. Runs as the consensus loop's fifth deep-window consumer; ages come strictly from the
+  `wallet_age` cache (unknown = not counted, and every push carries an "ages known M/N" line,
+  because cache coverage is the honest limit of this detector). New `cohort` alert type reuses
+  the consensus payload shape, so `/alerts`, validation backfill and escalation folding share
+  the same branches; the Telegram kind ships default-OFF; the signal bus registers it
+  `available: false` pending its own projection batch.
+
+Also fixed in passing: the i18n cross-shard collision gate had never covered the `pulse` and
+`calibration` dictionaries (born 2026-08-27); adding them immediately caught a real
+"样本不足" value conflict. 50 tests added (1872 → 1922 across 148 files).
 
 ### 2026-08-28 — The discovery channels get their report card
 
@@ -68,8 +108,8 @@ automatic purges; curation still goes through the existing admission gate and re
 
 The walk-forward batch had to drop its score-floor dimension and approximate per-wallet
 minimums with an average, for one reason: the facts were never recorded. A position knows its
-wallet count and total, but not *which* wallets, *how much each*, or *what score the engine saw
-at detection time* — and `smart_wallets.score` is a moving value, so backfilling from it would
+wallet count and total, but not _which_ wallets, _how much each_, or _what score the engine saw
+at detection time_ — and `smart_wallets.score` is a moving value, so backfilling from it would
 be look-ahead. Those facts can only be recorded forward; every day without them is a day the
 next re-derivation permanently cannot replay.
 

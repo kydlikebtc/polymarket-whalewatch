@@ -25,7 +25,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS market_daily (day TEXT NOT NULL, condition_id TEXT NOT NULL, title TEXT, slug TEXT, event_slug TEXT, category TEXT, subcategory TEXT, trades INTEGER NOT NULL, volume_usd REAL NOT NULL, wallet_count INTEGER NOT NULL, top_outcome TEXT, one_sided REAL, small_usd REAL, small_net_usd REAL, small_top_outcome TEXT, whale_usd REAL, whale_net_usd REAL, whale_top_outcome TEXT, price_first REAL, price_last REAL, covered_from_sec INTEGER, truncated INTEGER DEFAULT 0, PRIMARY KEY (day, condition_id));
     CREATE INDEX IF NOT EXISTS idx_market_daily_day ON market_daily(day);
     CREATE TABLE IF NOT EXISTS follow_strategies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, enabled INTEGER DEFAULT 1, params_json TEXT, created_at INTEGER, push_enabled INTEGER DEFAULT 0);
-    CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, formation_ts INTEGER, formation_price REAL, markout_30m REAL, markout_2h REAL, exec_price REAL, exec_best_ask REAL, exec_filled_usd REAL, fee_usd REAL, UNIQUE(strategy_id, condition_id, outcome));
+    CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, formation_ts INTEGER, formation_price REAL, markout_30m REAL, markout_2h REAL, exec_price REAL, exec_best_ask REAL, exec_filled_usd REAL, fee_usd REAL, book_cap_1c REAL, book_cap_3c REAL, UNIQUE(strategy_id, condition_id, outcome));
     CREATE TABLE IF NOT EXISTS strategy_signals (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER NOT NULL, position_id INTEGER, condition_id TEXT NOT NULL, outcome TEXT NOT NULL, outcome_index INTEGER, asset TEXT, title TEXT, slug TEXT, event_slug TEXT, formation_ts INTEGER NOT NULL, reference_price REAL, wallet_count INTEGER, total_net_usd REAL, entry_price REAL, size_usd REAL, emitted_at INTEGER NOT NULL, settled INTEGER DEFAULT 0, settled_ts INTEGER, exit_price REAL, won INTEGER, realized_pnl REAL, wallets_json TEXT, UNIQUE(strategy_id, condition_id, outcome));
     CREATE INDEX IF NOT EXISTS idx_strategy_signals_emitted ON strategy_signals(emitted_at);
     CREATE TABLE IF NOT EXISTS signal_deliveries (signal_id INTEGER NOT NULL, event TEXT NOT NULL, channel TEXT NOT NULL, delivered_at INTEGER, status TEXT NOT NULL, PRIMARY KEY (signal_id, event, channel));
@@ -137,6 +137,11 @@ export function openDb(path = "data.sqlite") {
     // 老仓恒为 null:费率表是当前值而非成交时刻值,回填会造出一个看不出
     // 是估算的估算值。
     "fee_usd REAL",
+    // 容量标尺(2026-08-28 第一梯队五件套):开仓瞬间 ask 簿的 +1¢/+3¢ 带内
+    // 深度(USD)——「跟随资金吃穿该带之前的最大容量」。盘口无历史,老仓恒
+    // null,不回填;红线同 exec_*:纯归因展示,不参与开仓判定与 realized_pnl。
+    "book_cap_1c REAL",
+    "book_cap_3c REAL",
   ]) {
     try {
       db.prepare(`ALTER TABLE follow_positions ADD COLUMN ${col}`).run();
@@ -150,7 +155,9 @@ export function openDb(path = "data.sqlite") {
   // 无法回填,这列就是可回放窗口的起点(NULL = 早于本批的行,自描述)。
   // 红线:纯归因,不参与任何开仓判定,不进任何对外载荷(投影惰性有守卫测试)。
   try {
-    db.prepare("ALTER TABLE strategy_signals ADD COLUMN wallets_json TEXT").run();
+    db.prepare(
+      "ALTER TABLE strategy_signals ADD COLUMN wallets_json TEXT",
+    ).run();
   } catch {
     // column already present
   }

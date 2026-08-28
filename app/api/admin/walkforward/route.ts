@@ -2,14 +2,20 @@ import { spawn } from "node:child_process";
 import { checkWriteAccess, guardExpensive } from "../../../../lib/apiGuard";
 import { openDb } from "../../../../lib/db";
 import type { WalkforwardReport } from "../../../../lib/walkforward";
+import {
+  diffWalkforwardReports,
+  wfDueInfo,
+} from "../../../../lib/walkforwardDiff";
 import { createWalkforwardRunner } from "../../../../lib/walkforwardRun";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // /manage「🧪 阈值重推」tab 的数据口(ADMIN_TOKEN 后,非公开 API):
-//   GET               最新报告 + 运行状态(卡轮询它)
+//   GET               最新报告 + 运行状态 + 月度例行 due(卡轮询它)
 //   GET ?download=1   最新(或 ?id=N 指定)报告完整 JSON,Content-Disposition 附件
+//   GET ?list=1       近 20 份报告元信息(id/时刻/窗口/网格,不含报告本体)
+//   GET ?diff=1       最近两份(或 ?id=&prevId= 指定)的结构性翻案 diff
 //   POST              触发一次生产库重推 —— spawn 子进程跑
 //                     `npx tsx scripts/walkforward.ts <DASH_DB>`,与运维手工
 //                     SSH 跑的是逐字节同一条路径;独立进程不占 Node 事件循环
@@ -58,6 +64,73 @@ export async function GET(req: Request) {
   const idParam = url.searchParams.get("id");
   const db = openDb(dbPath());
   try {
+    // 报告清单:元信息不含报告本体(一份 report_json 可达数百 KB,列表不背)。
+    if (url.searchParams.get("list") != null) {
+      const rows = db
+        .prepare(
+          `SELECT id, created_at, window_from, window_to, grid_size
+             FROM walkforward_reports ORDER BY created_at DESC, id DESC LIMIT 20`,
+        )
+        .all() as Omit<ReportRow, "config_json" | "report_json">[];
+      return Response.json({
+        reports: rows.map((r) => ({
+          id: r.id,
+          createdAt: r.created_at,
+          windowFrom: r.window_from,
+          windowTo: r.window_to,
+          gridSize: r.grid_size,
+        })),
+      });
+    }
+
+    // 结构性翻案 diff:默认最近两份;?id=&prevId= 可指定任意两份(id 为新)。
+    if (url.searchParams.get("diff") != null) {
+      const pick = (id: string | null) =>
+        db
+          .prepare(
+            `SELECT id, created_at, report_json FROM walkforward_reports
+              WHERE id = ?`,
+          )
+          .get(Number(id)) as
+          Pick<ReportRow, "id" | "created_at" | "report_json"> | undefined;
+      const currId = url.searchParams.get("id");
+      const prevId = url.searchParams.get("prevId");
+      const pair =
+        currId != null && prevId != null
+          ? [pick(currId), pick(prevId)]
+          : (db
+              .prepare(
+                `SELECT id, created_at, report_json FROM walkforward_reports
+                  ORDER BY created_at DESC, id DESC LIMIT 2`,
+              )
+              .all() as Pick<ReportRow, "id" | "created_at" | "report_json">[]);
+      const [c, p] = pair;
+      if (!c || !p) {
+        return Response.json({
+          diff: null,
+          reason: "不足两份报告 —— 第二次重推后才有可对比的上一份",
+        });
+      }
+      try {
+        const diff = diffWalkforwardReports(
+          {
+            createdAt: p.created_at,
+            report: JSON.parse(p.report_json) as WalkforwardReport,
+          },
+          {
+            createdAt: c.created_at,
+            report: JSON.parse(c.report_json) as WalkforwardReport,
+          },
+        );
+        return Response.json({ diff, currId: c.id, prevId: p.id });
+      } catch (e) {
+        console.error("[admin-walkforward] diff 解析失败:", e);
+        return Response.json(
+          { error: `报告行 id=${c.id}/${p.id} 的 JSON 损坏` },
+          { status: 500 },
+        );
+      }
+    }
     const row = (
       idParam != null
         ? db
@@ -142,6 +215,8 @@ export async function GET(req: Request) {
       gridSize: row?.grid_size ?? null,
       report,
       runState: runner.state(),
+      // 月度例行 due(重推日历化):只提醒,绝不自动跑 —— 子进程仍由运营者触发。
+      due: wfDueInfo(row?.created_at ?? null, Math.floor(Date.now() / 1000)),
     });
   } finally {
     db.close();

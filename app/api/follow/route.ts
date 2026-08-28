@@ -1,4 +1,5 @@
 import { openDb } from "../../../lib/db";
+import { decayVerdict } from "../../../lib/decaySentinel";
 import { withExitCounterfactual } from "../../../lib/exitCounterfactual";
 import { getEventCategories, type EventTaxonomy } from "../../../lib/gamma";
 import {
@@ -46,6 +47,10 @@ type PositionRow = FollowPositionRow & {
   exec_price: number | null;
   exec_best_ask: number | null;
   exec_filled_usd: number | null;
+  // 容量标尺:开仓瞬间 +1¢/+3¢ 带内深度(USD)。metrics 聚合成中位数供卡片
+  // 与详情面板展示;老仓 null。
+  book_cap_1c: number | null;
+  book_cap_3c: number | null;
 };
 
 // Read-only: strategies + their paper positions + per-strategy metrics. No live
@@ -66,7 +71,8 @@ export async function GET() {
                   entry_price, smart_avg_price, shares, status, entry_ts,
                   exit_ts, exit_price, realized_pnl,
                   formation_ts, formation_price, markout_30m, markout_2h,
-                  exec_price, exec_best_ask, exec_filled_usd, fee_usd
+                  exec_price, exec_best_ask, exec_filled_usd, fee_usd,
+                  book_cap_1c, book_cap_3c
              FROM follow_positions`,
         )
         .all() as PositionRow[];
@@ -95,14 +101,28 @@ export async function GET() {
       const view = buildFollowView(strategies, positions, taxByCid);
       // 反事实退出摘要:bulk 读已回填的模拟结果附到每档视图上。任何失败只
       // 降级为"无摘要"(面板省略该块),绝不拖垮整个接口。
+      let out = view.strategies;
       try {
-        return Response.json({
-          strategies: withExitCounterfactual(db, view.strategies),
-        });
+        out = withExitCounterfactual(db, out);
       } catch (e) {
         console.warn("[/api/follow] exitCounterfactual 附加失败,降级省略:", e);
-        return Response.json(view);
       }
+      // 衰变哨兵:同款降级纪律 —— 序贯监控挂不上就整块省略,主 payload 不陪葬。
+      try {
+        const byStrategy = new Map<number, PositionRow[]>();
+        for (const p of positions) {
+          const arr = byStrategy.get(p.strategy_id) ?? [];
+          arr.push(p);
+          byStrategy.set(p.strategy_id, arr);
+        }
+        out = out.map((v) => ({
+          ...v,
+          decay: decayVerdict(byStrategy.get(v.id) ?? []),
+        }));
+      } catch (e) {
+        console.warn("[/api/follow] 衰变哨兵现算失败,降级省略:", e);
+      }
+      return Response.json({ strategies: out });
     } finally {
       db.close();
     }

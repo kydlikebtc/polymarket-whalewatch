@@ -33,4 +33,16 @@ export const DICT_PULSE: Record<string, string> = {
 
   "口径：小单 = 单笔 $2k–10k（抓取下限之下的真散户不可见，因此只说「小单」）；鲸鱼 = 单笔 ≥$50k，与 heavy 信号同一把尺；异常分 = 0.35·量能异动 + 0.25·单边度 + 0.20·鲸鱼占比 + 0.20·日内价移，各分量 0–1 可逐项核对；量能异动在同市场基线不足 3 天时退化为当日横截面分位。":
     "Definitions: small = $2k–10k per fill (true retail below the fetch floor is invisible, hence “small orders”, never “retail”); whale = ≥$50k per fill, the same yardstick as heavy signals; anomaly = 0.35·volume surge + 0.25·one-sidedness + 0.20·whale share + 0.20·intraday move, each component 0–1 and individually inspectable; volume surge falls back to the day's cross-sectional percentile when a market has under 3 baseline days.",
+  // 确信指数(第一梯队五件套,2026-08-28)
+  "确信指数 · 品类激辩度": "Conviction index · category contention",
+  "高 = 激辩/恐慌（阵营对峙、小单与鲸鱼对立、价格动荡、量能异动），低 = 确信（一边倒、平静）。VIX 语义，逐品类按日合成。":
+    "High = contention/fear (split camps, small-vs-whale opposition, price churn, volume surge); low = conviction (one-sided, calm). VIX semantics, composed per category per day.",
+  品类: "Category",
+  指数: "Index",
+  "近 {n} 日": "Last {n} days",
+  市场数: "Markets",
+  对峙: "Contest",
+  对立: "Opposition",
+  "确信指数 = 0.30·阵营对峙（量能加权 1−单边度）+ 0.30·对立度（合格分歧市场量能占比，双边门槛与上表同尺）+ 0.20·价格动荡 + 0.20·量能异动；品类日总量 <$10k 不给分；量能异动在品类自身基线不足 3 天时退化为当日横截面分位。":
+    "Conviction index = 0.30·contest (volume-weighted 1−one-sidedness) + 0.30·opposition (volume share of qualifying divergence markets, same two-sided floors as the table above) + 0.20·price churn + 0.20·volume surge; category-days under $10k total get no score; volume surge falls back to same-day cross-sectional percentile when the category has fewer than 3 baseline days.",
 };

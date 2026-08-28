@@ -345,4 +345,23 @@ export const DICT_FOLLOW: Record<string, string> = {
   反分歧解除: "Inverse Standoff Resolved",
   反高分独狼: "Inverse Lone Wolf",
   反早期赢家: "Inverse Early Winner",
+  // 容量标尺(第一梯队五件套,2026-08-28)
+  "容量(+1¢) ~${a}": "Depth(+1¢) ~${a}",
+  "容量(+1¢ · +3¢)": "Capacity (+1¢ · +3¢)",
+  "开仓瞬间盘口 +1¢ 带内深度的中位数 —— 跟随资金把成交价推高 1¢ 之前最多能吃的金额。详情面板有 +3¢ 档与覆盖率":
+    "Median in-band book depth (+1¢) at entry — the most follower money could absorb before pushing the fill 1¢ past best ask. The detail panel adds the +3¢ band and coverage",
+  "开仓瞬间 ask 簿的带内深度中位数:把成交价推出最优价 +1¢/+3¢ 之前,跟随资金最多能吃的美元额。回答「这个信号能装下多少钱」—— 信号是真的但只有 $3k 深,跟随者必须知道。中位数抗离群(一次厚簿会把均值拉爆);盘口无历史,2026-08-28 前的老仓无此快照,故带 n= 覆盖率。纯归因展示,不参与开仓与盈亏":
+    'Median in-band ask-book depth at entry: the max USD follower money could absorb before pushing the fill past best ask +1¢/+3¢. Answers "how much money fits this signal" — a real signal that is only $3k deep is something a follower must know. Median resists outliers (one thick book would blow up the mean); books have no history, so positions before 2026-08-28 carry no snapshot — hence the n= coverage. Attribution display only, never enters entries or P&L',
+  // 衰变哨兵(第一梯队五件套,2026-08-28)
+  "⚠ 疑似衰变": "⚠ Possible decay",
+  衰变观察: "Decay watch",
+  衰变哨兵: "Decay sentinel",
+  健康: "Healthy",
+  // 「样本不足」沿用 alerts 分片既有译文("small sample")—— 跨分片同键
+  // 必须同值,这里不重复登记。
+  "市场点 {n}(需 ≥15)": "{n} market points (needs ≥15)",
+  "基线 {a}¢ → 近端 {b}¢ · 市场点 {n}":
+    "Baseline {a}¢ → recent {b}¢ · {n} market points",
+  "序贯监控这档策略是否在失效:已结算仓折成市场级观察点(同市场多仓共享同一次结算,只算一点),前段做基线,后段跑单侧 CUSUM 盯下行漂移。观察线 2.5σ、报警线 4σ;逐仓贡献与 walk-forward 同口径((已实现−协议费)÷份额,概率点)。哨兵只亮牌,不自动停用任何档 —— 生产参数永不自动改":
+    "Sequentially monitors whether this tier is decaying: settled positions fold into market-level observation points (positions in one market share a single settlement — one point), the earlier stretch forms the baseline, and a one-sided CUSUM watches the rest for downward drift. Watch line 2.5σ, alarm line 4σ; per-position contribution matches walk-forward ((realized − fee) ÷ shares, probability points). The sentinel only raises flags — it never auto-disables a tier; production parameters are never auto-modified",
 };

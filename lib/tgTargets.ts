@@ -20,13 +20,16 @@
 import type { DB } from "./db";
 import { sendMessage, type TgCreds } from "./telegram";
 
-export type TgKind = "large" | "consensus" | "strategy" | "ops";
+export type TgKind = "large" | "consensus" | "cohort" | "strategy" | "ops";
 
 export type TgKinds = Record<TgKind, boolean>;
 
 export const DEFAULT_TG_KINDS: TgKinds = {
   large: true,
   consensus: true,
+  // 同批出生(2026-08-28):新能力一律默认关 —— 年龄缓存覆盖率爬坡期的检测
+  // 灵敏度未知,运营者在投递目标里显式打开才推。
+  cohort: false,
   strategy: false,
   ops: false,
 };
@@ -41,6 +44,11 @@ export const TG_KINDS: { kind: TgKind; label: string; hint: string }[] = [
     kind: "consensus",
     label: "① 🔥 聪明钱共识(事件)",
     hint: "多个白名单钱包同向买入同一结果。稀有且独家",
+  },
+  {
+    kind: "cohort",
+    label: "① 🐣 同批新钱包(事件)",
+    hint: "N 个几乎同时出生的新钱包同向买入同一结果。年龄靠缓存覆盖,灵敏度随缓存增长;默认关",
   },
   {
     kind: "strategy",
@@ -290,7 +298,14 @@ export function resolveTargets(db: DB, env: TgEnvFallback): ResolvedTarget[] {
       chatId: env.alertChatId.trim(),
       // 现网语义:告警频道收大单/共识/运维,外加延迟版的策略信号
       // (tg_public —— 免费层靠延迟而非阉割字段)。
-      kinds: { large: true, consensus: true, strategy: true, ops: true },
+      // cohort 不进 env 回退:默认关的纪律贯穿到零配置路径,显式建目标才开。
+      kinds: {
+        large: true,
+        consensus: true,
+        cohort: false,
+        strategy: true,
+        ops: true,
+      },
       delayMin: env.publicDelayMin,
       source: "env",
       // 现网这条通道的历史键就是 tg_public,不能改。
@@ -304,7 +319,13 @@ export function resolveTargets(db: DB, env: TgEnvFallback): ResolvedTarget[] {
       creds: { botToken: token, chatId: env.signalChatId.trim() },
       chatId: env.signalChatId.trim(),
       // tg_paid:零延迟,只收策略信号。
-      kinds: { large: false, consensus: false, strategy: true, ops: false },
+      kinds: {
+        large: false,
+        consensus: false,
+        cohort: false,
+        strategy: true,
+        ops: false,
+      },
       delayMin: 0,
       source: "env",
       deliveryKey: "tg_paid",

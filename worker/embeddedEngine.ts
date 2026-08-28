@@ -3,6 +3,7 @@ import { openDb, type DB } from "../lib/db";
 import { getLargeTrades, getTradesWindowDeep } from "../lib/polymarket";
 import { maybePruneSeen, seenKeySet } from "../lib/seen";
 import { prunePersistedWindows } from "../lib/marketWindowStore";
+import { runCohortCycle } from "../lib/cohortBirth";
 import { dedupKey } from "../lib/trades";
 import { sendMessage } from "../lib/telegram";
 import {
@@ -164,6 +165,8 @@ export function startAlertEngine(): void {
   // 大单与共识分别走自己的类型:以前两者共用一个 send,后台无法只关其一。
   const sendLarge = kindSender("large");
   const sendConsensus = kindSender("consensus");
+  // 同批出生(2026-08-28):默认关,运营者在投递目标勾选后下一轮生效。
+  const sendCohort = kindSender("cohort");
   // 运维通知(日报自检 / 断更 / 熔断通报 / 存证摘要 / 启动 ping)。
   const sendOps = kindSender("ops");
   // Backfill window: resume from the last seen trade (bounded by the cap) so a
@@ -391,6 +394,23 @@ export function startAlertEngine(): void {
         }
       } catch (e) {
         console.error("[engine] follow cycle error", e);
+      }
+      // 同批出生检测(第五个深窗口消费者,2026-08-28):N 个几乎同时出生的
+      // 新钱包同向进场。零新增上游 —— 成交用本轮已抓的 win.trades,年龄走
+      // wallet_age 缓存裸读(缓存没有=不知道,绝不现场抓)。自带 try/catch:
+      // 检测失败不得扰动共识节奏(follow 同款隔离)。
+      try {
+        const cohortFired = await runCohortCycle({
+          db,
+          trades: win.trades,
+          send: sendCohort,
+          publicUrl: cfg.publicUrl,
+        });
+        if (cohortFired > 0) {
+          console.log(`[engine] cohort cycle fired ${cohortFired} alert(s)`);
+        }
+      } catch (e) {
+        console.error("[engine] cohort cycle error", e);
       }
       // 市场深度卡的窗口存档清理。存档表**不受内存 LRU 约束** —— 内存工作集
       // 封顶 200 个市场,但库里每个被访问过的市场都会留一行,不清就随访问过的

@@ -89,6 +89,7 @@ const TYPE_ICON: Record<string, string> = {
   large: "💰",
   smart: "🏆",
   consensus: "🔥",
+  cohort: "🐣",
 };
 
 // Per-type labels for the validation strip's grouped breakdown.
@@ -96,6 +97,7 @@ const TYPE_LABEL: Record<string, string> = {
   large: "💰大单",
   smart: "🏆聪明钱",
   consensus: "🔥共识",
+  cohort: "🐣同批新钱包",
 };
 
 type Side = "ALL" | "BUY" | "SELL";
