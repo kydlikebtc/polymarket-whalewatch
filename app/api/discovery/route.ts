@@ -22,6 +22,20 @@ export async function GET() {
       candidates: [],
       admitted: [],
       counts: { evidenceRows: 0, candidateWallets: 0, admitted: 0 },
+      // 错误兜底与真实视图同形(additive 键也要在):渲染侧对 undefined 有
+      // 防御,这里补空壳让「接口报错」与「记分卡没数据」在 UI 上可区分。
+      scorecard: {
+        groups: [],
+        mmSplit: [],
+        disclosures: {
+          gradedAlerts: 0,
+          rows: 0,
+          feeUnknownDropped: 0,
+          malformedDropped: 0,
+          orphanRows: 0,
+        },
+        groupCount: 0,
+      },
       error: message,
     });
   }

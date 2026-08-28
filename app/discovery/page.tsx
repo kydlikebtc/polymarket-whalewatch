@@ -12,6 +12,10 @@ import {
 import { WalletTagChips, tagVariant } from "../walletTagChips";
 import { WALLET_TAGS } from "../glossary";
 import { useLang } from "../i18n";
+import type {
+  ChannelScorecard,
+  ScorecardGroup,
+} from "../../lib/channelScorecard";
 import type { WalletTag } from "../../lib/walletTags";
 
 // -------------------------------------------------------------- read model
@@ -65,10 +69,12 @@ interface DiscoveryPayload {
     poolGlobal: number;
     poolDiscovery: number;
   };
+  /** 渠道效果记分卡(additive;旧部署/错误兜底可能缺失,渲染侧防御)。 */
+  scorecard?: ChannelScorecard;
   error?: string;
 }
 
-type View = "candidates" | "members";
+type View = "candidates" | "members" | "scorecard";
 
 // Daily consensus-cycle aggregates from /api/cycle-metrics (P0.9): the
 // signal-density dial that separates "market cooled" from "thresholds drifted".
@@ -261,6 +267,154 @@ function EvidenceDetailRows({
         )}
       </td>
     </tr>
+  );
+}
+
+// ---------------------------------------------------- channel scorecard
+
+// 渠道键 → 展示名走页面侧 t()(lib 的 channelLabel 是中文常量,直接渲染会让
+// 英文界面漏中文;coverage 闸只扫静态字面量,所以逐键写死)。
+function scorecardLabel(key: string, t: (s: string, v?: Record<string, string | number>) => string): string {
+  if (key.startsWith("category:")) {
+    return t("分类榜·{cat}", { cat: key.slice("category:".length) });
+  }
+  switch (key) {
+    case "leaderboard":
+      return t("全局榜");
+    case "echo":
+      return t("回声(echo)");
+    case "splitter":
+      return t("拆单(splitter)");
+    case "insider":
+      return t("新钱包(insider)");
+    case "early_winner":
+      return t("早期赢家");
+    case "manual":
+      return t("手动白名单");
+    case "unattributed":
+      return t("未归因");
+    case "departed":
+      return t("已离池(来源失联)");
+    case "leaderboard:mm":
+      return t("全局榜·做市商");
+    case "leaderboard:human":
+      return t("全局榜·非做市商");
+    default:
+      return key;
+  }
+}
+
+function ScorecardTable({
+  groups,
+  t,
+}: {
+  groups: ScorecardGroup[];
+  t: (s: string, v?: Record<string, string | number>) => string;
+}) {
+  const pts = (v: number) => (v * 100).toFixed(2);
+  const verdictText = (g: ScorecardGroup) =>
+    g.verdict === "pos"
+      ? t("✅ 显著为正")
+      : g.verdict === "neg"
+        ? t("❌ 显著为负")
+        : g.verdict === "flat"
+          ? t("○ 不显著")
+          : t("· 市场数不足");
+  return (
+    <div className="ds-table-wrap">
+      <table className="ds-table ds-table--compact">
+        <thead>
+          <tr>
+            <th>{t("渠道")}</th>
+            <th className="is-right">{t("告警行")}</th>
+            <th className="is-right">{t("钱包")}</th>
+            <th className="is-right">{t("市场")}</th>
+            <th className="is-right">{t("胜率")}</th>
+            <th className="is-right">{t("隐含")}</th>
+            <th className="is-right">{t("费用")}</th>
+            <th className="is-right">{t("净 edge ±95%(聚类)")}</th>
+            <th>{t("判定")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g) => (
+            <tr key={g.key}>
+              <td>{scorecardLabel(g.key, t)}</td>
+              <td
+                className="mono is-right"
+                title={t("smart {s} 条 · 共识成员 {c} 条", {
+                  s: g.smartN,
+                  c: g.consensusN,
+                })}
+              >
+                {g.n}
+              </td>
+              <td className="mono is-right">{g.wallets}</td>
+              <td className="mono is-right">{g.markets}</td>
+              <td className="mono is-right">{pts(g.winRate)}%</td>
+              <td className="mono is-right">{pts(g.implied)}%</td>
+              <td className="mono is-right">{pts(g.feePts)}</td>
+              <td className="mono is-right">
+                {pts(g.netEdge)} ±{" "}
+                {Number.isFinite(g.seC) ? pts(1.96 * g.seC) : "∞"}
+              </td>
+              <td className="ds-hint">{verdictText(g)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ScorecardSection({
+  sc,
+  t,
+}: {
+  sc: ChannelScorecard | undefined;
+  t: (s: string, v?: Record<string, string | number>) => string;
+}) {
+  if (!sc) {
+    return <div className="ds-hint">{t("记分卡数据不可用(旧部署或接口错误)。")}</div>;
+  }
+  const d = sc.disclosures;
+  return (
+    <div>
+      <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+        {t(
+          "每渠道的向前战绩:smart/共识告警只对在池钱包触发,每条已结算告警天然是该钱包在池期间的一次前向实验;按首发渠道(source)归组。逐行贡献 = 结算胜负 − 入场隐含 − 协议费(概率点/行),区间为市场聚类稳健口径。",
+        )}
+      </div>
+      <ScorecardTable groups={sc.groups} t={t} />
+      {sc.mmSplit.length > 0 && (
+        <>
+          <div
+            className="ds-label"
+            style={{ margin: "var(--s-4) 0 var(--s-2)" }}
+          >
+            {t("全局榜 × 做市商横切(官方榜不区分做市商,该不该留由数据说话)")}
+          </div>
+          <ScorecardTable groups={sc.mmSplit} t={t} />
+        </>
+      )}
+      <div className="ds-hint muted" style={{ marginTop: "var(--s-3)" }}>
+        {t(
+          "已打分告警 {a} 条 → 展开 {r} 行;费用不可定价剔除 {f} 行(绝不当 0);「已离池」桶 {o} 行 —— 30 天老化与清退会删除钱包行,来源失联的历史告警不丢弃、单独成桶,桶的大小本身就是幸存者盲区的读数。",
+          {
+            a: d.gradedAlerts,
+            r: d.rows,
+            f: d.feeUnknownDropped,
+            o: d.orphanRows,
+          },
+        )}
+      </div>
+      <div className="ds-hint muted" style={{ marginTop: "var(--s-2)" }}>
+        {t(
+          "多重比较提醒:本表共 {g} 个分组,α=0.05 下期望假阳性 ≈ {e} 个 —— 单组「显著」在独立时间段复现之前只是候选假设;判定不接任何自动清退,动手走既有准入/重审路径。",
+          { g: sc.groupCount, e: (sc.groupCount * 0.05).toFixed(1) },
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -605,6 +759,10 @@ export default function DiscoveryPage() {
               label: t("白名单池 ({n})", { n: data?.counts.poolTotal ?? 0 }),
               value: "members",
             },
+            {
+              label: t("渠道记分卡"),
+              value: "scorecard",
+            },
           ]}
         />
         <input
@@ -685,6 +843,7 @@ export default function DiscoveryPage() {
       )}
 
       {/* Active view table */}
+      {view === "scorecard" && <ScorecardSection sc={data?.scorecard} t={t} />}
       {view === "candidates" ? (
         <div className="ds-table-wrap">
           <table className="ds-table">
@@ -762,7 +921,7 @@ export default function DiscoveryPage() {
             </div>
           )}
         </div>
-      ) : (
+      ) : view === "members" ? (
         <div className="ds-table-wrap">
           <table className="ds-table">
             <thead>
@@ -847,7 +1006,7 @@ export default function DiscoveryPage() {
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
 
       {/* Tag definitions dialog — same data source as /glossary (WALLET_TAGS) */}
       <Modal
