@@ -535,3 +535,38 @@ describe("wallets_json 向前落库(2026-08-28,walk-forward v2 前置)", () => {
     expect(row.wallets_json).toBeNull();
   });
 });
+
+describe("runFollowCycle × wallets_json 接线(向前落库)", () => {
+  it("开仓落台账时带 wallets 快照:两钱包各 $6k、score 透传", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({
+        trades: [
+          trade({ proxyWallet: "w1", transactionHash: "h1", size: 10_000, price: 0.6 }),
+          trade({ proxyWallet: "w2", transactionHash: "h2", size: 10_000, price: 0.6 }),
+        ],
+      }),
+      getSmart: smart,
+      fetchPrice: async () => 0.63,
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const rows = db
+      .prepare("SELECT wallets_json FROM strategy_signals")
+      .all() as { wallets_json: string | null }[];
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows) {
+      const wallets = JSON.parse(row.wallets_json ?? "") as {
+        wallet: string;
+        netUsd: number;
+        score: number | null;
+      }[];
+      expect(wallets.map((w) => w.wallet).sort()).toEqual(["w1", "w2"]);
+      const byWallet = new Map(wallets.map((w) => [w.wallet, w]));
+      expect(byWallet.get("w1")).toEqual({ wallet: "w1", netUsd: 6_000, score: 80 });
+      expect(byWallet.get("w2")).toEqual({ wallet: "w2", netUsd: 6_000, score: 75 });
+    }
+  });
+});

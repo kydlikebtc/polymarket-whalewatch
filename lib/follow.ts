@@ -848,6 +848,10 @@ export async function runFollowCycle(
               entryPrice: entry,
               sizeUsd: s.sizeUsd,
               emittedAt: nowSec,
+              // 向前落库(2026-08-28):触发钱包+彼时评分+逐钱包金额的快照,
+              // detector 给什么记什么,不重排不加工 —— 这三样无法回填,
+              // 是未来 walk-forward 回放 score 维/真逐钱包阈值的唯一原料。
+              wallets: c.wallets,
             });
           } catch (e) {
             console.warn(
