@@ -233,7 +233,7 @@ State lives in one SQLite file (31 tables). Most of it is **rebuildable cache** 
 - [x] New outlets: MCP server (`npm run mcp`), embeddable record/status cards (`/embed/*`), public CSV dataset (CC BY 4.0)
 - [x] Content engine: daily market aggregates → anomaly board + small-vs-whale divergence (`/pulse`) + market calibration study (`/calibration`), with opt-in daily 𝕏 posts (default off)
 - [x] **30 uninterrupted trading days of data** (gate reached 2026-08-27), then re-derive every threshold — walk-forward machinery live: grid × subset selection under three significance gates, run/download from /manage 🧪, recommendations only (production parameters are never auto-modified)
-- [ ] Channel effectiveness scorecard (per-source forward hit-rate; the `source` column is the groundwork)
+- [x] Channel effectiveness scorecard — every graded smart/consensus alert is a forward experiment by a pool member; per-source net edge with market-clustered CIs, an explicit departed-wallet bucket against survivorship bias, and a market-maker split of the global board, on /discovery
 - [ ] Accumulation → Telegram alerts (stateful, tier-crossing dedup)
 - [ ] Event-level accumulation across correlated sub-markets
 

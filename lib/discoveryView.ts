@@ -1,4 +1,8 @@
 import type { DB } from "./db";
+import {
+  buildChannelScorecard,
+  type ChannelScorecard,
+} from "./channelScorecard";
 import { ADMIT_EVIDENCE_WINDOW_SEC } from "./admission";
 import { getWalletTagsBatch, type WalletTag } from "./walletTags";
 
@@ -62,6 +66,8 @@ export interface DiscoveryView {
   // The WHOLE whitelist pool (global boards + category specialists +
   // discovered graduates) — the funnel's terminal stage, shown in full.
   members: DiscoveryMemberRow[];
+  /** 渠道效果记分卡(2026-08-28,additive):每渠道的向前告警战绩。 */
+  scorecard: ChannelScorecard;
   counts: {
     evidenceRows: number;
     candidateWallets: number;
@@ -238,6 +244,7 @@ export function buildDiscoveryView(
   return {
     candidates,
     members,
+    scorecard: buildChannelScorecard(db),
     counts: {
       evidenceRows: evidence.length,
       // Funnel semantics: wallets under observation OUTSIDE the pool. Pool

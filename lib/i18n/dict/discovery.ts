@@ -6,6 +6,36 @@
 // 分片是唯一属主;此处只收 discovery 页与 WhitelistDialog 自有文案,外加
 // lib/walletTags 产出的标签底文(滤掉 ×N 后缀后的可枚举全集,筛选 chips 用)。
 export const DICT_DISCOVERY: Record<string, string> = {
+  // 渠道效果记分卡(2026-08-28)
+  渠道记分卡: "Channel scorecard",
+  "分类榜·{cat}": "Category board · {cat}",
+  "回声(echo)": "Echo",
+  "拆单(splitter)": "Splitter",
+  "新钱包(insider)": "Insider",
+  未归因: "Unattributed",
+  "已离池(来源失联)": "Departed (source lost)",
+  "全局榜·做市商": "Global board · market makers",
+  "全局榜·非做市商": "Global board · humans",
+  "✅ 显著为正": "✅ Significantly positive",
+  "❌ 显著为负": "❌ Significantly negative",
+  "○ 不显著": "○ Not significant",
+  "· 市场数不足": "· Too few markets",
+  告警行: "Graded rows",
+  费用: "Fees",
+  "净 edge ±95%(聚类)": "Net edge ±95% (clustered)",
+  判定: "Verdict",
+  "smart {s} 条 · 共识成员 {c} 条": "{s} smart · {c} consensus-member rows",
+  "记分卡数据不可用(旧部署或接口错误)。":
+    "Scorecard unavailable (stale deployment or API error).",
+  "每渠道的向前战绩:smart/共识告警只对在池钱包触发,每条已结算告警天然是该钱包在池期间的一次前向实验;按首发渠道(source)归组。逐行贡献 = 结算胜负 − 入场隐含 − 协议费(概率点/行),区间为市场聚类稳健口径。":
+    "Forward record per channel: smart/consensus alerts only fire for pool members, so every graded alert is a forward experiment made while the wallet was in the pool; grouped by first-discoverer source. Per-row contribution = settlement result − entry implied − protocol fee (probability points), intervals are market-clustered robust.",
+  "全局榜 × 做市商横切(官方榜不区分做市商,该不该留由数据说话)":
+    "Global board × market-maker split (the official leaderboard doesn't separate MMs — let the data decide)",
+  "已打分告警 {a} 条 → 展开 {r} 行;费用不可定价剔除 {f} 行(绝不当 0);「已离池」桶 {o} 行 —— 30 天老化与清退会删除钱包行,来源失联的历史告警不丢弃、单独成桶,桶的大小本身就是幸存者盲区的读数。":
+    "{a} graded alerts → {r} rows; {f} rows dropped for unpriceable fees (never guessed as 0); {o} rows in the departed bucket — 30-day aging and purges delete wallet rows, so orphaned history is kept in its own bucket rather than discarded; the bucket's size is itself the survivorship blind-spot reading.",
+  "多重比较提醒:本表共 {g} 个分组,α=0.05 下期望假阳性 ≈ {e} 个 —— 单组「显著」在独立时间段复现之前只是候选假设;判定不接任何自动清退,动手走既有准入/重审路径。":
+    "Multiple-comparison reminder: {g} groups here, so ~{e} false positives are expected at α=0.05 — any single significant group is a candidate hypothesis until it replicates in an independent period; verdicts trigger no automatic purges, act via the existing admission/re-audit paths.",
+
   // 渠道名(CHANNEL_META,证据子表渠道列 / ch: 筛选 chips 共用)
   共识同行: "Consensus echo",
   拆单建仓: "Split-buy entry",
