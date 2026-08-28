@@ -383,3 +383,21 @@ describe("openDb", () => {
     }
   });
 });
+
+describe("walkforward_reports", () => {
+  it("建表且一次运行一行:插入/读回最新报告(报告是数据,进库不进 git)", () => {
+    const db = openDb(":memory:");
+    const ins = db.prepare(
+      "INSERT INTO walkforward_reports (created_at, window_from, window_to, grid_size, config_json, report_json) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    ins.run(100, 1, 2, 210, '{"seed":1}', '{"tiers":[]}');
+    ins.run(200, 1, 3, 420, '{"seed":1}', '{"tiers":[1]}');
+    const latest = db
+      .prepare(
+        "SELECT * FROM walkforward_reports ORDER BY created_at DESC, id DESC LIMIT 1",
+      )
+      .get() as Record<string, unknown>;
+    expect(latest.grid_size).toBe(420);
+    expect(JSON.parse(latest.report_json as string).tiers).toEqual([1]);
+  });
+});
