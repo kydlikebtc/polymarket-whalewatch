@@ -210,3 +210,21 @@ describe("buildStrategyFeed", () => {
     db.close();
   });
 });
+
+describe("wallets_json 惰性守卫(向前落库批次)", () => {
+  it("台账行带 wallets_json,feed 输出零泄漏 —— 对外开放是另一个批次的产品决定", () => {
+    const db = openDb(":memory:");
+    const whale = enablePush(db, "巨鲸");
+    seed(db, { strategyId: whale, cid: "c1" });
+    db.prepare("UPDATE strategy_signals SET wallets_json = ?").run(
+      '[{"wallet":"0xleakcheck","netUsd":52000,"score":88}]',
+    );
+    const feed = buildStrategyFeed(db, { nowSec: NOW + 100 });
+    expect(feed.active).toHaveLength(1);
+    const dumped = JSON.stringify(feed);
+    // 哨兵地址与字段名双查:SELECT * 取回来的列若被 spread 式重构漏出,
+    // 任一断言当场红。walletCount(无 s)不误伤。
+    expect(dumped).not.toContain("0xleakcheck");
+    expect(dumped).not.toContain("wallets");
+  });
+});
