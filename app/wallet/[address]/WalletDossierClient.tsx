@@ -103,6 +103,20 @@ type WalletResponse = {
   alertHits: AlertHit[];
   // Coverage window of alertHits in days (the API bounds the LIKE scan).
   alertHitsWindowDays?: number;
+  // 价格影响持久性(2026-08-28 八件套,lib/priceImpact 的本地统计;
+  // null/缺失 = 现算降级或旧响应,整块省略)。
+  impact?: {
+    n: number;
+    measured: number;
+    retained: number;
+    rate: number | null;
+    ciLo: number | null;
+    ciHi: number | null;
+    markets: number;
+    medImpactCents: number | null;
+    med24hCents: number | null;
+    verdict: "followed" | "faded" | "mixed" | "insufficient";
+  } | null;
   recent: RecentTrade[];
   // 降级标志(见 route.localOnlyDossier):被限流/上游故障时仍回 200 + 本地
   // 档案,客户端按 retryAfterSec 倒计时自动重试实时层。
@@ -783,6 +797,71 @@ export default function WalletPage() {
               </div>
             )}
           </section>
+
+          {/* 价格影响持久性:他的告警落地后,市场初动有没有被留住。 */}
+          {data.impact && data.impact.n > 0 ? (
+            <section style={{ marginBottom: "var(--s-5)" }}>
+              <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+                {t("价格影响（告警后市场反应）")}
+              </div>
+              {data.impact.verdict === "insufficient" ||
+              data.impact.rate == null ? (
+                <div className="ds-hint">
+                  {t("样本不足：可测初动 {m} 条 · 覆盖 {k} 个市场（需 ≥8）", {
+                    m: data.impact.measured,
+                    k: data.impact.markets,
+                  })}
+                </div>
+              ) : (
+                <div className="ds-hint" style={{ lineHeight: 1.8 }}>
+                  <span
+                    style={
+                      data.impact.verdict === "followed"
+                        ? { color: "var(--up, #16a34a)", fontWeight: 600 }
+                        : data.impact.verdict === "faded"
+                          ? {
+                              color: "var(--warn-700, #b45309)",
+                              fontWeight: 600,
+                            }
+                          : { fontWeight: 600 }
+                    }
+                  >
+                    {data.impact.verdict === "followed"
+                      ? t("被市场跟随")
+                      : data.impact.verdict === "faded"
+                        ? t("被市场回吐")
+                        : t("反应不一")}
+                  </span>{" "}
+                  ·{" "}
+                  {t("初动留存率 {r}%（95% 区间 {lo}–{hi}%，{k} 个市场）", {
+                    r: Math.round(data.impact.rate * 100),
+                    lo: Math.round((data.impact.ciLo ?? 0) * 100),
+                    hi: Math.round((data.impact.ciHi ?? 1) * 100),
+                    k: data.impact.markets,
+                  })}
+                  {data.impact.medImpactCents != null &&
+                    data.impact.med24hCents != null && (
+                      <>
+                        {" "}
+                        ·{" "}
+                        {t("中位初动 +{a}¢ → 24h {b}¢", {
+                          a: data.impact.medImpactCents.toFixed(1),
+                          b: data.impact.med24hCents.toFixed(1),
+                        })}
+                      </>
+                    )}
+                </div>
+              )}
+              <div
+                className="ds-hint muted"
+                style={{ marginTop: "var(--s-1)" }}
+              >
+                {t(
+                  "口径：初动 = 告警后 10 分钟的方向化价移（≥2¢ 才可测），留住 = 24h 后保住初动一半以上；区间按市场聚簇。这是市场对他的反应的描述统计，不是任何跟随建议。",
+                )}
+              </div>
+            </section>
+          ) : null}
 
           {/* Recent trades(实时画像专属) */}
           {p ? (
