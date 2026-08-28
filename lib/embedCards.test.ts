@@ -4,11 +4,14 @@ import {
   fmtRecordCell,
   parseTheme,
   renderRecordEmbed,
+  renderSelfTestEmbed,
   renderStatusEmbed,
 } from "./embedCards";
 import type { RecordFeed, RecordFeedStrategy } from "./recordFeed";
 import type { HealthReport } from "./health";
 import type { ContinuityReport } from "./continuity";
+import { buildSelfTestVerdict, type PoolMemberRow } from "./selfTest";
+import type { WalletStats } from "./walletStats";
 
 const BASE = "https://whalewatch.wired.fund";
 
@@ -186,5 +189,91 @@ describe("renderStatusEmbed", () => {
       { theme: "light", baseUrl: BASE },
     );
     expect(html).toContain("no cycle records yet");
+  });
+});
+
+describe("renderSelfTestEmbed", () => {
+  const ADDR = "0x1234567890abcdef1234567890abcdef12345678";
+  const wstats = (over: Partial<WalletStats> = {}): WalletStats => ({
+    winRate: null,
+    netPnl: null,
+    roi: null,
+    settledCount: 0,
+    truncated: false,
+    marketsTraded: 10,
+    isMarketMaker: false,
+    ...over,
+  });
+  const pool: PoolMemberRow[] = [
+    { address: "0xa", score: 40, winRate: 0.5, netPnl: 100 },
+    { address: "0xb", score: 60, winRate: 0.7, netPnl: 9000 },
+  ];
+  const render = (
+    stats: WalletStats | null,
+    over: { fetchedAt?: number | null; theme?: "light" | "dark" } = {},
+  ) =>
+    renderSelfTestEmbed(
+      {
+        address: ADDR,
+        verdict: buildSelfTestVerdict(ADDR, stats, pool),
+        statsFetchedAt: over.fetchedAt ?? 1_787_800_000,
+      },
+      { theme: over.theme ?? "light", baseUrl: BASE },
+    );
+
+  it("pass 卡:判决词 + 三行数据带池分位 + 口径行 + 免责声明 + 署名回链指 /selftest", () => {
+    const html = render(
+      wstats({ winRate: 0.6, netPnl: 1200, roi: 0.02, settledCount: 12 }),
+    );
+    expect(html).toContain("PASS");
+    expect(html).toContain("clears the pool-admission bar");
+    expect(html).toContain("0x1234…5678");
+    expect(html).toContain("60%"); // win rate
+    expect(html).toContain("P50 of 2"); // 0.6 在 [0.5,0.7] 的 midrank 分位
+    expect(html).toContain("12 settled");
+    expect(html).toContain("not certification, not investment advice");
+    expect(html).toContain("≥55%"); // 口径引用常量
+    expect(html).toContain(`href="${BASE}/selftest"`);
+    expect(html).toContain("Data as of 2026-08-27");
+  });
+
+  it("fail 卡:below the bar,与 unjudged 措辞严格分家", () => {
+    const html = render(
+      wstats({ winRate: 0.4, netPnl: -500, roi: -0.1, settledCount: 20 }),
+    );
+    expect(html).toContain("BELOW BAR");
+    expect(html).not.toContain("UNJUDGEABLE");
+  });
+
+  it("截断样本:UNJUDGEABLE + 胜率显示 — 绝不显示错数", () => {
+    const html = render(
+      wstats({ netPnl: 8000, settledCount: 900, truncated: true }),
+    );
+    expect(html).toContain("UNJUDGEABLE");
+    expect(html).toContain("record truncated");
+    expect(html).toMatch(/Win rate<\/td><td[^>]*>—/);
+  });
+
+  it("做市商:N/A 判决,不给评分", () => {
+    const html = render(
+      wstats({ netPnl: 90000, marketsTraded: 5000, isMarketMaker: true }),
+    );
+    expect(html).toContain("N/A");
+    expect(html).toContain("market-maker");
+  });
+
+  it("no_data(本地无缓存)→ 未测过引导卡,不渲染数据表", () => {
+    const html = render(null, { fetchedAt: null });
+    expect(html).toContain("Not tested yet");
+    expect(html).toContain("Run the self-test");
+    expect(html).not.toContain("Win rate");
+  });
+
+  it("dark 主题换底色", () => {
+    const html = render(
+      wstats({ winRate: 0.6, netPnl: 1200, roi: 0.02, settledCount: 12 }),
+      { theme: "dark" },
+    );
+    expect(html).toContain("#14161e");
   });
 });

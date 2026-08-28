@@ -1,6 +1,7 @@
 import type { ContinuityReport } from "./continuity";
 import type { HealthReport } from "./health";
 import type { RecordFeed, RecordFeedStrategy } from "./recordFeed";
+import type { AxisPercentile, SelfTestVerdict } from "./selfTest";
 
 // 可嵌入卡片的纯渲染层(docs/plans/2026-08-27-outlet-trio-design.md #2)。
 // 路由(app/embed/*)只做取数与响应头,HTML 全在这里 —— 可测的部分与接线分开。
@@ -141,6 +142,123 @@ export function renderRecordEmbed(
     "WhaleWatch record",
     inner,
     `${opts.baseUrl}/record`,
+    host,
+  );
+}
+
+// ---- /embed/selftest —— 聪明钱自测判决卡 -------------------------------
+
+export interface SelfTestEmbedInput {
+  address: string;
+  verdict: SelfTestVerdict;
+  /** wallet_stats 行的拉取时间(秒);卡上标「数据截至」。 */
+  statsFetchedAt: number | null;
+}
+
+const shortAddr = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+
+const fmtPctile = (p: AxisPercentile | null): string =>
+  p ? `P${Math.round(p.pct)} of ${p.sampleN}` : "—";
+
+const fmtUsdSigned = (n: number): string =>
+  `${n >= 0 ? "+" : "−"}$${Math.round(Math.abs(n)).toLocaleString("en-US")}`;
+
+/** 判决词与色调。「没过」与「判不了」在措辞上严格分家。 */
+export function selfTestHeadline(v: SelfTestVerdict): {
+  text: string;
+  tone: "up" | "down" | "muted";
+} {
+  switch (v.verdict) {
+    case "pass":
+      return { text: "PASS — clears the pool-admission bar", tone: "up" };
+    case "fail":
+      return {
+        text: "BELOW BAR — does not clear the pool-admission bar",
+        tone: "down",
+      };
+    case "bot":
+      return {
+        text: "N/A — HF market-maker / bot, win-rate basis not applicable",
+        tone: "muted",
+      };
+    case "unjudged": {
+      const why =
+        v.unjudgedReason === "truncated"
+          ? "record truncated upstream (profit-sorted winner slice)"
+          : v.unjudgedReason === "small_sample"
+            ? `fewer than ${v.criteria.minSettledRoi} settled markets`
+            : "net P/L unavailable";
+      return { text: `UNJUDGEABLE — ${why}`, tone: "muted" };
+    }
+    default:
+      return { text: "Not tested yet", tone: "muted" };
+  }
+}
+
+/**
+ * /embed/selftest —— 判决卡。红线:渲染层拿到什么画什么,取数侧保证零上游
+ * (只读 wallet_stats 现存行);no_data = 本地无缓存 → 引导卡,绝不替围观者
+ * 花上游预算。免责声明与样本口径随卡走 —— 分发出去的卡必须自带上下文。
+ */
+export function renderSelfTestEmbed(
+  input: SelfTestEmbedInput,
+  opts: { theme: EmbedTheme; baseUrl: string },
+): string {
+  const host = new URL(opts.baseUrl).host;
+  const v = input.verdict;
+  const head = selfTestHeadline(v);
+  const addr = shortAddr(input.address);
+
+  let inner: string;
+  if (v.verdict === "no_data") {
+    inner = `<p class="title">WhaleWatch · smart-money self-test</p>
+<p><span style="font-family:ui-monospace,monospace">${escapeHtml(addr)}</span> — <b>Not tested yet</b>: no cached record for this address.</p>
+<p class="muted">Run the self-test on ${escapeHtml(host)} to get a verdict against the smart-money pool-admission bar.</p>`;
+  } else {
+    const s = v.stats;
+    const rows: [string, string, string][] = [
+      [
+        "Win rate",
+        s?.winRate != null ? `${Math.round(s.winRate * 100)}%` : "—",
+        fmtPctile(v.percentiles.winRate),
+      ],
+      [
+        "Net P/L",
+        s?.netPnl != null ? fmtUsdSigned(s.netPnl) : "—",
+        fmtPctile(v.percentiles.netPnl),
+      ],
+      [
+        "Score",
+        v.score != null ? String(v.score) : "—",
+        fmtPctile(v.percentiles.score),
+      ],
+    ];
+    const trs = rows
+      .map(
+        ([k, val, pctile]) =>
+          `<tr><td>${k}</td><td class="num">${escapeHtml(val)}</td><td class="num muted">${escapeHtml(pctile)}</td></tr>`,
+      )
+      .join("");
+    const c = v.criteria;
+    const bar =
+      `Bar: ≥${c.minSettled} settled · ≥${Math.round(c.minWinRate * 100)}% win rate · positive net P/L — ` +
+      `or ≥${c.minSettledRoi} settled · ≥${Math.round(c.minRoi * 100)}% ROI · positive net P/L`;
+    const asOf =
+      input.statsFetchedAt != null
+        ? ` · Data as of ${new Date(input.statsFetchedAt * 1000).toISOString().slice(0, 10)}`
+        : "";
+    inner = `<p class="title">WhaleWatch · smart-money self-test · <span style="font-family:ui-monospace,monospace">${escapeHtml(addr)}</span></p>
+<p class="${head.tone}" style="font-weight:600;margin:0 0 8px">${escapeHtml(head.text)}</p>
+<table><tr class="muted"><th></th><th style="text-align:right">value</th><th style="text-align:right">pool pct</th></tr>${trs}</table>
+<div class="muted" style="margin-top:6px">${s ? `${s.settledCount} settled` : ""}${asOf} · pool of ${v.poolSize}${v.inPool ? " (already a member)" : ""}</div>
+<div class="muted" style="margin-top:4px">${escapeHtml(bar)}</div>
+<div class="muted" style="margin-top:4px">Track-record checkup against this site's pool-admission bar — not certification, not investment advice. Percentiles vs the current pool (picked by this site's own bar, not all traders).</div>`;
+  }
+  return shell(
+    opts.theme,
+    `WhaleWatch self-test ${addr}`,
+    inner,
+    `${opts.baseUrl}/selftest`,
     host,
   );
 }
