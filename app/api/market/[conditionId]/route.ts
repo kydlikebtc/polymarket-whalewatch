@@ -57,7 +57,8 @@ export async function GET(
       staleGateSec: cfg.staleGateSec,
       ttlSec: cfg.windowTtlSec,
       lruMax: cfg.lruMax,
-      takeToken: (cost) => takeCardToken(budgetFor(health, cfg.budgetPerMin), cost),
+      takeToken: (cost) =>
+        takeCardToken(budgetFor(health, cfg.budgetPerMin), cost),
     });
     if (!out.ok) {
       return Response.json(

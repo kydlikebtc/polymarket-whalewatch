@@ -274,7 +274,10 @@ function EvidenceDetailRows({
 
 // 渠道键 → 展示名走页面侧 t()(lib 的 channelLabel 是中文常量,直接渲染会让
 // 英文界面漏中文;coverage 闸只扫静态字面量,所以逐键写死)。
-function scorecardLabel(key: string, t: (s: string, v?: Record<string, string | number>) => string): string {
+function scorecardLabel(
+  key: string,
+  t: (s: string, v?: Record<string, string | number>) => string,
+): string {
   if (key.startsWith("category:")) {
     return t("分类榜·{cat}", { cat: key.slice("category:".length) });
   }
@@ -375,7 +378,9 @@ function ScorecardSection({
   t: (s: string, v?: Record<string, string | number>) => string;
 }) {
   if (!sc) {
-    return <div className="ds-hint">{t("记分卡数据不可用(旧部署或接口错误)。")}</div>;
+    return (
+      <div className="ds-hint">{t("记分卡数据不可用(旧部署或接口错误)。")}</div>
+    );
   }
   const d = sc.disclosures;
   return (
