@@ -37,6 +37,41 @@ Scope: 433 commits, 2026-06-23 → 2026-08-27. Test suite at the end of that ran
 
 ## Batches
 
+### 2026-08-28 — The thresholds face their first re-derivation (walk-forward, recommendations only)
+
+Every detection parameter across the 19 strategy tiers was a design-day gut call, and the 8-18
+edge audit proved the data was not yet qualified to correct them. With the 30-day continuity gate
+reached, this batch ships the promised re-derivation as `scripts/walkforward.ts` + a pure-function
+layer in `lib/walkforward.ts` — and it changes **nothing** by itself: the output is a report row in
+the new `walkforward_reports` table plus a 🧪 summary card on /manage. Tier parameters are a public
+track record's definition; adopting a suggestion means manually creating a challenger tier that
+runs forward next to the original.
+
+The method is grid × subset selection under the observable cone: the raw trade stream is
+deliberately not archived, so only tightening/shifting variants can be replayed — each variant is a
+filter over settled paper positions whose real execution facts (`exec_price`, `fee_usd`,
+`formation_price`) are already on disk, zero new simulation. Exit variants are lookups into the
+nine-rule `position_exit_sims` table. Facts that were never recorded stay honest: the score-floor
+dimension is unreplayable (no per-position wallet/score snapshot) and is substituted by a
+net-buy-floor with a fixed disclosure; per-wallet minimums degrade to an average-basis superset,
+declared in every report.
+
+Evaluation is weekly expanding walk-forward — train ranks, validate scores, and a train-rejected
+variant's validate numbers are never even published. Survival takes three gates at once:
+cluster-robust CI (CRVE, markets as clusters), Bonferroni over the count of cells that actually
+received a validate score, and a market-level direction randomization (10,000 seeded draws;
+same-market positions share one draw, opposite sides anti-correlated — per-position redraws would
+repeat the exact independence mistake the clustered intervals fixed). Calibration tests pin ~5%
+false-positive rate on known-no-edge synthetic sets and guaranteed survival on constructed strong
+edge. One premise correction surfaced during implementation: 2026-07-28 (the gate start) is a UTC
+Tuesday, not the Monday the design assumed, so the clean window currently yields two validate folds
+(08-10, 08-17), not three — a test now pins the real calendar.
+
+**Scope**: `lib/walkforward.ts` (+ 31 tests), `walkforward_reports` table, `scripts/walkforward.ts`,
+`/api/admin/walkforward`, /manage 🧪 阈值重推 card (+ 4 view tests). Thin tiers (settled too sparse
+for two valid folds) are skipped whole-tier and reported as such — "not enough data" is a
+conclusion, not an obstacle.
+
 ### 2026-08-27 — The pulse boards learn to tweet (default off)
 
 The content engine's deliberately-deferred X wiring, now wired: two new broadcast kinds —
