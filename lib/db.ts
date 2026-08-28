@@ -47,6 +47,7 @@ export function openDb(path = "data.sqlite") {
     CREATE INDEX IF NOT EXISTS idx_bus_signals_emitted ON bus_signals(emitted_at);
     CREATE TABLE IF NOT EXISTS x_oauth_pending (oauth_token TEXT PRIMARY KEY, oauth_token_secret TEXT NOT NULL, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS tg_targets (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, bot_token TEXT NOT NULL, chat_id TEXT NOT NULL, kinds TEXT NOT NULL, delay_min INTEGER NOT NULL DEFAULT 0, paused INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, last_ok_at INTEGER, last_error TEXT, last_error_at INTEGER, consecutive_failures INTEGER NOT NULL DEFAULT 0, UNIQUE(bot_token, chat_id));
+    CREATE TABLE IF NOT EXISTS walkforward_reports (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL, window_from INTEGER NOT NULL, window_to INTEGER NOT NULL, grid_size INTEGER NOT NULL, config_json TEXT NOT NULL, report_json TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
     CREATE INDEX IF NOT EXISTS idx_candidates_evidence_ts ON wallet_candidates(evidence_ts);
     CREATE INDEX IF NOT EXISTS idx_market_tilt_history_ts ON market_tilt_history(ts);

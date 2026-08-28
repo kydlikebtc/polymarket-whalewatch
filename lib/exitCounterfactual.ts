@@ -348,7 +348,10 @@ export function analyzeExitCounterfactual(
  */
 export function withExitCounterfactual<
   T extends { settled: { id?: number; realized_pnl: number | null }[] },
->(db: DB, views: T[]): (T & { exitCounterfactual: ExitCounterfactualSummary | null })[] {
+>(
+  db: DB,
+  views: T[],
+): (T & { exitCounterfactual: ExitCounterfactualSummary | null })[] {
   const allIds = views.flatMap((v) =>
     v.settled
       .map((row) => row.id)
@@ -391,8 +394,7 @@ export function withExitCounterfactual<
       v.settled
         .filter(
           (row): row is typeof row & { id: number; realized_pnl: number } =>
-            typeof row.id === "number" &&
-            typeof row.realized_pnl === "number",
+            typeof row.id === "number" && typeof row.realized_pnl === "number",
         )
         .map((row) => ({ id: row.id, realizedPnl: row.realized_pnl })),
       simsById,

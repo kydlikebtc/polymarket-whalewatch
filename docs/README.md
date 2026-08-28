@@ -6,7 +6,7 @@
 | --------------------------------- | --------------------------------------- | -------------------------- | -------------------------------- |
 | `api-access.md`、`signals-api.md` | 对外接口文档（2 份）                    | 订阅方 / 接口维护者        | 不允许过时，与实现同步校准       |
 | `README.md`（本文件）             | docs 目录索引                           | 找文档的人                 | 新增文档时需同步                 |
-| `docs/plans/`                     | 设计文档与实现计划（37 份，按日期命名） | 想理解「为什么这么做」的人 | **刻意不更新**，是提案当时的快照 |
+| `docs/plans/`                     | 设计文档与实现计划（38 份，按日期命名） | 想理解「为什么这么做」的人 | **刻意不更新**，是提案当时的快照 |
 | `docs/*.png`、`docs/design/`      | 界面截图与高保真原型                    | README 配图 / 设计参考     | 会过时，各条目下已注明拍摄日期   |
 
 `docs/plans/` 是**历史档案**，不是使用手册。每份文档记录的是「那一天决定这么做、以及为什么」，包括被否决的方案与踩过的坑。实现落地后代码会继续演进，文档不回填——想知道现在代码长什么样，读代码；想知道当初为什么选这条路，读这里。
@@ -45,11 +45,12 @@
 
 ## 设计文档索引
 
-`docs/plans/` 共 **37 份**，按日期倒序。同一主题的 design + implementation 相邻。
+`docs/plans/` 共 **38 份**，按日期倒序。同一主题的 design + implementation 相邻。
 
 | 日期       | 主题                                                                                     | 类型           | 一句话                                                                                                                                                                                                                                                              |
 | ---------- | ---------------------------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-08-28 | [Walk-forward 阈值重推](plans/2026-08-28-walkforward-rederivation-design.md) | design | 30 天闸门开启后的第一件事：网格×子集选择（收紧方向可回放、放松方向只能开挑战者档向前跑）、按周扩张窗、三道显著性闸（聚类 CI+Bonferroni+方向随机化 10k）；永不改存量档参数——胜出变体以新挑战者档入种子。 |
+| 2026-08-28 | [Walk-forward 阈值重推](plans/2026-08-28-walkforward-rederivation.md) | implementation | 13 任务 TDD：`lib/walkforward.ts` 纯函数层（折切分/网格/三态过滤/CRVE/市场级随机化/两段式评估）+ 姊妹脚本 + `walkforward_reports` 表 + /manage 卡；实现期修正设计的日历前提（07-28 实为 UTC 周二，validate 折=08-10/08-17 两折）。 |
 | 2026-08-27 | [脉搏接入 𝕏 播报](plans/2026-08-27-pulse-broadcast-design.md)                            | design         | 日榜/分歧两类新播报（默认全关）：时刻闸+数据就绪闸（只发昨天，旧闻永不补发）+台账 dedup 每日一帖；模板/参数//manage 全接入，280 与无链接硬不变量不破。                                                                                                              |
 | 2026-08-27 | [内容引擎三件套](plans/2026-08-27-content-engine-design.md)                              | design         | 共享 market_daily 每日聚合底座：异常市场日榜（四可解释分量）+ 小单vs鲸鱼方向分歧 + 市场校准研究（赔率带隐含 vs 实际，聚簇 CI，选择偏差声明是底线）；全部说市场自己的事实，闸门无关。                                                                                |
 | 2026-08-27 | [新出口三件套](plans/2026-08-27-outlet-trio-design.md)                                   | design         | 零新数据换三个新出口：MCP server（stdio 走公开 API，与部署解耦）、可嵌入战绩卡/状态徽章（Route Handler 直出自包含 HTML）、公开 CSV 数据集（CC BY 4.0，分母与 /api/record 同口径）。                                                                                 |
@@ -87,7 +88,7 @@
 | 2026-06-23 | [项目奠基：大额成交 & 聪明钱监控](plans/2026-06-23-polymarket-monitor-design.md)         | design         | 两个核心目标（大额**成交**实时推送 + 聪明钱监控）；文中所有上游接口均经实测打通（HTTP 200 + 真实数据）后才写入。                                                                                                                                                    |
 | 2026-06-23 | [项目奠基：大额成交 & 聪明钱监控](plans/2026-06-23-polymarket-monitor-implementation.md) | implementation | 分阶段 TDD：单个 Next.js 工程，`lib/` 共享代码 + `worker/` 常驻轮询 + `app/` 只读看板，worker 与看板通过本地 SQLite 解耦；无需任何 Polymarket 鉴权。                                                                                                                |
 
-> 计数说明：`docs/plans/` 下 37 份 markdown = 26 份 `-design.md` + 3 份 `-implementation.md` + 8 份无后缀（其中 `2026-07-10-polymarket-monitor-strategic-roadmap` 是战略总纲、`2026-08-27-iteration-brainstorm-round2` 是脑暴快照；`follow-strategy-tiers` / `follow-page-card-redesign` / `reverse-control` / `x-broadcast-bot` / `x-post-copy-density` / `market-card-api` 正文自述为 Implementation Plan，上表按实际类型标注）。连同 `docs/api-access.md`、`docs/signals-api.md` 两份对外文档与本索引，`docs/` 全目录共 40 份 markdown。
+> 计数说明：`docs/plans/` 下 38 份 markdown = 26 份 `-design.md` + 3 份 `-implementation.md` + 9 份无后缀（其中 `2026-07-10-polymarket-monitor-strategic-roadmap` 是战略总纲、`2026-08-27-iteration-brainstorm-round2` 是脑暴快照；`follow-strategy-tiers` / `follow-page-card-redesign` / `reverse-control` / `x-broadcast-bot` / `x-post-copy-density` / `market-card-api` / `walkforward-rederivation` 正文自述为 Implementation Plan，上表按实际类型标注）。连同 `docs/api-access.md`、`docs/signals-api.md` 两份对外文档与本索引，`docs/` 全目录共 41 份 markdown。
 
 ---
 
