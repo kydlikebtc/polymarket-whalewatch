@@ -304,6 +304,40 @@ describe("computeAlertOutcomes", () => {
     expect(fetchPrice).toHaveBeenCalledWith("tok1", T0 + 3600);
   });
 
+  it("tracks cohort alerts exactly like consensus: synthetic BUY at avgBuyPrice, timed at lastTs", async () => {
+    // 同批出生告警的 payload 字段名刻意与 ConsensusGroup 对齐 —— trackable
+    // 分支镜像 consensus,不发明第二套字段学(第一梯队五件套 §五)。
+    const db = openDb(":memory:");
+    const payload = {
+      conditionId: "0xc9",
+      outcome: "Yes",
+      title: "M",
+      eventSlug: "e",
+      asset: "tok9",
+      outcomeIndex: 0,
+      avgBuyPrice: 0.35,
+      lastTs: T0,
+      totalNetUsd: 12000,
+      walletCount: 3,
+      birthSpanHours: 20,
+    };
+    const r = db
+      .prepare(
+        "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES ('cohort', 'coh', ?, ?)",
+      )
+      .run(JSON.stringify(payload), T0);
+    const id = Number(r.lastInsertRowid);
+    const out = await computeAlertOutcomes(db, [id], {
+      fetchPrice: async () => 0.5,
+      getMeta: async () => ({
+        "0xc9": meta({ closed: true, outcomePrices: [0, 1] }),
+      }),
+      nowSec: T0 + 90_000,
+    });
+    expect(out[id].resolved).toBe(true);
+    expect(out[id].won).toBe(false); // BUY@0.35, outcomeIndex 0 settled at 0
+  });
+
   it("a concurrent writer's persisted facts survive a slower failing writer (merge upsert)", async () => {
     // Race made routine by the worker backfill loop: this writer reads the
     // cache snapshot (no row yet), then — while it is stuck in fetchPrice —

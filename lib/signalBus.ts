@@ -21,7 +21,8 @@ export type BusSourceType =
   | "discovery"
   | "disagreement"
   | "accumulation"
-  | "pregame";
+  | "pregame"
+  | "cohort";
 
 export interface BusTypeMeta {
   type: BusSourceType;
@@ -73,6 +74,12 @@ export const BUS_TYPES: BusTypeMeta[] = [
     hint: "结算前数小时的热门市场汇总。当前只用于 𝕏 播报,尚未落库(待接入)",
     available: false,
   },
+  {
+    type: "cohort",
+    label: "🐣 同批新钱包",
+    hint: "N 个几乎同时出生的新钱包同向买入。已落库 alerts 并推 TG,总线投影(三处白名单接线)留独立批次(待接入)",
+    available: false,
+  },
 ];
 
 export interface BusTypeSetting {
@@ -89,6 +96,7 @@ export const DEFAULT_BUS_SETTINGS: BusSettings = {
   disagreement: { enabled: false },
   accumulation: { enabled: false },
   pregame: { enabled: false },
+  cohort: { enabled: false },
 };
 
 const CONFIG_KEY = "bus_signal_settings";

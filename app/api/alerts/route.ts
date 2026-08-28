@@ -84,8 +84,10 @@ export async function GET() {
           p = {};
         }
         const type = row.type ?? "large";
-        // Consensus payloads are group aggregates, not single fills.
-        if (type === "consensus") {
+        // Consensus/cohort payloads are group aggregates, not single fills —
+        // cohort(同批出生,2026-08-28)的 payload 字段名与 ConsensusGroup 对齐,
+        // 投影分支完全共用;fold 键同样剥掉尾段 walletCount(升级行折叠)。
+        if (type === "consensus" || type === "cohort") {
           return {
             id: row.id,
             type,

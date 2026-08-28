@@ -67,6 +67,7 @@ export const DICT_ALERTS: Record<string, string> = {
   // 有效样本量:同一市场的多条告警共享一个结算,只算一个独立观测。
   "{n} 个市场": "{n} markets",
   "💰大单": "💰 Large",
+  "🐣同批新钱包": "🐣 Cohort",
   "🏆聪明钱": "🏆 Smart",
   "🔥共识": "🔥 Consensus",
 
