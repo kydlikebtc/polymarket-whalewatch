@@ -37,6 +37,33 @@ Scope: 473 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that ran
 
 ## Batches
 
+### 2026-08-28 — The discovery channels get their report card
+
+The wallet-discovery program has been feeding the smart-money pool since early July — global
+leaderboards, category boards, four behavioral channels (echo, splitter, insider, early winner)
+— with first-discoverer attribution recorded in `smart_wallets.source`, and nobody had ever
+checked which channel's wallets actually win going forward. This batch closes that loop with
+zero new data: smart and consensus alerts only fire for pool members, so every graded alert in
+the ledger is by construction a forward experiment made while the wallet was in the pool.
+Consensus alerts expand into per-member rows, each priced at that member's own average entry
+(the payload already carries it), and the whole thing joins to the source column.
+
+The yardstick is the house standard, reused not reinvented: per-row contribution =
+settlement result − entry implied − protocol fee (fee-unpriceable rows are dropped and counted,
+never guessed as zero), intervals are market-clustered robust via the walk-forward batch's
+CRVE, and a multiplicity footer states the actual group count. One bucket exists specifically
+to fight survivorship bias: 30-day aging and purges delete wallet rows, so alerts from departed
+wallets land in an explicit "source lost" bucket instead of silently vanishing — the bucket's
+size is itself the blind-spot reading. A market-maker split of the global board finally gives
+the "should the 72 bots stay" question a number instead of an opinion.
+
+It ships as a third tab on /discovery (fully bilingual, 23 new dictionary entries), an additive
+`scorecard` key on the discovery view, and — deliberately — no buttons: verdicts trigger no
+automatic purges; curation still goes through the existing admission gate and re-audit paths.
+
+**Scope**: `lib/channelScorecard.ts` (+9 tests), `DiscoveryView.scorecard` wiring (+1),
+/discovery 渠道记分卡 tab.
+
 ### 2026-08-28 — Signals start remembering who triggered them (walk-forward v2 groundwork)
 
 The walk-forward batch had to drop its score-floor dimension and approximate per-wallet
