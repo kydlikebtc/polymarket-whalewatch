@@ -66,7 +66,31 @@ type ConsensusResponse = {
   // Contested markets (smart money on opposing sides) — mutually exclusive
   // with `groups`, which the API already filters to one-sided consensus only.
   disagreement: DisagreementMarket[];
+  // 离场(2026-08-28 八件套):卖侧窗口读数,同一把 minWallets/minPerWalletUsd 尺。
+  exits?: ExitGroupView[];
   error?: string;
+};
+
+// 镜像 lib/smartExit 的 SmartExitGroup(前端手写平行类型,页面惯例)。
+type ExitWalletView = {
+  wallet: string;
+  soldUsd: number;
+  avgSellPrice: number;
+  sellCount: number;
+  score: number | null;
+  winRate: number | null;
+};
+type ExitGroupView = {
+  conditionId: string;
+  outcome: string;
+  title: string;
+  slug: string;
+  eventSlug: string;
+  wallets: ExitWalletView[];
+  walletCount: number;
+  totalSoldUsd: number;
+  avgSellPrice: number;
+  lastTs: number;
 };
 
 type Hours = 2 | 6 | 12;
@@ -74,7 +98,7 @@ type Hours = 2 | 6 | 12;
 const PER_WALLET_PRESETS = [5000, 10000, 25000];
 const HOURS_CHOICES = [2, 6, 12] as const;
 const MIN_WALLETS_CHOICES = [2, 3, 4] as const;
-type View = "consensus" | "disagreement";
+type View = "consensus" | "disagreement" | "exits";
 // Page defaults — doubling as the "omit from URL" baseline so the default
 // view serializes to a bare pathname.
 const DEFAULTS = { hours: 6 as Hours, minWallets: 2, minPerWalletUsd: 5000 };
@@ -516,6 +540,14 @@ export default function ConsensusPage() {
                 ),
                 value: "disagreement",
               },
+              {
+                label: (
+                  <span>
+                    <Icon s="📤" /> {t("离场")} {data?.exits?.length ?? 0}
+                  </span>
+                ),
+                value: "exits",
+              },
             ]}
           />
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
@@ -523,9 +555,14 @@ export default function ConsensusPage() {
               ? t("一边倒 · ≥{n} 个白名单钱包同向买入同一结果", {
                   n: minWallets,
                 })
-              : t(
-                  "同一市场对立结果都有聪明钱 · 按质量加权称天平（与共识互斥）",
-                )}
+              : view === "disagreement"
+                ? t(
+                    "同一市场对立结果都有聪明钱 · 按质量加权称天平（与共识互斥）",
+                  )
+                : t(
+                    "≥{n} 个池内钱包在同一结果上净卖出 · 窗内只见卖不见此前建仓——抓的就是减持老仓，但分不清获利了结与止损",
+                    { n: minWallets },
+                  )}
           </div>
         </div>
       ) : null}
@@ -705,6 +742,67 @@ export default function ConsensusPage() {
       <div style={{ display: view === "disagreement" ? "block" : "none" }}>
         {data ? (
           <DisagreementSection markets={data.disagreement ?? []} />
+        ) : null}
+      </div>
+
+      <div style={{ display: view === "exits" ? "block" : "none" }}>
+        {data && (data.exits?.length ?? 0) === 0 && !loading ? (
+          <div className="ds-empty">{t("窗口内暂无池内钱包的集体离场")}</div>
+        ) : (data?.exits?.length ?? 0) > 0 ? (
+          <div className="ds-table-wrap">
+            <table className="ds-table">
+              <thead>
+                <tr>
+                  <th>{t("市场 / 结果")}</th>
+                  <th className="is-right">{t("离场钱包")}</th>
+                  <th className="is-right">{t("合计卖出")}</th>
+                  <th className="is-right">{t("卖出均价")}</th>
+                  <th>{t("钱包")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(data?.exits ?? []).map((g) => (
+                  <tr key={`${g.conditionId}:${g.outcome}`}>
+                    <td>
+                      <div style={{ fontWeight: 500 }}>
+                        {g.title}
+                        {g.slug && (
+                          <MarketSlugActions
+                            slug={g.slug}
+                            eventSlug={g.eventSlug || undefined}
+                          />
+                        )}
+                      </div>
+                      <div className="ds-hint">{g.outcome}</div>
+                    </td>
+                    <td className="is-right num mono">{g.walletCount}</td>
+                    <td
+                      className="is-right num mono"
+                      style={{ fontWeight: 600 }}
+                    >
+                      ${Math.round(g.totalSoldUsd).toLocaleString("en-US")}
+                    </td>
+                    <td className="is-right num mono">
+                      {(g.avgSellPrice * 100).toFixed(1)}¢
+                    </td>
+                    <td className="ds-hint mono">
+                      {g.wallets.slice(0, 3).map((w, i) => (
+                        <span key={w.wallet} style={{ whiteSpace: "nowrap" }}>
+                          {i > 0 && " · "}
+                          <WalletLink address={w.wallet}>
+                            {w.wallet.slice(0, 6)}…{w.wallet.slice(-4)}
+                          </WalletLink>
+                          {" $"}
+                          {Math.round(w.soldUsd / 1000)}k
+                        </span>
+                      ))}
+                      {g.wallets.length > 3 && " …"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : null}
       </div>
 
