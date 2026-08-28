@@ -5,6 +5,7 @@ import {
   buildEntryVariants,
   buildGrid,
   categoryMatches,
+  contribOf,
   entryMatches,
   foldOf,
   listValidateFolds,
@@ -305,5 +306,37 @@ describe("子集过滤", () => {
     });
     expect(tp.included.map((p) => p.id)).toEqual([1]);
     expect(tp.droppedMissing).toBe(2);
+  });
+});
+
+describe("退出合成", () => {
+  it("hold:contrib = (realized_pnl − fee)/shares,二元结算下即 won − q − fee", () => {
+    // BUY@0.4 结算 1:realized = 100×0.6 = 60;fee $2 → (60−2)/100 = 0.58。
+    const p = pos({
+      entryPrice: 0.4,
+      shares: 100,
+      realizedPnl: 60,
+      feeUsd: 2,
+    });
+    expect(contribOf(p, "hold")).toBeCloseTo(0.58, 12);
+  });
+
+  it("九规则:sims.pnl 查表(触发与未触发都直接查 —— 落库时未触发已回填实际值)", () => {
+    const p = pos({
+      entryPrice: 0.4,
+      shares: 100,
+      realizedPnl: -40,
+      feeUsd: 0,
+      exitSims: { tp10: { exited: 1, pnl: 10 }, sl10: { exited: 0, pnl: -40 } },
+    });
+    expect(contribOf(p, "tp10")).toBeCloseTo(0.1, 12); // 10/100
+    expect(contribOf(p, "sl10")).toBeCloseTo(-0.4, 12); // 未触发 = 实际
+  });
+
+  it("sims 缺席或缺该规则行 → null(调用方剔除,不猜)", () => {
+    expect(contribOf(pos({ exitSims: null }), "tp10")).toBeNull();
+    expect(
+      contribOf(pos({ exitSims: { sl10: { exited: 0, pnl: 0 } } }), "tp10"),
+    ).toBeNull();
   });
 });

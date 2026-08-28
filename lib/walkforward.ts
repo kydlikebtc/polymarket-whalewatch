@@ -297,3 +297,24 @@ export function subsetOf(positions: WfPosition[], cell: WfCell): WfSubset {
   }
   return { included, droppedMissing };
 }
+
+// ---------------------------------------------------------------------------
+// 主指标(实现计划 §0.1):逐仓贡献,单位=概率点。
+// contrib = (rulePnl − fee) / shares。二元结算的 hold 恰好等于 won − q − 每股费
+// (entry_price 就是隐含概率 q,赔率调整天然内建,与 gradeRows 的 excess 同族);
+// 提前退出自然推广为 exit − entry − 每股费。记账基准 = entry_price(realized_pnl
+// 与九规则 sims 共同的基准),绝不混入 exec_price —— 换基准等于让本报告与全站
+// 已发布战绩打架。
+
+/**
+ * 一笔仓在某退出规则下的贡献;规则数据缺席(sims 未回填/缺行)返回 null,
+ * 调用方剔除。fee 是入场侧协议费 —— 提前退出的退出侧盘口与费**没有**建模,
+ * 报告固定段落带 exitCounterfactual 的红线原话(纸面对纸面/蜡烛盲区)。
+ */
+export function contribOf(p: WfPosition, exitRule: string): number | null {
+  if (p.shares <= 0) return null;
+  if (exitRule === "hold") return (p.realizedPnl - p.feeUsd) / p.shares;
+  const sim = p.exitSims?.[exitRule];
+  if (!sim) return null;
+  return (sim.pnl - p.feeUsd) / p.shares;
+}
