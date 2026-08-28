@@ -723,3 +723,88 @@ describe("walk-forward 评估管线", () => {
     expect(all).toContain("均值口径");
   });
 });
+
+describe("反事实校验(设计 §9:校准错了整份报告失效)", () => {
+  it("无 edge 均匀集 200 组 × 100 次随机化:假阳率 ≈ 5%(落在 [0.5%, 12%])", () => {
+    let falsePositives = 0;
+    for (let s = 0; s < 200; s++) {
+      const rng = mulberry32(1_000 + s);
+      const rows: {
+        conditionId: string;
+        outcome: string;
+        q: number;
+        feePerShare: number;
+      }[] = [];
+      let sum = 0;
+      for (let mkt = 0; mkt < 15; mkt++) {
+        const q = 0.2 + 0.6 * rng();
+        const won = rng() < q; // 市场级抽签:同市场两仓共享同一结算
+        for (let k = 0; k < 2; k++) {
+          rows.push({
+            conditionId: `m${mkt}`,
+            outcome: "Yes",
+            q,
+            feePerShare: 0,
+          });
+          sum += (won ? 1 : 0) - q;
+        }
+      }
+      const p = randomizationP(rows, sum / rows.length, 100, 2_000 + s);
+      if (p <= 0.05) falsePositives++;
+    }
+    expect(falsePositives / 200).toBeGreaterThan(0.005);
+    expect(falsePositives / 200).toBeLessThan(0.12);
+  });
+
+  it("强 edge 构造集:40 仓 20 市场 q=0.5 全胜 → 聚类 CI 与随机化(100 次)双过", () => {
+    const rows = Array.from({ length: 40 }, (_, i) => ({
+      contrib: 0.5,
+      cluster: `m${i % 20}`,
+    }));
+    const s = clusterStat(rows)!;
+    expect(s.point - 3.5 * s.seC).toBeGreaterThan(0); // 远超 Bonferroni 级临界
+    const p = randomizationP(
+      rows.map((r, i) => ({
+        conditionId: r.cluster,
+        outcome: "Yes",
+        q: 0.5,
+        feePerShare: 0,
+      })),
+      0.5,
+      100,
+      99,
+    );
+    expect(p).toBeCloseTo(1 / 101, 12);
+  });
+
+  it("端到端假阳兜底:纯噪声档喂进全管线 → 无存活变体", () => {
+    const rng = mulberry32(777);
+    const positions: unknown[] = [];
+    for (const era of [TRAIN_ERA, F1, F2]) {
+      for (let i = 0; i < 40; i++) {
+        const q = 0.3 + 0.4 * rng();
+        const won = rng() < q;
+        positions.push(
+          tierPos(era, i, won, {
+            entryPrice: q,
+            formationPrice: q,
+            realizedPnl: won ? 100 * (1 - q) : -100 * q,
+            totalNetUsd: 50_000 + Math.floor(rng() * 100_000),
+          }),
+        );
+      }
+    }
+    const r = runWalkforward(
+      [
+        tierInput(
+          "噪声档",
+          params({ id: 99, source: "heavy", minSingleFillUsd: 50_000 }),
+          positions,
+        ),
+      ],
+      OPTS,
+    );
+    expect(r.tiers[0].thin).toBe(false);
+    expect(r.tiers[0].survivors).toHaveLength(0);
+  });
+});
