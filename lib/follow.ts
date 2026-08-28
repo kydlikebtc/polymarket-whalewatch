@@ -1495,7 +1495,8 @@ export interface FollowStrategyView {
    * 九个退出规则下的假想结果聚合。null/缺失 = 尚无已回填路径(回填中或全部
    * 不可回填),面板整块省略。
    */
-  exitCounterfactual?: import("./exitCounterfactual").ExitCounterfactualSummary | null;
+  exitCounterfactual?:
+    import("./exitCounterfactual").ExitCounterfactualSummary | null;
 }
 
 /**

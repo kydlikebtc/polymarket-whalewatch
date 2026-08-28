@@ -77,8 +77,9 @@ AND fee_usd IS NOT NULL AND entry_price ∈ (0,1) AND shares > 0
 
 ### 0.5 折与选择/评价分离
 
-- 折 = UTC 整周（`utcWeekStart`），按 **formation_ts** 归折。闸门起点 `GATE_START = 2026-07-28 00:00 UTC`（周一，写死常量+注释，与 /api/continuity 的 streak 起点同源）。
-- validate 折 = 干净窗内的**完整周**，从第 2 周起：W2、W3、W4…（跑的当天所在的不完整周不做 validate——「已结算」子集在新折里天然偏向快结算市场，报告代表性一节披露这层偏置）。
+- 折 = UTC 整周（`utcWeekStart`），按 **formation_ts** 归折。闸门起点 `GATE_START = 2026-07-28 00:00 UTC`（写死常量+注释，与 /api/continuity 的 streak 起点同源）。
+- **设计前提修正（实现期发现）**：2026-07-28 实际是 UTC **周二**，不是设计 §4.1 说的「恰为周一」（独立验算：2026-01-01 周四 +208 天=周二；`utcWeekStart` 同判）。设计的「4 整折」按错历推的。实现按真实日历走：首个干净整周顺延到 2026-08-03（周一），07-28～08-02 的残段与闸门前数据一样只进 train；截至 2026-08-28，validate 折 = **08-10、08-17 两折**（08-31 起自然长出第三折）。有测试钉住这条修正。
+- validate 折 = 首个干净整周之后的**完整周**（跑的当天所在的不完整周不做 validate——「已结算」子集在新折里天然偏向快结算市场，报告代表性一节披露这层偏置）。
 - train(折 k) = formation_ts < 折 k 起点的**全部历史**（含闸门前旧数据——只进 train 永不 validate）。
 - **折对某变体可评** ⇔ train 与 validate 双侧都过最小样本闸（settled ≥ 10 且去重市场 ≥ 5；train 侧也设闸，否则 3 仓 train 的噪声排序会白烧 validate 与 Bonferroni 名额）。
 - **入围（train 只选）**：变体在其每个可评折上 train contrib 均值 **严格大于** 基线同折 train 均值 → 才成为候选、才允许看 validate。未入围的变体**连 validate 数字都不发布**（发布即烧 OOS）。
