@@ -4,8 +4,11 @@ import { utcWeekStart } from "./followAnalysis";
 import {
   buildEntryVariants,
   buildGrid,
+  categoryMatches,
+  entryMatches,
   foldOf,
   listValidateFolds,
+  subsetOf,
 } from "./walkforward";
 
 /** 造一份最小 StrategyParams(通用字段全给默认,专属字段按测试覆写)。 */
@@ -113,7 +116,11 @@ describe("网格生成", () => {
   });
 
   it("阶梯 ∩ 严格紧于当前:maxPrice 已 0.90 → 只剩 0.85", () => {
-    const p = params({ source: "heavy", minSingleFillUsd: 50_000, maxPrice: 0.9 });
+    const p = params({
+      source: "heavy",
+      minSingleFillUsd: 50_000,
+      maxPrice: 0.9,
+    });
     const mp = buildEntryVariants(p).filter((e) => e.dim === "maxPrice");
     expect(mp).toHaveLength(1);
     expect(mp[0].spec).toEqual({ kind: "maxPrice", max: 0.85 });
@@ -171,5 +178,132 @@ describe("网格生成", () => {
     expect(entries.some((e) => e.dim.toLowerCase().includes("score"))).toBe(
       false,
     );
+  });
+});
+
+/** 造一笔最小 WfPosition(事实齐全的仓;缺事实场景按测试覆写成 null)。 */
+function pos(over: Partial<import("./walkforward").WfPosition> = {}) {
+  return {
+    id: 1,
+    conditionId: "0xc1",
+    outcome: "Yes",
+    formationTs: 1_000,
+    entryTs: 1_100,
+    entryPrice: 0.5,
+    formationPrice: 0.5,
+    shares: 100,
+    feeUsd: 0,
+    realizedPnl: 50,
+    category: "Sports" as string | null,
+    walletCount: 3 as number | null,
+    totalNetUsd: 60_000 as number | null,
+    tiltPct: 0.75 as number | null,
+    exitSims: null as Record<string, { exited: number; pnl: number }> | null,
+    ...over,
+  };
+}
+
+describe("子集过滤", () => {
+  const m = (spec: import("./walkforward").EntrySpec, p: unknown) =>
+    entryMatches(spec, p as import("./walkforward").WfPosition);
+
+  it("base 全进", () => {
+    expect(m({ kind: "base" }, pos())).toBe(true);
+  });
+
+  it("heavy 单笔下限:75k 进 / 74k 出 / 事实缺失 null", () => {
+    const spec = { kind: "minFillUsd", min: 75_000 } as const;
+    expect(m(spec, pos({ totalNetUsd: 75_000 }))).toBe(true);
+    expect(m(spec, pos({ totalNetUsd: 74_999 }))).toBe(false);
+    expect(m(spec, pos({ totalNetUsd: null }))).toBeNull();
+  });
+
+  it("maxPrice 引擎语义 entry>max 才拦:0.90 恰好进,0.901 出", () => {
+    const spec = { kind: "maxPrice", max: 0.9 } as const;
+    expect(m(spec, pos({ entryPrice: 0.9 }))).toBe(true);
+    expect(m(spec, pos({ entryPrice: 0.901 }))).toBe(false);
+  });
+
+  it("形成偏离 ≤6¢:5.9 进 / 6.1 出 / formation 缺失 null", () => {
+    const spec = { kind: "maxDevCents", max: 6 } as const;
+    expect(m(spec, pos({ entryPrice: 0.559, formationPrice: 0.5 }))).toBe(true);
+    expect(m(spec, pos({ entryPrice: 0.561, formationPrice: 0.5 }))).toBe(
+      false,
+    );
+    expect(m(spec, pos({ formationPrice: null }))).toBeNull();
+  });
+
+  it("consensus:钱包数 / 均值每钱包 / 新鲜度(601s 出)", () => {
+    expect(m({ kind: "minWallets", min: 3 }, pos({ walletCount: 3 }))).toBe(
+      true,
+    );
+    expect(m({ kind: "minWallets", min: 3 }, pos({ walletCount: 2 }))).toBe(
+      false,
+    );
+    expect(m({ kind: "minWallets", min: 3 }, pos({ walletCount: null }))).toBe(
+      null,
+    );
+    const avg = { kind: "minAvgPerWalletUsd", min: 15_000 } as const;
+    expect(m(avg, pos({ totalNetUsd: 45_000, walletCount: 3 }))).toBe(true);
+    expect(m(avg, pos({ totalNetUsd: 44_000, walletCount: 3 }))).toBe(false);
+    expect(m(avg, pos({ walletCount: null }))).toBeNull();
+    const fresh = { kind: "maxStalenessSec", max: 600 } as const;
+    expect(m(fresh, pos({ entryTs: 1_600, formationTs: 1_000 }))).toBe(true);
+    expect(m(fresh, pos({ entryTs: 1_601, formationTs: 1_000 }))).toBe(false);
+  });
+
+  it("tilt 下限:0.8 判 0.75 出、0.85 进、快照缺失 null", () => {
+    const spec = { kind: "minTiltPct", min: 0.8 } as const;
+    expect(m(spec, pos({ tiltPct: 0.85 }))).toBe(true);
+    expect(m(spec, pos({ tiltPct: 0.75 }))).toBe(false);
+    expect(m(spec, pos({ tiltPct: null }))).toBeNull();
+  });
+
+  it("赛道:sports 只留 Sports;nonsports 留非 null 非 Sports;null 两边都缺事实", () => {
+    expect(categoryMatches("all", pos({ category: null }))).toBe(true);
+    expect(categoryMatches("sports", pos({ category: "Sports" }))).toBe(true);
+    expect(categoryMatches("sports", pos({ category: "Politics" }))).toBe(
+      false,
+    );
+    expect(categoryMatches("sports", pos({ category: null }))).toBeNull();
+    expect(categoryMatches("nonsports", pos({ category: "Politics" }))).toBe(
+      true,
+    );
+    expect(categoryMatches("nonsports", pos({ category: "Sports" }))).toBe(
+      false,
+    );
+    expect(categoryMatches("nonsports", pos({ category: null }))).toBeNull();
+  });
+
+  it("subsetOf:进/出/缺事实三态,缺事实计数;退出≠hold 还要求 sims 在场", () => {
+    const sims = { tp10: { exited: 1, pnl: 10 } };
+    const positions = [
+      pos({ id: 1, totalNetUsd: 80_000, exitSims: sims }), // 进
+      pos({ id: 2, totalNetUsd: 10_000, exitSims: sims }), // 阈值出局
+      pos({ id: 3, totalNetUsd: null, exitSims: sims }), // 缺事实
+      pos({ id: 4, totalNetUsd: 90_000, exitSims: null }), // hold 进,tp10 缺 sims
+    ];
+    const entry = {
+      entryKey: "minFillUsd:75000",
+      dim: "minSingleFillUsd",
+      label: "",
+      spec: { kind: "minFillUsd", min: 75_000 } as const,
+    };
+    const hold = subsetOf(positions as never, {
+      key: "k1",
+      entry,
+      category: "all",
+      exitRule: "hold",
+    });
+    expect(hold.included.map((p) => p.id)).toEqual([1, 4]);
+    expect(hold.droppedMissing).toBe(1);
+    const tp = subsetOf(positions as never, {
+      key: "k2",
+      entry,
+      category: "all",
+      exitRule: "tp10",
+    });
+    expect(tp.included.map((p) => p.id)).toEqual([1]);
+    expect(tp.droppedMissing).toBe(2);
   });
 });

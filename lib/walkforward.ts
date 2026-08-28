@@ -196,3 +196,104 @@ export function buildGrid(p: StrategyParams): WfCell[] {
   }
   return cells;
 }
+
+// ---------------------------------------------------------------------------
+// 子集过滤(实现计划 §0.2/0.3):一笔仓对一个格 = 进 / 出 / 缺事实三态。
+// 缺事实(该维度的落库起点晚于这笔仓、或点查失败)一律剔除并计数 —— 不猜值,
+// 猜值就是在编造「假如当时记录了」的世界,可观测锥红线。
+
+export interface WfPosition {
+  id: number;
+  /** 聚类键(市场)。 */
+  conditionId: string;
+  /** 随机化的对边耦合用(二元市场同 condition 的两个 outcome 完全互补)。 */
+  outcome: string;
+  formationTs: number;
+  entryTs: number;
+  /** 记账基准价 = 隐含概率 q(BUY)。宇宙已保证 ∈ (0,1)。 */
+  entryPrice: number;
+  formationPrice: number | null;
+  shares: number;
+  /** 宇宙已剔除 null(fee 不可定价的仓);0 = 确知免费。 */
+  feeUsd: number;
+  realizedPnl: number;
+  /** event_category 口径(categoriesFor);null = 未知。 */
+  category: string | null;
+  /** strategy_signals 关联(2026-08-15 起);null = 关联缺失。 */
+  walletCount: number | null;
+  totalNetUsd: number | null;
+  /** market_tilt_history atOrBefore(formation_ts, ≤1h);null = 无可用快照。 */
+  tiltPct: number | null;
+  /** position_exit_sims 九规则行;null = 未回填/墓碑。 */
+  exitSims: Record<string, { exited: number; pnl: number }> | null;
+}
+
+/** true=进子集,false=被阈值筛出,null=缺该维事实(剔除并计数)。 */
+export function entryMatches(
+  spec: EntrySpec,
+  p: WfPosition,
+): boolean | null {
+  switch (spec.kind) {
+    case "base":
+      return true;
+    case "minFillUsd":
+    case "minNetUsd":
+      return p.totalNetUsd == null ? null : p.totalNetUsd >= spec.min;
+    case "maxPrice":
+      // 引擎护栏原样(lib/follow.ts:entry > maxPrice 才拦):恰好等于上限的进。
+      return p.entryPrice <= spec.max;
+    case "maxDevCents":
+      return p.formationPrice == null
+        ? null
+        : Math.abs(p.entryPrice - p.formationPrice) * 100 <= spec.max;
+    case "minWallets":
+      return p.walletCount == null ? null : p.walletCount >= spec.min;
+    case "minAvgPerWalletUsd":
+      return p.walletCount == null || p.totalNetUsd == null || p.walletCount <= 0
+        ? null
+        : p.totalNetUsd / p.walletCount >= spec.min;
+    case "maxStalenessSec":
+      return p.entryTs - p.formationTs <= spec.max;
+    case "minTiltPct":
+      return p.tiltPct == null ? null : p.tiltPct >= spec.min;
+  }
+}
+
+/** 赛道三态:未知分类(null)不冒充「非体育」,受限子集里它是缺事实。 */
+export function categoryMatches(
+  cat: WfCategory,
+  p: WfPosition,
+): boolean | null {
+  if (cat === "all") return true;
+  if (p.category == null) return null;
+  return cat === "sports"
+    ? p.category === "Sports"
+    : p.category !== "Sports";
+}
+
+export interface WfSubset {
+  included: WfPosition[];
+  /** 因缺事实被剔除的仓数(阈值筛出的不算 —— 那是过滤器的本职)。 */
+  droppedMissing: number;
+}
+
+/** 一个格的子集:入场谓词 ∧ 赛道 ∧(退出≠hold 时 sims 在场)。 */
+export function subsetOf(positions: WfPosition[], cell: WfCell): WfSubset {
+  const included: WfPosition[] = [];
+  let droppedMissing = 0;
+  for (const p of positions) {
+    const e = entryMatches(cell.entry.spec, p);
+    const c = categoryMatches(cell.category, p);
+    if (e === null || c === null) {
+      droppedMissing++;
+      continue;
+    }
+    if (!e || !c) continue;
+    if (cell.exitRule !== "hold" && p.exitSims == null) {
+      droppedMissing++;
+      continue;
+    }
+    included.push(p);
+  }
+  return { included, droppedMissing };
+}
