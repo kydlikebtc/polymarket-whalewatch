@@ -123,5 +123,12 @@ export function detectConsensusCandidates(
     sourceKind: "consensus" as const,
     walletCount: g.walletCount,
     totalNetUsd: g.totalNetUsd,
+    // 向前落库快照:qualified 集合原样投影(netUsd 降序沿用组内排序),score
+    // 是检测时 ctx.smart 可见的分 —— 纯归因,开仓判定与上面各闸零关系。
+    wallets: g.wallets.map((w) => ({
+      wallet: w.wallet,
+      netUsd: w.netUsd,
+      score: w.score,
+    })),
   }));
 }
