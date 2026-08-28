@@ -375,3 +375,66 @@ export function normalQuantile(p: number): number {
   const x = t - (2.30753 + t * 0.27061) / (1 + t * (0.99229 + t * 0.04481));
   return p < 0.5 ? -x : x;
 }
+
+// ---------------------------------------------------------------------------
+// 方向随机化(Gómez-Cram 方法,设计 §4.3 第三道闸):把每仓方向按市场隐含
+// 概率重掷,变体真实超额在 null 分布中的分位即 p。**按市场抽签,不逐仓**:
+// 同市场的仓共享同一次结算,逐仓独立重掷会把 null 分布做窄、p 虚小 ——
+// 恰好重犯 clusteredInterval 修过的那个错。耦合方式:每市场一个均匀数 u,
+// 与簇参考 outcome 同边的仓 won = u < q_i(共单调,各保边际 q_i),对边的仓
+// won = u ≥ 1 − q_j(反相关 —— 二元市场对边完全互补)。
+
+/** mulberry32:32 位种子 PRNG。确定性是报告可复现的根,lib 层禁 Math.random。 */
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export interface WfRandRow {
+  conditionId: string;
+  outcome: string;
+  /** 隐含概率 = entry_price(BUY)。 */
+  q: number;
+  feePerShare: number;
+}
+
+/**
+ * 单边 p 值:null 下「均值贡献 ≥ 实测」的频率,(1+k)/(1+N) 防报 0。
+ * null 重掷的是**二元结算**(won ∈ {0,1});少数分数结算仓的实测贡献仍可比
+ * (同一量纲),报告披露这层近似。
+ */
+export function randomizationP(
+  rows: WfRandRow[],
+  observed: number,
+  draws: number,
+  seed: number,
+): number {
+  if (rows.length === 0) return 1;
+  const rng = mulberry32(seed);
+  // 市场 → 成员行;参考边 = 该市场第一行的 outcome。
+  const byMarket = new Map<string, WfRandRow[]>();
+  for (const r of rows) {
+    const g = byMarket.get(r.conditionId);
+    if (g) g.push(r);
+    else byMarket.set(r.conditionId, [r]);
+  }
+  let hits = 0;
+  for (let i = 0; i < draws; i++) {
+    let sum = 0;
+    for (const members of byMarket.values()) {
+      const ref = members[0].outcome;
+      const u = rng();
+      for (const r of members) {
+        const won = r.outcome === ref ? u < r.q : u >= 1 - r.q;
+        sum += (won ? 1 : 0) - r.q - r.feePerShare;
+      }
+    }
+    if (sum / rows.length >= observed) hits++;
+  }
+  return (1 + hits) / (1 + draws);
+}

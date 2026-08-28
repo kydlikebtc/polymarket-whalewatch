@@ -10,7 +10,9 @@ import {
   entryMatches,
   foldOf,
   listValidateFolds,
+  mulberry32,
   normalQuantile,
+  randomizationP,
   subsetOf,
 } from "./walkforward";
 
@@ -388,5 +390,58 @@ describe("聚类稳健统计(edge-audit 自检性质原样移植)", () => {
     expect(Math.abs(normalQuantile(1 - 0.05 / 120) - 3.3441)).toBeLessThan(
       5e-3,
     );
+  });
+});
+
+describe("方向随机化", () => {
+  const row = (
+    over: Partial<{
+      conditionId: string;
+      outcome: string;
+      q: number;
+      feePerShare: number;
+    }> = {},
+  ) => ({
+    conditionId: "0xc1",
+    outcome: "Yes",
+    q: 0.5,
+    feePerShare: 0,
+    ...over,
+  });
+
+  it("mulberry32 同种子 → 序列逐值相等(报告可复现的根)", () => {
+    const a = mulberry32(42);
+    const b = mulberry32(42);
+    const seqA = [a(), a(), a(), a()];
+    const seqB = [b(), b(), b(), b()];
+    expect(seqA).toEqual(seqB);
+    expect(seqA.every((v) => v >= 0 && v < 1)).toBe(true);
+  });
+
+  it("按市场抽签,不逐仓:单市场 10 仓全胜的 p ≈ 0.5(逐仓独立会虚小到 ~0.001)", () => {
+    const rows = Array.from({ length: 10 }, () => row());
+    // 实测 stat:全胜 → mean(1 − 0.5) = +0.5。
+    const p = randomizationP(rows, 0.5, 100, 42);
+    expect(p).toBeGreaterThan(0.25);
+    expect(p).toBeLessThan(0.75);
+  });
+
+  it("同市场对边反相关耦合:每次抽签恰一胜一负,null 统计量恒为 0", () => {
+    const rows = [row(), row({ outcome: "No" })];
+    // null 恒 0:观测 0 → 全部 null ≥ 0 → p = 1;观测 0.1 → 无 null ≥ → 最小 p。
+    expect(randomizationP(rows, 0, 100, 7)).toBe(1);
+    expect(randomizationP(rows, 0.1, 100, 7)).toBeCloseTo(1 / 101, 12);
+  });
+
+  it("边际正确:q=0.3 单仓,null 里 won 频率 ≈ 0.3(p 即该频率)", () => {
+    const p = randomizationP([row({ q: 0.3 })], 0.7, 10_000, 20260828);
+    expect(p).toBeGreaterThan(0.28);
+    expect(p).toBeLessThan(0.32);
+  });
+
+  it("p 公式 (1+k)/(1+N):零命中不报 0", () => {
+    // 观测 1.0 严格高于 null 的上确界(1 − q − fee = 0.99)→ 零命中。
+    const p = randomizationP([row({ q: 0.01 })], 1.0, 100, 3);
+    expect(p).toBeCloseTo(1 / 101, 12);
   });
 });
