@@ -192,4 +192,19 @@ export const DICT_DISCOVERY: Record<string, string> = {
   "做市机器人（成交市场数 ≥1000）：保留池成员资格积累战绩数据，但不计入共识/分歧投票——做市流是库存再平衡，不是方向性观点":
     "Market-maker bot (≥1000 markets traded): keeps pool membership to accrue track-record data, but never votes in consensus/split — market-making flow is inventory rebalancing, not a directional view",
   无投票权: "no vote",
+  // 名人堂/反指(第二梯队八件套,2026-08-28)
+  "👑 名人堂": "👑 Hall of fame",
+  "名人堂数据缺失（接口错误兜底）。": "League data missing (API error fallback).",
+  "代号 / 钱包": "Codename / wallet",
+  "样本 n（市场）": "n (markets)",
+  "净 edge（点/仓）": "Net edge (pts/fill)",
+  "最佳 / 最惨一战": "Best / worst call",
+  "👑 名人堂 · 前向净 edge 显著为正": "👑 Hall of fame · forward net edge significantly positive",
+  "暂无净 edge 显著为正的钱包（≥10 市场才发判定）。":
+    "No wallet with significantly positive net edge yet (verdicts need ≥10 markets).",
+  "🪞 反指名单 · 前向净 edge 显著为负": "🪞 Fade list · forward net edge significantly negative",
+  "暂无净 edge 显著为负的钱包——逆势少数边暂时还是孤例。":
+    "No wallet with significantly negative net edge yet — the contrarian-minority tier remains a lone example for now.",
+  "口径：逐行贡献 = 结算(0/1) − 入场隐含 − 每股协议费；区间按市场聚簇（CRVE）；代号是确定性哈希的纯趣味展示，地址才是身份。多重比较：本页共检验 {w} 个 ≥10 市场的钱包，区间未做 Bonferroni 校正——两张名单是研究线索，不是交易结论。":
+    "Definitions: per-row contribution = settlement (0/1) − entry implied − per-share protocol fee; intervals market-clustered (CRVE); codenames are deterministic-hash fun only — the address is the identity. Multiplicity: {w} wallets with ≥10 markets were tested and the intervals carry no Bonferroni correction — both lists are research leads, not trading conclusions.",
 };

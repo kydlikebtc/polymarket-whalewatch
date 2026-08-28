@@ -6,6 +6,7 @@ import {
 import { ADMIT_EVIDENCE_WINDOW_SEC } from "./admission";
 import { getWalletTagsBatch, type WalletTag } from "./walletTags";
 import { buildPoolStyles } from "./walletFingerprint";
+import { buildWalletLeague, type WalletLeague } from "./walletLeague";
 
 // Read-model for the /discovery dashboard: the candidate funnel (evidence →
 // recurrence → verdict) plus the discovery program's output (pool members
@@ -72,6 +73,8 @@ export interface DiscoveryView {
   members: DiscoveryMemberRow[];
   /** 渠道效果记分卡(2026-08-28,additive):每渠道的向前告警战绩。 */
   scorecard: ChannelScorecard;
+  /** 名人堂/反指(2026-08-28 八件套)。与记分卡各扫一遍台账(毫秒级,不共享)。 */
+  league: WalletLeague;
   counts: {
     evidenceRows: number;
     candidateWallets: number;
@@ -257,6 +260,7 @@ export function buildDiscoveryView(
     candidates,
     members,
     scorecard: buildChannelScorecard(db),
+    league: buildWalletLeague(db),
     counts: {
       evidenceRows: evidence.length,
       // Funnel semantics: wallets under observation OUTSIDE the pool. Pool

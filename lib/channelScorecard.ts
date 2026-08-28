@@ -34,6 +34,11 @@ export interface ScorecardRow {
   /** channelOf 归一后的渠道键。 */
   channel: string;
   isMarketMaker: boolean;
+  // 名人堂/反指(2026-08-28 八件套)的最佳/最惨单条展示需要 —— additive,
+  // 记分卡自身的分组逻辑不读它们。
+  alertId?: number;
+  createdAt?: number;
+  title?: string | null;
 }
 
 export interface ScorecardGroup {
@@ -105,6 +110,8 @@ export function channelLabel(key: string): string {
 }
 
 interface RawAlert {
+  id: number;
+  created_at: number;
   type: string;
   payload: string;
   won: number | null;
@@ -131,6 +138,7 @@ function buildRow(
   } | null,
   channel: string,
   isMarketMaker: boolean,
+  extra?: { alertId: number; createdAt: number; title: string | null },
 ): ScorecardRow | "push" | "fee-unknown" | "malformed" {
   if (!(price > 0 && price < 1) || !(shares > 0)) return "malformed";
   let won: boolean | null;
@@ -159,6 +167,7 @@ function buildRow(
     feePerShare: feeUsd / shares,
     channel,
     isMarketMaker,
+    ...(extra ?? {}),
   };
 }
 
@@ -170,7 +179,7 @@ export function loadScorecardRows(db: DB): {
 } {
   const alerts = db
     .prepare(
-      `SELECT a.type, a.payload, o.won, o.resolution_price
+      `SELECT a.id, a.created_at, a.type, a.payload, o.won, o.resolution_price
          FROM alerts a
          JOIN alert_outcomes o ON o.alert_id = a.id
         WHERE a.type IN ('smart', 'consensus') AND o.resolved = 1`,
@@ -266,6 +275,11 @@ export function loadScorecardRows(db: DB): {
           meta,
           channelFor(wallet),
           mm.has(wallet),
+          {
+            alertId: a.id,
+            createdAt: a.created_at,
+            title: typeof p.title === "string" ? p.title : null,
+          },
         ),
       );
     } else {
@@ -297,6 +311,11 @@ export function loadScorecardRows(db: DB): {
             meta,
             channelFor(wallet),
             mm.has(wallet),
+            {
+              alertId: a.id,
+              createdAt: a.created_at,
+              title: typeof p.title === "string" ? p.title : null,
+            },
           ),
         );
       }
@@ -305,7 +324,7 @@ export function loadScorecardRows(db: DB): {
   return { rows, gradedAlerts, feeUnknownDropped, malformedDropped };
 }
 
-function groupOf(
+export function groupOf(
   key: string,
   label: string,
   rows: ScorecardRow[],
