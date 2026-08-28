@@ -265,3 +265,23 @@ Commit: `docs: CHANGELOG 批次条目 + README 索引/计数同步`
 3. 把 demo 库拷进 worktree 当 `data.sqlite` → `npm run dev:webpack -- -p 3457` → /manage（本地无 ADMIN_TOKEN 自动解锁）→ 🧪 卡截图。
 4. 线上口径对表：`curl whalewatch.wired.fund/api/follow` 记录各档 settled 计数，写进 PR 正文（脚本的「原始 settled」列与之同口径——本地没有生产库副本，真跑生产报告留给运维在服务器上执行，PR 说明这点）。
 5. push `claude/walkforward-impl` → PR（base main），正文含测试证据 + 截图 + /api/follow 对表；CI 只认 typecheck + unit tests，Workers Builds 红是僵尸集成照例忽略。
+
+---
+
+## 增补(同日,用户追加需求):/manage 独立 tab + 页面触发 + 报告下载
+
+原 Task 11 的「卡挂在 ② 策略信号底部、跑报告靠 SSH」被三条追加需求取代:①页面直接触发对生产库跑;②下载完整报告数据;③模块独立成 tab 并带详细使用说明。
+
+### Task 14: 运行管理器 lib/walkforwardRun.ts(+test)
+
+页面触发 = 服务端 **spawn 子进程**跑 `npx --no-install tsx scripts/walkforward.ts <DASH_DB>`——与运维 SSH 手工跑逐字节同一条路径;绝不在请求内直算(runWalkforward 是同步 CPU 活,会把 4s 告警循环连同整个事件循环冻住)。镜像可行性已核对:Dockerfile runner 阶段整拷 `node_modules + scripts/ + lib/`(builder `npm ci` 含 devDeps → tsx 在场)。TDD 六用例:互斥锁拒绝并跑 / exit 0 成功态 / 非零失败态含 stderr / tail 只留末尾 8KB / spawn 同步抛错不留 running 僵尸 / error 事件后迟到 exit 不翻案。spawn 注入,lib 零 node 依赖;模块级锁(单容器单进程部署形态,apiGuard 同款惯例)。脚本补 `busy_timeout=5000`(生产库引擎在写,默认 0 会让末尾 INSERT 撞锁抛掉整轮)。
+
+### Task 15: 路由扩展 + 独立 tab + 使用说明
+
+- 路由:`GET /api/admin/walkforward` 增 `runState`;`GET ?download=1[&id=N]` 返回完整落库行(config 可复现清单 + report 全部格明细)带 `Content-Disposition` 附件(文件名 `walkforward-<id>-<日期>.json`);`POST` 触发一次(互斥 409;限流 6/min 挡手抖,锁才是真闸)。
+- /manage:🧪 阈值重推升为**第 4 个顶级 tab**(既不是信号线也不是管线,是月度参数体检;挤在 ② 底部会被 19 档大表推到三屏外),从 signals 子 tab 移除。tab 内容 = 动作行(跑/下载/状态行,跑中 4s 轮询,失败展示 stderr 末尾)+ 报告详情(逐档存活变体明细表/格账本/观察名单)+ 📖 使用说明卡(这是什么/怎么跑/怎么读/怎么采纳/红线与近似,五点)。
+- 下载走 fetch→blob(普通 `<a>` 带不了 x-admin-token 头);`runStateLine` 纯函数 TDD 四用例。
+
+### 验收(增补部分,已完成)
+
+真机 dev :3457:点「▶」→ ⏳ 跑中 → ✅ 成功(耗时 1s)→ 报告 meta 由 02:44 更新为 03:13、库中新增 id=3 行;`?download=1` 实测 `content-disposition: attachment; filename="walkforward-3-20260828.json"`,58KB 完整 JSON(config seed/3 tiers/9 declarations);整页截图含四 tab 导航、40 行存活明细表与使用说明。

@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 460 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that range: 1839 tests across
-142 files (`npm test`).
+Scope: 463 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that range: 1849 tests across
+143 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -67,10 +67,17 @@ edge. One premise correction surfaced during implementation: 2026-07-28 (the gat
 Tuesday, not the Monday the design assumed, so the clean window currently yields two validate folds
 (08-10, 08-17), not three — a test now pins the real calendar.
 
-**Scope**: `lib/walkforward.ts` (+ 31 tests), `walkforward_reports` table, `scripts/walkforward.ts`,
-`/api/admin/walkforward`, /manage 🧪 阈值重推 card (+ 4 view tests). Thin tiers (settled too sparse
-for two valid folds) are skipped whole-tier and reported as such — "not enough data" is a
-conclusion, not an obstacle.
+The report is operable from /manage without a shell: 🧪 阈值重推 is its own top-level tab with a
+run button (the server spawns the exact same `npx tsx scripts/walkforward.ts` a shell operator
+would run — a child process, never in-request compute that would freeze the 4s alert loop; a mutex
+rejects concurrent runs and the card polls until the new row lands), a full-report JSON download
+(config manifest + every cell's detail, served as an attachment), and a five-point usage guide
+(what it is / how to run / how to read / how to adopt via a challenger tier / red lines).
+
+**Scope**: `lib/walkforward.ts` (+ 31 tests), `lib/walkforwardRun.ts` (+ 6), `walkforward_reports`
+table, `scripts/walkforward.ts`, `/api/admin/walkforward` (GET/POST/download), /manage 🧪 tab
+(+ 8 view tests). Thin tiers (settled too sparse for two valid folds) are skipped whole-tier and
+reported as such — "not enough data" is a conclusion, not an obstacle.
 
 ### 2026-08-27 — The pulse boards learn to tweet (default off)
 
