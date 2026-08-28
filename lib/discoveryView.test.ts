@@ -100,3 +100,39 @@ describe("buildDiscoveryView", () => {
     expect(v.counts.evidenceRows).toBe(0);
   });
 });
+
+describe("scorecard 接线(渠道效果记分卡)", () => {
+  it("视图带 scorecard 键:分组/披露/组数齐活,旧键零感知", () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO smart_wallets (address, score, is_whitelist, updated_at, source) VALUES ('0xa', 80, 0, 1, 'leaderboard')",
+    ).run();
+    db.prepare(
+      "INSERT INTO market_meta (condition_id, meta_json, fetched_at) VALUES ('m1', '{\"feesEnabled\":false}', 1)",
+    ).run();
+    const res = db
+      .prepare(
+        "INSERT INTO alerts (type, dedup_key, payload, created_at) VALUES ('smart', 'sc1', ?, 1000)",
+      )
+      .run(
+        JSON.stringify({
+          proxyWallet: "0xA",
+          side: "BUY",
+          price: 0.5,
+          size: 20000,
+          conditionId: "m1",
+        }),
+      );
+    db.prepare(
+      "INSERT INTO alert_outcomes (alert_id, resolved, resolution_price, won, checked_at) VALUES (?, 1, 1, 1, 1)",
+    ).run(Number(res.lastInsertRowid));
+    const view = buildDiscoveryView(db, 2_000);
+    expect(view.scorecard.groups).toHaveLength(1);
+    expect(view.scorecard.groups[0].key).toBe("leaderboard");
+    expect(view.scorecard.disclosures.gradedAlerts).toBe(1);
+    expect(view.scorecard.groupCount).toBeGreaterThanOrEqual(1);
+    // 既有键不受影响。
+    expect(Array.isArray(view.candidates)).toBe(true);
+    expect(Array.isArray(view.members)).toBe(true);
+  });
+});
