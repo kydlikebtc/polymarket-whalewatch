@@ -9,6 +9,7 @@ import {
   detectDisagreement,
   type DisagreementMarket,
 } from "../../../lib/disagreement";
+import { detectSmartExits } from "../../../lib/smartExit";
 import { excludeContestedFromConsensus } from "../../../lib/marketSignals";
 import { getEventCategories, getMarketMeta } from "../../../lib/gamma";
 import type { Trade } from "../../../lib/types";
@@ -98,6 +99,7 @@ export async function GET(req: Request) {
       effectiveSinceSec: null,
       groups: [],
       disagreement: [],
+      exits: [],
     },
   );
   if (limited) return limited;
@@ -122,6 +124,12 @@ export async function GET(req: Request) {
         minPerSideUsd: minPerWalletUsd,
       });
       const groups = excludeContestedFromConsensus(rawGroups, disagreements);
+      // 离场(2026-08-28 八件套):同一份双侧窗口的卖侧读数。复用同一
+      // minWallets/minPerWalletUsd 控件 —— 三个视图一把尺同调。
+      const exits = detectSmartExits(trades, smartTags, {
+        minWallets,
+        minPerWalletUsd,
+      });
 
       // Current outcome prices via gamma (cached; failures degrade to null) for
       // the UNION of both lists. Categories come from EVENT TAGS — the
@@ -181,6 +189,7 @@ export async function GET(req: Request) {
         effectiveSinceSec,
         groups: views,
         disagreement,
+        exits,
       });
     } finally {
       db.close();
@@ -195,6 +204,7 @@ export async function GET(req: Request) {
       effectiveSinceSec: null,
       groups: [],
       disagreement: [],
+      exits: [],
       error: message,
     });
   }

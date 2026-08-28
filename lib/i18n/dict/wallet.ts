@@ -120,4 +120,28 @@ export const DICT_WALLET: Record<string, string> = {
   "💰 大单": "💰 Large trade",
   "🔥 共识": "🔥 Consensus",
   "最近成交（20）": "Recent trades (20)",
+  // 价格影响持久性(第二梯队八件套,2026-08-28)
+  "价格影响（告警后市场反应）": "Price impact (market reaction after alerts)",
+  "样本不足：可测初动 {m} 条 · 覆盖 {k} 个市场（需 ≥8）":
+    "Insufficient sample: {m} measurable moves across {k} markets (needs ≥8)",
+  被市场跟随: "Followed by the market",
+  被市场回吐: "Faded by the market",
+  反应不一: "Mixed reaction",
+  "初动留存率 {r}%（95% 区间 {lo}–{hi}%，{k} 个市场）":
+    "Initial-move retention {r}% (95% CI {lo}–{hi}%, {k} markets)",
+  "中位初动 +{a}¢ → 24h {b}¢": "Median initial move +{a}¢ → 24h {b}¢",
+  "口径：初动 = 告警后 10 分钟的方向化价移（≥2¢ 才可测），留住 = 24h 后保住初动一半以上；区间按市场聚簇。这是市场对他的反应的描述统计，不是任何跟随建议。":
+    "Definitions: initial move = direction-signed price change 10 minutes after the alert (≥2¢ to count), retained = 24h later at least half the move survives; CI clustered by market. Descriptive statistics of how the market reacted — never a suggestion to follow anyone.",
+  // 交易风格(第二梯队八件套,2026-08-28;词表与 discovery 页共用)
+  "交易风格（池内 · 近 90 天告警样本 {n} 条）":
+    "Trading style (pool member · {n} alert samples in 90d)",
+  "风格最像的池内钱包：": "Most similar pool wallets: ",
+  "🎯 冷门猎手": "🎯 Longshot hunter",
+  "⚖️ 中盘": "⚖️ Midrange",
+  "🛡️ 热门守卫": "🛡️ Favorite guard",
+  "⏱️ 临场": "⏱️ Last-call",
+  "📅 隔日": "📅 Intraday-to-day",
+  "🗓️ 长线": "🗓️ Long-haul",
+  "🔨 重锤": "🔨 Hammer",
+  "↔️ 双向": "↔️ Two-way",
 };

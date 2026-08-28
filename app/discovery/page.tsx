@@ -57,8 +57,36 @@ interface MemberRow {
   netPnl: number | null;
   updatedAt: number | null;
   tags: WalletTag[];
+  styleTags?: string[];
   evidence: EvidenceDetail[];
 }
+
+// 交易风格标签译名(lib/walletFingerprint 的 ASCII 键;lib 中文常量不被
+// coverage 闸看见,页面逐键写死 —— scorecardLabel 同一原因)。
+function styleLabel(key: string, t: TFn2): string {
+  switch (key) {
+    case "longshot":
+      return t("🎯 冷门猎手");
+    case "midrange":
+      return t("⚖️ 中盘");
+    case "favorite":
+      return t("🛡️ 热门守卫");
+    case "lastcall":
+      return t("⏱️ 临场");
+    case "intraday":
+      return t("📅 隔日");
+    case "longhaul":
+      return t("🗓️ 长线");
+    case "hammer":
+      return t("🔨 重锤");
+    case "twoway":
+      return t("↔️ 双向");
+    default:
+      return key;
+  }
+}
+type TFn2 = (zh: string, params?: Record<string, string | number>) => string;
+
 interface DiscoveryPayload {
   candidates: CandidateRow[];
   members: MemberRow[];
@@ -71,10 +99,43 @@ interface DiscoveryPayload {
   };
   /** 渠道效果记分卡(additive;旧部署/错误兜底可能缺失,渲染侧防御)。 */
   scorecard?: ChannelScorecard;
+  /** 名人堂/反指(2026-08-28 八件套;additive,渲染侧防御)。 */
+  league?: LeagueView;
   error?: string;
 }
 
-type View = "candidates" | "members" | "scorecard";
+type LeagueAlertRef = {
+  title: string | null;
+  createdAt: number | null;
+  contrib: number;
+};
+type LeagueRowView = {
+  wallet: string;
+  codename: string;
+  n: number;
+  markets: number;
+  winRate: number;
+  netEdge: number;
+  seC: number;
+  verdict: "pos" | "neg";
+  channel: string;
+  isMarketMaker: boolean;
+  best: LeagueAlertRef | null;
+  worst: LeagueAlertRef | null;
+};
+type LeagueView = {
+  hall: LeagueRowView[];
+  fade: LeagueRowView[];
+  testedWallets: number;
+  disclosures: {
+    gradedAlerts: number;
+    rows: number;
+    feeUnknownDropped: number;
+    malformedDropped: number;
+  };
+};
+
+type View = "candidates" | "members" | "scorecard" | "league";
 
 // Daily consensus-cycle aggregates from /api/cycle-metrics (P0.9): the
 // signal-density dial that separates "market cooled" from "thresholds drifted".
@@ -274,7 +335,10 @@ function EvidenceDetailRows({
 
 // 渠道键 → 展示名走页面侧 t()(lib 的 channelLabel 是中文常量,直接渲染会让
 // 英文界面漏中文;coverage 闸只扫静态字面量,所以逐键写死)。
-function scorecardLabel(key: string, t: (s: string, v?: Record<string, string | number>) => string): string {
+function scorecardLabel(
+  key: string,
+  t: (s: string, v?: Record<string, string | number>) => string,
+): string {
   if (key.startsWith("category:")) {
     return t("分类榜·{cat}", { cat: key.slice("category:".length) });
   }
@@ -375,7 +439,9 @@ function ScorecardSection({
   t: (s: string, v?: Record<string, string | number>) => string;
 }) {
   if (!sc) {
-    return <div className="ds-hint">{t("记分卡数据不可用(旧部署或接口错误)。")}</div>;
+    return (
+      <div className="ds-hint">{t("记分卡数据不可用(旧部署或接口错误)。")}</div>
+    );
   }
   const d = sc.disclosures;
   return (
@@ -419,6 +485,109 @@ function ScorecardSection({
 }
 
 // ------------------------------------------------------------------ page
+
+
+// 名人堂 + 反指名单(2026-08-28 八件套):逐钱包前向战绩两榜。判定纪律与
+// 记分卡同源(CRVE + 扣费 + nc≥10);多重比较只披露不校正,页脚写明分母。
+function LeagueSection({
+  lg,
+  t,
+}: {
+  lg: LeagueView | undefined;
+  t: (zh: string, params?: Record<string, string | number>) => string;
+}) {
+  if (!lg) {
+    return (
+      <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
+        {t("名人堂数据缺失（接口错误兜底）。")}
+      </div>
+    );
+  }
+  const pts = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}`;
+  const leagueTable = (rows: LeagueRowView[]) => (
+    <div className="ds-table-wrap" style={{ marginBottom: "var(--s-4)" }}>
+      <table className="ds-table ds-table--compact">
+        <thead>
+          <tr>
+            <th>{t("代号 / 钱包")}</th>
+            <th>{t("渠道")}</th>
+            <th className="is-right">{t("样本 n（市场）")}</th>
+            <th className="is-right">{t("胜率")}</th>
+            <th className="is-right">{t("净 edge（点/仓）")}</th>
+            <th>{t("最佳 / 最惨一战")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.wallet}>
+              <td>
+                <div style={{ fontWeight: 500 }}>
+                  {r.codename}
+                  {r.isMarketMaker && " 🤖"}
+                </div>
+                <div className="ds-hint mono">
+                  <WalletLink address={r.wallet}>
+                    {r.wallet.slice(0, 6)}…{r.wallet.slice(-4)}
+                  </WalletLink>
+                </div>
+              </td>
+              <td className="ds-hint">{scorecardLabel(r.channel, t)}</td>
+              <td className="mono is-right">
+                {r.n}（{r.markets}）
+              </td>
+              <td className="mono is-right">{Math.round(r.winRate * 100)}%</td>
+              <td className="mono is-right" style={{ fontWeight: 600 }}>
+                {pts(r.netEdge)} ±{(r.seC * 100).toFixed(1)}
+              </td>
+              <td className="ds-hint">
+                {r.best && (
+                  <div>
+                    ▲ {pts(r.best.contrib)} {r.best.title ?? ""}
+                  </div>
+                )}
+                {r.worst && (
+                  <div>
+                    ▼ {pts(r.worst.contrib)} {r.worst.title ?? ""}
+                  </div>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+  return (
+    <section style={{ marginBottom: "var(--s-5)" }}>
+      <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+        {t("👑 名人堂 · 前向净 edge 显著为正")}
+      </div>
+      {lg.hall.length === 0 ? (
+        <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
+          {t("暂无净 edge 显著为正的钱包（≥10 市场才发判定）。")}
+        </div>
+      ) : (
+        leagueTable(lg.hall)
+      )}
+      <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+        {t("🪞 反指名单 · 前向净 edge 显著为负")}
+      </div>
+      {lg.fade.length === 0 ? (
+        <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
+          {t("暂无净 edge 显著为负的钱包——逆势少数边暂时还是孤例。")}
+        </div>
+      ) : (
+        leagueTable(lg.fade)
+      )}
+      <div className="ds-hint muted">
+        {t(
+          "口径：逐行贡献 = 结算(0/1) − 入场隐含 − 每股协议费；区间按市场聚簇（CRVE）；代号是确定性哈希的纯趣味展示，地址才是身份。多重比较：本页共检验 {w} 个 ≥10 市场的钱包，区间未做 Bonferroni 校正——两张名单是研究线索，不是交易结论。",
+          { w: lg.testedWallets },
+        )}
+      </div>
+    </section>
+  );
+}
 
 export default function DiscoveryPage() {
   const { t } = useLang();
@@ -473,7 +642,7 @@ export default function DiscoveryPage() {
   // carry every selected tag — "echo AND splitter" is the interesting query).
   const rows: Array<CandidateRow | MemberRow> = useMemo(
     () =>
-      view === "candidates" ? (data?.candidates ?? []) : (data?.members ?? []),
+      view === "candidates" ? (data?.candidates ?? []) : (data?.members ?? []), // league/scorecard 沿 members
     [data, view],
   );
   const chipStats = useMemo(() => {
@@ -763,6 +932,10 @@ export default function DiscoveryPage() {
               label: t("渠道记分卡"),
               value: "scorecard",
             },
+            {
+              label: t("👑 名人堂"),
+              value: "league",
+            },
           ]}
         />
         <input
@@ -844,6 +1017,7 @@ export default function DiscoveryPage() {
 
       {/* Active view table */}
       {view === "scorecard" && <ScorecardSection sc={data?.scorecard} t={t} />}
+      {view === "league" && <LeagueSection lg={data?.league} t={t} />}
       {view === "candidates" ? (
         <div className="ds-table-wrap">
           <table className="ds-table">
@@ -959,6 +1133,16 @@ export default function DiscoveryPage() {
                     <td>{walletCell(a.address)}</td>
                     <td>
                       <WalletTagChips tags={a.tags} max={4} />
+                      {(a.styleTags ?? []).length > 0 && (
+                        <span
+                          className="ds-hint"
+                          style={{ display: "block", marginTop: 2 }}
+                        >
+                          {(a.styleTags ?? [])
+                            .map((k) => styleLabel(k, t))
+                            .join(" · ")}
+                        </span>
+                      )}
                     </td>
                     <td className="mono is-right">
                       {a.score != null ? Math.round(a.score) : "—"}

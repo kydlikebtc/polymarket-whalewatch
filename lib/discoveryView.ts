@@ -5,6 +5,8 @@ import {
 } from "./channelScorecard";
 import { ADMIT_EVIDENCE_WINDOW_SEC } from "./admission";
 import { getWalletTagsBatch, type WalletTag } from "./walletTags";
+import { buildPoolStyles } from "./walletFingerprint";
+import { buildWalletLeague, type WalletLeague } from "./walletLeague";
 
 // Read-model for the /discovery dashboard: the candidate funnel (evidence →
 // recurrence → verdict) plus the discovery program's output (pool members
@@ -55,6 +57,9 @@ export interface DiscoveryMemberRow {
   netPnl: number | null;
   updatedAt: number | null;
   tags: WalletTag[];
+  // 交易风格(2026-08-28 八件套):lib/walletFingerprint 的 ASCII 标签键,
+  // 译名在页面侧逐键写死(scorecardLabel 先例)。样本不足 = 空数组。
+  styleTags: string[];
   // Upstream funnel evidence carried onto the pool row: a member that ALSO
   // left channel evidence (before joining, or a global-board member the
   // firehose observed) shows its ch:* history here. Newest first, capped.
@@ -68,6 +73,8 @@ export interface DiscoveryView {
   members: DiscoveryMemberRow[];
   /** 渠道效果记分卡(2026-08-28,additive):每渠道的向前告警战绩。 */
   scorecard: ChannelScorecard;
+  /** 名人堂/反指(2026-08-28 八件套)。与记分卡各扫一遍台账(毫秒级,不共享)。 */
+  league: WalletLeague;
   counts: {
     evidenceRows: number;
     candidateWallets: number;
@@ -207,6 +214,13 @@ export function buildDiscoveryView(
   // within equal scores? No — one honest ordering: score desc, ties by
   // freshest confirmation. Upstream channel evidence (ch:* tags + detail
   // rows) rides along on each member row.
+  // 风格表一趟算好(失败降级空表 —— 风格是装饰,不许拖垮发现页)。
+  let poolStyles: ReturnType<typeof buildPoolStyles> = new Map();
+  try {
+    poolStyles = buildPoolStyles(db, { nowSec });
+  } catch (e) {
+    console.warn("[discoveryView] poolStyles 现算失败,降级空表:", e);
+  }
   const isDiscovery = (source: string | null) =>
     source != null &&
     (source.startsWith("discovered:") || source.startsWith("category:"));
@@ -222,6 +236,7 @@ export function buildDiscoveryView(
         netPnl: r.realized_pnl,
         updatedAt: r.updated_at,
         tags: [] as WalletTag[],
+        styleTags: poolStyles.get(address)?.tags ?? [],
         evidence: detailsOf(address),
       };
     })
@@ -245,6 +260,7 @@ export function buildDiscoveryView(
     candidates,
     members,
     scorecard: buildChannelScorecard(db),
+    league: buildWalletLeague(db),
     counts: {
       evidenceRows: evidence.length,
       // Funnel semantics: wallets under observation OUTSIDE the pool. Pool

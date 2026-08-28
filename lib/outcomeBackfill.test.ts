@@ -38,6 +38,7 @@ function insertAlert(
 // Plain function on purpose: wrapping a shared vi.fn in vi.fn() would share
 // its call log across tests.
 const emptyOutcome: AlertOutcome = {
+  price10m: null,
   price1h: null,
   price24h: null,
   resolved: false,
@@ -77,13 +78,13 @@ describe("runOutcomeBackfillCycle", () => {
     }
   });
 
-  it("does not select terminal rows (resolved with both marks present)", async () => {
+  it("does not select terminal rows (resolved with all three marks present)", async () => {
     const db = openDb(":memory:");
     const id = insertAlert(db);
     db.prepare(
       `INSERT INTO alert_outcomes
-         (alert_id, price_1h, price_24h, resolved, resolution_price, won, checked_at)
-       VALUES (?, 0.7, 0.9, 1, 1, 1, ?)`,
+         (alert_id, price_10m, price_1h, price_24h, resolved, resolution_price, won, checked_at)
+       VALUES (?, 0.65, 0.7, 0.9, 1, 1, 1, ?)`,
     ).run(id, T0 + 90_000);
     const compute = vi.fn(computeAll);
     const r = await runOutcomeBackfillCycle(db, createBackfillState(), {
@@ -282,5 +283,27 @@ describe("runOutcomeBackfillCycle", () => {
   it("uses the real computeAlertOutcomes by default", () => {
     // Guard against the test seam silently replacing the production path.
     expect(typeof computeAlertOutcomes).toBe("function");
+  });
+});
+
+// --- price_10m(2026-08-28):已终态老行缺 10m 标记 → 重新入选,历史滴灌 ---
+
+describe("price_10m 历史滴灌", () => {
+  it("resolved 且 1h/24h 齐但 price_10m 为 NULL 的老行会被再次选中补齐", async () => {
+    const db = openDb(":memory:");
+    const id = insertAlert(db);
+    db.prepare(
+      `INSERT INTO alert_outcomes
+         (alert_id, price_1h, price_24h, resolved, resolution_price, won, checked_at)
+       VALUES (?, 0.7, 0.9, 1, 1, 1, ?)`,
+    ).run(id, T0 + 90_000);
+    const compute = vi.fn(computeAll);
+    const r = await runOutcomeBackfillCycle(db, createBackfillState(), {
+      outcomes: { getMeta: noMeta },
+      compute,
+    });
+    expect(r.pending).toBe(1);
+    expect(compute).toHaveBeenCalledTimes(1);
+    expect(compute.mock.calls[0][1]).toEqual([id]);
   });
 });

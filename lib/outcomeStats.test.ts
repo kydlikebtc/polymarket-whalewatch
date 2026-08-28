@@ -420,3 +420,21 @@ describe("clusteredInterval", () => {
     expect(clusteredInterval(0, 0, 0)).toEqual({ lo: 0, hi: 1 });
   });
 });
+
+// --- price_10m(2026-08-28):验证条第四档 dir10m ---
+
+describe("summarizeOutcomes · dir10m", () => {
+  it("10 分钟方向档与 1h/24h 同规则计数", () => {
+    const alerts = [
+      { id: 1, type: "large", side: "BUY", price: 0.5 },
+      { id: 2, type: "large", side: "BUY", price: 0.5 },
+    ];
+    const outcomes = {
+      1: { price10m: 0.6, price1h: null, price24h: null, resolved: false, resolutionPrice: null, won: null },
+      2: { price10m: 0.4, price1h: null, price24h: null, resolved: false, resolutionPrice: null, won: null },
+    };
+    const s = summarizeOutcomes(alerts, outcomes);
+    expect(s.dir10m.total).toBe(2);
+    expect(s.dir10m.hits).toBe(1);
+  });
+});

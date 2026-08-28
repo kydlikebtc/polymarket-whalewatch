@@ -93,4 +93,18 @@ export const DICT_MARKET: Record<string, string> = {
   结算: "Settlement",
   "🔴卖": "🔴 Sell",
   "🟢买": "🟢 Buy",
+  // 时光机 · 复盘(第二梯队八件套,2026-08-28)
+  "🕰 复盘（价格曲线 × 本站告警 × 结算）":
+    "🕰 Replay (price curve × this site's alerts × settlement)",
+  "加载复盘（拉一次价格曲线）": "Load replay (fetches the price curve once)",
+  "曲线为 {o} 一侧的价格。": "Curve shows the {o} side. ",
+  "另一侧的告警按 1−p 精确映射到同一坐标（标记带 ↔）。":
+    "Alerts on the other side map exactly via 1−p onto the same axis (markers carry ↔). ",
+  "非二元市场：只显示第一结果一侧的告警，其余边无等价映射。":
+    "Non-binary market: only first-outcome alerts are shown — other sides have no exact mapping. ",
+  "虚线为结算价。": "Dashed line = settlement price. ",
+  "标记色：💰大单 🏆聪明钱 🔥共识 🐣同批新钱包。":
+    "Marker colors: 💰 large · 🏆 smart · 🔥 consensus · 🐣 cohort.",
+  "该区间没有价格历史点（市场太新或曲线不可用）。":
+    "No price-history points in this range (market too new or curve unavailable).",
 };

@@ -59,6 +59,7 @@ export const DICT_ALERTS: Record<string, string> = {
 
   // Validation strip
   "信号验证（当前列表）": "Signal validation (current list)",
+  "10m 方向命中": "10m direction hits",
   "1h 方向命中": "1h direction hits",
   "24h 方向命中": "24h direction hits",
   已结算胜率: "Settled win rate",

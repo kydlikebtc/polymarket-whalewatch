@@ -96,4 +96,12 @@ export const DICT_CONSENSUS: Record<string, string> = {
     " · {n} wallets · net buy ${net} · quality-weighted ${weighted} · avg entry {avg}",
   " · 现价 {cur}": " · now {cur}",
   胜率: "Win rate",
+  // 离场(第二梯队八件套,2026-08-28)
+  离场: "Exits",
+  "≥{n} 个池内钱包在同一结果上净卖出 · 窗内只见卖不见此前建仓——抓的就是减持老仓，但分不清获利了结与止损":
+    "≥{n} pool wallets net-selling the same outcome · the window sees sells but not the earlier entries — that is the point (trimming old positions), but profit-taking and stop-outs look identical",
+  窗口内暂无池内钱包的集体离场: "No collective pool exits inside the window",
+  离场钱包: "Exiting wallets",
+  合计卖出: "Total sold",
+  卖出均价: "Avg sell price",
 };

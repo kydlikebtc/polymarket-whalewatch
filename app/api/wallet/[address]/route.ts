@@ -12,6 +12,11 @@ import { createBoundedCache } from "../../../../lib/boundedCache";
 import { fetchPusdBalance } from "../../../../lib/pusdBalance";
 import { getSmartTags } from "../../../../lib/smartWallets";
 import { getWalletTags } from "../../../../lib/walletTags";
+import { walletPriceImpact } from "../../../../lib/priceImpact";
+import {
+  buildPoolStyles,
+  similarWallets,
+} from "../../../../lib/walletFingerprint";
 import {
   getEventCategories,
   readEventCategories,
@@ -153,6 +158,44 @@ function decorateWithTaxonomy(
  * 即返回,miss 时 fetcher 立刻拒绝 → null 且不污染缓存(两个模块对失败
  * 的既有语义都是 uncached,见 lib/walletStats / lib/walletAge)。
  */
+// 交易风格(2026-08-28 八件套):池表一趟扫,10 分钟进程缓存(池与告警窗
+// 都是慢变量);池外钱包 null 整块省略。失败同样降级 null。
+let poolStylesCache: {
+  at: number;
+  styles: ReturnType<typeof buildPoolStyles>;
+} | null = null;
+const POOL_STYLES_TTL_MS = 600_000;
+function styleOf(db: DB, address: string) {
+  try {
+    const now = Date.now();
+    if (!poolStylesCache || now - poolStylesCache.at > POOL_STYLES_TTL_MS) {
+      poolStylesCache = { at: now, styles: buildPoolStyles(db) };
+    }
+    const styles = poolStylesCache.styles;
+    const me = styles.get(address.toLowerCase());
+    if (!me) return null;
+    return {
+      tags: me.tags,
+      alerts: me.alerts,
+      similar: similarWallets(styles, address, 3).map((s) => s.wallet),
+    };
+  } catch (e) {
+    console.warn("[/api/wallet] poolStyles 现算失败,降级 null:", e);
+    return null;
+  }
+}
+
+// 价格影响持久性(2026-08-28 八件套):纯本地读,正常/降级两条路径都能算;
+// 任何失败只降级 null(块整体省略),不拖垮档案。
+function impactOf(db: DB, address: string) {
+  try {
+    return walletPriceImpact(db, address);
+  } catch (e) {
+    console.warn("[/api/wallet] priceImpact 现算失败,降级 null:", e);
+    return null;
+  }
+}
+
 async function localOnlyDossier(
   db: DB,
   address: string,
@@ -210,6 +253,8 @@ async function localOnlyDossier(
     categories: decorated?.categories ?? [],
     alertHits,
     alertHitsWindowDays: ALERT_HITS_WINDOW_DAYS,
+    impact: impactOf(db, address),
+    style: styleOf(db, address),
     recent: warm?.recent ?? [],
     degraded,
     retryAfterSec,
@@ -294,6 +339,8 @@ export async function GET(
         alertHits,
         // Surfaced so the page can label the coverage window it's showing.
         alertHitsWindowDays: ALERT_HITS_WINDOW_DAYS,
+        impact: impactOf(db, address),
+        style: styleOf(db, address),
         recent,
       });
     } catch (e) {

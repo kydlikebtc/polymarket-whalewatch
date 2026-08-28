@@ -14,7 +14,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS market_meta (condition_id TEXT PRIMARY KEY, meta_json TEXT, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS event_category (event_slug TEXT PRIMARY KEY, category TEXT, subcategory TEXT, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS consensus_state (condition_id TEXT, outcome TEXT, wallet_count INTEGER, total_usd REAL, last_alert_ts INTEGER, PRIMARY KEY (condition_id, outcome));
-    CREATE TABLE IF NOT EXISTS alert_outcomes (alert_id INTEGER PRIMARY KEY, price_1h REAL, price_24h REAL, resolved INTEGER DEFAULT 0, resolution_price REAL, won INTEGER, checked_at INTEGER);
+    CREATE TABLE IF NOT EXISTS alert_outcomes (alert_id INTEGER PRIMARY KEY, price_10m REAL, price_1h REAL, price_24h REAL, resolved INTEGER DEFAULT 0, resolution_price REAL, won INTEGER, checked_at INTEGER);
     CREATE TABLE IF NOT EXISTS wallet_candidates (address TEXT NOT NULL, channel TEXT NOT NULL, condition_id TEXT NOT NULL, evidence_ts INTEGER, usd REAL, price REAL, note TEXT, title TEXT, slug TEXT, event_slug TEXT, outcome TEXT, created_at INTEGER, PRIMARY KEY (address, channel, condition_id));
     CREATE TABLE IF NOT EXISTS early_winner_scans (condition_id TEXT PRIMARY KEY, scanned_at INTEGER, trades_scanned INTEGER, truncated INTEGER);
     CREATE TABLE IF NOT EXISTS config_history (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, value TEXT, changed_at INTEGER NOT NULL);
@@ -22,7 +22,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS heartbeats (loop TEXT PRIMARY KEY, last_ts INTEGER NOT NULL, day TEXT NOT NULL, cycles INTEGER NOT NULL, max_gap_sec INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS cycle_metrics (id INTEGER PRIMARY KEY AUTOINCREMENT, loop TEXT NOT NULL, ts INTEGER NOT NULL, window_trades INTEGER, window_usd REAL, raw_groups INTEGER, contested_dropped INTEGER, fired INTEGER);
     CREATE INDEX IF NOT EXISTS idx_cycle_metrics_ts ON cycle_metrics(loop, ts);
-    CREATE TABLE IF NOT EXISTS market_daily (day TEXT NOT NULL, condition_id TEXT NOT NULL, title TEXT, slug TEXT, event_slug TEXT, category TEXT, subcategory TEXT, trades INTEGER NOT NULL, volume_usd REAL NOT NULL, wallet_count INTEGER NOT NULL, top_outcome TEXT, one_sided REAL, small_usd REAL, small_net_usd REAL, small_top_outcome TEXT, whale_usd REAL, whale_net_usd REAL, whale_top_outcome TEXT, price_first REAL, price_last REAL, covered_from_sec INTEGER, truncated INTEGER DEFAULT 0, PRIMARY KEY (day, condition_id));
+    CREATE TABLE IF NOT EXISTS market_daily (day TEXT NOT NULL, condition_id TEXT NOT NULL, title TEXT, slug TEXT, event_slug TEXT, category TEXT, subcategory TEXT, trades INTEGER NOT NULL, volume_usd REAL NOT NULL, wallet_count INTEGER NOT NULL, top_outcome TEXT, one_sided REAL, small_usd REAL, small_net_usd REAL, small_top_outcome TEXT, whale_usd REAL, whale_net_usd REAL, whale_top_outcome TEXT, price_first REAL, price_last REAL, covered_from_sec INTEGER, truncated INTEGER DEFAULT 0, wash_usd REAL, max_fill_usd REAL, PRIMARY KEY (day, condition_id));
     CREATE INDEX IF NOT EXISTS idx_market_daily_day ON market_daily(day);
     CREATE TABLE IF NOT EXISTS follow_strategies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, enabled INTEGER DEFAULT 1, params_json TEXT, created_at INTEGER, push_enabled INTEGER DEFAULT 0);
     CREATE TABLE IF NOT EXISTS follow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, strategy_id INTEGER, condition_id TEXT, outcome TEXT, asset TEXT, outcome_index INTEGER, title TEXT, event_slug TEXT, entry_ts INTEGER, entry_price REAL, smart_avg_price REAL, size_usd REAL, shares REAL, status TEXT, exit_ts INTEGER, exit_price REAL, realized_pnl REAL, formation_ts INTEGER, formation_price REAL, markout_30m REAL, markout_2h REAL, exec_price REAL, exec_best_ask REAL, exec_filled_usd REAL, fee_usd REAL, book_cap_1c REAL, book_cap_3c REAL, UNIQUE(strategy_id, condition_id, outcome));
@@ -148,6 +148,25 @@ export function openDb(path = "data.sqlite") {
     } catch {
       // column already present
     }
+  }
+  // market_daily 洗量/单笔最大(2026-08-28 第二梯队八件套):同钱包当日往返
+  // 配对量(单腿口径,展示层 ×2/volume 得占比)与当日单笔最大名义额(无鲸
+  // 异动的精确材料 —— whale_usd=0 挡不住 $30k 单)。老日份恒 NULL,不回填:
+  // 聚合窗口早已滚出,回填只能造假数。
+  for (const col of ["wash_usd REAL", "max_fill_usd REAL"]) {
+    try {
+      db.prepare(`ALTER TABLE market_daily ADD COLUMN ${col}`).run();
+    } catch {
+      // column already present
+    }
+  }
+  // alert_outcomes 10 分钟标记(2026-08-28 八件套):价格影响持久性的「初动」
+  // 端。历史价不可变,老行经回填循环的 price_10m IS NULL 候选分支滴灌补齐
+  // (每轮 ≤500 条既有预算,一次到位永不重取)。
+  try {
+    db.prepare("ALTER TABLE alert_outcomes ADD COLUMN price_10m REAL").run();
+  } catch {
+    // column already present
   }
   // strategy_signals gained wallets_json(2026-08-28,walk-forward v2 前置,
   // 设计见 docs/plans/2026-08-28-signal-forward-facts-design.md):触发钱包 +

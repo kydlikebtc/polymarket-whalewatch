@@ -118,6 +118,7 @@ describe("computeAlertOutcomes", () => {
       nowSec: T0 + 90_000, // past both marks
     });
     expect(out[id]).toEqual({
+      price10m: 0.9, // 夹具只区分 1h,其余标记走 0.9 分支
       price1h: 0.68,
       price24h: 0.9,
       resolved: false,
@@ -130,7 +131,7 @@ describe("computeAlertOutcomes", () => {
       getMeta: async () => ({}),
       nowSec: T0 + 95_000,
     });
-    expect(fetchPrice).toHaveBeenCalledTimes(2); // 1h + 24h, once each
+    expect(fetchPrice).toHaveBeenCalledTimes(3); // 10m + 1h + 24h, once each
   });
 
   it("does not fetch a mark that has not elapsed yet", async () => {
@@ -142,9 +143,10 @@ describe("computeAlertOutcomes", () => {
       getMeta: async () => ({}),
       nowSec: T0 + 4000, // 1h passed (with margin), 24h not
     });
+    expect(out[id].price10m).toBe(0.7);
     expect(out[id].price1h).toBe(0.7);
     expect(out[id].price24h).toBeNull();
-    expect(fetchPrice).toHaveBeenCalledTimes(1);
+    expect(fetchPrice).toHaveBeenCalledTimes(2); // 10m + 1h,24h 未到点
   });
 
   it("marks BUY as won when the outcome settles at 1 (and SELL as lost)", async () => {
@@ -176,16 +178,16 @@ describe("computeAlertOutcomes", () => {
     const fetchPrice = vi.fn(async () => null); // dead market
     const deps = { fetchPrice, getMeta: async () => ({}), nowSec: T0 + 90_000 };
     await computeAlertOutcomes(db, [id], deps);
-    expect(fetchPrice).toHaveBeenCalledTimes(2);
+    expect(fetchPrice).toHaveBeenCalledTimes(3);
     // Shortly after: cached null, no retry.
     await computeAlertOutcomes(db, [id], { ...deps, nowSec: T0 + 91_000 });
-    expect(fetchPrice).toHaveBeenCalledTimes(2);
+    expect(fetchPrice).toHaveBeenCalledTimes(3);
     // Past the retry backoff: tries again.
     await computeAlertOutcomes(db, [id], {
       ...deps,
       nowSec: T0 + 90_000 + 7 * 3600,
     });
-    expect(fetchPrice).toHaveBeenCalledTimes(4);
+    expect(fetchPrice).toHaveBeenCalledTimes(6);
   });
 
   it("fetches the 1h price at the mark even when the alert was viewed earlier (regression)", async () => {
@@ -209,7 +211,7 @@ describe("computeAlertOutcomes", () => {
       nowSec: T0 + 3600 + 400,
     });
     expect(atMark[id].price1h).toBe(0.7);
-    expect(fetchPrice).toHaveBeenCalledTimes(1);
+    expect(fetchPrice).toHaveBeenCalledTimes(2); // 10m 同批补上
   });
 
   it("scores fractional settlements by P&L direction vs the fill price", async () => {
@@ -395,5 +397,43 @@ describe("computeAlertOutcomes", () => {
       nowSec: T0 + 90_000,
     });
     expect(out[id]).toBeUndefined();
+  });
+});
+
+// --- 第二梯队八件套(2026-08-28):price_10m —— 价格影响持久性的采集层 ---
+
+describe("price_10m 十分钟标记", () => {
+  it("与 1h/24h 同批取数:mark=T0+600,写库并返回 price10m(每告警上游预算 2→3)", async () => {
+    const db = openDb(":memory:");
+    const id = insertAlert(db);
+    const fetchPrice = vi.fn(async (_tok: string, ts: number) => {
+      if (ts === T0 + 600) return 0.62;
+      if (ts === T0 + 3600) return 0.68;
+      return 0.9;
+    });
+    const out = await computeAlertOutcomes(db, [id], {
+      fetchPrice,
+      getMeta: async () => ({}),
+      nowSec: T0 + 90_000,
+    });
+    expect(out[id].price10m).toBe(0.62);
+    expect(fetchPrice).toHaveBeenCalledWith("tok1", T0 + 600);
+    const row = db
+      .prepare("SELECT price_10m FROM alert_outcomes WHERE alert_id = ?")
+      .get(id) as { price_10m: number | null };
+    expect(row.price_10m).toBe(0.62);
+  });
+
+  it("告警不满 10 分钟不取 10m 标记(结算余量同 1h/24h 纪律)", async () => {
+    const db = openDb(":memory:");
+    const id = insertAlert(db);
+    const fetchPrice = vi.fn(async () => 0.5);
+    const out = await computeAlertOutcomes(db, [id], {
+      fetchPrice,
+      getMeta: async () => ({}),
+      nowSec: T0 + 500, // < 600 + SETTLE_MARGIN
+    });
+    expect(out[id].price10m).toBeNull();
+    expect(fetchPrice).not.toHaveBeenCalled();
   });
 });

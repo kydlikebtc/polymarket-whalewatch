@@ -36,6 +36,17 @@ export async function GET() {
         },
         groupCount: 0,
       },
+      league: {
+        hall: [],
+        fade: [],
+        testedWallets: 0,
+        disclosures: {
+          gradedAlerts: 0,
+          rows: 0,
+          feeUnknownDropped: 0,
+          malformedDropped: 0,
+        },
+      },
       error: message,
     });
   }

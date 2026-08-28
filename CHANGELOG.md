@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 489 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that range: 1922 tests across
-148 files (`npm test`).
+Scope: 500 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that range: 1958 tests across
+153 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -36,6 +36,45 @@ Scope: 489 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-28 — Tier-two octet: the wallet becomes a character, the market gets a risk layer
+
+All eight tier-two items from the round-3 brainstorm, in one batch
+(`docs/plans/2026-08-28-tier2-octet-design.md`). Six are pure projections of existing data; the
+two bounded exceptions are declared: `price_10m` costs one extra immutable prices-history point
+per alert (drip-filled through the existing 500-per-cycle backfill budget), and the replay curve
+is fetched only when a user clicks.
+
+- **Ghost moves + wash board** (`/pulse`, additive `ghosts[]`/`washTop[]`/`top[].washRatio` on
+  `/api/pulse`). `market_daily` gains `wash_usd` (per-wallet matched buy/sell volume, one-leg
+  stored, both-legs displayed) and `max_fill_usd` — the precise material for "the price moved
+  ≥10¢ and nobody paid ≥$10k for it". Old days stay `null` and never chart: not knowing is not
+  the same as no whale. Wash copy is pinned as structure, not accusation.
+- **Price-impact persistence** (`alert_outcomes.price_10m` + `/alerts` fourth strip +
+  wallet dossier "价格影响" block). Per wallet: did the market keep the 10-minute move his
+  alerts caused? Retention rate with market-clustered CI, consensus members priced at their own
+  entry, verdicts `followed/faded/mixed/insufficient` (<8 markets). Descriptive statistics of
+  the market's reaction — the copy never suggests following anyone.
+- **Smart-money exits** (`/consensus` third tab). Sell-side mirror of the consensus accounting
+  (net-sold shares × avg sell price; window buy-backs cancel out; MMs don't vote), riding the
+  route's existing two-sided window — zero worker changes, zero new alert types. The window
+  limitation is stated on the page: trimming old positions is exactly the point, but
+  profit-taking and stop-outs look identical.
+- **Behavioral fingerprints, pool-only** (`/discovery` member rows + dossier "交易风格" block).
+  Rule-based style tags (odds band / clock / size / direction) that each fit in one sentence —
+  deliberately not clustering — plus z-scored nearest-neighbour "similar pool wallets".
+- **Hall of fame + fade list** (`/discovery` fourth tab). The scorecard's per-wallet forward
+  experiments regrouped by wallet under the same CRVE + fee + nc≥10 discipline; fade = upper
+  bound < 0, turning the lone contrarian tier into a category. Departed wallets stay listed
+  (survivorship line held); deterministic codenames are hash-fun only; the footer discloses the
+  number of wallets tested with no Bonferroni correction — leads, not conclusions.
+- **Replay** (`/market/[id]` 🕰 section). Price curve × this site's alert markers × settlement
+  line; binary other-side alerts map exactly via 1−p, non-binary sides are omitted rather than
+  faked. Click-to-load with a 10-minute per-market cache.
+
+36 tests added (1922 → 1958 across 153 files). Same-day design correction: the impact metric
+tightened from |m10m| to m10m ≥ +2¢ — the retention question is ill-posed for moves that were
+immediately faded.
 
 ### 2026-08-28 — Tier-one quintet: capacity, conviction, decay, calendar, cohort
 

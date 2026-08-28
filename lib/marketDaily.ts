@@ -42,6 +42,14 @@ export interface MarketDayRow {
   priceLast: number | null;
   coveredFromSec: number;
   truncated: boolean;
+  /**
+   * 洗量(2026-08-28 八件套):同钱包同市场当日往返配对量 = 逐钱包
+   * min(买额, 卖额) 之和。**单腿口径** —— 两腿都计入 volume_usd,展示层
+   * 用 2·washUsd/volumeUsd 才是「洗量占比」。中性结构描述,非指控。
+   */
+  washUsd: number;
+  /** 当日单笔最大名义额 —— 无鲸异动的精确材料(whale_usd=0 挡不住 $30k 单)。 */
+  maxFillUsd: number | null;
 }
 
 interface OutcomeAcc {
@@ -74,6 +82,9 @@ export function aggregateMarketDay(
       small: { gross: number; byOutcome: Map<string, number> };
       whale: { gross: number; byOutcome: Map<string, number> };
       fills: { ts: number; outcome: string; price: number }[];
+      /** 洗量原料:逐钱包(lowercase)买/卖名义额。wallets Set 语义不动。 */
+      flowByWallet: Map<string, { buyUsd: number; sellUsd: number }>;
+      maxFillUsd: number;
     }
   >();
 
@@ -94,11 +105,20 @@ export function aggregateMarketDay(
       small: { gross: 0, byOutcome: new Map<string, number>() },
       whale: { gross: 0, byOutcome: new Map<string, number>() },
       fills: [],
+      flowByWallet: new Map<string, { buyUsd: number; sellUsd: number }>(),
+      maxFillUsd: 0,
     };
     byMarket.set(t.conditionId, m);
     m.trades++;
     m.volume += usd;
     m.wallets.add(t.proxyWallet);
+    // 洗量按 lowercase 归户(链上地址大小写不定,分家会把往返漏成单向)。
+    const wkey = t.proxyWallet.toLowerCase();
+    const flow = m.flowByWallet.get(wkey) ?? { buyUsd: 0, sellUsd: 0 };
+    if (t.side === "BUY") flow.buyUsd += usd;
+    else flow.sellUsd += usd;
+    m.flowByWallet.set(wkey, flow);
+    if (usd > m.maxFillUsd) m.maxFillUsd = usd;
     const signed = t.side === "BUY" ? usd : -usd;
     const acc = m.outcomes.get(t.outcome) ?? { gross: 0, net: 0 };
     acc.gross += usd;
@@ -169,6 +189,11 @@ export function aggregateMarketDay(
       priceLast: topFills[topFills.length - 1]?.price ?? null,
       coveredFromSec: opts.coveredFromSec,
       truncated: opts.truncated,
+      washUsd: [...m.flowByWallet.values()].reduce(
+        (s, f) => s + Math.min(f.buyUsd, f.sellUsd),
+        0,
+      ),
+      maxFillUsd: m.maxFillUsd > 0 ? m.maxFillUsd : null,
     });
   }
   return out;
@@ -221,8 +246,9 @@ export async function runMarketDailyCycle(
         trades, volume_usd, wallet_count, top_outcome, one_sided,
         small_usd, small_net_usd, small_top_outcome,
         whale_usd, whale_net_usd, whale_top_outcome,
-        price_first, price_last, covered_from_sec, truncated)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        price_first, price_last, covered_from_sec, truncated,
+        wash_usd, max_fill_usd)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   );
   const writeAll = db.transaction((list: MarketDayRow[]) => {
     for (const r of list) {
@@ -250,6 +276,8 @@ export async function runMarketDailyCycle(
         r.priceLast,
         r.coveredFromSec,
         r.truncated ? 1 : 0,
+        r.washUsd,
+        r.maxFillUsd,
       );
     }
     db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)").run(
