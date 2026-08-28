@@ -15,6 +15,7 @@ import { DICT_MISC } from "./dict/misc";
 import { DICT_STATUS } from "./dict/status";
 import { DICT_PULSE } from "./dict/pulse";
 import { DICT_CALIBRATION } from "./dict/calibration";
+import { DICT_SELFTEST } from "./dict/selftest";
 
 // 字典卫生:四条规则挡住四类真实事故 ——
 //  1. 空译文 → 英文界面出现空洞;
@@ -45,6 +46,7 @@ const SHARDS: [string, Record<string, string>][] = [
   // 跨分片撞车检查对它们一直裸奔 —— 第一梯队五件套批次顺手锁上。
   ["pulse", DICT_PULSE],
   ["calibration", DICT_CALIBRATION],
+  ["selftest", DICT_SELFTEST],
 ];
 
 describe("DICT hygiene", () => {

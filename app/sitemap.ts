@@ -16,6 +16,7 @@ const STATIC_PAGES: { path: string; priority: number }[] = [
   { path: "/consensus", priority: 0.8 },
   { path: "/accumulation", priority: 0.7 },
   { path: "/discovery", priority: 0.7 },
+  { path: "/selftest", priority: 0.7 },
   { path: "/pulse", priority: 0.7 },
   { path: "/calibration", priority: 0.6 },
   { path: "/alerts", priority: 0.6 },
