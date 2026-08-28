@@ -191,3 +191,78 @@ describe("runMarketDailyCycle", () => {
     db.close();
   });
 });
+
+// --- 第二梯队八件套(2026-08-28):洗量与单笔最大 —— #2/#14 的原料层 ---
+
+describe("洗量(wash_usd)与单笔最大(max_fill_usd)", () => {
+  it("同钱包同市场当日往返:wash_usd = Σ min(买额, 卖额),单腿口径", () => {
+    const rows = aggregateMarketDay(
+      [
+        // 钱包 A:买 $10k、卖 $6k → 配对量 $6k
+        trade({ proxyWallet: "0xAA", size: 20_000, price: 0.5 }),
+        trade({ proxyWallet: "0xaa", side: "SELL", size: 12_000, price: 0.5 }), // 大小写不同也是同一钱包
+        // 钱包 B:只买 → 贡献 0
+        trade({ proxyWallet: "0xBB", size: 8_000, price: 0.5 }),
+      ],
+      OPTS,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].washUsd).toBeCloseTo(6_000);
+  });
+
+  it("纯单向市场 wash_usd = 0;max_fill_usd = 当日单笔最大名义额", () => {
+    const rows = aggregateMarketDay(
+      [
+        trade({ size: 20_000, price: 0.5 }), // $10k
+        trade({ size: 6_000, price: 0.5 }), // $3k
+      ],
+      OPTS,
+    );
+    expect(rows[0].washUsd).toBe(0);
+    expect(rows[0].maxFillUsd).toBeCloseTo(10_000);
+  });
+
+  it("runMarketDailyCycle 落库后两列可读(新库 CREATE 路径)", async () => {
+    const db = openDb(":memory:");
+    await runMarketDailyCycle(db, {
+      nowSec: NOW,
+      fetchWindow: async () => ({
+        trades: [
+          trade({ proxyWallet: "0xw", size: 20_000, price: 0.5 }),
+          trade({ proxyWallet: "0xw", side: "SELL", size: 4_000, price: 0.5 }),
+        ],
+        truncated: false,
+        effectiveSinceSec: Y,
+      }),
+    });
+    const row = db
+      .prepare("SELECT wash_usd, max_fill_usd FROM market_daily")
+      .get() as { wash_usd: number; max_fill_usd: number };
+    expect(row.wash_usd).toBeCloseTo(2_000);
+    expect(row.max_fill_usd).toBeCloseTo(10_000);
+  });
+});
+
+describe("market_daily 迁移", () => {
+  it("老库(22 列时代)重开时靠 ALTER 补齐两列 —— :memory: 全走 CREATE,漏写 ALTER 测不出", async () => {
+    const { mkdtempSync, rmSync } = await import("fs");
+    const { tmpdir } = await import("os");
+    const { join } = await import("path");
+    const dir = mkdtempSync(join(tmpdir(), "mdaily-"));
+    const path = join(dir, "old.sqlite");
+    const Database = (await import("better-sqlite3")).default;
+    const legacy = new Database(path);
+    legacy.exec(
+      `CREATE TABLE market_daily (day TEXT NOT NULL, condition_id TEXT NOT NULL, title TEXT, slug TEXT, event_slug TEXT, category TEXT, subcategory TEXT, trades INTEGER NOT NULL, volume_usd REAL NOT NULL, wallet_count INTEGER NOT NULL, top_outcome TEXT, one_sided REAL, small_usd REAL, small_net_usd REAL, small_top_outcome TEXT, whale_usd REAL, whale_net_usd REAL, whale_top_outcome TEXT, price_first REAL, price_last REAL, covered_from_sec INTEGER, truncated INTEGER DEFAULT 0, PRIMARY KEY (day, condition_id));`,
+    );
+    legacy.close();
+    const db = openDb(path);
+    const cols = (
+      db.prepare("PRAGMA table_info(market_daily)").all() as { name: string }[]
+    ).map((c) => c.name);
+    expect(cols).toContain("wash_usd");
+    expect(cols).toContain("max_fill_usd");
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
