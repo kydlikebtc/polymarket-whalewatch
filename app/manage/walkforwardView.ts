@@ -48,3 +48,23 @@ export function tierLine(t: WfTierReport): string {
     `(Bonf 下界 ${top.loBonf != null ? pts(top.loBonf) : "—"},p=${top.randP?.toFixed(4) ?? "—"})`
   );
 }
+
+/** 运行状态一行;本进程没跑过返回 null(报告以库里最新行为准,不误导)。 */
+export function runStateLine(
+  s: import("../../lib/walkforwardRun").WfRunState,
+  nowSec: number,
+): string | null {
+  if (s.running && s.startedAt != null) {
+    return `⏳ 跑中… 已 ${Math.max(0, nowSec - s.startedAt)}s(完成后下方报告自动更新)`;
+  }
+  const last = s.lastRun;
+  if (!last) return null;
+  if (last.ok) {
+    const at = new Date(last.finishedAt * 1000)
+      .toISOString()
+      .replace("T", " ")
+      .slice(0, 16);
+    return `上次运行:✅ 成功(${at} UTC · 耗时 ${last.finishedAt - last.startedAt}s)`;
+  }
+  return `上次运行:❌ 失败(exit ${last.exitCode ?? "—"})—— 末尾输出见下`;
+}

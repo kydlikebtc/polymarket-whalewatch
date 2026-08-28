@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WfTierReport } from "../../lib/walkforward";
-import { reportMeta, tierLine } from "./walkforwardView";
+import { reportMeta, runStateLine, tierLine } from "./walkforwardView";
 
 function tier(over: Partial<WfTierReport>): WfTierReport {
   return {
@@ -120,5 +120,61 @@ describe("阈值重推卡文案", () => {
     expect(meta).toContain("G=42");
     expect(meta).toContain("z=3.24");
     expect(meta).toContain("10,000");
+  });
+});
+
+describe("运行状态一行", () => {
+  it("跑中:显示已耗秒数", () => {
+    const line = runStateLine(
+      { running: true, startedAt: 1_000, lastRun: null },
+      1_042,
+    );
+    expect(line).toContain("⏳");
+    expect(line).toContain("42s");
+  });
+
+  it("上次成功:时刻 + 耗时", () => {
+    const line = runStateLine(
+      {
+        running: false,
+        startedAt: null,
+        lastRun: {
+          startedAt: Date.UTC(2026, 7, 28, 10, 0) / 1000,
+          finishedAt: Date.UTC(2026, 7, 28, 10, 0, 37) / 1000,
+          ok: true,
+          exitCode: 0,
+          tail: "",
+        },
+      },
+      0,
+    );
+    expect(line).toContain("✅");
+    expect(line).toContain("2026-08-28 10:00");
+    expect(line).toContain("37s");
+  });
+
+  it("上次失败:❌ + exit 码(tail 由卡另行展示)", () => {
+    const line = runStateLine(
+      {
+        running: false,
+        startedAt: null,
+        lastRun: {
+          startedAt: 1,
+          finishedAt: 2,
+          ok: false,
+          exitCode: 1,
+          tail: "boom",
+        },
+      },
+      0,
+    );
+    expect(line).toContain("❌");
+    expect(line).toContain("exit 1");
+  });
+
+  it("本进程还没跑过 → null(卡不渲染这一行)", () => {
+    expect(
+      runStateLine({ running: false, startedAt: null, lastRun: null }, 0),
+    ).toBeNull();
   });
 });

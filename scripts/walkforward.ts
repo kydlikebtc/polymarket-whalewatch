@@ -362,6 +362,10 @@ function printTier(t: WfTierReport, report: WalkforwardReport) {
 
 function main() {
   const db = new Database(DB_PATH, { fileMustExist: true });
+  // 生产库上引擎在持续写:默认 busy_timeout=0 会让末尾那一条 INSERT 在撞上
+  // 写锁的瞬间直接 SQLITE_BUSY 抛掉整轮计算 —— 等 5s 足够(引擎单笔写都是
+  // 毫秒级)。只读段不受影响(WAL 读者从不阻塞)。
+  db.pragma("busy_timeout = 5000");
   try {
     const nowSec = Math.floor(Date.now() / 1000);
     const folds = listValidateFolds(GATE_START, nowSec);

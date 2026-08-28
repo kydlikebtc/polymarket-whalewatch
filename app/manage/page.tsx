@@ -64,6 +64,10 @@ const TOKEN_DEBOUNCE_MS = 400;
 const TABS = [
   { id: "lines", label: "🧭 对外产出" },
   { id: "pipes", label: "🚚 下游管线" },
+  // 🧪 阈值重推独立成 tab(2026-08-28):它既不是信号线也不是管线,是月度
+  // 参数体检 —— 有自己的动作(跑/下载)与整页报告,挤在 ② 底部会被 19 档
+  // 大表推到三屏之外。
+  { id: "wf", label: "🧪 阈值重推" },
   { id: "health", label: "🩺 健康度" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
@@ -418,17 +422,11 @@ export default function ManagePage() {
           </div>
           {lineSub === "events" && <EventsSection token={token} />}
           {lineSub === "signals" && (
-            <>
-              <SignalsSection
-                token={token}
-                overview={overview}
-                reload={loadAll}
-              />
-              {/* 🧪 阈值重推报告住在 ② 策略信号里:它评的是这些档的参数,
-                  采纳路径(手工建挑战者档)也在本 tab —— 看报告与动手建档
-                  不该隔着一次导航。 */}
-              <WalkforwardSection token={token} />
-            </>
+            <SignalsSection
+              token={token}
+              overview={overview}
+              reload={loadAll}
+            />
           )}
           {lineSub === "views" && <ViewsSection />}
         </>
@@ -470,6 +468,7 @@ export default function ManagePage() {
           {pipeSub === "x" && <XAccountsSection token={token} />}
         </>
       )}
+      {tab === "wf" && <WalkforwardSection token={token} />}
       {tab === "health" && (
         <HealthSection health={health} ops={overview?.ops ?? null} />
       )}
