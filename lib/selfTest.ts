@@ -206,8 +206,27 @@ export async function readLocalStats(
     ttlSec: Number.MAX_SAFE_INTEGER,
     fetcher: localOnly,
   });
+  return {
+    stats: stats[addr] ?? null,
+    fetchedAt: readStatsFetchedAt(db, addr),
+  };
+}
+
+/** wallet_stats 行的拉取时间(秒)—— 实时路径也要标「数据截至」。 */
+export function readStatsFetchedAt(db: DB, address: string): number | null {
   const row = db
     .prepare("SELECT fetched_at FROM wallet_stats WHERE wallet = ?")
-    .get(addr) as { fetched_at: number } | undefined;
-  return { stats: stats[addr] ?? null, fetchedAt: row?.fetched_at ?? null };
+    .get(address.toLowerCase()) as { fetched_at: number } | undefined;
+  return row?.fetched_at ?? null;
+}
+
+/** /api/selftest 响应契约(路由是薄接线,契约随判决层住在 lib)。 */
+export interface SelfTestResponse extends SelfTestVerdict {
+  address: string;
+  /** 判决计算时间(秒)。缓存命中时返回原判决的计算时间,不冒充新算。 */
+  computedAt: number;
+  /** 战绩数据的拉取时间(秒)—— 即使实时路径也可能来自 24h SQLite 缓存。 */
+  statsFetchedAt: number | null;
+  degraded?: "rate_limited" | "upstream_error";
+  retryAfterSec?: number;
 }

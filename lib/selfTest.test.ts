@@ -13,6 +13,7 @@ import {
   midrankPercentile,
   readPool,
   readLocalStats,
+  readStatsFetchedAt,
   type PoolMemberRow,
 } from "./selfTest";
 
@@ -269,6 +270,17 @@ describe("readLocalStats(降级/嵌入共用:只读缓存、绝不回源)", () =
     const db = openDb(":memory:");
     const r = await readLocalStats(db, "0xdd");
     expect(r).toEqual({ stats: null, fetchedAt: null });
+    db.close();
+  });
+
+  it("readStatsFetchedAt:大小写不敏感,无行给 null", () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      `INSERT INTO wallet_stats (wallet, settled_count, truncated, fetched_at)
+       VALUES ('0xee', 3, 0, 777)`,
+    ).run();
+    expect(readStatsFetchedAt(db, "0xEE")).toBe(777);
+    expect(readStatsFetchedAt(db, "0xff")).toBeNull();
     db.close();
   });
 });
