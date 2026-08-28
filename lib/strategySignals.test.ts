@@ -500,3 +500,73 @@ describe("runFollowCycle × strategy_signals 接线", () => {
     db.close();
   });
 });
+
+describe("wallets_json 向前落库(2026-08-28,walk-forward v2 前置)", () => {
+  it("新库自带 wallets_json 列;老库经幂等 ALTER 补列", () => {
+    const db = openDb(":memory:");
+    const cols = (
+      db.prepare("PRAGMA table_info(strategy_signals)").all() as {
+        name: string;
+      }[]
+    ).map((c) => c.name);
+    expect(cols).toContain("wallets_json");
+  });
+
+  it("带 wallets → 序列化落库,读回逐字段还原(含 score:null 的诚实态)", () => {
+    const db = openDb(":memory:");
+    const wallets = [
+      { wallet: "0xaaa", netUsd: 8_000, score: 71.5 },
+      { wallet: "0xbbb", netUsd: 4_000, score: null },
+    ];
+    const id = recordStrategySignal(db, input({ wallets }));
+    expect(id).not.toBeNull();
+    const row = db
+      .prepare("SELECT wallets_json FROM strategy_signals WHERE id = ?")
+      .get(id) as { wallets_json: string | null };
+    expect(JSON.parse(row.wallets_json ?? "")).toEqual(wallets);
+  });
+
+  it("不带 wallets → NULL(老行/未接 detector 的自描述覆盖窗)", () => {
+    const db = openDb(":memory:");
+    const id = recordStrategySignal(db, input());
+    const row = db
+      .prepare("SELECT wallets_json FROM strategy_signals WHERE id = ?")
+      .get(id) as { wallets_json: string | null };
+    expect(row.wallets_json).toBeNull();
+  });
+});
+
+describe("runFollowCycle × wallets_json 接线(向前落库)", () => {
+  it("开仓落台账时带 wallets 快照:两钱包各 $6k、score 透传", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({
+        trades: [
+          trade({ proxyWallet: "w1", transactionHash: "h1", size: 10_000, price: 0.6 }),
+          trade({ proxyWallet: "w2", transactionHash: "h2", size: 10_000, price: 0.6 }),
+        ],
+      }),
+      getSmart: smart,
+      fetchPrice: async () => 0.63,
+      getMeta: async () => ({}),
+      nowSec: 1800,
+    });
+    expect(r.opened).toBeGreaterThanOrEqual(1);
+    const rows = db
+      .prepare("SELECT wallets_json FROM strategy_signals")
+      .all() as { wallets_json: string | null }[];
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows) {
+      const wallets = JSON.parse(row.wallets_json ?? "") as {
+        wallet: string;
+        netUsd: number;
+        score: number | null;
+      }[];
+      expect(wallets.map((w) => w.wallet).sort()).toEqual(["w1", "w2"]);
+      const byWallet = new Map(wallets.map((w) => [w.wallet, w]));
+      expect(byWallet.get("w1")).toEqual({ wallet: "w1", netUsd: 6_000, score: 80 });
+      expect(byWallet.get("w2")).toEqual({ wallet: "w2", netUsd: 6_000, score: 75 });
+    }
+  });
+});

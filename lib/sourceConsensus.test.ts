@@ -259,3 +259,37 @@ describe("detectConsensusCandidates — A3+A4 同配:口径必须同步(边界)"
     expect(out).toHaveLength(0);
   });
 });
+
+describe("detectConsensusCandidates — wallets 快照(向前落库)", () => {
+  it("候选带逐钱包 {wallet, netUsd, score}:数量=walletCount、Σ=totalNetUsd、netUsd 降序", () => {
+    const trades = [
+      mk({ proxyWallet: "0xA", size: 24_000, price: 0.5 }), // $12k
+      mk({ proxyWallet: "0xB", size: 16_000, price: 0.5 }), // $8k
+    ];
+    const c = detectConsensusCandidates(trades, params(), ctx())[0];
+    expect(c.wallets).toBeDefined();
+    expect(c.wallets!).toHaveLength(c.walletCount);
+    expect(c.wallets!.map((w) => w.wallet)).toEqual(["0xa", "0xb"]);
+    expect(c.wallets!.map((w) => w.netUsd)).toEqual([12_000, 8_000]);
+    expect(
+      c.wallets!.reduce((s, w) => s + w.netUsd, 0),
+    ).toBeCloseTo(c.totalNetUsd, 6);
+    expect(c.wallets![0].score).toBe(80);
+  });
+
+  it("score:null 的钱包诚实透传 null(当时无分,不猜)", () => {
+    const c = detectConsensusCandidates(
+      [mk({ proxyWallet: "0xA" }), mk({ proxyWallet: "0xB" })],
+      params(),
+      ctx({
+        smart: new Map([
+          ["0xa", tag()],
+          ["0xb", tag({ score: null })],
+        ]),
+      }),
+    )[0];
+    const byWallet = new Map(c.wallets!.map((w) => [w.wallet, w.score]));
+    expect(byWallet.get("0xa")).toBe(80);
+    expect(byWallet.get("0xb")).toBeNull();
+  });
+});

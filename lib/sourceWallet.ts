@@ -231,6 +231,14 @@ function detectWalletCandidates(
       sourceKind,
       walletCount: 1,
       totalNetUsd: netUsd,
+      // 向前落库快照:聚合净买 + 检测时可见评分(纯归因,不参与判定)。
+      wallets: [
+        {
+          wallet: entry.wallet,
+          netUsd,
+          score: ctx.smart.get(entry.wallet)?.score ?? null,
+        },
+      ],
     }),
   );
 }

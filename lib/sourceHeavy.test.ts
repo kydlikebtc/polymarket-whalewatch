@@ -277,3 +277,17 @@ describe("detectHeavyCandidates — B3 质量门槛", () => {
     expect(out).toHaveLength(1);
   });
 });
+
+describe("detectHeavyCandidates — wallets 快照(向前落库)", () => {
+  it("单钱包单元素:同钱包两笔取大后 wallets 与 totalNetUsd 一致,score 透传", () => {
+    const trades = [
+      mk({ proxyWallet: "0xA", size: 120_000, price: 0.5 }), // $60k
+      mk({ proxyWallet: "0xA", size: 160_000, price: 0.5 }), // $80k(取大)
+    ];
+    const c = detectHeavyCandidates(trades, params(), ctx())[0];
+    expect(c.wallets).toEqual([
+      { wallet: "0xa", netUsd: c.totalNetUsd, score: 80 },
+    ]);
+    expect(c.totalNetUsd).toBe(80_000);
+  });
+});

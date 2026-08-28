@@ -521,3 +521,25 @@ describe("端点推送类型(2026-08-19)", () => {
     expect(webhookWantsType(capped, "strategy")).toBe(true);
   });
 });
+
+describe("wallets_json 惰性守卫(向前落库批次)", () => {
+  it("行对象带 wallets_json(SELECT s.* 会带上),webhook 事件零泄漏", () => {
+    const ev = buildSignalEvent(
+      {
+        ...row(),
+        wallets_json: '[{"wallet":"0xleakcheck","netUsd":1,"score":9}]',
+      } as never,
+      "entry",
+      {
+        strategyName: "巨鲸",
+        source: "heavy",
+        record: { settled: 41, wins: 26, implied: 22.9, excess: 3.1, sd: 3.4 },
+        category: "Sports",
+        subcategory: "NBA",
+      },
+    );
+    const dumped = JSON.stringify(ev);
+    expect(dumped).not.toContain("0xleakcheck");
+    expect(dumped).not.toContain("wallets");
+  });
+});

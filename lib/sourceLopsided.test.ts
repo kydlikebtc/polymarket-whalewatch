@@ -558,3 +558,37 @@ describe("parseStrategy — side 解析(第 13 档「逆势少数边」)", () =>
     warnSpy.mockRestore();
   });
 });
+
+describe("detectLopsidedCandidates — wallets 快照(向前落库)", () => {
+  it("lead:记主导边净买者,netUsd 降序,数量/合计与 walletCount/totalNetUsd 一致", () => {
+    const trades = lopsidedTrades();
+    const smart = smartMap({ "0xa": 80, "0xb": 80, "0xc": 80 });
+    const contested = detectDisagreement(trades, smart, DEFAULT_DISAGREEMENT);
+    const c = detectLopsidedCandidates(
+      [],
+      params(),
+      ctx({ contested, nowSec: 800 }),
+    )[0];
+    expect(c.wallets).toEqual([
+      { wallet: "0xc", netUsd: 20_000, score: 80 },
+      { wallet: "0xa", netUsd: 6_000, score: 80 },
+    ]);
+    expect(c.wallets!).toHaveLength(c.walletCount);
+    expect(c.wallets!.reduce((s, w) => s + w.netUsd, 0)).toBeCloseTo(
+      c.totalNetUsd,
+      6,
+    );
+  });
+
+  it('minor(逆势少数边档):记的是所选边(少数边)的钱包,不是主导边', () => {
+    const trades = lopsidedTrades();
+    const smart = smartMap({ "0xa": 80, "0xb": 80, "0xc": 80 });
+    const contested = detectDisagreement(trades, smart, DEFAULT_DISAGREEMENT);
+    const c = detectLopsidedCandidates(
+      [],
+      params({ side: "minor" }),
+      ctx({ contested, nowSec: 800 }),
+    )[0];
+    expect(c.wallets).toEqual([{ wallet: "0xb", netUsd: 6_000, score: 80 }]);
+  });
+});

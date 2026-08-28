@@ -11,7 +11,7 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 463 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that range: 1849 tests across
+Scope: 473 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that range: 1862 tests across
 143 files (`npm test`).
 
 ## Corrections that changed reported numbers
@@ -36,6 +36,34 @@ Scope: 463 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-28 — Signals start remembering who triggered them (walk-forward v2 groundwork)
+
+The walk-forward batch had to drop its score-floor dimension and approximate per-wallet
+minimums with an average, for one reason: the facts were never recorded. A position knows its
+wallet count and total, but not *which* wallets, *how much each*, or *what score the engine saw
+at detection time* — and `smart_wallets.score` is a moving value, so backfilling from it would
+be look-ahead. Those facts can only be recorded forward; every day without them is a day the
+next re-derivation permanently cannot replay.
+
+This batch adds exactly that recording and nothing else. `FollowCandidate` gains an optional,
+attribution-only `wallets` snapshot (`{wallet, netUsd, score}` — score as visible in that
+cycle's smart-wallet map, `null` stays `null`), all six detectors fill it from data they
+already held, and the open path writes it through to a new `strategy_signals.wallets_json`
+column. No cap, no re-sorting: truncation would recreate the very "necessary but not
+sufficient" problem this exists to solve. Old rows stay `NULL`, which doubles as the coverage
+marker — the next walk-forward run can split its replay window on `wallets_json IS NOT NULL`
+without any bookkeeping.
+
+Nothing is exposed. Every outbound surface (strategy feed, webhook events, TG templates, CSV
+export, admin overview) was audited as an explicit projection, and two leak-guard tests pin it:
+a sentinel wallet planted in the column must never appear in the feed or in a webhook body —
+a future spread-style refactor goes red on the spot (mutation-verified). Publishing per-wallet
+data to subscribers is a separate product decision with its own doc obligations, deliberately
+not taken here.
+
+**Scope**: `wallets_json` column + `recordStrategySignal`, `CandidateWallet` on the candidate
+contract, six detector fills, open-path wiring, two leak guards (+10 tests).
 
 ### 2026-08-28 — The thresholds face their first re-derivation (walk-forward, recommendations only)
 
