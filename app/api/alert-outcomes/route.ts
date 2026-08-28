@@ -6,7 +6,7 @@ import { guardExpensive } from "../../../lib/apiGuard";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Each cold alert can cost up to two prices-history calls; results are cached
+// Each cold alert can cost up to three prices-history calls; results are cached
 // permanently (immutable history), so only first views pay.
 const MAX = 100;
 

@@ -54,12 +54,15 @@ export interface OutcomeBackfillResult {
   wrapped: boolean; // this cycle reached the oldest candidate; next starts fresh
 }
 
-// Terminal = settled AND both follow-through marks present. Everything else
-// still has (or may still get) work: missing rows, unresolved markets, and
-// null marks the 6h backoff will retry.
+// Terminal = settled AND all three follow-through marks present. Everything
+// else still has (or may still get) work: missing rows, unresolved markets,
+// and null marks the 6h backoff will retry. price_10m(2026-08-28 加列)让
+// 全部历史已终态行重新入选一次 —— 历史价不可变,借既有 500 条/轮预算滴灌
+// 补齐,每行至多多付一次 prices-history。
 const CANDIDATE_WHERE = `
   (ao.alert_id IS NULL
    OR ao.resolved = 0
+   OR ao.price_10m IS NULL
    OR ao.price_1h IS NULL
    OR ao.price_24h IS NULL)`;
 

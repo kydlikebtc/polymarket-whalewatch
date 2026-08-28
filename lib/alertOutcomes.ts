@@ -9,6 +9,8 @@ import { settleWon } from "./outcomeStats";
 // here is queried ON DEMAND from public history (prices-history + gamma) —
 // no archival layer needed — and cached because past prices are immutable.
 export interface AlertOutcome {
+  /** 10 分钟标记(2026-08-28 八件套):价格影响持久性的「初动」端。 */
+  price10m: number | null;
   price1h: number | null;
   price24h: number | null;
   resolved: boolean;
@@ -84,6 +86,7 @@ function parseTrackable(
   }
 }
 
+const TEN_MIN = 600;
 const HOUR = 3600;
 const DAY = 86_400;
 // Wait a little past the mark so the candle actually exists.
@@ -135,7 +138,7 @@ export async function computeAlertOutcomes(
   if (trackable.length === 0) return {};
 
   const selOut = db.prepare(
-    "SELECT price_1h, price_24h, resolved, resolution_price, won, checked_at FROM alert_outcomes WHERE alert_id = ?",
+    "SELECT price_10m, price_1h, price_24h, resolved, resolution_price, won, checked_at FROM alert_outcomes WHERE alert_id = ?",
   );
   // MERGE, not replace: every fact here is immutable once known (historical
   // prices, settlement), so an existing non-null column always wins over the
@@ -148,9 +151,10 @@ export async function computeAlertOutcomes(
   // attempt so the null-retry backoff stays honest.
   const upsert = db.prepare(
     `INSERT INTO alert_outcomes
-       (alert_id, price_1h, price_24h, resolved, resolution_price, won, checked_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+       (alert_id, price_10m, price_1h, price_24h, resolved, resolution_price, won, checked_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(alert_id) DO UPDATE SET
+       price_10m = COALESCE(alert_outcomes.price_10m, excluded.price_10m),
        price_1h = COALESCE(alert_outcomes.price_1h, excluded.price_1h),
        price_24h = COALESCE(alert_outcomes.price_24h, excluded.price_24h),
        resolved = MAX(alert_outcomes.resolved, excluded.resolved),
@@ -165,6 +169,7 @@ export async function computeAlertOutcomes(
       a.id,
       selOut.get(a.id) as
         | {
+            price_10m: number | null;
             price_1h: number | null;
             price_24h: number | null;
             resolved: number;
@@ -194,6 +199,7 @@ export async function computeAlertOutcomes(
   const out: Record<number, AlertOutcome> = {};
   await mapLimit(trackable, concurrency, async ({ id, p }) => {
     const cached = cachedRows.get(id);
+    let price10m = cached?.price_10m ?? null;
     let price1h = cached?.price_1h ?? null;
     let price24h = cached?.price_24h ?? null;
     let resolved = !!cached?.resolved;
@@ -230,12 +236,16 @@ export async function computeAlertOutcomes(
     // "Attempted" must be judged PER MARK: a cached row whose checked_at
     // predates the mark (e.g. the dashboard viewed the alert before the hour
     // elapsed) has NEVER tried this mark, so the null backoff must not gate it.
-    const marks: [number, "1h" | "24h"][] = [
+    // 10m 标记(价格影响持久性,2026-08-28):每告警上游预算 2→3 次;历史
+    // 已终态行经 CANDIDATE_WHERE 的 price_10m IS NULL 分支按既有轮转预算滴灌。
+    const marks: [number, "10m" | "1h" | "24h"][] = [
+      [TEN_MIN, "10m"],
       [HOUR, "1h"],
       [DAY, "24h"],
     ];
     for (const [delta, which] of marks) {
-      const have = which === "1h" ? price1h : price24h;
+      const have =
+        which === "10m" ? price10m : which === "1h" ? price1h : price24h;
       if (have != null) continue;
       const markAt = p.timestamp + delta + SETTLE_MARGIN_SEC;
       if (nowSec < markAt) continue;
@@ -243,7 +253,8 @@ export async function computeAlertOutcomes(
       if (attempted && nowSec - cached.checked_at <= NULL_RETRY_SEC) continue;
       try {
         const price = await fetchPrice(p.asset, p.timestamp + delta);
-        if (which === "1h") price1h = price;
+        if (which === "10m") price10m = price;
+        else if (which === "1h") price1h = price;
         else price24h = price;
         dirty = true;
       } catch (e) {
@@ -254,6 +265,7 @@ export async function computeAlertOutcomes(
     if (dirty) {
       upsert.run(
         id,
+        price10m,
         price1h,
         price24h,
         resolved ? 1 : 0,
@@ -262,7 +274,7 @@ export async function computeAlertOutcomes(
         nowSec,
       );
     }
-    out[id] = { price1h, price24h, resolved, resolutionPrice, won };
+    out[id] = { price10m, price1h, price24h, resolved, resolutionPrice, won };
   });
   return out;
 }

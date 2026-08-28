@@ -78,6 +78,7 @@ type SmartPoolMeta = {
 
 // On-demand validation data per alert (computed lazily from public history).
 type AlertOutcome = {
+  price10m?: number | null;
   price1h: number | null;
   price24h: number | null;
   resolved: boolean;
@@ -363,6 +364,7 @@ export default function Page() {
   // ε-deadband pushes excluded from both sides (see lib/outcomeStats).
   const summary = summarizeOutcomes(data.alerts, outcomes);
   const hasStats =
+    summary.dir10m.total > 0 ||
     summary.dir1h.total > 0 ||
     summary.dir24h.total > 0 ||
     summary.settled.total > 0;
@@ -473,6 +475,7 @@ export default function Page() {
           <span>
             <Icon s="📐" /> {t("信号验证（当前列表）")}
           </span>
+          <StatLine label={t("10m 方向命中")} stat={summary.dir10m} />
           <StatLine label={t("1h 方向命中")} stat={summary.dir1h} />
           <StatLine label={t("24h 方向命中")} stat={summary.dir24h} />
           <StatLine label={t("已结算胜率")} stat={summary.settled} />
@@ -561,6 +564,12 @@ export default function Page() {
                           flexWrap: "wrap",
                         }}
                       >
+                        <FollowBadge
+                          label="10m"
+                          entry={a.price}
+                          later={o?.price10m ?? null}
+                          side={a.side}
+                        />
                         <FollowBadge
                           label="1h"
                           entry={a.price}

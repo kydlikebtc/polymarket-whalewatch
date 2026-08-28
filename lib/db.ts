@@ -14,7 +14,7 @@ export function openDb(path = "data.sqlite") {
     CREATE TABLE IF NOT EXISTS market_meta (condition_id TEXT PRIMARY KEY, meta_json TEXT, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS event_category (event_slug TEXT PRIMARY KEY, category TEXT, subcategory TEXT, fetched_at INTEGER);
     CREATE TABLE IF NOT EXISTS consensus_state (condition_id TEXT, outcome TEXT, wallet_count INTEGER, total_usd REAL, last_alert_ts INTEGER, PRIMARY KEY (condition_id, outcome));
-    CREATE TABLE IF NOT EXISTS alert_outcomes (alert_id INTEGER PRIMARY KEY, price_1h REAL, price_24h REAL, resolved INTEGER DEFAULT 0, resolution_price REAL, won INTEGER, checked_at INTEGER);
+    CREATE TABLE IF NOT EXISTS alert_outcomes (alert_id INTEGER PRIMARY KEY, price_10m REAL, price_1h REAL, price_24h REAL, resolved INTEGER DEFAULT 0, resolution_price REAL, won INTEGER, checked_at INTEGER);
     CREATE TABLE IF NOT EXISTS wallet_candidates (address TEXT NOT NULL, channel TEXT NOT NULL, condition_id TEXT NOT NULL, evidence_ts INTEGER, usd REAL, price REAL, note TEXT, title TEXT, slug TEXT, event_slug TEXT, outcome TEXT, created_at INTEGER, PRIMARY KEY (address, channel, condition_id));
     CREATE TABLE IF NOT EXISTS early_winner_scans (condition_id TEXT PRIMARY KEY, scanned_at INTEGER, trades_scanned INTEGER, truncated INTEGER);
     CREATE TABLE IF NOT EXISTS config_history (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, value TEXT, changed_at INTEGER NOT NULL);
@@ -159,6 +159,14 @@ export function openDb(path = "data.sqlite") {
     } catch {
       // column already present
     }
+  }
+  // alert_outcomes 10 分钟标记(2026-08-28 八件套):价格影响持久性的「初动」
+  // 端。历史价不可变,老行经回填循环的 price_10m IS NULL 候选分支滴灌补齐
+  // (每轮 ≤500 条既有预算,一次到位永不重取)。
+  try {
+    db.prepare("ALTER TABLE alert_outcomes ADD COLUMN price_10m REAL").run();
+  } catch {
+    // column already present
   }
   // strategy_signals gained wallets_json(2026-08-28,walk-forward v2 前置,
   // 设计见 docs/plans/2026-08-28-signal-forward-facts-design.md):触发钱包 +

@@ -135,6 +135,8 @@ export interface OutcomeStat extends OutcomeTally {
 }
 
 export interface OutcomeSummary {
+  /** 10 分钟方向档(2026-08-28):价格影响持久性的「初动」读数。 */
+  dir10m: OutcomeStat;
   dir1h: OutcomeStat;
   dir24h: OutcomeStat;
   settled: OutcomeStat;
@@ -167,6 +169,7 @@ export interface SummaryAlert {
 }
 
 export interface SummaryOutcome {
+  price10m?: number | null;
   price1h: number | null;
   price24h: number | null;
   resolved: boolean;
@@ -232,6 +235,7 @@ export function summarizeOutcomes(
     byType: {},
   });
   const summary: OutcomeSummary = {
+    dir10m: empty(),
     dir1h: empty(),
     dir24h: empty(),
     settled: empty(),
@@ -284,6 +288,10 @@ export function summarizeOutcomes(
     }
     return out;
   };
+  gradeInto(
+    summary.dir10m,
+    dirGraded((o) => o.price10m ?? null),
+  );
   gradeInto(
     summary.dir1h,
     dirGraded((o) => o.price1h),
