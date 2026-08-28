@@ -90,6 +90,7 @@ const NAV: NavEntry[] = [
     items: [
       { href: "/consensus", label: "共识 / 分歧" },
       { href: "/discovery", label: "聪明钱发现" },
+      { href: "/selftest", label: "聪明钱自测" },
     ],
   },
   {

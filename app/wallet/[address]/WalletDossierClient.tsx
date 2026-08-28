@@ -16,6 +16,7 @@ import {
 } from "../../ui";
 import { useLang } from "../../i18n";
 import { WalletTagChips } from "../../walletTagChips";
+import SelfTestBlock from "./SelfTestBlock";
 import { subLabel } from "../../../lib/categoryLabel";
 import type { WalletTag } from "../../../lib/walletTags";
 
@@ -984,6 +985,9 @@ export default function WalletPage() {
           ) : null}
         </>
       ) : null}
+
+      {/* 自测判决块:独立取数、点击加载 —— 档案降级时也可体检 */}
+      {address ? <SelfTestBlock address={address} /> : null}
     </main>
   );
 }
