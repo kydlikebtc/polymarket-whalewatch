@@ -204,3 +204,15 @@ minTotalUsd: 10000 }`），v1 无配置面。
 | F    | CHANGELOG 批次条目 + README（roadmap/At a glance）+ 本文档索引 | 文档守卫全绿                                                      |
 
 每任务完成必须：`npm test` 全绿（基线 1872+新增）+ `npm run typecheck` 干净。
+
+## 实现期修正（同日）
+
+- **重推 due 周期 90 天 → 30 天**：/manage 使用说明既有裁决是「节律:月度——
+  validate 折按完整 UTC 周自然长出」，季度口径与产品自述冲突，按月度实现
+  （`WF_DUE_DAYS = 30`）。
+- **哨兵与 walk-forward 的两处刻意口径分歧**补充论证入代码头注释：fee 缺失
+  按 0 计而非整仓剔除（监控流不能断）、同市场折均值而非仅聚类方差（CUSUM
+  要准独立观察流，折均值不涉「整簇挑边」）。
+- 顺手补闸：`dict.test.ts` 的 SHARDS 名单漏了 pulse/calibration 两片，补上后
+  立即拦下「样本不足」跨分片异值真冲突——新键改为沿用 alerts 片既有译文。
+- 全批落地：1872 → 1922 测试 / 148 文件，typecheck 零错，六个 feat/docs 提交。
