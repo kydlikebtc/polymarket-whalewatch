@@ -161,3 +161,12 @@ SVG 折线 + 分类型着色标记点 + 结算横线,复用 `computeTimeTicks`�
 
 基线：1922 tests / 148 files（86da532）。每任务 `npm test` 全绿 +
 `npm run typecheck` 干净。
+
+## 实现期修正（同日）
+
+- **价格影响的可测口径收紧**：设计稿「|m_10m| ≥ 2¢」改为「m_10m ≥ +2¢」——
+  负初动（落地即被打回）的「留存」问题不适定，计入会把分母灌水。
+- **离场组字段**：`totalSoldUsd`/`avgSellPrice` 命名落地（设计稿写意为
+  ExitGroup），页面表格含钱包内联前三。
+- 全批落地：1922 → 1958 测试 / 153 文件，typecheck 零错，设计 + A–H + 收尾
+  共十个提交；`/pulse` 的三个 additive 键同步进 api-access §13/§16（Task B 内完成）。
