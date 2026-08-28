@@ -13,6 +13,7 @@ import TgTargetsSection from "./TgTargetsSection";
 import XAccountsSection from "./XAccountsSection";
 import SignalsSection from "./SignalsSection";
 import MarketCardSection from "./MarketCardSection";
+import WalkforwardSection from "./WalkforwardSection";
 import StatusStrip from "./StatusStrip";
 import {
   PipelinesOverview,
@@ -417,11 +418,17 @@ export default function ManagePage() {
           </div>
           {lineSub === "events" && <EventsSection token={token} />}
           {lineSub === "signals" && (
-            <SignalsSection
-              token={token}
-              overview={overview}
-              reload={loadAll}
-            />
+            <>
+              <SignalsSection
+                token={token}
+                overview={overview}
+                reload={loadAll}
+              />
+              {/* 🧪 阈值重推报告住在 ② 策略信号里:它评的是这些档的参数,
+                  采纳路径(手工建挑战者档)也在本 tab —— 看报告与动手建档
+                  不该隔着一次导航。 */}
+              <WalkforwardSection token={token} />
+            </>
           )}
           {lineSub === "views" && <ViewsSection />}
         </>
