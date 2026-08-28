@@ -438,3 +438,382 @@ export function randomizationP(
   }
   return (1 + hits) / (1 + draws);
 }
+
+// ---------------------------------------------------------------------------
+// 全档评估管线(实现计划 §0.5/0.6)。两段式:先逐档收集「validate 被看过的格」
+// 定死全局 G(Bonferroni 分母),再统一判闸 —— G 没定死之前判任何一格都是在
+// 用未来信息。选择与评价严格分离:train 打平/落选的格连 validate 数字都不
+// 发布(发布即烧 OOS)。
+
+export interface WfOptions {
+  /** 闸门起点(报告透传;lib 不持有日期常量)。 */
+  gateStart: number;
+  /** listValidateFolds 的输出。 */
+  folds: number[];
+  randDraws: number;
+  seed: number;
+  /** 折内最小 settled 数(train 与 validate 双侧同闸)。 */
+  minFoldSettled: number;
+  /** 折内最小去重市场数。 */
+  minFoldMarkets: number;
+  /** 变体最少可评折数,不足进观察名单。 */
+  minValidFolds: number;
+  alpha: number;
+}
+
+export interface WfTierInput {
+  strategyId: number;
+  name: string;
+  code: string | null;
+  params: StrategyParams;
+  /** 宇宙过滤(§0.2)后的仓;原始 settled 总数另报以对表 /api/follow。 */
+  positions: WfPosition[];
+  settledRaw: number;
+  universeDropped: { noFormation: number; noFee: number; badShares: number };
+}
+
+export interface WfFoldDetail {
+  fold: number;
+  trainN: number;
+  trainMarkets: number;
+  trainPoint: number | null;
+  validateN: number;
+  validateMarkets: number;
+  validatePoint: number | null;
+  evaluable: boolean;
+  reason?: string;
+}
+
+export interface WfPooled {
+  n: number;
+  markets: number;
+  point: number;
+  seC: number;
+}
+
+export interface WfVariantReport {
+  key: string;
+  label: string;
+  dim: string;
+  category: WfCategory;
+  exitRule: string;
+  folds: WfFoldDetail[];
+  pooled: WfPooled | null;
+  /** point − zBonf·seC(闸 A 的判定量)。 */
+  loBonf: number | null;
+  randP: number | null;
+  passClustered: boolean;
+  passRand: boolean;
+  survives: boolean;
+}
+
+export interface WfTierReport {
+  strategyId: number;
+  name: string;
+  code: string | null;
+  source: string;
+  settledRaw: number;
+  universeN: number;
+  universeDropped: { noFormation: number; noFee: number; badShares: number };
+  /** 基线可评折 < minValidFolds → 整档薄档:跳网格,只报现状。 */
+  thin: boolean;
+  /** 全样本 hold 现状(聚类口径),薄档的唯一读数,非薄档的对照。 */
+  currentStat: WfClusterStat | null;
+  baseline: WfVariantReport | null;
+  candidates: WfVariantReport[];
+  survivors: string[];
+  watchlist: { key: string; label: string; validFolds: number }[];
+  /** 可评折够但 train 未入选的格数(它们的 validate 从未被看过)。 */
+  trainRejected: number;
+  /** 可评折不足的格数(观察名单是其中 train 有戏的子集)。 */
+  insufficient: number;
+}
+
+export interface WalkforwardReport {
+  gateStart: number;
+  folds: number[];
+  /** 非薄档的网格格数合计(构造出来的);薄档整档跳过不计。 */
+  gridTotal: number;
+  /** Bonferroni 分母 G = 实际发布过 validate 成绩的格数(候选+非薄档基线)。 */
+  scoredCells: number;
+  zBonf: number;
+  alpha: number;
+  randDraws: number;
+  seed: number;
+  tiers: WfTierReport[];
+  declarations: string[];
+}
+
+/** 报告固定诚实段落(设计 §7 + 实现计划 §0 的近似声明),脚本与管理页共用。 */
+export const WF_DECLARATIONS: readonly string[] = [
+  "幸存者宇宙:分析宇宙 = 在当前阈值下触发过的信号;对「从未触发过的世界」本报告一无所知。",
+  "收紧外推禁令:一切变体只在收紧/平移方向成立,禁止外推到放松方向 —— 放松的唯一诚实做法是开更松的挑战者档从今天向前跑。",
+  "score 维度不可回放:仓位未记录触发钱包与彼时评分,以 minNetUsd 平移代之;要网格化它需先向前落 wallet+score(v2)。",
+  "minPerWalletUsd 为均值口径(total/count):是真逐钱包收紧子集的超集;胜出建挑战者档时配真 minPerWalletUsd,向前对照给出无偏读数。",
+  "freshSec 以 entry_ts−formation_ts 近似检测时新鲜度;tiltPct 取 formation 前 ≤1h 的最近快照 —— 两者都是落库残影,非逐 tick 重放。",
+  "退出规则为纸面对纸面反事实:~10min 蜡烛盲区使 SL 触发被系统性低估,读数是下界;推及实盘须另计退出侧盘口与费。退出格的方向随机化在其子集的 hold 基准上判(退出规则不产生方向技能)。",
+  "方向随机化按市场抽签(同市场同抽,对边反相关),null 重掷的是二元结算;分数结算仓的实测贡献同量纲可比。",
+  "fee_usd 为 null(不可定价)的仓整行出宇宙,绝不当 0;逐档披露剔除量。",
+  "本报告不修改任何存量档参数,不输出买卖建议 —— 产出只有「参数变体在历史子集上的费用后超额」与手工挑战者档路径。",
+];
+
+interface CellEval {
+  cell: WfCell;
+  folds: WfFoldDetail[];
+  validFolds: number[];
+  /** 在每个可评折上 train 均值是否严格大于基线同折 train 均值。 */
+  trainSelected: boolean;
+  pooledRows: { p: WfPosition; contrib: number }[] | null;
+}
+
+function foldGate(
+  n: number,
+  markets: number,
+  opts: WfOptions,
+): string | null {
+  if (n < opts.minFoldSettled) return `样本不足(${n} 仓)`;
+  if (markets < opts.minFoldMarkets) return `市场不足(${markets} 个)`;
+  return null;
+}
+
+function statOf(rows: { p: WfPosition; contrib: number }[]) {
+  return clusterStat(
+    rows.map((r) => ({ contrib: r.contrib, cluster: r.p.conditionId })),
+  );
+}
+
+/** 一个格在全部折上的读数与入选判定(基线传 null 的 baselineTrain)。 */
+function evalCell(
+  cell: WfCell,
+  positions: WfPosition[],
+  opts: WfOptions,
+  baselineTrainPoint: Map<number, number | null> | null,
+): CellEval {
+  const folds: WfFoldDetail[] = [];
+  const validFolds: number[] = [];
+  let trainSelected = true;
+  const pooledRows: { p: WfPosition; contrib: number }[] = [];
+  const rowsOf = (list: WfPosition[]) => {
+    const out: { p: WfPosition; contrib: number }[] = [];
+    for (const p of subsetOf(list, cell).included) {
+      const c = contribOf(p, cell.exitRule);
+      if (c != null) out.push({ p, contrib: c });
+    }
+    return out;
+  };
+  for (const fold of opts.folds) {
+    const train = rowsOf(positions.filter((p) => p.formationTs < fold));
+    const val = rowsOf(
+      positions.filter((p) => foldOf(p.formationTs, [fold]) === fold),
+    );
+    const trainStat = statOf(train);
+    const valStat = statOf(val);
+    const trainWhy = foldGate(train.length, trainStat?.nc ?? 0, opts);
+    const valWhy = foldGate(val.length, valStat?.nc ?? 0, opts);
+    const evaluable = trainWhy == null && valWhy == null;
+    folds.push({
+      fold,
+      trainN: train.length,
+      trainMarkets: trainStat?.nc ?? 0,
+      trainPoint: trainStat?.point ?? null,
+      validateN: val.length,
+      validateMarkets: valStat?.nc ?? 0,
+      validatePoint: valStat?.point ?? null,
+      evaluable,
+      reason: evaluable
+        ? undefined
+        : trainWhy
+          ? `train ${trainWhy}`
+          : `validate ${valWhy}`,
+    });
+    if (!evaluable) continue;
+    validFolds.push(fold);
+    pooledRows.push(...val);
+    if (baselineTrainPoint) {
+      const base = baselineTrainPoint.get(fold);
+      // 基线同折 train 缺失时不入选(候选的 train ⊆ 基线的 train,理论上
+      // 不会发生 —— 防御,不猜)。
+      if (base == null || !((trainStat?.point ?? -Infinity) > base)) {
+        trainSelected = false;
+      }
+    }
+  }
+  return {
+    cell,
+    folds,
+    validFolds,
+    trainSelected,
+    pooledRows: pooledRows.length > 0 ? pooledRows : null,
+  };
+}
+
+function toVariantReport(ev: CellEval): WfVariantReport {
+  const stat = ev.pooledRows ? statOf(ev.pooledRows) : null;
+  return {
+    key: ev.cell.key,
+    label: `${ev.cell.entry.label}${
+      ev.cell.category === "all"
+        ? ""
+        : ev.cell.category === "sports"
+          ? " · 仅体育"
+          : " · 仅非体育"
+    }${ev.cell.exitRule === "hold" ? "" : ` · 退出 ${ev.cell.exitRule}`}`,
+    dim: ev.cell.entry.dim,
+    category: ev.cell.category,
+    exitRule: ev.cell.exitRule,
+    folds: ev.folds,
+    pooled: stat
+      ? { n: stat.n, markets: stat.nc, point: stat.point, seC: stat.seC }
+      : null,
+    loBonf: null,
+    randP: null,
+    passClustered: false,
+    passRand: false,
+    survives: false,
+  };
+}
+
+export function runWalkforward(
+  tiers: WfTierInput[],
+  opts: WfOptions,
+): WalkforwardReport {
+  interface TierWork {
+    input: WfTierInput;
+    thin: boolean;
+    baseline: CellEval | null;
+    candidates: CellEval[];
+    watchlist: { key: string; label: string; validFolds: number }[];
+    trainRejected: number;
+    insufficient: number;
+    gridCells: number;
+  }
+  const works: TierWork[] = [];
+  for (const tier of tiers) {
+    const cells = buildGrid(tier.params);
+    const baseCell = cells.find(
+      (c) =>
+        c.entry.dim === "base" && c.category === "all" && c.exitRule === "hold",
+    )!;
+    const baseEval = evalCell(baseCell, tier.positions, opts, null);
+    const thin = baseEval.validFolds.length < opts.minValidFolds;
+    if (thin) {
+      works.push({
+        input: tier,
+        thin,
+        baseline: baseEval,
+        candidates: [],
+        watchlist: [],
+        trainRejected: 0,
+        insufficient: 0,
+        gridCells: 0,
+      });
+      continue;
+    }
+    const baseTrainByFold = new Map<number, number | null>(
+      baseEval.folds.map((f) => [f.fold, f.trainPoint]),
+    );
+    const candidates: CellEval[] = [];
+    const watchlist: TierWork["watchlist"] = [];
+    let trainRejected = 0;
+    let insufficient = 0;
+    for (const cell of cells) {
+      if (cell === baseCell) continue;
+      const ev = evalCell(cell, tier.positions, opts, baseTrainByFold);
+      if (ev.validFolds.length >= opts.minValidFolds) {
+        if (ev.trainSelected) candidates.push(ev);
+        else trainRejected++;
+      } else {
+        insufficient++;
+        if (ev.validFolds.length >= 1 && ev.trainSelected) {
+          watchlist.push({
+            key: cell.key,
+            label: toVariantReport(ev).label,
+            validFolds: ev.validFolds.length,
+          });
+        }
+      }
+    }
+    works.push({
+      input: tier,
+      thin,
+      baseline: baseEval,
+      candidates,
+      watchlist,
+      trainRejected,
+      insufficient,
+      gridCells: cells.length,
+    });
+  }
+
+  // 全局 G 定死后才判闸。
+  const scoredCells =
+    works.reduce((s, w) => s + w.candidates.length, 0) +
+    works.filter((w) => !w.thin).length;
+  const alphaAdj = opts.alpha / Math.max(scoredCells, 1);
+  const zBonf = normalQuantile(1 - alphaAdj / 2);
+
+  const tiersOut: WfTierReport[] = works.map((w) => {
+    const holdContribs = w.input.positions
+      .map((p) => ({ p, contrib: contribOf(p, "hold") }))
+      .filter((r): r is { p: WfPosition; contrib: number } => r.contrib != null);
+    const currentStat = statOf(holdContribs);
+    const baselineReport = w.baseline ? toVariantReport(w.baseline) : null;
+    const survivors: string[] = [];
+    const candidates = w.candidates.map((ev) => {
+      const rep = toVariantReport(ev);
+      const rows = ev.pooledRows!;
+      rep.loBonf =
+        rep.pooled == null ? null : rep.pooled.point - zBonf * rep.pooled.seC;
+      rep.passClustered = rep.loBonf != null && rep.loBonf > 0;
+      // 闸 B 永远在该格子集的 hold 基准上跑:观测量=同一批仓的 hold 贡献均值,
+      // 同入场不同退出的格子集相同 → p 逐字相等(退出不产生方向技能)。
+      const holdObserved =
+        rows.reduce((s, r) => s + contribOf(r.p, "hold")!, 0) / rows.length;
+      rep.randP = randomizationP(
+        rows.map((r) => ({
+          conditionId: r.p.conditionId,
+          outcome: r.p.outcome,
+          q: r.p.entryPrice,
+          feePerShare: r.p.feeUsd / r.p.shares,
+        })),
+        holdObserved,
+        opts.randDraws,
+        opts.seed,
+      );
+      rep.passRand = rep.randP <= alphaAdj;
+      rep.survives = rep.passClustered && rep.passRand;
+      if (rep.survives) survivors.push(rep.key);
+      return rep;
+    });
+    return {
+      strategyId: w.input.strategyId,
+      name: w.input.name,
+      code: w.input.code,
+      source: w.input.params.source,
+      settledRaw: w.input.settledRaw,
+      universeN: w.input.positions.length,
+      universeDropped: w.input.universeDropped,
+      thin: w.thin,
+      currentStat,
+      baseline: baselineReport,
+      candidates,
+      survivors,
+      watchlist: w.watchlist,
+      trainRejected: w.trainRejected,
+      insufficient: w.insufficient,
+    };
+  });
+
+  return {
+    gateStart: opts.gateStart,
+    folds: opts.folds,
+    gridTotal: works.reduce((s, w) => s + w.gridCells, 0),
+    scoredCells,
+    zBonf,
+    alpha: opts.alpha,
+    randDraws: opts.randDraws,
+    seed: opts.seed,
+    tiers: tiersOut,
+    declarations: [...WF_DECLARATIONS],
+  };
+}

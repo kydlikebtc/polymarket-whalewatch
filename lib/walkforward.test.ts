@@ -13,6 +13,7 @@ import {
   mulberry32,
   normalQuantile,
   randomizationP,
+  runWalkforward,
   subsetOf,
 } from "./walkforward";
 
@@ -443,5 +444,282 @@ describe("方向随机化", () => {
     // 观测 1.0 严格高于 null 的上确界(1 − q − fee = 0.99)→ 零命中。
     const p = randomizationP([row({ q: 0.01 })], 1.0, 100, 3);
     expect(p).toBeCloseTo(1 / 101, 12);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 全档评估管线。合成夹具约定:q=0.5、shares=100、fee=0 → 赢仓 contrib=+0.5、
+// 输仓 −0.5;一仓一市场(m<id>);exitSims 默认九规则未触发(pnl=实际)——
+// 退出格与 hold 同值,让「子集选择」成为唯一的差异来源。
+const F1 = MON + 2 * WEEK;
+const F2 = MON + 3 * WEEK;
+const TRAIN_ERA = MON + WEEK; // 首个干净周,foldOf=null → 只进 train
+const OPTS = {
+  gateStart: GATE,
+  folds: [F1, F2],
+  randDraws: 1_000,
+  seed: 20_260_828,
+  minFoldSettled: 10,
+  minFoldMarkets: 5,
+  minValidFolds: 2,
+  alpha: 0.05,
+};
+let nextId = 1;
+const RULE_IDS = [
+  "sl10",
+  "sl20",
+  "sl30",
+  "tp10",
+  "tp20",
+  "tp30",
+  "t24",
+  "t72",
+  "t168",
+];
+function tierPos(
+  base: number,
+  i: number,
+  win: boolean,
+  over: Partial<import("./walkforward").WfPosition> = {},
+) {
+  const id = nextId++;
+  const pnl = win ? 50 : -50;
+  return pos({
+    id,
+    conditionId: `m${id}`,
+    formationTs: base + i * 600,
+    entryTs: base + i * 600 + 60,
+    entryPrice: 0.5,
+    formationPrice: 0.5,
+    shares: 100,
+    feeUsd: 0,
+    realizedPnl: pnl,
+    category: "Sports",
+    walletCount: 2,
+    tiltPct: null,
+    exitSims: Object.fromEntries(
+      RULE_IDS.map((r) => [r, { exited: 0, pnl }]),
+    ),
+    ...over,
+  });
+}
+function tierInput(
+  name: string,
+  p: StrategyParams,
+  positions: unknown[],
+): import("./walkforward").WfTierInput {
+  return {
+    strategyId: p.id,
+    name,
+    code: null,
+    params: p,
+    positions: positions as import("./walkforward").WfPosition[],
+    settledRaw: positions.length,
+    universeDropped: { noFormation: 0, noFee: 0, badShares: 0 },
+  };
+}
+
+/** 旗舰 heavy 档:大单($120k)全赢、小单($60k)全输,三个时代各 12+12。 */
+function mkHeavyTier() {
+  const positions: unknown[] = [];
+  for (const era of [TRAIN_ERA, F1, F2]) {
+    for (let i = 0; i < 12; i++) {
+      positions.push(tierPos(era, i, true, { totalNetUsd: 120_000 }));
+    }
+    for (let i = 12; i < 24; i++) {
+      positions.push(tierPos(era, i, false, { totalNetUsd: 60_000 }));
+    }
+  }
+  return tierInput(
+    "巨鲸",
+    params({ id: 9, source: "heavy", minSingleFillUsd: 50_000 }),
+    positions,
+  );
+}
+
+/** 薄档:F2 12 仓但仅 4 市场(市场闸打掉)→ 基线可评折 1 < 2。 */
+function mkThinTier() {
+  const positions: unknown[] = [];
+  for (let i = 0; i < 24; i++) {
+    positions.push(tierPos(TRAIN_ERA, i, i % 2 === 0));
+  }
+  for (let i = 0; i < 24; i++) {
+    positions.push(tierPos(F1, i, i % 2 === 0));
+  }
+  for (let i = 0; i < 12; i++) {
+    positions.push(
+      tierPos(F2, i, i % 2 === 0, { conditionId: `thin${i % 4}` }),
+    );
+  }
+  return tierInput(
+    "首发共识",
+    params({ id: 7, source: "consensus", minWallets: 2, minPerWalletUsd: 5_000 }),
+    positions,
+  );
+}
+
+describe("walk-forward 评估管线", () => {
+  const report = runWalkforward([mkHeavyTier(), mkThinTier()], OPTS);
+  const heavy = report.tiers.find((t) => t.name === "巨鲸")!;
+  const thin = report.tiers.find((t) => t.name === "首发共识")!;
+
+  it("薄档:基线可评折<2 → 跳网格只报现状;折明细带市场闸原因", () => {
+    expect(thin.thin).toBe(true);
+    expect(thin.candidates).toHaveLength(0);
+    expect(thin.currentStat?.n).toBe(60);
+    const f2 = thin.baseline?.folds.find((f) => f.fold === F2);
+    expect(f2?.evaluable).toBe(false);
+    expect(f2?.reason).toContain("validate");
+  });
+
+  it("G = 候选 + 非薄档基线,薄档整档不进分母;zBonf 按 G 换算", () => {
+    // heavy:强单维 2 阶梯 × {all,sports} × 10 退出 = 40 候选(全 Sports 数据
+    // 让 sports 子集 ≡ all,与基线打平的其它维度全部 train 落选)。
+    expect(heavy.candidates).toHaveLength(40);
+    expect(report.scoredCells).toBe(41);
+    expect(report.zBonf).toBeCloseTo(
+      normalQuantile(1 - 0.05 / 41 / 2),
+      6,
+    );
+    expect(report.gridTotal).toBe(210); // 薄档的 180 格不计
+    expect(report.gateStart).toBe(GATE);
+  });
+
+  it("train 打平的变体落选:连 validate 数字都不发布", () => {
+    expect(
+      heavy.candidates.some((c) => c.key.startsWith("maxPrice:")),
+    ).toBe(false);
+    expect(heavy.trainRejected).toBeGreaterThan(0);
+  });
+
+  it("强 edge 变体三道闸全过存活;基线自己不参与存活判定", () => {
+    const c = heavy.candidates.find(
+      (c) => c.key === "minFillUsd:75000|all|hold",
+    )!;
+    expect(c.pooled?.n).toBe(24);
+    expect(c.pooled?.point).toBeCloseTo(0.5, 12);
+    expect(c.passClustered).toBe(true);
+    expect(c.passRand).toBe(true);
+    expect(c.survives).toBe(true);
+    expect(c.randP!).toBeLessThanOrEqual(0.05 / 41);
+    expect(heavy.survivors).toContain("minFillUsd:75000|all|hold");
+    expect(heavy.baseline?.pooled?.point).toBeCloseTo(0, 12);
+  });
+
+  it("退出格的随机化继承同子集 hold 基准:同入场不同退出的 p 逐字相等", () => {
+    const byExit = (rule: string) =>
+      heavy.candidates.find((c) => c.key === `minFillUsd:75000|all|${rule}`)!;
+    expect(byExit("tp10").randP).toBe(byExit("hold").randP);
+    expect(byExit("sl10").randP).toBe(byExit("tp10").randP);
+  });
+
+  it("train 赢 validate 输:入围但闸 A 不过,不存活 —— OOS 的全部意义", () => {
+    // consensus 档:wc=3 子集 train 强赢(era 12 全胜),validate 4胜8负×2 折。
+    const positions: unknown[] = [];
+    for (let i = 0; i < 12; i++) {
+      positions.push(
+        tierPos(TRAIN_ERA, i, true, {
+          walletCount: 3,
+          totalNetUsd: 60_000,
+          category: "Politics",
+        }),
+      );
+    }
+    for (let i = 12; i < 24; i++) {
+      positions.push(
+        tierPos(TRAIN_ERA, i, false, {
+          walletCount: 2,
+          totalNetUsd: 20_000,
+          category: "Politics",
+        }),
+      );
+    }
+    for (const era of [F1, F2]) {
+      for (let i = 0; i < 12; i++) {
+        positions.push(
+          tierPos(era, i, i < 4, {
+            walletCount: 3,
+            totalNetUsd: 60_000,
+            category: "Politics",
+          }),
+        );
+      }
+      for (let i = 12; i < 24; i++) {
+        positions.push(
+          tierPos(era, i, i < 20, {
+            walletCount: 2,
+            totalNetUsd: 20_000,
+            category: "Politics",
+          }),
+        );
+      }
+    }
+    const r = runWalkforward(
+      [
+        tierInput(
+          "激进",
+          params({
+            id: 2,
+            source: "consensus",
+            minWallets: 2,
+            minPerWalletUsd: 10_000,
+          }),
+          positions,
+        ),
+      ],
+      OPTS,
+    );
+    const c = r.tiers[0].candidates.find(
+      (c) => c.key === "minWallets:3|all|hold",
+    )!;
+    expect(c).toBeDefined();
+    expect(c.pooled?.point).toBeLessThan(0);
+    expect(c.passClustered).toBe(false);
+    expect(c.survives).toBe(false);
+    expect(r.tiers[0].survivors).toHaveLength(0);
+  });
+
+  it("观察名单:只有 1 个可评折但 train 入选的变体,列名不发数", () => {
+    const positions: unknown[] = [];
+    for (let i = 0; i < 12; i++) {
+      positions.push(tierPos(TRAIN_ERA, i, true, { totalNetUsd: 120_000 }));
+    }
+    for (let i = 12; i < 24; i++) {
+      positions.push(tierPos(TRAIN_ERA, i, false, { totalNetUsd: 60_000 }));
+    }
+    for (let i = 0; i < 20; i++) {
+      positions.push(tierPos(F1, i, i % 2 === 0, { totalNetUsd: 60_000 }));
+    }
+    for (const [i, win] of Array.from({ length: 12 }, (_, i) => [i, true] as const)) {
+      positions.push(tierPos(F2, i, win, { totalNetUsd: 120_000 }));
+    }
+    for (let i = 12; i < 24; i++) {
+      positions.push(tierPos(F2, i, false, { totalNetUsd: 60_000 }));
+    }
+    const r = runWalkforward(
+      [
+        tierInput(
+          "巨鲸",
+          params({ id: 9, source: "heavy", minSingleFillUsd: 50_000 }),
+          positions,
+        ),
+      ],
+      OPTS,
+    );
+    expect(r.tiers[0].candidates).toHaveLength(0);
+    expect(
+      r.tiers[0].watchlist.some(
+        (w) => w.key === "minFillUsd:75000|all|hold" && w.validFolds === 1,
+      ),
+    ).toBe(true);
+  });
+
+  it("报告自带固定诚实段落(幸存者宇宙/收紧外推禁令/近似声明)", () => {
+    expect(report.declarations.length).toBeGreaterThanOrEqual(6);
+    const all = report.declarations.join("\n");
+    expect(all).toContain("幸存者");
+    expect(all).toContain("收紧");
+    expect(all).toContain("score");
+    expect(all).toContain("均值口径");
   });
 });
