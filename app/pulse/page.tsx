@@ -2,9 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useLang } from "../i18n";
-import { catLabelFine } from "../../lib/categoryLabel";
+import { catLabel, catLabelFine } from "../../lib/categoryLabel";
+import type { ConvictionReport } from "../../lib/convictionIndex";
 import type { PulseReport } from "../../lib/marketPulse";
 import { MarketSlugActions } from "../ui";
+
+// /api/pulse 的完整 payload:PulseReport + additive 的确信指数键(服务端
+// 现算失败会降级 null,页面必须能在没有它的情况下照常渲染前两个 section)。
+type PulsePayload = PulseReport & { conviction?: ConvictionReport | null };
 
 // /pulse 市场脉搏:①异常市场日榜(四个可解释分量合成,总分必须能看到组成)
 // ②散户 vs 鲸鱼分歧(小单与鲸鱼桶的方向背离)。数据 = market_daily 每日聚合,
@@ -43,16 +48,83 @@ function CompChips({
   );
 }
 
+// 确信指数四分量微条(复用 .pulse-comp 系列样式;标签集与日榜的不同,不硬套
+// CompChips 的类型)。
+function ConvictionChips({
+  c,
+}: {
+  c: {
+    contest: number;
+    divergence: number;
+    priceMove: number;
+    volSurge: number;
+  };
+}) {
+  const { t } = useLang();
+  const item = (label: string, v: number) => (
+    <span className="pulse-comp" key={label}>
+      <span className="pulse-comp__bar" aria-hidden>
+        <span style={{ width: `${Math.round(v * 100)}%` }} />
+      </span>
+      {t(label)} {Math.round(v * 100)}
+    </span>
+  );
+  return (
+    <span className="pulse-comps">
+      {item("对峙", c.contest)}
+      {item("对立", c.divergence)}
+      {item("价移", c.priceMove)}
+      {item("量能", c.volSurge)}
+    </span>
+  );
+}
+
+// 迷你趋势线:分数天然 0-100 有界,直接线性映射,无需引入图表底座。
+// 单点画圆不画线(polyline 单点不可见,会被误读为无数据)。
+function ScoreSpark({ series }: { series: { day: string; score: number }[] }) {
+  const W = 120;
+  const H = 26;
+  const PAD = 3;
+  if (series.length === 0) return null;
+  const y = (s: number) => PAD + (1 - s / 100) * (H - PAD * 2);
+  if (series.length === 1) {
+    return (
+      <svg width={W} height={H} aria-hidden>
+        <circle
+          cx={W / 2}
+          cy={y(series[0].score)}
+          r={2.5}
+          fill="currentColor"
+        />
+      </svg>
+    );
+  }
+  const x = (i: number) => PAD + (i / (series.length - 1)) * (W - PAD * 2);
+  const points = series.map((s, i) => `${x(i)},${y(s.score)}`).join(" ");
+  return (
+    <svg width={W} height={H} aria-hidden>
+      <polyline
+        points={points}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 export default function PulsePage() {
   const { t } = useLang();
-  const [report, setReport] = useState<PulseReport | null>(null);
+  const [report, setReport] = useState<PulsePayload | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/pulse")
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        setReport((await r.json()) as PulseReport);
+        setReport((await r.json()) as PulsePayload);
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
@@ -230,9 +302,62 @@ export default function PulsePage() {
             )}
           </section>
 
+          {report.conviction && report.conviction.categories.length > 0 && (
+            <section style={{ marginBottom: "var(--s-5)" }}>
+              <h2 style={{ fontSize: "var(--t-lg)", margin: "0 0 var(--s-3)" }}>
+                {t("确信指数 · 品类激辩度")}
+              </h2>
+              <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+                {t(
+                  "高 = 激辩/恐慌（阵营对峙、小单与鲸鱼对立、价格动荡、量能异动），低 = 确信（一边倒、平静）。VIX 语义，逐品类按日合成。",
+                )}
+              </div>
+              <div className="ds-table-wrap">
+                <table className="ds-table">
+                  <thead>
+                    <tr>
+                      <th>{t("品类")}</th>
+                      <th className="is-right">{t("指数")}</th>
+                      <th>{t("构成")}</th>
+                      <th>{t("近 {n} 日", { n: report.conviction.days })}</th>
+                      <th className="is-right">{t("量能")}</th>
+                      <th className="is-right">{t("市场数")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.conviction.categories.map((c) => (
+                      <tr key={c.key || "__other"}>
+                        <td style={{ fontWeight: 500 }}>{catLabel(c.key)}</td>
+                        <td
+                          className="is-right num mono"
+                          style={{ fontSize: "var(--t-lg)", fontWeight: 600 }}
+                        >
+                          {c.score}
+                        </td>
+                        <td>
+                          <ConvictionChips c={c.components} />
+                        </td>
+                        <td className="ds-hint">
+                          <ScoreSpark series={c.series} />
+                        </td>
+                        <td className="is-right num mono">
+                          {usd(c.volumeUsd)}
+                        </td>
+                        <td className="is-right num mono">{c.markets}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
           <div className="ds-hint">
             {t(
               "口径：小单 = 单笔 $2k–10k（抓取下限之下的真散户不可见，因此只说「小单」）；鲸鱼 = 单笔 ≥$50k，与 heavy 信号同一把尺；异常分 = 0.35·量能异动 + 0.25·单边度 + 0.20·鲸鱼占比 + 0.20·日内价移，各分量 0–1 可逐项核对；量能异动在同市场基线不足 3 天时退化为当日横截面分位。",
+            )}{" "}
+            {t(
+              "确信指数 = 0.30·阵营对峙（量能加权 1−单边度）+ 0.30·对立度（合格分歧市场量能占比，双边门槛与上表同尺）+ 0.20·价格动荡 + 0.20·量能异动；品类日总量 <$10k 不给分；量能异动在品类自身基线不足 3 天时退化为当日横截面分位。",
             )}
           </div>
         </>

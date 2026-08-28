@@ -13,6 +13,8 @@ import { DICT_MARKET } from "./dict/market";
 import { DICT_GLOSSARY } from "./dict/glossary";
 import { DICT_MISC } from "./dict/misc";
 import { DICT_STATUS } from "./dict/status";
+import { DICT_PULSE } from "./dict/pulse";
+import { DICT_CALIBRATION } from "./dict/calibration";
 
 // 字典卫生:四条规则挡住四类真实事故 ——
 //  1. 空译文 → 英文界面出现空洞;
@@ -39,6 +41,10 @@ const SHARDS: [string, Record<string, string>][] = [
   ["glossary", DICT_GLOSSARY],
   ["misc", DICT_MISC],
   ["status", DICT_STATUS],
+  // 2026-08-28 补录:这两片自内容引擎批次(08-27)出生起就没进过本名单,
+  // 跨分片撞车检查对它们一直裸奔 —— 第一梯队五件套批次顺手锁上。
+  ["pulse", DICT_PULSE],
+  ["calibration", DICT_CALIBRATION],
 ];
 
 describe("DICT hygiene", () => {
