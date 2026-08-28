@@ -1,4 +1,9 @@
 import type { WfTierReport, WalkforwardReport } from "../../lib/walkforward";
+import type {
+  WfDueInfo,
+  WfReportDiff,
+  WfTierDiff,
+} from "../../lib/walkforwardDiff";
 
 // 🧪 阈值重推卡的纯展示逻辑(与渲染分开,才测得动 —— routing.ts 同一纪律)。
 // 卡只做「最新报告的摘要」:跑于何时/窗口/网格数/各档一行结论;不做一键建档
@@ -48,6 +53,50 @@ export function tierLine(t: WfTierReport): string {
     `OOS ${top.pooled ? pts(top.pooled.point) : "—"} 点` +
     `(Bonf 下界 ${top.loBonf != null ? pts(top.loBonf) : "—"},p=${top.randP?.toFixed(4) ?? "—"})`
   );
+}
+
+/** 月度例行状态行(重推日历化)。amber 与否由组件按 due 决定,这里只出文案。 */
+export function dueLine(d: WfDueInfo): string {
+  if (!d.hasRun) {
+    return "📅 月度例行:从未跑过 —— 建议现在跑第一次,建立 diff 的对照基线";
+  }
+  if (!d.due) {
+    return `📅 月度例行:上次 ${d.daysSinceLast} 天前 · 距下次还有 ${d.daysLeft} 天`;
+  }
+  return `📅 月度例行:已到期 ${Math.abs(d.daysLeft ?? 0)} 天 —— validate 折可能已长出新折,建议重跑`;
+}
+
+/** 一档一行翻案:只拼有变化的段,空段不出现(diff 的价值就在于短)。 */
+export function diffTierLine(d: WfTierDiff): string {
+  const parts: string[] = [];
+  const sv = [
+    ...d.survivorAdded.map((l) => `+${l}`),
+    ...d.survivorRemoved.map((l) => `−${l}`),
+  ];
+  if (sv.length > 0) parts.push(`存活 ${sv.join(" ")}`);
+  const w = [
+    ...d.watchAdded.map((l) => `+${l}`),
+    ...d.watchRemoved.map((l) => `−${l}`),
+  ];
+  if (w.length > 0) parts.push(`观察 ${w.join(" ")}`);
+  if (d.thinFlipped === "nowThick") parts.push("薄档→可评");
+  if (d.thinFlipped === "nowThin") parts.push("可评→薄档");
+  if (d.pointDelta != null) parts.push(`现状 ${pts(d.pointDelta)} 点`);
+  return `${d.name}:${parts.join(" · ")}`;
+}
+
+/** diff 总述一行:翻案计数 + 档集合变化点名。 */
+export function diffHeadline(d: WfReportDiff): string {
+  const head =
+    d.changed.length === 0
+      ? `无结构性翻案(${d.unchangedTiers} 档结论稳定)`
+      : `${d.changed.length} 档翻案 · ${d.unchangedTiers} 档稳定`;
+  const extra: string[] = [];
+  if (d.tiersOnlyInCurr.length > 0)
+    extra.push(`新增档:${d.tiersOnlyInCurr.join("、")}`);
+  if (d.tiersOnlyInPrev.length > 0)
+    extra.push(`消失档:${d.tiersOnlyInPrev.join("、")}`);
+  return extra.length > 0 ? `${head} · ${extra.join(" · ")}` : head;
 }
 
 /** 运行状态一行;本进程没跑过返回 null(报告以库里最新行为准,不误导)。 */

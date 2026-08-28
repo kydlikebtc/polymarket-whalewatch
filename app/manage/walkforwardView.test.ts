@@ -178,3 +178,95 @@ describe("运行状态一行", () => {
     ).toBeNull();
   });
 });
+
+// --- 重推日历化(第一梯队五件套):due 状态行 + diff 翻案行 ---
+
+import { dueLine, diffTierLine, diffHeadline } from "./walkforwardView";
+import type { WfReportDiff, WfTierDiff } from "../../lib/walkforwardDiff";
+
+describe("dueLine — 月度例行状态行", () => {
+  it("从未跑过 → 提示跑第一次", () => {
+    const l = dueLine({
+      hasRun: false,
+      lastCreatedAt: null,
+      dueAtSec: null,
+      daysSinceLast: null,
+      daysLeft: null,
+      due: true,
+    });
+    expect(l).toContain("从未跑过");
+  });
+
+  it("未到期 → 报出上次距今与剩余天数", () => {
+    const l = dueLine({
+      hasRun: true,
+      lastCreatedAt: 0,
+      dueAtSec: 100,
+      daysSinceLast: 10,
+      daysLeft: 20,
+      due: false,
+    });
+    expect(l).toContain("10 天前");
+    expect(l).toContain("还有 20 天");
+  });
+
+  it("已到期 → 报出超期天数(组件据 due 转 amber)", () => {
+    const l = dueLine({
+      hasRun: true,
+      lastCreatedAt: 0,
+      dueAtSec: 100,
+      daysSinceLast: 45,
+      daysLeft: -15,
+      due: true,
+    });
+    expect(l).toContain("已到期 15 天");
+  });
+});
+
+describe("diff 翻案渲染", () => {
+  const d: WfTierDiff = {
+    strategyId: 1,
+    name: "巨鲸",
+    survivorAdded: ["maxPrice≤0.8"],
+    survivorRemoved: ["minFillUsd≥75k"],
+    watchAdded: [],
+    watchRemoved: ["w 变体"],
+    thinFlipped: "nowThick",
+    pointDelta: 0.012,
+  };
+
+  it("diffTierLine:逐段拼出存活/观察/薄档/point 变化,空段不出现", () => {
+    const l = diffTierLine(d);
+    expect(l).toContain("巨鲸");
+    expect(l).toContain("存活 +maxPrice≤0.8");
+    expect(l).toContain("−minFillUsd≥75k");
+    expect(l).toContain("观察 −w 变体");
+    expect(l).toContain("薄档→可评");
+    expect(l).toContain("现状 +1.20 点");
+    const quiet = diffTierLine({
+      ...d,
+      survivorAdded: [],
+      survivorRemoved: [],
+      watchRemoved: [],
+      thinFlipped: null,
+      pointDelta: null,
+    });
+    expect(quiet).not.toContain("存活");
+    expect(quiet).not.toContain("观察");
+  });
+
+  it("diffHeadline:无翻案与有翻案两种总述", () => {
+    const base: WfReportDiff = {
+      prevCreatedAt: 0,
+      currCreatedAt: 86_400,
+      tiersOnlyInPrev: [],
+      tiersOnlyInCurr: ["新档"],
+      changed: [],
+      unchangedTiers: 19,
+    };
+    expect(diffHeadline(base)).toContain("无结构性翻案");
+    expect(diffHeadline(base)).toContain("19 档结论稳定");
+    expect(diffHeadline(base)).toContain("新档");
+    expect(diffHeadline({ ...base, changed: [d] })).toContain("1 档翻案");
+  });
+});

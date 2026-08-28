@@ -2,11 +2,19 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WalkforwardReport, WfTierReport } from "../../lib/walkforward";
+import type { WfDueInfo, WfReportDiff } from "../../lib/walkforwardDiff";
 import type { WfRunState } from "../../lib/walkforwardRun";
 import { SectionHead } from "./bits";
 import { sectionView } from "./sectionGate";
 import { authHeaders } from "./shared";
-import { reportMeta, runStateLine, tierLine } from "./walkforwardView";
+import {
+  diffHeadline,
+  diffTierLine,
+  dueLine,
+  reportMeta,
+  runStateLine,
+  tierLine,
+} from "./walkforwardView";
 
 // 🧪 阈值重推 tab(2026-08-28,walk-forward 批次;设计 §6.2 + 同日增补)。
 //
@@ -22,7 +30,15 @@ interface LatestReport {
   createdAt: number | null;
   report: WalkforwardReport | null;
   runState: WfRunState;
+  /** 月度例行 due(重推日历化);旧响应可能缺失,缺失时不渲染状态行。 */
+  due?: WfDueInfo;
 }
+
+type DiffResponse = {
+  diff: WfReportDiff | null;
+  reason?: string;
+  error?: string;
+};
 
 const POLL_MS = 4_000;
 const pts = (v: number) =>
@@ -78,6 +94,7 @@ export default function WalkforwardSection({ token }: { token: string }) {
   const [data, setData] = useState<LatestReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [diffRes, setDiffRes] = useState<DiffResponse | null>(null);
   const alive = useRef(true);
 
   const load = useCallback(async () => {
@@ -107,6 +124,28 @@ export default function WalkforwardSection({ token }: { token: string }) {
       alive.current = false;
     };
   }, [load]);
+
+  // diff 随最新报告 id 变化拉取(新报告落库 → 自动换成「与上一份」的对比)。
+  // 失败只静默降级 —— diff 是报告的附注,拉不到不该挡住报告本体。
+  const reportId = data?.id ?? null;
+  useEffect(() => {
+    if (reportId == null) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/walkforward?diff=1", {
+          headers: authHeaders(token),
+        });
+        const body = (await res.json()) as DiffResponse;
+        if (!cancelled && res.ok) setDiffRes(body);
+      } catch {
+        // 静默:diff 缺席时页面只是少一块附注
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reportId, token]);
 
   // 跑中每 4s 轮询:完成的判据不是「running 翻 false」本身,而是随后 GET
   // 读到的新报告行 —— 同一次轮询把两件事都带回来了。
@@ -202,6 +241,17 @@ export default function WalkforwardSection({ token }: { token: string }) {
           </button>
           {stateLine && <span className="ds-hint mono">{stateLine}</span>}
         </div>
+        {data?.due && (
+          <div
+            className="ds-hint"
+            style={{
+              marginBottom: "var(--s-3)",
+              ...(data.due.due ? { color: "var(--warn, #b45309)" } : {}),
+            }}
+          >
+            {dueLine(data.due)}
+          </div>
+        )}
         {actionMsg && (
           <div
             className="ds-hint"
@@ -276,6 +326,35 @@ export default function WalkforwardSection({ token }: { token: string }) {
                   )}
                 </div>
               ))}
+              {diffRes && (
+                <div
+                  style={{
+                    borderTop: "1px solid var(--line, #ddd)",
+                    paddingTop: "var(--s-3)",
+                    marginBottom: "var(--s-3)",
+                  }}
+                >
+                  <div className="ds-hint" style={{ fontWeight: 600 }}>
+                    🔁 与上次重推对比
+                  </div>
+                  {diffRes.diff == null ? (
+                    <div className="ds-hint muted">
+                      {diffRes.reason ?? "暂无可对比的上一份报告"}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="ds-hint">
+                        {diffHeadline(diffRes.diff)}
+                      </div>
+                      {diffRes.diff.changed.map((c) => (
+                        <div key={c.strategyId} className="ds-hint mono">
+                          {diffTierLine(c)}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
               <div className="ds-hint muted">
                 可观测锥:本报告只能回放收紧方向(原始流未归档);放松方向的唯一
                 诚实做法是开更松的挑战者档向前跑。逐折明细/落选格/固定诚实段落
@@ -309,7 +388,11 @@ export default function WalkforwardSection({ token }: { token: string }) {
             每次运行在 <code className="mono">walkforward_reports</code>{" "}
             表新增一行(历史留痕,不覆盖)。同一数据窗口重跑结果逐字节相同
             (随机化种子固定)。<b>节律:月度</b> —— validate 折按完整 UTC
-            周自然长出,窗口没长新折时重跑只会得到同一份结论。
+            周自然长出,窗口没长新折时重跑只会得到同一份结论。顶部「📅
+            月度例行」状态行替你记这个日子;满 30 天转 amber 提醒,
+            <b>只提醒 不自动跑</b>。新报告落库后下方自动出「🔁
+            与上次重推对比」—— 只报结构性翻案(存活集合/观察名单/薄档判定),point
+            漂移不算翻案。
           </li>
           <li>
             <b>怎么读。</b>每档一行结论:🏁 有存活变体(下方表格给明细)/ ⭕
