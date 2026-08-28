@@ -369,3 +369,19 @@ describe("detectResolvedCandidates", () => {
     expect(out[0].conditionId).toBe("0xc");
   });
 });
+
+describe("detectResolvedCandidates — wallets 快照(向前落库)", () => {
+  it("记主导边净买者(开的就是这一边),与 walletCount/totalNetUsd 一致", () => {
+    const c = detectResolvedCandidates(
+      [...leadTrades(), ...minorFlippedTrades()],
+      params(),
+      ctx({
+        smart: resolvedSmart(),
+        nowSec: 800,
+        prevTilt: new Map([["0xc", snapshot()]]),
+      }),
+    )[0];
+    expect(c.wallets).toEqual([{ wallet: "0xa", netUsd: 10_000, score: 80 }]);
+    expect(c.wallets!).toHaveLength(c.walletCount);
+  });
+});

@@ -183,6 +183,12 @@ export function detectResolvedCandidates(
       sourceKind: "resolved",
       walletCount: lead.walletCount,
       totalNetUsd: lead.netUsd,
+      // 向前落库快照:主导边净买者(开的就是这一边)。纯归因,不参与判定。
+      wallets: lead.wallets.map((w) => ({
+        wallet: w.wallet,
+        netUsd: w.netUsd,
+        score: w.score,
+      })),
     });
   }
 

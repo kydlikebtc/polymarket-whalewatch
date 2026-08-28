@@ -163,6 +163,13 @@ export function detectLopsidedCandidates(
       sourceKind: "lopsided",
       walletCount: chosen.walletCount,
       totalNetUsd: chosen.netUsd,
+      // 向前落库快照:所选边(lead/minor)的净买者原样投影,netUsd 降序沿用
+      // side.wallets 排序;score = 检测时可见分。纯归因,不参与判定。
+      wallets: chosen.wallets.map((w) => ({
+        wallet: w.wallet,
+        netUsd: w.netUsd,
+        score: w.score,
+      })),
     });
   }
 
