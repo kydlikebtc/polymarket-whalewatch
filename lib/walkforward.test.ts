@@ -1,6 +1,26 @@
 import { describe, expect, it } from "vitest";
+import type { StrategyParams } from "./followCandidate";
 import { utcWeekStart } from "./followAnalysis";
-import { foldOf, listValidateFolds } from "./walkforward";
+import {
+  buildEntryVariants,
+  buildGrid,
+  foldOf,
+  listValidateFolds,
+} from "./walkforward";
+
+/** 造一份最小 StrategyParams(通用字段全给默认,专属字段按测试覆写)。 */
+function params(over: Partial<StrategyParams>): StrategyParams {
+  return {
+    id: 1,
+    source: "consensus",
+    sizeUsd: 1000,
+    exitRule: "settlement",
+    maxEntryDeviationCents: 10,
+    maxPrice: 0.95,
+    freshSec: 900,
+    ...over,
+  };
+}
 
 // walk-forward 阈值重推的纯函数层测试。设计:docs/plans/2026-08-28-walkforward-
 // rederivation-design.md;实现级口径:同名无后缀实现计划 §0。
@@ -58,5 +78,98 @@ describe("折切分", () => {
     expect(foldOf(MON + 2 * WEEK - 1, folds)).toBeNull(); // 前一秒还在上周
     expect(foldOf(MON + 3 * WEEK + 6 * DAY, folds)).toBe(MON + 3 * WEEK);
     expect(foldOf(MON + 4 * WEEK, folds)).toBeNull(); // 最后一折之后
+  });
+});
+
+describe("网格生成", () => {
+  it("heavy 三维阶梯:基线+2+2+2=7 入场变体,×3 赛道 ×10 退出 = 210 格", () => {
+    const p = params({
+      source: "heavy",
+      minSingleFillUsd: 50_000,
+      maxPrice: 0.95,
+      maxEntryDeviationCents: 10,
+    });
+    const entries = buildEntryVariants(p);
+    expect(entries).toHaveLength(7);
+    expect(entries.filter((e) => e.dim === "base")).toHaveLength(1);
+    expect(entries.filter((e) => e.dim === "minSingleFillUsd")).toHaveLength(2);
+    expect(entries.filter((e) => e.dim === "maxPrice")).toHaveLength(2);
+    expect(
+      entries.filter((e) => e.dim === "maxEntryDeviationCents"),
+    ).toHaveLength(2);
+    const cells = buildGrid(p);
+    expect(cells).toHaveLength(7 * 3 * 10);
+    // key 全网格唯一(报告/管理页按 key 认格)。
+    expect(new Set(cells.map((c) => c.key)).size).toBe(cells.length);
+    // 恰好一个纯基线格(当前参数×全赛道×hold)。
+    expect(
+      cells.filter(
+        (c) =>
+          c.entry.dim === "base" &&
+          c.category === "all" &&
+          c.exitRule === "hold",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("阶梯 ∩ 严格紧于当前:maxPrice 已 0.90 → 只剩 0.85", () => {
+    const p = params({ source: "heavy", minSingleFillUsd: 50_000, maxPrice: 0.9 });
+    const mp = buildEntryVariants(p).filter((e) => e.dim === "maxPrice");
+    expect(mp).toHaveLength(1);
+    expect(mp[0].spec).toEqual({ kind: "maxPrice", max: 0.85 });
+  });
+
+  it("维度参数缺失不猜默认:heavy 没配 minSingleFillUsd → 该维为空", () => {
+    const p = params({ source: "heavy" });
+    expect(
+      buildEntryVariants(p).filter((e) => e.dim === "minSingleFillUsd"),
+    ).toHaveLength(0);
+  });
+
+  it("consensus:minWallets+1 / 均值口径 perWallet ×1.5 ×2 / freshSec 已最紧则为空", () => {
+    const p = params({
+      source: "consensus",
+      minWallets: 2,
+      minPerWalletUsd: 10_000,
+      freshSec: 300,
+    });
+    const entries = buildEntryVariants(p);
+    expect(entries.filter((e) => e.dim === "freshSec")).toHaveLength(0);
+    const w = entries.filter((e) => e.dim === "minWallets");
+    expect(w).toHaveLength(1);
+    expect(w[0].spec).toEqual({ kind: "minWallets", min: 3 });
+    const pw = entries.filter((e) => e.dim === "minPerWalletUsd");
+    expect(pw.map((e) => e.spec)).toEqual([
+      { kind: "minAvgPerWalletUsd", min: 15_000 },
+      { kind: "minAvgPerWalletUsd", min: 20_000 },
+    ]);
+  });
+
+  it("lopsided:minTiltPct+0.1,越界(≥1)则维为空", () => {
+    const ok = params({ source: "lopsided", minTiltPct: 0.7 });
+    const tilt = buildEntryVariants(ok).filter((e) => e.dim === "minTiltPct");
+    expect(tilt).toHaveLength(1);
+    expect(tilt[0].spec).toEqual({ kind: "minTiltPct", min: 0.8 });
+    const capped = params({ source: "resolved", minTiltPct: 0.95 });
+    expect(
+      buildEntryVariants(capped).filter((e) => e.dim === "minTiltPct"),
+    ).toHaveLength(0);
+  });
+
+  it("钱包族:minNetUsd ×1.5/×2 顶替不可回放的 score 维度 —— 网格里不存在任何 score 维", () => {
+    const p = params({
+      source: "lone_wolf",
+      minNetUsd: 20_000,
+      minWalletScore: 60,
+    });
+    const entries = buildEntryVariants(p);
+    expect(entries.map((e) => e.dim).sort()).toEqual([
+      "base",
+      "minNetUsd",
+      "minNetUsd",
+    ]);
+    expect(entries.some((e) => e.dim.toLowerCase().includes("score"))).toBe(
+      false,
+    );
   });
 });

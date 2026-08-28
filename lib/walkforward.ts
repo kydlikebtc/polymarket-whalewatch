@@ -1,4 +1,6 @@
+import { EXIT_RULES } from "./exitCounterfactual";
 import { utcWeekStart } from "./followAnalysis";
+import type { StrategyParams } from "./followCandidate";
 
 // Walk-forward 阈值重推的纯函数层(2026-08-28,设计见 docs/plans/
 // 2026-08-28-walkforward-rederivation-design.md,实现口径见同名实现计划 §0)。
@@ -42,4 +44,155 @@ export function foldOf(formationTs: number, folds: number[]): number | null {
     if (formationTs >= s && formationTs < s + WEEK) return s;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// 网格(实现计划 §0.4):单维平移 × 赛道 × 退出,不做维度间全叉积 —— 设计 §5
+// 的「≤24 入场变体/档」只在一次只动一维下成立,全叉积还会把 Bonferroni 分母
+// 炸大、且多维同动的胜出变体翻译不成一条可解释的挑战者档参数。
+// 阶梯全部固定值 ∩ 严格紧于当前生效值(parseStrategy 消毒后的值,含默认兜底);
+// 维度参数缺失不猜默认 —— 该维直接不出变体。
+
+/** 入场过滤谓词的数据形态(判定逻辑在 entryMatches,分开是为了网格可枚举可断言)。 */
+export type EntrySpec =
+  | { kind: "base" }
+  /** heavy 单笔下限:回放事实 = strategy_signals.total_net_usd(heavy 的 totalNetUsd 即那一笔)。 */
+  | { kind: "minFillUsd"; min: number }
+  /** 引擎护栏原样:entry > maxPrice 才拦,故子集条件是 entry ≤ max。 */
+  | { kind: "maxPrice"; max: number }
+  /** 引擎护栏原样:|entry − formation|×100 ≤ max。 */
+  | { kind: "maxDevCents"; max: number }
+  | { kind: "minWallets"; min: number }
+  /**
+   * 均值口径(实现计划 §0.4):逐钱包金额未落库,total/count ≥ X 是「每钱包
+   * ≥ X」的必要不充分条件 —— 该子集是真收紧子集的超集,报告固定段落声明。
+   */
+  | { kind: "minAvgPerWalletUsd"; min: number }
+  /** freshSec 近似:entry_ts − formation_ts(检测时新鲜度的落库残影,披露)。 */
+  | { kind: "maxStalenessSec"; max: number }
+  | { kind: "minTiltPct"; min: number }
+  /** 钱包族净买下限 —— 顶替不可回放的 score 维(仓位未记录触发钱包与彼时评分)。 */
+  | { kind: "minNetUsd"; min: number };
+
+export type WfCategory = "all" | "sports" | "nonsports";
+
+export interface WfEntryVariant {
+  /** 稳定标识(报告/管理页按它认格),如 "minFillUsd:75000";基线 = "base"。 */
+  entryKey: string;
+  /** 动了哪一维;基线 = "base"。 */
+  dim: string;
+  label: string;
+  spec: EntrySpec;
+}
+
+export interface WfCell {
+  /** `${entryKey}|${category}|${exitRule}`,全网格唯一。 */
+  key: string;
+  entry: WfEntryVariant;
+  category: WfCategory;
+  /** "hold"(实际记录)或 position_exit_sims 的九规则 id。 */
+  exitRule: string;
+}
+
+/** 退出维度:hold(实际记录的结算持有)+ 九规则查表。 */
+export const WF_EXIT_RULES: readonly string[] = [
+  "hold",
+  ...EXIT_RULES.map((r) => r.id),
+];
+
+const usd = (v: number) => `$${Math.round(v).toLocaleString("en-US")}`;
+
+export function buildEntryVariants(p: StrategyParams): WfEntryVariant[] {
+  const out: WfEntryVariant[] = [
+    {
+      entryKey: "base",
+      dim: "base",
+      label: "当前参数",
+      spec: { kind: "base" },
+    },
+  ];
+  const push = (dim: string, spec: EntrySpec, label: string) => {
+    const value = "min" in spec ? spec.min : "max" in spec ? spec.max : "";
+    out.push({ entryKey: `${spec.kind}:${value}`, dim, label, spec });
+  };
+  // 乘数阶梯(×1.5/×2):heavy 单笔、consensus 每钱包、钱包族净买共用。
+  const scaled = (
+    dim: string,
+    cur: number | undefined,
+    kind: "minFillUsd" | "minAvgPerWalletUsd" | "minNetUsd",
+    name: string,
+  ) => {
+    if (cur == null || cur <= 0) return;
+    for (const k of [1.5, 2]) {
+      push(dim, { kind, min: cur * k }, `${name} ≥${usd(cur * k)}(×${k})`);
+    }
+  };
+  if (p.source === "heavy") {
+    scaled("minSingleFillUsd", p.minSingleFillUsd, "minFillUsd", "单笔下限");
+    for (const v of [0.9, 0.85]) {
+      if (v < p.maxPrice - 1e-9) {
+        push("maxPrice", { kind: "maxPrice", max: v }, `价格上限 ${v * 100}¢`);
+      }
+    }
+    for (const v of [6, 4]) {
+      if (v < p.maxEntryDeviationCents) {
+        push(
+          "maxEntryDeviationCents",
+          { kind: "maxDevCents", max: v },
+          `形成偏离 ≤${v}¢`,
+        );
+      }
+    }
+  } else if (p.source === "consensus") {
+    if (p.minWallets != null) {
+      push(
+        "minWallets",
+        { kind: "minWallets", min: p.minWallets + 1 },
+        `钱包数 ≥${p.minWallets + 1}(+1)`,
+      );
+    }
+    scaled(
+      "minPerWalletUsd",
+      p.minPerWalletUsd,
+      "minAvgPerWalletUsd",
+      "每钱包(均值口径)",
+    );
+    for (const v of [600, 300]) {
+      if (v < p.freshSec) {
+        push("freshSec", { kind: "maxStalenessSec", max: v }, `新鲜度 ≤${v}s`);
+      }
+    }
+  } else if (p.source === "lopsided" || p.source === "resolved") {
+    if (p.minTiltPct != null && p.minTiltPct + 0.1 < 1) {
+      // 千分位取整挡浮点尘埃(0.7+0.1=0.7999…):阈值是人类参数,不是计算结果。
+      const v = Math.round((p.minTiltPct + 0.1) * 1000) / 1000;
+      push(
+        "minTiltPct",
+        { kind: "minTiltPct", min: v },
+        `倾斜下限 ≥${Math.round(v * 100)}%(+10pp)`,
+      );
+    }
+  } else {
+    // lone_wolf / early_winner
+    scaled("minNetUsd", p.minNetUsd, "minNetUsd", "净买下限");
+  }
+  return out;
+}
+
+/** 全格 = 入场变体 × {全部,仅体育,仅非体育} × {hold,九退出规则}。 */
+export function buildGrid(p: StrategyParams): WfCell[] {
+  const cells: WfCell[] = [];
+  for (const entry of buildEntryVariants(p)) {
+    for (const category of ["all", "sports", "nonsports"] as const) {
+      for (const exitRule of WF_EXIT_RULES) {
+        cells.push({
+          key: `${entry.entryKey}|${category}|${exitRule}`,
+          entry,
+          category,
+          exitRule,
+        });
+      }
+    }
+  }
+  return cells;
 }
