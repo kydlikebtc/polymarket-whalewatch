@@ -5,10 +5,12 @@ import {
   buildEntryVariants,
   buildGrid,
   categoryMatches,
+  clusterStat,
   contribOf,
   entryMatches,
   foldOf,
   listValidateFolds,
+  normalQuantile,
   subsetOf,
 } from "./walkforward";
 
@@ -338,5 +340,53 @@ describe("退出合成", () => {
     expect(
       contribOf(pos({ exitSims: { sl10: { exited: 0, pnl: 0 } } }), "tp10"),
     ).toBeNull();
+  });
+});
+
+describe("聚类稳健统计(edge-audit 自检性质原样移植)", () => {
+  it("每行独立时,聚类 SE ≈ 朴素 SE(仅差 G/(G−1) 小样本校正)", () => {
+    const rows = Array.from({ length: 200 }, (_, i) => ({
+      contrib: i % 2 === 0 ? 0.5 : -0.5,
+      cluster: `m${i}`,
+    }));
+    const s = clusterStat(rows)!;
+    expect(s.n).toBe(200);
+    expect(s.nc).toBe(200);
+    expect(s.point).toBeCloseTo(0, 12);
+    expect(Math.abs(s.seC / s.seNaive - 1)).toBeLessThan(0.02);
+  });
+
+  it("同簇 10 份完全同向复制:点估计不变,SE 约为朴素的 √10 倍", () => {
+    const rows = Array.from({ length: 20 }, (_, g) =>
+      Array.from({ length: 10 }, () => ({
+        contrib: g % 2 === 0 ? 0.5 : -0.5,
+        cluster: `m${g}`,
+      })),
+    ).flat();
+    const s = clusterStat(rows)!;
+    expect(s.point).toBeCloseTo(0, 12);
+    expect(s.nc).toBe(20);
+    expect(s.seC / s.seNaive).toBeGreaterThan(2.8);
+    expect(s.seC / s.seNaive).toBeLessThan(3.5);
+  });
+
+  it("同市场对边各自入账:点估计不被挑边带跑,完全对冲簇的 CRVE 方差为 0", () => {
+    const rows = [
+      { contrib: 0.4, cluster: "m1" },
+      { contrib: -0.4, cluster: "m1" },
+      { contrib: 0.4, cluster: "m2" },
+      { contrib: -0.4, cluster: "m2" },
+    ];
+    const s = clusterStat(rows)!;
+    expect(s.point).toBeCloseTo(0, 12);
+    expect(s.seC).toBeCloseTo(0, 12);
+  });
+
+  it("空集 → null;normalQuantile 两个关键分位与 edge-audit 同值", () => {
+    expect(clusterStat([])).toBeNull();
+    expect(Math.abs(normalQuantile(0.975) - 1.95996)).toBeLessThan(5e-4);
+    expect(Math.abs(normalQuantile(1 - 0.05 / 120) - 3.3441)).toBeLessThan(
+      5e-3,
+    );
   });
 });

@@ -318,3 +318,60 @@ export function contribOf(p: WfPosition, exitRule: string): number | null {
   if (!sim) return null;
   return (sim.pnl - p.feeUsd) / p.shares;
 }
+
+// ---------------------------------------------------------------------------
+// 聚类稳健统计(CRVE)。口径逐字移植 scripts/edge-audit.ts 的 stat():点估计
+// 照旧用全部行(那是一句真话),只让方差反映簇内相关 —— 同簇残差先求和再平方,
+// 簇内完全同向时方差不被行数稀释;完全对冲簇(对边各自入账)方差归零。绝不做
+// 「把每簇折成一个观测」(那需要给整簇挑一个方向,点估计会被随机挑边带跑)。
+
+export interface WfClusterStat {
+  n: number;
+  /** 有效样本量 = 去重簇(市场)数。 */
+  nc: number;
+  /** contrib 均值(概率点,0-1 量纲)。 */
+  point: number;
+  /** 聚类稳健标准误 —— 判定只看它。 */
+  seC: number;
+  /** 朴素标准误,仅作「被低估多少」的对照。 */
+  seNaive: number;
+}
+
+export function clusterStat(
+  rows: { contrib: number; cluster: string }[],
+): WfClusterStat | null {
+  const n = rows.length;
+  if (n === 0) return null;
+  const point = rows.reduce((s, r) => s + r.contrib, 0) / n;
+  const clusterResid = new Map<string, number>();
+  let ssNaive = 0;
+  for (const r of rows) {
+    const u = r.contrib - point;
+    ssNaive += u * u;
+    clusterResid.set(r.cluster, (clusterResid.get(r.cluster) ?? 0) + u);
+  }
+  const G = clusterResid.size;
+  let ss = 0;
+  for (const v of clusterResid.values()) ss += v * v;
+  // G/(G−1) 小样本校正:簇数少时残差被过度收缩。单簇无从估方差 → Infinity。
+  const varC = G > 1 ? (ss / (n * n)) * (G / (G - 1)) : Infinity;
+  return {
+    n,
+    nc: G,
+    point,
+    seC: Math.sqrt(varC),
+    seNaive: Math.sqrt(ssNaive / n / Math.max(n, 1)),
+  };
+}
+
+/**
+ * 标准正态分位数(Abramowitz & Stegun 26.2.23 有理近似,|ε| < 4.5e-4)。
+ * 镜像自 scripts/edge-audit.ts —— lib 不该反向依赖脚本,8 行重复换单向依赖;
+ * 两边的关键分位点由测试互相钉死。
+ */
+export function normalQuantile(p: number): number {
+  const tail = p < 0.5 ? p : 1 - p;
+  const t = Math.sqrt(-2 * Math.log(tail));
+  const x = t - (2.30753 + t * 0.27061) / (1 + t * (0.99229 + t * 0.04481));
+  return p < 0.5 ? -x : x;
+}
