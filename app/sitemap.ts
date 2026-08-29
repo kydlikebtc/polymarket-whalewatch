@@ -10,7 +10,8 @@ import {
 export const dynamic = "force-dynamic";
 
 // 静态页的先验优先级:首页/策略中心是主落地页。
-const STATIC_PAGES: { path: string; priority: number }[] = [
+// export 给 /guide 的覆盖闸测试:sitemap 收录的公开页必须有说明书条目。
+export const STATIC_PAGES: { path: string; priority: number }[] = [
   { path: "/", priority: 1 },
   { path: "/follow", priority: 0.9 },
   { path: "/consensus", priority: 0.8 },

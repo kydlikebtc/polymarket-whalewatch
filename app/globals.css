@@ -1426,3 +1426,13 @@ tr:hover .copy-btn,
     font-size: var(--t-lg);
   }
 }
+
+/* ------------------------------------------------ /guide 功能说明书 */
+.guide-list {
+  margin: 0;
+  padding-left: 1.2em;
+  line-height: 1.7;
+}
+.guide-list li + li {
+  margin-top: var(--s-1);
+}
