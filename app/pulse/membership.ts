@@ -1,4 +1,4 @@
-import type { PulseReport } from "../../lib/marketPulse";
+import type { PulseBoardTag, PulseReport } from "../../lib/marketPulse";
 
 // /pulse 的跨榜成员身份 —— 纯逻辑,与渲染无关。单独成模块的理由同
 // lib/categoryLabel.ts 那条既有先例:app/ 下没有组件测试基建,但归并/去重
@@ -13,7 +13,10 @@ import type { PulseReport } from "../../lib/marketPulse";
 // 同一个市场经常同时上好几个榜(高洗量的市场往往也是异常榜常客)。改成分段
 // 标签页后一次只渲染一个榜,跨榜身份就看不见了 —— 这些标记把它带回每一行,
 // 否则想知道「这个异常市场是不是也在洗量榜上」只能切过去人肉扫一遍。
-export type BoardTag = "anomaly" | "divergence" | "ghost" | "wash";
+// 标记的单一来源在 lib/marketPulse.ts —— 市场信号卡的 pulse 段也消费同一个
+// 联合类型,两边各定义一份迟早漂移,且漂移时两个页面会给同一市场贴不同标签、
+// 谁都不报错。此处只做本地别名,不重新定义。
+export type BoardTag = PulseBoardTag;
 export type Membership = Map<string, BoardTag[]>;
 
 /** buildMembership 的入参:四个市场级榜单的数组,后两个可能缺席(缓存里的旧

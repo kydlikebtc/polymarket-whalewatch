@@ -894,7 +894,7 @@ id、不可被推送、也不是任何事件的折叠（§6 的判据）。你�
 
 ```typescript
 interface MarketCardResponse {
-  card: MarketCard; // identity / meta / brief / freshFlow / history / window
+  card: MarketCard; // identity / meta / brief / freshFlow / history / window / pulse
   builtAt: number; // 本卡数据的基准时刻（unix 秒）
   staleSec: number; // 响应时刻 − builtAt
   live: boolean; // true = 新鲜期内；false = 预算耗尽，发的是陈旧窗口重算的卡
@@ -913,6 +913,36 @@ interface MarketCardResponse {
 > 逐结果的两个合计都在**截断之前**求和。`wallets` 每个结果最多给 8 个（按敞口
 > 降序），但 `totalExposureUsd` / `totalNetShares` 始终是该结果**全部**聪明钱的
 > 和 —— 一边超过 8 个钱包时，合计不会缩水成「你看到的这几行之和」。
+
+### `card.pulse`：市场脉搏视角（2026-08-31 新增）
+
+```typescript
+interface MarketCardPulse {
+  day: string; // 榜单判定覆盖的 UTC 日
+  category: string | null; // Polymarket 分类（空串归一为 null）
+  subcategory: string | null;
+  boards: ("anomaly" | "divergence" | "ghost" | "wash")[]; // 该日上了哪些榜
+  anomalyScore: number | null; // 0–100，仅进入当日异常日榜前 10 才有值
+}
+```
+
+两类信息，分工是重点：`category` / `subcategory` 是 **Polymarket 对市场的分类**
+（这是什么市场），`boards` 是 **我们在脉搏日榜上给它的评价**（我们发现它怎么
+了），判定与 `/api/pulse`（§13）同一套门槛、同一个实现，两处不会给出不同答案。
+
+`pulse` 为 `null` = `market_daily` 里没有这个市场的任何一天（底座还没覆盖到
+它），不是「它很正常」。`boards` 为空数组才是「那天它一个榜都没上」。
+
+> ⚠️ **时间口径与 `card` 其余字段不同，不要混读。** `brief` / `freshFlow` /
+> `window` 说的是**此刻**那个成交窗口；`pulse` 说的是 `pulse.day` 那个**已收盘
+> 的完整 UTC 日**。今天盘中刚异动起来的市场，今天不会有 `boards` —— 这是设计，
+> 不是延迟。
+
+> `anomalyScore` 只覆盖当日异常日榜**前 10**（榜在数据层就封了 10 条）。排到第
+> 11 的市场拿到的是 `null`，含义是「我们没算到那么远」而不是「它不异常」。
+>
+> 本段全部来自本地 `market_daily`，**不打上游** —— 它不会让这个端点更容易吃到
+> `429`。
 
 ### ⚠️ `brief.settled`：市场结算后敞口一律为 0
 
@@ -1013,21 +1043,22 @@ Polymarket 自己的持仓接口返回空，而按买卖推算出来的敞口是
 
 ## 16. 变更记录
 
-| 日期       | 变更                                                                                                                                                                                        |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-28 | `GET /api/pulse` 再追加 `ghosts[]`（无鲸异动）、`washTop[]`（洗量榜）与 `top[].washRatio`（§13）：全部 additive，判定材料（`wash_usd`/`max_fill_usd`）自当日起采集，老日份为 `null`/不进榜  |
-| 2026-08-28 | `GET /api/pulse` payload 追加 `conviction` 键（§13）：品类×日确信指数（激辩度 0–100，四分量逐项返回，≤30 天逐日序列）——additive 字段，老消费方按「忽略未知字段」零影响；现算失败降级 `null` |
-| 2026-08-27 | 新增公开端点 `GET /api/pulse` 与 `GET /api/calibration`（§13）：市场脉搏（异常日榜 + 小单vs鲸鱼分歧，market_daily 每日聚合）与市场校准（赔率带隐含 vs 实际，聚簇 CI）——零上游               |
-| 2026-08-27 | 新增公开数据集 `GET /api/dataset/record.csv`（§13）：已发布信号全量台账，CC BY 4.0，未结算行含（won 空）——分母与 `/api/record` 同一口径                                                     |
-| 2026-08-27 | 新增可嵌入卡片 `GET /embed/record` `/embed/status`（§13）：自包含 HTML、零脚本、60s 缓存、noindex、带署名回链，`?theme=dark` 深色版                                                         |
-| 2026-08-27 | 新增 MCP Server（§13）：`mcp/server.ts` 把全部端点 1:1 暴露给 MCP 客户端；公开工具免 key，信号工具读 `WHALEWATCH_API_KEY`                                                                   |
-| 2026-08-27 | 新增公开端点 `/api/continuity`（§13）：数据连续性 · 30 天起算时钟——逐 UTC 日的覆盖/断档条带与当前连续覆盖读数，判定与 `/api/health` 停跳阈值同一把尺，零上游，起算日由数据自己说话          |
-| 2026-08-27 | 新增 `/api/signals/list` 信号名录（§4.1）：按 ①原始/②策略两大类列出**这把 key 实际收得到**的信号，全 ASCII（`type`+`threshold` / `code`+`source`），内部异常返 `503` 而非空名录             |
-| 2026-08-21 | ② `strategy` 增 **`code`**：跨部署稳定的 ASCII 档位码（如 `mega_whale`），认档改用它。`id` 是部署本地行号、`name` 是中文名，都别硬编码                                                      |
-| 2026-08-21 | ② `strategy.id` 澄清为**部署本地**自增行号、跨部署会变：§8.3 删掉会被误读成 id 的行序号列并增实时对照表，§8.2/§10/§13/§15 同步补认档口径                                                    |
-| 2026-08-21 | 新增 `/api/market-card/{cid}` 市场深度卡——本文首个**会打上游**的端点，自成「按需查询」一类（`realtime` + `market` 范围），含 `429` 背压语义                                                 |
-| 2026-08-21 | ① `bus[]` 增 `wallets` 钱包明细（与 `active[]` 同名同义；`discovery` 恒 `null`）——webhook 同步生效                                                                                          |
-| 2026-08-19 | 文档重写为使用者参考版（理由与修订史移至内部契约）。信号=事件（①原始/②策略）与视图分立为本文骨架                                                                                            |
-| 2026-08-19 | ① 支持多档信号定义（同类型不同阈值），webhook 可按档订阅；`settled[]` 补齐与 `active[]` 同构字段；`active[]` 增 `slug`                                                                      |
-| 2026-08-18 | webhook 支持 ① 类型；失败响应字段集合与成功一致；`record` 量纲修正（条数）；开放状态改实时生成                                                                                              |
-| 2026-08-13 | `strategies` 段、`delayed` tier、多租户 key、webhook、`/api/record` 与存证链、`bus[]` 与订阅范围                                                                                            |
+| 日期       | 变更                                                                                                                                                                                                                                                                                                                                    |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-31 | `GET /api/market-card/{cid}` 的 `card` 追加 `pulse` 键（§14）：该市场的分类与市场脉搏日榜身份（`boards[]` = 异常/分歧/无鲸/洗量，`anomalyScore`）——additive、**零上游**（纯 market_daily 本地读），底座未覆盖该市场时为 `null`。⚠️ 时间口径与 `card` 其余字段不同：其余是此刻的成交窗口，`pulse` 是 `pulse.day` 那个已收盘 UTC 日的判定 |
+| 2026-08-28 | `GET /api/pulse` 再追加 `ghosts[]`（无鲸异动）、`washTop[]`（洗量榜）与 `top[].washRatio`（§13）：全部 additive，判定材料（`wash_usd`/`max_fill_usd`）自当日起采集，老日份为 `null`/不进榜                                                                                                                                              |
+| 2026-08-28 | `GET /api/pulse` payload 追加 `conviction` 键（§13）：品类×日确信指数（激辩度 0–100，四分量逐项返回，≤30 天逐日序列）——additive 字段，老消费方按「忽略未知字段」零影响；现算失败降级 `null`                                                                                                                                             |
+| 2026-08-27 | 新增公开端点 `GET /api/pulse` 与 `GET /api/calibration`（§13）：市场脉搏（异常日榜 + 小单vs鲸鱼分歧，market_daily 每日聚合）与市场校准（赔率带隐含 vs 实际，聚簇 CI）——零上游                                                                                                                                                           |
+| 2026-08-27 | 新增公开数据集 `GET /api/dataset/record.csv`（§13）：已发布信号全量台账，CC BY 4.0，未结算行含（won 空）——分母与 `/api/record` 同一口径                                                                                                                                                                                                 |
+| 2026-08-27 | 新增可嵌入卡片 `GET /embed/record` `/embed/status`（§13）：自包含 HTML、零脚本、60s 缓存、noindex、带署名回链，`?theme=dark` 深色版                                                                                                                                                                                                     |
+| 2026-08-27 | 新增 MCP Server（§13）：`mcp/server.ts` 把全部端点 1:1 暴露给 MCP 客户端；公开工具免 key，信号工具读 `WHALEWATCH_API_KEY`                                                                                                                                                                                                               |
+| 2026-08-27 | 新增公开端点 `/api/continuity`（§13）：数据连续性 · 30 天起算时钟——逐 UTC 日的覆盖/断档条带与当前连续覆盖读数，判定与 `/api/health` 停跳阈值同一把尺，零上游，起算日由数据自己说话                                                                                                                                                      |
+| 2026-08-27 | 新增 `/api/signals/list` 信号名录（§4.1）：按 ①原始/②策略两大类列出**这把 key 实际收得到**的信号，全 ASCII（`type`+`threshold` / `code`+`source`），内部异常返 `503` 而非空名录                                                                                                                                                         |
+| 2026-08-21 | ② `strategy` 增 **`code`**：跨部署稳定的 ASCII 档位码（如 `mega_whale`），认档改用它。`id` 是部署本地行号、`name` 是中文名，都别硬编码                                                                                                                                                                                                  |
+| 2026-08-21 | ② `strategy.id` 澄清为**部署本地**自增行号、跨部署会变：§8.3 删掉会被误读成 id 的行序号列并增实时对照表，§8.2/§10/§13/§15 同步补认档口径                                                                                                                                                                                                |
+| 2026-08-21 | 新增 `/api/market-card/{cid}` 市场深度卡——本文首个**会打上游**的端点，自成「按需查询」一类（`realtime` + `market` 范围），含 `429` 背压语义                                                                                                                                                                                             |
+| 2026-08-21 | ① `bus[]` 增 `wallets` 钱包明细（与 `active[]` 同名同义；`discovery` 恒 `null`）——webhook 同步生效                                                                                                                                                                                                                                      |
+| 2026-08-19 | 文档重写为使用者参考版（理由与修订史移至内部契约）。信号=事件（①原始/②策略）与视图分立为本文骨架                                                                                                                                                                                                                                        |
+| 2026-08-19 | ① 支持多档信号定义（同类型不同阈值），webhook 可按档订阅；`settled[]` 补齐与 `active[]` 同构字段；`active[]` 增 `slug`                                                                                                                                                                                                                  |
+| 2026-08-18 | webhook 支持 ① 类型；失败响应字段集合与成功一致；`record` 量纲修正（条数）；开放状态改实时生成                                                                                                                                                                                                                                          |
+| 2026-08-13 | `strategies` 段、`delayed` tier、多租户 key、webhook、`/api/record` 与存证链、`bus[]` 与订阅范围                                                                                                                                                                                                                                        |

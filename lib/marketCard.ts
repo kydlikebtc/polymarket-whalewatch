@@ -14,8 +14,65 @@ import {
   type MarketBrief,
 } from "./marketBrief";
 import { parseAlertHit, type AlertHit, type AlertHitRow } from "./alertHits";
+import { buildPulse, type PulseBoardTag } from "./marketPulse";
 import { fetchWithRetry } from "./fetchWithRetry";
 import { consensusFoldKey } from "./outcomeStats";
+
+/**
+ * 市场脉搏视角。纯本地 market_daily,零上游。
+ *
+ * 榜单成员身份走 buildPulse 而不是就地重算门槛:异常分里的量能异动在自身基线
+ * 不足 3 天时要退化成**当日横截面分位**,洗量/无鲸也各有门槛 —— 任何一份独立
+ * 实现都会漂移,而漂移的表现是脉搏页和信号卡对同一个市场给出不同判定,两边都
+ * 不报错。代价是每次建卡多扫一次当日 market_daily(近日 ~769 行的单次带索引
+ * 查询 + 内存打分),相对本卡的 gamma + 多页 /trades + 钱包年龄探测可以忽略。
+ *
+ * 分类单独查:市场可能今天没交易(不在脉搏日的行里),但分类是稳定属性,取它
+ * 最近一条即可 —— 否则一个昨天上过榜的市场今天连品类标签都会消失。
+ */
+export function buildMarketCardPulse(
+  db: DB,
+  conditionId: string,
+): MarketCardPulse | null {
+  const row = db
+    .prepare(
+      `SELECT day, category, subcategory FROM market_daily
+        WHERE condition_id = ? ORDER BY day DESC LIMIT 1`,
+    )
+    .get(conditionId) as
+    | { day: string; category: string | null; subcategory: string | null }
+    | undefined;
+  if (row == null) return null;
+
+  const pulse = buildPulse(db);
+  if (pulse.latestDay == null) return null;
+
+  const boards: PulseBoardTag[] = [];
+  const hit = pulse.top.find((m) => m.conditionId === conditionId);
+  if (hit) boards.push("anomaly");
+  if (pulse.divergences.some((d) => d.conditionId === conditionId)) {
+    boards.push("divergence");
+  }
+  if (pulse.ghosts.some((g) => g.conditionId === conditionId)) {
+    boards.push("ghost");
+  }
+  if (pulse.washTop.some((w) => w.conditionId === conditionId)) {
+    boards.push("wash");
+  }
+
+  // 空串是 gamma 派生里「取到了但没有标签」的已知取值(gamma.ts §tags),
+  // 与 null 一样都是「不知道」,在这里归一,免得 UI 渲染出一个空标签。
+  const norm = (s: string | null): string | null =>
+    s == null || s === "" ? null : s;
+
+  return {
+    day: pulse.latestDay,
+    category: norm(row.category),
+    subcategory: norm(row.subcategory),
+    boards,
+    anomalyScore: hit?.score ?? null,
+  };
+}
 
 // Shared single-market card composition — ONE implementation feeding both the
 // dashboard API (/api/market/[cid]) and the Telegram bot's 🎯 query reply, so
@@ -51,6 +108,33 @@ export interface CardHistoryRow extends AlertHit {
   foldKey: string | null;
 }
 
+/**
+ * 市场脉搏视角(2026-08-31)。两类标签,分工是重点:
+ *   category/subcategory = Polymarket 对市场的分类,「这是什么市场」;
+ *   boards               = 本站在脉搏日榜上给它的评价,「我们发现它怎么了」。
+ *
+ * 全部来自本地 market_daily,**零上游调用** —— 卡片本身已经是全站最贵的读
+ * (gamma + 多页 /trades + 钱包年龄探测),这一段不能再往那个预算上加东西。
+ *
+ * ⚠️ 时间口径与卡片其余部分不同,不要混读:卡片的其余字段是**此刻**的窗口,
+ * 而 boards 是 `day` 那个**已收盘的完整 UTC 日**的判定。今天盘中刚异动起来
+ * 的市场,今天还不会有 boards。
+ */
+export interface MarketCardPulse {
+  /** 榜单判定覆盖的 UTC 日(脉搏底座的最新完整日)。 */
+  day: string;
+  /** market_daily 最近一条上的分类;空串与缺失都归一成 null。 */
+  category: string | null;
+  subcategory: string | null;
+  /** 该日它上了哪些市场级榜单;空数组 = 一个都没上(不是「没数据」)。 */
+  boards: PulseBoardTag[];
+  /**
+   * 异常分 0-100。仅当它进了当日异常日榜**前 10** 才有值 —— 榜在数据层就
+   * 封了 10 条,第 11 名不是「不异常」而是「我们没算到那么远」。
+   */
+  anomalyScore: number | null;
+}
+
 export interface MarketCard {
   conditionId: string;
   identity: { title: string; slug: string; eventSlug: string } | null;
@@ -59,6 +143,8 @@ export interface MarketCard {
   freshFlow: FreshFlowRow[];
   history: CardHistoryRow[];
   window: { trades: number; truncated: boolean; hours: number };
+  /** null = market_daily 里没有这个市场的任何一天(底座还没覆盖到它)。 */
+  pulse: MarketCardPulse | null;
 }
 
 export interface MarketCardDeps {
@@ -186,6 +272,7 @@ export async function buildMarketCard(
       truncated: window.truncated,
       hours: CARD_WINDOW_SEC / 3600,
     },
+    pulse: buildMarketCardPulse(db, conditionId),
   };
 }
 

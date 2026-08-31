@@ -323,9 +323,16 @@ function MarketCell({
     <>
       <div style={{ fontWeight: 500 }}>
         {title ?? conditionId}
-        {slug && (
-          <MarketSlugActions slug={slug} eventSlug={eventSlug ?? undefined} />
-        )}
+        {/* conditionId 必须传:MarketSlugActions 的 🎯(打开本站市场信号卡)只在
+            拿得到它时才渲染,而全站只有 /pulse 漏了这个参数 —— 榜单行因此比
+            首页/共识/分歧/拆单累计/发现少一个入口,偏偏榜上是最该往下追一层的
+            市场。也不再用 slug 做外层守卫:组件自己判空(!s && !conditionId 才
+            返回 null),外层挡着会让无 slug 的市场连信号卡入口一起丢掉。 */}
+        <MarketSlugActions
+          slug={slug}
+          eventSlug={eventSlug ?? undefined}
+          conditionId={conditionId}
+        />
       </div>
       <div
         style={{

@@ -65,6 +65,16 @@ verdicts, and green/red untouched because they mean BUY/SELL everywhere else on 
 `异常` tag covers only the top 10, because that is where the data layer caps the anomaly board; a
 market ranked 11th carries no tag, and that limit is stated rather than papered over.
 
+Both tag kinds now also ride on the market signal card (`/market/{cid}`, and the public
+`/api/market-card/{cid}` as an additive `card.pulse` key), so a market carries the same badges
+wherever you meet it. That data is a pure local `market_daily` read reusing `buildPulse` verbatim —
+no upstream call, so the card's `429` budget is untouched, and the two surfaces cannot disagree
+about whether a market charted. Its time basis is deliberately different from the rest of the card
+and says so: everything else is the live window, `pulse` is the last closed UTC day. Rows on
+`/pulse` also gained the 🎯 signal-card link every other list already had — `MarketSlugActions`
+renders it whenever it is handed a `conditionId`, and `/pulse` was the one caller that never passed
+one, so the boards most worth drilling into were the only place you could not.
+
 Per-board methodology moved out of the three-paragraph block at the page foot into a `口径`
 disclosure under each board, so "how is this score computed" is answerable without leaving the
 table; only the two rulers the whole page shares (small order = $2k–10k, whale = ≥$50k) stay at the
