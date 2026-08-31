@@ -92,7 +92,7 @@ export async function GET(req: Request) {
             ...buildSignalFeed(db, { nowSec, windowHours }),
             strategies: keyAllows(access.busTypes, "strategy")
               ? buildStrategyFeed(db, { nowSec })
-              : { active: [], settled: [], recordByStrategy: {} },
+              : { active: [], settled: [], events: [], recordByStrategy: {} },
             // 统一信号总线(大单/共识/发现…):既有字段只增不改。
             // **服务端按 key 的订阅范围过滤**——订阅方不必自己筛,也拿不到
             // 没订阅的类型(过滤在服务端才是边界,客户端过滤只是显示)。
@@ -131,7 +131,12 @@ export async function GET(req: Request) {
         active: [],
         settled: [],
         record30d: { settled: 0, wins: 0, implied: 0, excess: 0, sd: 0 },
-        strategies: { active: [], settled: [], recordByStrategy: {} },
+        strategies: {
+          active: [],
+          settled: [],
+          events: [],
+          recordByStrategy: {},
+        },
         bus: [],
         delayedMin: delaySec / 60,
         healthy: false,
