@@ -3,8 +3,65 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { MarketSlugActions, StatCard, Tag, WalletLink } from "../../ui";
 import { useLang } from "../../i18n";
+import { catLabel, subLabel } from "../../../lib/categoryLabel";
+import type { PulseBoardTag } from "../../../lib/marketPulse";
+
+// 市场脉搏标签条(2026-08-31)。与 /pulse 的榜单行同一套视觉语言,刻意不另起
+// 一套:分类用 --brand、本站的判断用 --warn、涨跌色 --up/--down 谁都不占。
+// 读者在脉搏页看到的 chip 和在这里点进来看到的必须长一样,否则「同一个市场」
+// 这件事就得靠标题去对。
+//
+// ⚠️ 时间口径与卡片其余部分不同:卡片其余字段是**此刻**的成交窗口,榜单标记是
+// `day` 那个**已收盘的完整 UTC 日**。这个差别写在 title 里,不靠读者猜。
+function PulseTags({ pulse }: { pulse: NonNullable<Payload["pulse"]> }) {
+  const { t } = useLang();
+  const primary = pulse.category != null ? catLabel(pulse.category) : null;
+  const sub = pulse.subcategory != null ? subLabel(pulse.subcategory) : null;
+  const boardLabel = (k: PulseBoardTag): string =>
+    k === "anomaly"
+      ? t("异常")
+      : k === "divergence"
+        ? t("分歧")
+        : k === "ghost"
+          ? t("无鲸")
+          : t("洗量");
+  if (primary == null && pulse.boards.length === 0) return null;
+  // 返回片段而不是自带包裹:对齐交给外层那一行 flex 统一管。带 title 的
+  // tooltip 包裹层必须也是 inline-flex —— 普通 span 作为 flex item 会按自己的
+  // 行盒撑高,与直接放进去的 <Tag> 差出几像素(实测三种对齐上下文差 6.5px)。
+  const tip = (key: string, title: string, node: ReactNode) => (
+    <span key={key} title={title} style={{ display: "inline-flex" }}>
+      {node}
+    </span>
+  );
+  return (
+    <>
+      {primary != null && <Tag variant="brand">{primary}</Tag>}
+      {sub != null && sub !== primary && <Tag>{sub}</Tag>}
+      {pulse.boards.map((k) =>
+        tip(
+          k,
+          t("{d}（UTC）的市场脉搏日榜判定，不是此刻窗口", { d: pulse.day }),
+          <Tag variant="warn">{boardLabel(k)}</Tag>,
+        ),
+      )}
+      {pulse.anomalyScore != null &&
+        tip(
+          "score",
+          t("{d}（UTC）异常分 {s}/100", {
+            d: pulse.day,
+            s: pulse.anomalyScore,
+          }),
+          <Tag variant="warn">
+            {t("异常分 {s}", { s: pulse.anomalyScore })}
+          </Tag>,
+        )}
+    </>
+  );
+}
 
 // ---- API payload types (server truth lives in /api/market/[conditionId]) --
 
@@ -48,6 +105,15 @@ interface DisagreementSideInfo {
 interface Payload {
   conditionId: string;
   identity: { title: string; slug: string; eventSlug: string } | null;
+  /** 市场脉搏视角(2026-08-31 additive)。旧缓存/旧部署可能没有这个键,
+   *  故标可选 —— 与 /pulse 对 ghosts/washTop 同一套渲染侧防御。 */
+  pulse?: {
+    day: string;
+    category: string | null;
+    subcategory: string | null;
+    boards: PulseBoardTag[];
+    anomalyScore: number | null;
+  } | null;
   meta: {
     volume24hr: number | null;
     liquidity: number | null;
@@ -170,10 +236,28 @@ export default function MarketCard() {
           })}
           {win.truncated ? t("（窗口触顶截断，指标为下界）") : ""}
         </div>
-        <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
+        <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-2)" }}>
           {identity?.title ?? data.conditionId}
-          {meta?.closed ? <Tag> {t("已结算")}</Tag> : null}
         </h1>
+        {/* 标签自成一行,不塞进 h1。h1 是 28px 字号 / 42px 行高,而 .ds-tag 固定
+            20px 高:塞进去就有三套并存的对齐上下文(裸 Tag 按基线、包裹层按
+            vertical-align、tooltip 那层又按 flex item),实测垂直中心差 6.5px。
+            单独一行 + align-items:center 一次性消掉,顺带与 /pulse 榜单行的
+            「标题 → 标签行 → 灰色提示」同一个版式。 */}
+        {(meta?.closed || data.pulse) && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "var(--s-1)",
+              marginBottom: "var(--s-2)",
+            }}
+          >
+            {meta?.closed && <Tag>{t("已结算")}</Tag>}
+            {data.pulse && <PulseTags pulse={data.pulse} />}
+          </div>
+        )}
         <div className="ds-hint mono">
           {identity && (
             <>

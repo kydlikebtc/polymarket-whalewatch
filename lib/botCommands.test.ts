@@ -90,6 +90,9 @@ const card = (over: Partial<MarketCard> = {}): MarketCard => ({
     },
   ],
   window: { trades: 36, truncated: false, hours: 24 },
+  // 默认 null = 底座没覆盖到这个市场。TG 版式不渲染 pulse 段,夹具给 null 就
+  // 够;需要断言标签的用例自己 over 掉。
+  pulse: null,
   ...over,
 });
 

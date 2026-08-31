@@ -83,8 +83,10 @@ export const DICT_GUIDE: Record<string, string> = {
     "Anomaly board: daily rankings of volume/wallet-count outliers, plus the small-vs-whale directional divergence board.",
   "无鲸异动榜：价格移动 ≥10¢ 但窗口内没有对应大单——要么簿子薄，要么蚂蚁搬家。":
     "Ghost-move board: price moved ≥10¢ with no matching large fill in the window — either a thin book or ant-style accumulation.",
-  "洗量榜：同钱包窗口内配对买卖的市场风险分；品类确信指数：分歧度 × 量能 × 簿厚 × 校准偏离的每日合成。":
-    "Wash board: a per-market risk score from same-wallet matched buys/sells in the window; category conviction index: a daily composite of disagreement × volume × book depth × calibration gap.",
+  "洗量榜：同钱包当日在同一市场配对买卖的量占比（双腿口径），占比 ≥20% 且量 ≥$10k 入榜。":
+    "Wash board: the share of volume matched between buys and sells by the same wallet in the same market that day (both legs counted); a market ranks at ≥20% share and ≥$10k volume.",
+  "品类确信指数：阵营对峙 + 对立度 + 价格动荡 + 量能异动四分量的每日加权求和（0.30/0.30/0.20/0.20），高 = 激辩，低 = 确信（VIX 语义）。":
+    "Category conviction index: a daily weighted sum of four components — contest + opposition + price churn + volume surge (0.30/0.30/0.20/0.20); high = contention, low = conviction (VIX semantics).",
   "按日期翻页看历史；榜单行点入市场卡追根；确信指数按品类切换。":
     "Page through days for history; board rows link into the market card; the conviction index switches by category.",
   "洗量分是结构描述不是指控——高分说「这个盘的成交结构可疑」，不点名任何钱包作弊。":
