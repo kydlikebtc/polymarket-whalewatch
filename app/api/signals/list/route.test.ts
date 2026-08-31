@@ -136,7 +136,7 @@ describe("GET /api/signals/list", () => {
       { type: "large", threshold: 50_000 },
     ]);
     expect(body.signals.strategy).toEqual([
-      { code: "mega_whale", source: "heavy" },
+      { code: "mega_whale", source: "heavy", events: ["entry", "settle"] },
     ]);
   });
 

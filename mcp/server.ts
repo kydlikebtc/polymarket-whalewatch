@@ -88,7 +88,7 @@ server.registerTool(
   {
     title: "Signal feed",
     description:
-      "Main machine feed: raw bus[] events, folded active[] view, settled list, per-strategy paper entries and 30d records. Requires an API key; delayed-tier keys see a time-shifted world.",
+      "Main machine feed: raw bus[] events, folded active[] view, settled list, and per-strategy data — strategies.events[] is the action stream (paper entry AND settle/redeem as symmetric first-class events, mirroring webhook payloads) plus 30d records. Requires an API key; delayed-tier keys see a time-shifted world.",
     inputSchema: {
       windowHours: z
         .number()

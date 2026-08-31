@@ -5,6 +5,7 @@ import {
   buildStrategyFeed,
   STRATEGY_ACTIVE_WINDOW_HOURS,
 } from "./strategyFeed";
+import { SignalEventV1Schema } from "./webhookDelivery";
 
 // 对外信号批次 2:/api/signals 的 strategies 段。全部字段来自已持久化状态
 // (strategy_signals + follow_strategies + event_category),零上游调用 ——
@@ -207,6 +208,128 @@ describe("buildStrategyFeed", () => {
     const feed = buildStrategyFeed(db, { nowSec: NOW });
     expect(feed.active[0].strategy.code).toBeNull();
     expect(feed.active[0].strategy.name).toBe("运营手工档");
+    db.close();
+  });
+});
+
+// 动作流(2026-08-31):买入与兑现是一等对称事件。此前拉取侧只有买入 ——
+// active[] 在结算后把行撤走(轮询方视角是「买入被撤走」而非「收到兑现」),
+// settled[] 是 3d/LIMIT 20 的战绩视图。events[] 是 webhook SignalEventV1 的
+// 拉取镜像:同一 buildSignalEvent 构造,同 (id, event) 幂等键。
+describe("events[] 动作流:兑现与买入同为一等事件", () => {
+  it("结算后的信号出两条事件(entry+settle),entry 不因结算消失;逐条过 SignalEventV1Schema", () => {
+    const db = openDb(":memory:");
+    const whale = enablePush(db, "巨鲸");
+    seed(db, {
+      strategyId: whale,
+      cid: "done",
+      emittedAt: NOW - 4000,
+      settled: { ts: NOW - 1000, exit: 1, pnl: 293.7 },
+    });
+    const feed = buildStrategyFeed(db, { nowSec: NOW });
+    // 状态视图 vs 动作流的分野:active[] 里这行已消失,events[] 里买入仍在。
+    expect(feed.active).toHaveLength(0);
+    expect(feed.events.map((e) => e.event)).toEqual(["settle", "entry"]);
+    for (const e of feed.events) {
+      expect(SignalEventV1Schema.parse(e)).toBeTruthy();
+    }
+    const settle = feed.events[0];
+    const entry = feed.events[1];
+    // 同一台账行、同一幂等键前半 —— (id, event) 与 webhook 完全一致。
+    expect(settle.id).toBe(entry.id);
+    expect(settle.settle).toEqual({
+      settledTs: NOW - 1000,
+      exitPrice: 1,
+      won: true,
+      realizedPnl: 293.7,
+    });
+    expect(entry.settle).toBeNull();
+    expect(entry.paper.entryPrice).toBe(0.63);
+    // record 与 recordByStrategy 同源(投递时 webhook 也带同一份 30d 战绩)。
+    expect(settle.record).toEqual(feed.recordByStrategy[String(whale)].record);
+    db.close();
+  });
+
+  it("窗口:entry 按 emitted_at、settle 按 settled_ts 各 48h —— 老买入的新结算只出 settle 事件", () => {
+    const db = openDb(":memory:");
+    const whale = enablePush(db, "巨鲸");
+    db.prepare(
+      "INSERT INTO event_category (event_slug, category, subcategory, fetched_at) VALUES ('e1','Sports','NBA',1)",
+    ).run();
+    // 买入在 3 天前(出窗),结算 1h 前(在窗)—— 兑现动作必须可见,
+    // 且分类 join 对「只出现在 settle 行」的 slug 也生效。
+    seed(db, {
+      strategyId: whale,
+      cid: "oldbuy",
+      emittedAt: NOW - 3 * 86_400,
+      settled: { ts: NOW - 3600, exit: 0, pnl: -500 },
+    });
+    // 结算超 48h(出窗),买入更早:两条都不出。
+    seed(db, {
+      strategyId: whale,
+      cid: "ancient",
+      emittedAt: NOW - 6 * 86_400,
+      settled: { ts: NOW - 3 * 86_400, exit: 1, pnl: 1 },
+    });
+    const feed = buildStrategyFeed(db, { nowSec: NOW });
+    expect(feed.events.map((e) => [e.market.conditionId, e.event])).toEqual([
+      ["oldbuy", "settle"],
+    ]);
+    expect(feed.events[0].market.category).toBe("Sports");
+    db.close();
+  });
+
+  it("排序:事件自身时刻倒序,同刻 settle 在 entry 前(操作历史「同刻兑现在上」)", () => {
+    const db = openDb(":memory:");
+    const whale = enablePush(db, "巨鲸");
+    // b 买入较早、同刻结算;a 在两者之间买入。时间线(倒序):
+    // settle(b)@NOW-50 → entry(a)@NOW-50(同刻,settle 在前)→ entry(b)@NOW-200。
+    seed(db, {
+      strategyId: whale,
+      cid: "b",
+      emittedAt: NOW - 200,
+      settled: { ts: NOW - 50, exit: 1, pnl: 100 },
+    });
+    seed(db, { strategyId: whale, cid: "a", emittedAt: NOW - 50 });
+    const feed = buildStrategyFeed(db, { nowSec: NOW });
+    expect(feed.events.map((e) => [e.market.conditionId, e.event])).toEqual([
+      ["b", "settle"],
+      ["a", "entry"],
+      ["b", "entry"],
+    ]);
+    db.close();
+  });
+
+  it("时移:delayed 视图里「尚未发生」的结算不出现,买入照常 —— 与 active 的口径互洽", () => {
+    const db = openDb(":memory:");
+    const whale = enablePush(db, "巨鲸");
+    seed(db, {
+      strategyId: whale,
+      cid: "c1",
+      emittedAt: NOW - 4000,
+      settled: { ts: NOW - 600, exit: 1, pnl: 100 },
+    });
+    // 30 分钟前的世界:结算(NOW-600)还没发生 —— events 只有 entry,
+    // 且该信号在 active[] 里仍是行动项。
+    const delayed = buildStrategyFeed(db, { nowSec: NOW - 1800 });
+    expect(delayed.events.map((e) => e.event)).toEqual(["entry"]);
+    expect(delayed.active).toHaveLength(1);
+    const live = buildStrategyFeed(db, { nowSec: NOW });
+    expect(live.events.map((e) => e.event)).toEqual(["settle", "entry"]);
+    db.close();
+  });
+
+  it("push_enabled=0 的档不进动作流(对外只谈已放开推送的档)", () => {
+    const db = openDb(":memory:");
+    enablePush(db, "巨鲸");
+    const off = idOf(db, "保守");
+    seed(db, {
+      strategyId: off,
+      cid: "hidden",
+      settled: { ts: NOW - 100, exit: 1, pnl: 100 },
+    });
+    const feed = buildStrategyFeed(db, { nowSec: NOW });
+    expect(feed.events).toEqual([]);
     db.close();
   });
 });

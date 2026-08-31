@@ -78,9 +78,15 @@ describe("buildSignalCatalog", () => {
       publish(db, "超级巨鲸");
       publish(db, "首发共识");
       const c = buildSignalCatalog(db, { scopes: null });
+      // events 是名录对事件种类的承诺:买入与兑现对称,两种都必须列 ——
+      // 少列 settle 就回到「订阅方不知道有兑现」的老问题。
       expect(c.strategy).toEqual([
-        { code: "first_mover_consensus", source: "consensus" },
-        { code: "mega_whale", source: "heavy" },
+        {
+          code: "first_mover_consensus",
+          source: "consensus",
+          events: ["entry", "settle"],
+        },
+        { code: "mega_whale", source: "heavy", events: ["entry", "settle"] },
       ]);
       // 中文档名不出现 —— 与 ① 同一条纪律。
       expect(JSON.stringify(c)).not.toContain("巨鲸");
@@ -145,7 +151,9 @@ describe("buildSignalCatalog", () => {
       publish(db, "超级巨鲸");
       const c = buildSignalCatalog(db, { scopes: ["strategy"] });
       expect(c.bus).toEqual([]);
-      expect(c.strategy).toEqual([{ code: "mega_whale", source: "heavy" }]);
+      expect(c.strategy).toEqual([
+        { code: "mega_whale", source: "heavy", events: ["entry", "settle"] },
+      ]);
     } finally {
       db.close();
     }

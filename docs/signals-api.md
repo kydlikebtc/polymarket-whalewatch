@@ -242,7 +242,7 @@ active 条目对上号，也可复用同一个卡片渲染。差别只在末尾�
 **数据基准时刻**（时移后的），消费方展示"截至 HH:MM"应以它为准。
 `healthy`/`staleLoops` 按**真实当下**评估 —— 引擎死没死不属于可延迟的信息。
 
-### 新增 `strategies` 段（策略中心各档的买入触发）
+### 新增 `strategies` 段（策略中心各档的买入/兑现动作）
 
 > 档位数随种子演进：v2 写作时 13 档，`follow_seed_v=4`（2026-08-13 的 6 个反向
 > 对照档）后为 19 档。消费方**不应把档位数写死**——`recordByStrategy` 的键就是
@@ -281,6 +281,12 @@ active 条目对上号，也可复用同一个卡片渲染。差别只在末尾�
   "settled": [ /* 近 3 天认账,最多 20 条,新在前:
     { id, strategyId, strategyCode, strategyName, conditionId, title, outcome,
       entryPrice, exitPrice, won, realizedPnl, settledAt } */ ],
+  "events": [ /* 动作流(2026-08-31):买入(entry)与兑现(settle)一等对称,
+    逐条 = webhook 的 SignalEventV1(同一 buildSignalEvent 构造,拉/推同构,
+    幂等键同 (id, event))。entry 按 emittedAt、settle 按 settledTs 各 48h 窗,
+    事件自身时刻倒序、同刻 settle 在前,无 LIMIT。active[] 在结算后把行撤走
+    (状态视图),只轮询的消费方此前因此看不到兑现动作 —— 触发用这里,
+    别用视图。对外口径见 api-access.md §8.4 */ ],
   "recordByStrategy": {
     "6": { "name": "巨鲸", "source": "heavy",
            "record": { "settled": 41, "wins": 26, "implied": 22.9,

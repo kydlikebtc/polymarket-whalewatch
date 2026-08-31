@@ -38,6 +38,13 @@ export interface StrategyCatalogEntry {
   code: string | null;
   /** 检测器族:heavy / consensus / lopsided / resolved / lone_wolf / early_winner。 */
   source: string;
+  /**
+   * 该档会发出的事件种类(2026-08-31)。买入(entry)与兑现(settle)是
+   * 一等对称动作:webhook 两种都推,feed 的 strategies.events[] 两种都列。
+   * 此前名录只列档位不列事件,订阅方无从得知有 settle —— 名录承诺什么,
+   * 通道就投什么,这一字段就是那句承诺。
+   */
+  events: ("entry" | "settle")[];
 }
 
 export interface SignalCatalog {
@@ -79,6 +86,7 @@ export function buildSignalCatalog(
         .map((r) => ({
           code: strategyCode(r.name),
           source: sourceOf(r.params_json),
+          events: ["entry", "settle"] as ("entry" | "settle")[],
         }))
         // 按 code 排,不按 id:id 是部署本地自增行号,拿它排序会让同一份名录
         // 在两个部署上顺序不同 —— 而顺序是订阅方做 diff 的依据。
