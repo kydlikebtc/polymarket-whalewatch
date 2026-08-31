@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 514 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that range: 1993 tests across
-155 files (`npm test`).
+Scope: 516 commits, 2026-06-23 → 2026-08-31. Test suite at the end of that range: 2002 tests across
+156 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -36,6 +36,53 @@ Scope: 514 commits, 2026-06-23 → 2026-08-28. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-31 — Market pulse: five boards become five tabs, and our own verdicts become tags
+
+`/pulse` stacked all five boards vertically in the order they shipped rather than the order they
+should be read, and the cost was measurable: 6143px, 5.3 screens. The budget was inverted — ghost
+moves (26 rows, 1756px) and the wash board (35 rows, 2318px), the two least important sections, ate
+66% of the page, while the anomaly board the page exists for took 12.9%. The root cause sat in the
+data layer, where `buildPulse` caps `top` at 10 rows and leaves the other three boards uncapped.
+
+The boards are now a segmented tab strip rendering one at a time, ordered as a funnel: conviction
+index (category-level — which category the mood landed in) → anomaly board → small-vs-whale split →
+ghost moves (market-level — what actually moved) → wash board (data quality — how much of that
+volume to discount). The page is 1163–1338px depending on tab. Each board caps at 10 rows behind an
+explicit "show all N rows (M more)" toggle rather than a silent truncation, the selected tab syncs
+to `?board=` (shareable; `replaceState`, so switching tabs never buries the back button), and a
+board with no rows today hides its tab instead of offering an empty one. The KPI strip stays above
+the tabs — with one board visible at a time it is the page's only global view — and it is computed
+client-side from the payload already being fetched, so `/api/pulse` is untouched.
+
+Two kinds of tag now sit on every market row, and keeping them apart is the point. Category tags
+(`体育` `电竞`) are Polymarket's classification: what kind of market this is. Board tags (`异常`
+`分歧` `无鲸` `洗量`) are this site's own verdict: what we found wrong with it. Because a market
+often charts on several boards at once — 27 of one day's 57 ghost moves were also on the wash board
+— and tabs would otherwise hide exactly that, each row carries the _other_ boards it appears on.
+The three tag colours are kept disjoint deliberately: brand for classification, amber for our
+verdicts, and green/red untouched because they mean BUY/SELL everywhere else on the site. The
+`异常` tag covers only the top 10, because that is where the data layer caps the anomaly board; a
+market ranked 11th carries no tag, and that limit is stated rather than papered over.
+
+Both tag kinds now also ride on the market signal card (`/market/{cid}`, and the public
+`/api/market-card/{cid}` as an additive `card.pulse` key), so a market carries the same badges
+wherever you meet it. That data is a pure local `market_daily` read reusing `buildPulse` verbatim —
+no upstream call, so the card's `429` budget is untouched, and the two surfaces cannot disagree
+about whether a market charted. Its time basis is deliberately different from the rest of the card
+and says so: everything else is the live window, `pulse` is the last closed UTC day. Rows on
+`/pulse` also gained the 🎯 signal-card link every other list already had — `MarketSlugActions`
+renders it whenever it is handed a `conditionId`, and `/pulse` was the one caller that never passed
+one, so the boards most worth drilling into were the only place you could not.
+
+Per-board methodology moved out of the three-paragraph block at the page foot into a `口径`
+disclosure under each board, so "how is this score computed" is answerable without leaving the
+table; only the two rulers the whole page shares (small order = $2k–10k, whale = ≥$50k) stay at the
+foot. The divergence board's own definition — the two buckets' top net-bought outcomes must differ,
+both sides must clear their floors, and strength is the weaker side — had existed only as a comment
+in `lib/marketPulse.ts` and is now on the page. The conviction-index formula text lost its "same
+floors as the table above" pointer, which the reordering had made false; it names the tab instead,
+since layout changes and tab names do not.
 
 ### 2026-08-28 — Feature guide: the per-section manual, with honesty machine-checked
 

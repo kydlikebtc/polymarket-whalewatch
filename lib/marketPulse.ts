@@ -86,6 +86,15 @@ export interface DivergenceRow {
   strength: number;
 }
 
+/**
+ * 四个**市场级**榜单的标记(确信指数不在其列 —— 它是品类级的,不落到单个
+ * 市场)。定义放在这里而不是消费方,因为消费它的有两处:/pulse 的跨榜标记
+ * (app/pulse/membership.ts)与市场信号卡的 pulse 段(lib/marketCard.ts)。
+ * 各定义一份迟早会漂移,而漂移的表现是两个页面给同一个市场贴不同的标签、
+ * 且两边都不会报错。
+ */
+export type PulseBoardTag = "anomaly" | "divergence" | "ghost" | "wash";
+
 export interface PulseReport {
   latestDay: string | null;
   /** 底座已积累的天数 —— 榜从部署日开始变厚,进度对外自述。 */

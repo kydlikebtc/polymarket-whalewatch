@@ -1,131 +1,66 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLang } from "../i18n";
-import { catLabel, catLabelFine } from "../../lib/categoryLabel";
-import type { ConvictionReport } from "../../lib/convictionIndex";
-import type { PulseReport } from "../../lib/marketPulse";
-import { MarketSlugActions } from "../ui";
+import { Segmented } from "../ui";
+import {
+  buildQueryString,
+  parseChoiceParam,
+  replaceUrlQuery,
+} from "../urlQuery";
+import type { PulsePayload } from "./boards";
+import {
+  AnomalyBoard,
+  ConvictionBoard,
+  DivergenceBoard,
+  GhostBoard,
+  PulseOverview,
+  WashBoard,
+} from "./boards";
+import type { Membership } from "./membership";
+import { buildMembership } from "./membership";
 
-// /api/pulse 的完整 payload:PulseReport + additive 的确信指数键(服务端
-// 现算失败会降级 null,页面必须能在没有它的情况下照常渲染前两个 section)。
-// ghosts/washTop 标为可选:部署后 5 分钟内(max-age=300)浏览器/中间缓存可能
-// 把旧 payload 喂给新页面 JS,必须与 conviction 同一套渲染侧防御 —— 缓存
-// 世界里「同一次部署所以键必在」不成立。
-type PulsePayload = Omit<PulseReport, "ghosts" | "washTop"> & {
-  conviction?: ConvictionReport | null;
-  ghosts?: PulseReport["ghosts"];
-  washTop?: PulseReport["washTop"];
-};
+// /pulse 市场脉搏。五个榜是分段标签页,一次只渲染一个 —— 2026-08-31 第二轮
+// 改版的核心。此前五榜纵向全量堆叠,实测 6143px = 5.3 屏,且版面预算与信息
+// 重要性完全倒挂:无鲸异动(26 行/1756px)+ 洗量榜(35 行/2318px)两个最次要
+// 的榜吃掉 66% 的页面高度,而核心的异常日榜只占 12.9%。根因在数据层 ——
+// marketPulse.ts 只给 top 封了 10 行,其余三榜敞开供应。
+//
+// 标签顺序仍是漏斗(宏观 → 微观 → 数据质量),默认落在确信指数 = 漏斗起点:
+//   ① 确信指数(品类级):今天整体情绪落在哪个品类;
+//   ②③④ 异常日榜 / 小单vs鲸鱼分歧 / 无鲸异动(市场级):具体谁在异动;
+//   ⑤ 洗量榜(数据质量):上面那些量能里有多少不是方向性意见。
+// 标签上带计数,KPI 概览条常驻在标签之上 —— 一次只见一榜丢掉的全局视野,
+// 由这两处补回来。数据 = market_daily 每日聚合,从部署日开始积累 ——
+// 页面对外自述底座厚度(dayCount),不装老。
 
-// /pulse 市场脉搏:①异常市场日榜(四个可解释分量合成,总分必须能看到组成)
-// ②散户 vs 鲸鱼分歧(小单与鲸鱼桶的方向背离)。数据 = market_daily 每日聚合,
-// 从部署日开始积累 —— 页面对外自述底座厚度(dayCount),不装老。
+type BoardKey = "conviction" | "anomaly" | "divergence" | "ghost" | "wash";
+const BOARD_KEYS = [
+  "conviction",
+  "anomaly",
+  "divergence",
+  "ghost",
+  "wash",
+] as const;
+const DEFAULT_BOARD: BoardKey = "conviction";
 
-const usd = (n: number): string => `$${Math.round(n).toLocaleString("en-US")}`;
-const cents = (p: number | null): string =>
-  p == null ? "—" : `${(p * 100).toFixed(1).replace(/\.0$/, "")}¢`;
+// 切换标签时面板高度骤变会让整页跳动(35 行的洗量榜 → 2 行的分歧榜),给个
+// 下限兜住。数值同 /follow 详情页 tab 的既有做法,不是精算出来的。
+const PANEL_MIN_HEIGHT = 360;
 
-function CompChips({
-  c,
-}: {
-  c: {
-    volSurge: number;
-    oneSided: number;
-    whaleShare: number;
-    priceMove: number;
-  };
-}) {
-  const { t } = useLang();
-  const item = (label: string, v: number) => (
-    <span className="pulse-comp" key={label}>
-      <span className="pulse-comp__bar" aria-hidden>
-        <span style={{ width: `${Math.round(v * 100)}%` }} />
-      </span>
-      {t(label)} {Math.round(v * 100)}
-    </span>
-  );
-  return (
-    <span className="pulse-comps">
-      {item("量能", c.volSurge)}
-      {item("单边", c.oneSided)}
-      {item("鲸鱼", c.whaleShare)}
-      {item("价移", c.priceMove)}
-    </span>
-  );
-}
-
-// 确信指数四分量微条(复用 .pulse-comp 系列样式;标签集与日榜的不同,不硬套
-// CompChips 的类型)。
-function ConvictionChips({
-  c,
-}: {
-  c: {
-    contest: number;
-    divergence: number;
-    priceMove: number;
-    volSurge: number;
-  };
-}) {
-  const { t } = useLang();
-  const item = (label: string, v: number) => (
-    <span className="pulse-comp" key={label}>
-      <span className="pulse-comp__bar" aria-hidden>
-        <span style={{ width: `${Math.round(v * 100)}%` }} />
-      </span>
-      {t(label)} {Math.round(v * 100)}
-    </span>
-  );
-  return (
-    <span className="pulse-comps">
-      {item("对峙", c.contest)}
-      {item("对立", c.divergence)}
-      {item("价移", c.priceMove)}
-      {item("量能", c.volSurge)}
-    </span>
-  );
-}
-
-// 迷你趋势线:分数天然 0-100 有界,直接线性映射,无需引入图表底座。
-// 单点画圆不画线(polyline 单点不可见,会被误读为无数据)。
-function ScoreSpark({ series }: { series: { day: string; score: number }[] }) {
-  const W = 120;
-  const H = 26;
-  const PAD = 3;
-  if (series.length === 0) return null;
-  const y = (s: number) => PAD + (1 - s / 100) * (H - PAD * 2);
-  if (series.length === 1) {
-    return (
-      <svg width={W} height={H} aria-hidden>
-        <circle
-          cx={W / 2}
-          cy={y(series[0].score)}
-          r={2.5}
-          fill="currentColor"
-        />
-      </svg>
-    );
-  }
-  const x = (i: number) => PAD + (i / (series.length - 1)) * (W - PAD * 2);
-  const points = series.map((s, i) => `${x(i)},${y(s.score)}`).join(" ");
-  return (
-    <svg width={W} height={H} aria-hidden>
-      <polyline
-        points={points}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
+/* ------------------------------------------------------------------ 页面 */
 
 export default function PulsePage() {
   const { t } = useLang();
   const [report, setReport] = useState<PulsePayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [board, setBoard] = useState<BoardKey>(DEFAULT_BOARD);
+  // 每个榜各自记「是否已展开全部」。只有当前标签在渲染,互不干扰。
+  const [expanded, setExpanded] = useState<Partial<Record<BoardKey, boolean>>>(
+    {},
+  );
+  // URL 读一次之后才允许回写 —— 否则挂载时的回写会先把合法的 ?board= 抹掉。
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     fetch("/api/pulse")
@@ -136,13 +71,66 @@ export default function PulsePage() {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
+  // READ once on mount(urlQuery.ts 的既有契约:客户端读,非法值回落默认,
+  // 手工篡改的 URL 产生不了非法状态)。
+  useEffect(() => {
+    const raw = new URLSearchParams(window.location.search).get("board");
+    const parsed = parseChoiceParam(raw, BOARD_KEYS);
+    if (parsed) setBoard(parsed);
+    setHydrated(true);
+  }, []);
+
+  // WRITE 用 replaceState:切标签不该埋掉后退按钮;等于默认值时省略参数,
+  // 默认视图序列化成裸路径。
+  useEffect(() => {
+    if (!hydrated) return;
+    replaceUrlQuery(
+      buildQueryString([["board", board === DEFAULT_BOARD ? null : board]]),
+    );
+  }, [board, hydrated]);
+
+  // 哪些榜今天有内容。异常日榜与分歧榜恒在(它们各自带空态文案,「今天没有」
+  // 本身是信息);确信指数/无鲸/洗量为空时连标签一起隐藏 —— 点进去空空如也
+  // 的标签比没有这个标签更糟。
+  const available: BoardKey[] = report
+    ? [
+        ...(report.conviction && report.conviction.categories.length > 0
+          ? (["conviction"] as const)
+          : []),
+        "anomaly" as const,
+        "divergence" as const,
+        ...((report.ghosts ?? []).length > 0 ? (["ghost"] as const) : []),
+        ...((report.washTop ?? []).length > 0 ? (["wash"] as const) : []),
+      ]
+    : [];
+
+  // 落在一个不存在的标签上(确信指数今天算不出来,或 URL 指向空榜)就回落到
+  // 第一个可用的,顺带把 URL 改正。
+  useEffect(() => {
+    if (available.length > 0 && !available.includes(board)) {
+      setBoard(available[0]);
+    }
+    // available 每次渲染都新建数组,依赖它会无限循环;依赖它的内容摘要。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [available.join(","), board]);
+
+  const toggle = (k: BoardKey) =>
+    setExpanded((prev) => ({ ...prev, [k]: !prev[k] }));
+
+  // 跨榜成员身份算一次给五个榜共用 —— 四个市场级榜单的数组都在同一份
+  // payload 里,按 conditionId 归并即可,不需要额外请求。
+  const membership: Membership = useMemo(
+    () => (report ? buildMembership(report) : new Map()),
+    [report],
+  );
+
   return (
     <main className="ds-main">
       <header style={{ marginBottom: "var(--s-5)" }}>
         <h1 style={{ fontSize: "var(--t-2xl)", margin: 0 }}>{t("市场脉搏")}</h1>
         <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
           {t(
-            "每 UTC 日收盘后重建的市场级聚合：谁在异动、小单与鲸鱼是否站在对立面。",
+            "每 UTC 日收盘后重建的市场级聚合：先看整体情绪落在哪个品类，再落到具体哪些市场在异动，最后看这些量能要打几折。",
           )}
           {report?.latestDay && (
             <>
@@ -184,318 +172,103 @@ export default function PulsePage() {
             </div>
           )}
 
-          <section style={{ marginBottom: "var(--s-6)" }}>
-            <h2 style={{ fontSize: "var(--t-lg)", margin: "0 0 var(--s-3)" }}>
-              {t("异常市场日榜")}
-            </h2>
-            {report.top.length === 0 ? (
-              <div className="ds-hint">
-                {t("该日无达到材料性门槛（$10k 总量）的市场。")}
-              </div>
-            ) : (
-              <div className="ds-table-wrap">
-                <table className="ds-table">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>{t("市场")}</th>
-                      <th className="is-right">{t("异常分")}</th>
-                      <th>{t("构成")}</th>
-                      <th className="is-right">{t("量能")}</th>
-                      <th className="is-right">{t("顶结果首→末价")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.top.map((m, i) => (
-                      <tr key={m.conditionId}>
-                        <td className="num mono">{i + 1}</td>
-                        <td>
-                          <div style={{ fontWeight: 500 }}>
-                            {m.title ?? m.conditionId}
-                            {m.slug && (
-                              <MarketSlugActions
-                                slug={m.slug}
-                                eventSlug={m.eventSlug ?? undefined}
-                              />
-                            )}
-                          </div>
-                          <div className="ds-hint">
-                            {catLabelFine(m.category, m.subcategory)}
-                            {m.topOutcome && <> · {m.topOutcome}</>}
-                            {m.volRatio != null && (
-                              <>
-                                {" "}
-                                ·{" "}
-                                {t("量能为其 {n} 日均值的 {r} 倍", {
-                                  n: m.volBaselineDays,
-                                  r: m.volRatio.toFixed(1),
-                                })}
-                              </>
-                            )}
-                            {m.washRatio != null && m.washRatio >= 0.1 && (
-                              <>
-                                {" "}
-                                ·{" "}
-                                {t("洗量占比 {p}%", {
-                                  p: Math.round(m.washRatio * 100),
-                                })}
-                              </>
-                            )}
-                          </div>
-                        </td>
-                        <td
-                          className="is-right num mono"
-                          style={{ fontSize: "var(--t-lg)", fontWeight: 600 }}
-                        >
-                          {m.score}
-                        </td>
-                        <td>
-                          <CompChips c={m.components} />
-                        </td>
-                        <td className="is-right num mono">
-                          {usd(m.volumeUsd)}
-                        </td>
-                        <td className="is-right num mono">
-                          {cents(m.priceFirst)} → {cents(m.priceLast)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          <PulseOverview report={report} />
+
+          {/* 五个选项在 375px 下必然放不下一行,按 globals.css 里那条既有约定
+              直接上 ds-segmented--wrap(「不管几个选项,装不下就换行」的通用
+              防御),不单独验证这次会不会溢出。 */}
+          <Segmented<BoardKey>
+            ariaLabel={t("市场脉搏榜单分区")}
+            className="ds-segmented--wrap"
+            options={[
+              ...(available.includes("conviction")
+                ? [
+                    {
+                      label: `${t("确信指数")} ${report.conviction?.categories.length ?? 0}`,
+                      value: "conviction" as BoardKey,
+                    },
+                  ]
+                : []),
+              {
+                label: `${t("异常日榜")} ${report.top.length}`,
+                value: "anomaly" as BoardKey,
+              },
+              {
+                label: `${t("方向分歧")} ${report.divergences.length}`,
+                value: "divergence" as BoardKey,
+              },
+              ...(available.includes("ghost")
+                ? [
+                    {
+                      label: `${t("无鲸异动")} ${(report.ghosts ?? []).length}`,
+                      value: "ghost" as BoardKey,
+                    },
+                  ]
+                : []),
+              ...(available.includes("wash")
+                ? [
+                    {
+                      label: `${t("洗量榜")} ${(report.washTop ?? []).length}`,
+                      value: "wash" as BoardKey,
+                    },
+                  ]
+                : []),
+            ]}
+            value={board}
+            onChange={setBoard}
+          />
+
+          <div
+            style={{
+              minHeight: PANEL_MIN_HEIGHT,
+              marginTop: "var(--s-4)",
+              marginBottom: "var(--s-5)",
+            }}
+          >
+            {board === "conviction" && report.conviction && (
+              <ConvictionBoard
+                data={report.conviction}
+                expanded={!!expanded.conviction}
+                onToggle={() => toggle("conviction")}
+              />
             )}
-          </section>
-
-          <section style={{ marginBottom: "var(--s-5)" }}>
-            <h2 style={{ fontSize: "var(--t-lg)", margin: "0 0 var(--s-3)" }}>
-              {t("小单 vs 鲸鱼 · 方向分歧")}
-            </h2>
-            {report.divergences.length === 0 ? (
-              <div className="ds-hint">
-                {t("该日无达到双边材料性门槛的方向分歧。")}
-              </div>
-            ) : (
-              <div className="ds-table-wrap">
-                <table className="ds-table">
-                  <thead>
-                    <tr>
-                      <th>{t("市场")}</th>
-                      <th>{t("小单在买")}</th>
-                      <th>{t("鲸鱼在买")}</th>
-                      <th className="is-right">{t("分歧强度")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.divergences.map((d) => (
-                      <tr key={d.conditionId}>
-                        <td>
-                          <div style={{ fontWeight: 500 }}>
-                            {d.title ?? d.conditionId}
-                            {d.slug && <MarketSlugActions slug={d.slug} />}
-                          </div>
-                          <div className="ds-hint">
-                            {catLabelFine(d.category, d.subcategory)}
-                          </div>
-                        </td>
-                        <td>
-                          {d.smallTopOutcome}{" "}
-                          <span className="num mono up">
-                            +{usd(d.smallNetUsd)}
-                          </span>
-                        </td>
-                        <td>
-                          {d.whaleTopOutcome}{" "}
-                          <span className="num mono up">
-                            +{usd(d.whaleNetUsd)}
-                          </span>
-                        </td>
-                        <td className="is-right num mono">{usd(d.strength)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            {board === "anomaly" && (
+              <AnomalyBoard
+                rows={report.top}
+                membership={membership}
+                expanded={!!expanded.anomaly}
+                onToggle={() => toggle("anomaly")}
+              />
             )}
-          </section>
-
-          {report.conviction && report.conviction.categories.length > 0 && (
-            <section style={{ marginBottom: "var(--s-5)" }}>
-              <h2 style={{ fontSize: "var(--t-lg)", margin: "0 0 var(--s-3)" }}>
-                {t("确信指数 · 品类激辩度")}
-              </h2>
-              <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
-                {t(
-                  "高 = 激辩/恐慌（阵营对峙、小单与鲸鱼对立、价格动荡、量能异动），低 = 确信（一边倒、平静）。VIX 语义，逐品类按日合成。",
-                )}
-              </div>
-              <div className="ds-table-wrap">
-                <table className="ds-table">
-                  <thead>
-                    <tr>
-                      <th>{t("品类")}</th>
-                      <th className="is-right">{t("指数")}</th>
-                      <th>{t("构成")}</th>
-                      <th>{t("近 {n} 日", { n: report.conviction.days })}</th>
-                      <th className="is-right">{t("量能")}</th>
-                      <th className="is-right">{t("市场数")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.conviction.categories.map((c) => (
-                      <tr key={c.key || "__other"}>
-                        <td style={{ fontWeight: 500 }}>{catLabel(c.key)}</td>
-                        <td
-                          className="is-right num mono"
-                          style={{ fontSize: "var(--t-lg)", fontWeight: 600 }}
-                        >
-                          {c.score}
-                        </td>
-                        <td>
-                          <ConvictionChips c={c.components} />
-                        </td>
-                        <td className="ds-hint">
-                          <ScoreSpark series={c.series} />
-                        </td>
-                        <td className="is-right num mono">
-                          {usd(c.volumeUsd)}
-                        </td>
-                        <td className="is-right num mono">{c.markets}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-
-          {(report.ghosts ?? []).length > 0 && (
-            <section style={{ marginBottom: "var(--s-5)" }}>
-              <h2 style={{ fontSize: "var(--t-lg)", margin: "0 0 var(--s-3)" }}>
-                {t("无鲸异动 · 没人付大钱的剧烈价移")}
-              </h2>
-              <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
-                {t(
-                  "价移 ≥10¢ 但当日没有任何一笔 ≥$10k —— 要么簿子薄到小单就能推，要么有人在蚂蚁搬家。",
-                )}
-              </div>
-              <div className="ds-table-wrap">
-                <table className="ds-table">
-                  <thead>
-                    <tr>
-                      <th>{t("市场")}</th>
-                      <th className="is-right">{t("价移")}</th>
-                      <th className="is-right">{t("首→末价")}</th>
-                      <th className="is-right">{t("量能")}</th>
-                      <th className="is-right">{t("单笔最大")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(report.ghosts ?? []).map((g) => (
-                      <tr key={g.conditionId}>
-                        <td>
-                          <div style={{ fontWeight: 500 }}>
-                            {g.title ?? g.conditionId}
-                            {g.slug && (
-                              <MarketSlugActions
-                                slug={g.slug}
-                                eventSlug={g.eventSlug ?? undefined}
-                              />
-                            )}
-                          </div>
-                          <div className="ds-hint">
-                            {catLabelFine(g.category, g.subcategory)}
-                            {g.washRatio != null && g.washRatio >= 0.1 && (
-                              <>
-                                {" "}
-                                ·{" "}
-                                {t("洗量占比 {p}%", {
-                                  p: Math.round(g.washRatio * 100),
-                                })}
-                              </>
-                            )}
-                          </div>
-                        </td>
-                        <td className="is-right num mono">
-                          {g.moveCents.toFixed(0)}¢
-                        </td>
-                        <td className="is-right num mono">
-                          {cents(g.priceFirst)} → {cents(g.priceLast)}
-                        </td>
-                        <td className="is-right num mono">
-                          {usd(g.volumeUsd)}
-                        </td>
-                        <td className="is-right num mono">
-                          {usd(g.maxFillUsd)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-
-          {(report.washTop ?? []).length > 0 && (
-            <section style={{ marginBottom: "var(--s-5)" }}>
-              <h2 style={{ fontSize: "var(--t-lg)", margin: "0 0 var(--s-3)" }}>
-                {t("洗量榜 · 同钱包当日往返")}
-              </h2>
-              <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
-                {t(
-                  "同一钱包在同一市场当日既买又卖的配对量占比（双腿口径）。是结构描述不是指控——做市、调仓也长这样；把它当「这个市场的量能里有多少不是方向性意见」来读。",
-                )}
-              </div>
-              <div className="ds-table-wrap">
-                <table className="ds-table">
-                  <thead>
-                    <tr>
-                      <th>{t("市场")}</th>
-                      <th className="is-right">{t("洗量占比")}</th>
-                      <th className="is-right">{t("配对量")}</th>
-                      <th className="is-right">{t("量能")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(report.washTop ?? []).map((w) => (
-                      <tr key={w.conditionId}>
-                        <td>
-                          <div style={{ fontWeight: 500 }}>
-                            {w.title ?? w.conditionId}
-                            {w.slug && <MarketSlugActions slug={w.slug} />}
-                          </div>
-                          <div className="ds-hint">
-                            {catLabelFine(w.category, w.subcategory)}
-                          </div>
-                        </td>
-                        <td
-                          className="is-right num mono"
-                          style={{ fontWeight: 600 }}
-                        >
-                          {Math.round(w.washRatio * 100)}%
-                        </td>
-                        <td className="is-right num mono">
-                          {usd(2 * w.washUsd)}
-                        </td>
-                        <td className="is-right num mono">
-                          {usd(w.volumeUsd)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
+            {board === "divergence" && (
+              <DivergenceBoard
+                rows={report.divergences}
+                membership={membership}
+                expanded={!!expanded.divergence}
+                onToggle={() => toggle("divergence")}
+              />
+            )}
+            {board === "ghost" && (
+              <GhostBoard
+                rows={report.ghosts ?? []}
+                membership={membership}
+                expanded={!!expanded.ghost}
+                onToggle={() => toggle("ghost")}
+              />
+            )}
+            {board === "wash" && (
+              <WashBoard
+                rows={report.washTop ?? []}
+                membership={membership}
+                expanded={!!expanded.wash}
+                onToggle={() => toggle("wash")}
+              />
+            )}
+          </div>
 
           <div className="ds-hint">
             {t(
-              "口径：小单 = 单笔 $2k–10k（抓取下限之下的真散户不可见，因此只说「小单」）；鲸鱼 = 单笔 ≥$50k，与 heavy 信号同一把尺；异常分 = 0.35·量能异动 + 0.25·单边度 + 0.20·鲸鱼占比 + 0.20·日内价移，各分量 0–1 可逐项核对；量能异动在同市场基线不足 3 天时退化为当日横截面分位。",
-            )}{" "}
-            {t(
-              "确信指数 = 0.30·阵营对峙（量能加权 1−单边度）+ 0.30·对立度（合格分歧市场量能占比，双边门槛与上表同尺）+ 0.20·价格动荡 + 0.20·量能异动；品类日总量 <$10k 不给分；量能异动在品类自身基线不足 3 天时退化为当日横截面分位。",
-            )}{" "}
-            {t(
-              "无鲸异动 = 价移 ≥10¢ 且当日单笔最大 <$10k（判定材料 2026-08-28 起采集，之前的日份不进榜）；洗量占比 = 同钱包当日买卖配对量 ×2 ÷ 总量，只统计单笔 ≥$2k 的抓取窗口。",
+              "全页共用口径：小单 = 单笔 $2k–10k（抓取下限之下的真散户不可见，因此只说「小单」）；鲸鱼 = 单笔 ≥$50k，与 heavy 信号同一把尺。各榜自身的公式与门槛，见该榜标题下的「口径」折叠。",
             )}
           </div>
         </>

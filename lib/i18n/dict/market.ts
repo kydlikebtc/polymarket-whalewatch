@@ -107,4 +107,12 @@ export const DICT_MARKET: Record<string, string> = {
     "Marker colors: 💰 large · 🏆 smart · 🔥 consensus · 🐣 cohort.",
   "该区间没有价格历史点（市场太新或曲线不可用）。":
     "No price-history points in this range (market too new or curve unavailable).",
+
+  // -------- 市场脉搏标签条(2026-08-31)。标签文字本身(异常/分歧/无鲸/洗量、
+  // 品类名)复用 pulse 分片与 categoryLabel,此处只放本页独有的时间口径提示 ——
+  // 卡片其余字段是此刻的窗口,榜单标记是已收盘那个 UTC 日的判定,不写明会被混读。
+  "{d}（UTC）的市场脉搏日榜判定，不是此刻窗口":
+    "From the {d} (UTC) market-pulse daily boards, not the live window",
+  "{d}（UTC）异常分 {s}/100": "Anomaly score {s}/100 on {d} (UTC)",
+  "异常分 {s}": "Anomaly {s}",
 };
