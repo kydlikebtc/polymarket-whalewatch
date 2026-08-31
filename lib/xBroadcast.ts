@@ -34,6 +34,46 @@ export const X_POST_MAX_AGE_SEC = 1800;
 // 留 1 天缓冲 —— 更远的结算写承诺就是可被抓包的空头支票。
 export const SETTLE_PROMISE_MAX_H = 144;
 
+// --- 市场级去重 ------------------------------------------------------------
+//
+// 为什么不按告警 id 去重(2026-08-31 线上实测的教训):
+// @PolyWhaleFeedHQ 14 小时 56 条帖里约两成是近似重复 —— 同一市场 71¢ 上
+// 五分钟内发了 $284K/$121K/$107K 三条,文案除金额外逐字相同。X 的重复内容
+// 判定不要求逐字一致,模板化近似文本就够;而读者视角这三条本就是同一个
+// 事件。去重锚点因此从「告警 id」上移到「市场 + 方向 + 价格档 + 小时桶」。
+//
+// 为什么是"桶"而不是"滑动窗口":滑窗对持续有大单流的市场会永远压着不发
+// (每次检查都落在窗口内);按小时分桶则给出可预期的节奏 —— 同一市场同一
+// 方向同一价格档,每小时至多一条。
+export const MARKET_DEDUP_BUCKET_SEC = 3600;
+// 价格档宽(¢)。71¢ 与 72¢ 对读者是同一个信号;40¢ 与 71¢ 不是。
+export const MARKET_DEDUP_PRICE_BAND_CENTS = 5;
+
+export interface MarketDedupInput {
+  conditionId: unknown;
+  outcome: string;
+  /** 成交价/共识均价(¢)。取不到传 null —— 仍按市场+方向去重。 */
+  priceCents: number | null;
+  /** 大单方向;共识组恒为买入。 */
+  side: "BUY" | "SELL";
+  nowSec: number;
+}
+
+/**
+ * 市场级去重键。返回 null = 数据不足以安全归并(payload 没有 conditionId),
+ * 调用方退回按告警去重 —— **宁可多发一条,也不能因为脏数据把不相干的两个
+ * 市场压成一条**。
+ */
+export function marketDedupKey(i: MarketDedupInput): string | null {
+  if (typeof i.conditionId !== "string" || i.conditionId === "") return null;
+  const band =
+    i.priceCents != null && Number.isFinite(i.priceCents)
+      ? String(Math.round(i.priceCents / MARKET_DEDUP_PRICE_BAND_CENTS))
+      : "na";
+  const bucket = Math.floor(i.nowSec / MARKET_DEDUP_BUCKET_SEC);
+  return `mkt:${i.conditionId}:${i.side}:${i.outcome}:${band}:${bucket}`;
+}
+
 export interface XBroadcastDeps {
   db: DB;
   client: XClient;
@@ -77,6 +117,11 @@ interface Candidate {
   kind: "whale" | "consensus";
   text: string;
   usd: number;
+  /**
+   * 台账去重键:市场级(marketDedupKey)优先,数据不足时退 `alert:${id}`。
+   * 抢占失败 = 同市场本小时已有帖 或 另一进程先到 —— 两种都该落 skipped。
+   */
+  dedup: string;
 }
 
 // 赛道标签的唯一来源:本地 event_category 表(只读,绝不触发上游请求)。
@@ -122,6 +167,8 @@ interface ParseOpts {
   sirenUsd?: number;
   whaleTemplate?: string | null;
   consensusTemplate?: string | null;
+  /** 市场级去重的小时桶取自本轮时刻(见 marketDedupKey)。 */
+  nowSec: number;
 }
 
 // 共识告警 → 候选。payload = 完整 ConsensusGroup;老告警行缺的字段
@@ -152,17 +199,27 @@ function parseConsensusCandidate(
     p.lastTs >= p.firstTs
       ? p.lastTs - p.firstTs
       : null;
+  const priceCents =
+    typeof avg === "number" && avg > 0 ? Math.round(avg * 100) : null;
   return {
     alertId: row.id,
     kind: "consensus",
     usd: totalUsd,
+    // 共识组恒为买入方向(见 xSettled 同款注释)。
+    dedup:
+      marketDedupKey({
+        conditionId: p.conditionId,
+        outcome,
+        priceCents,
+        side: "BUY",
+        nowSec: opts.nowSec,
+      }) ?? `alert:${row.id}`,
     text: composeConsensusPost({
       walletCount,
       outcome,
       title,
       totalUsd,
-      priceCents:
-        typeof avg === "number" && avg > 0 ? Math.round(avg * 100) : null,
+      priceCents,
       wallets: walletReceipts(p.wallets),
       spanSec,
       template: opts.consensusTemplate,
@@ -219,16 +276,25 @@ function parseWhaleCandidate(
   if (usd < opts.minTradeUsd) return "below_floor";
   const ctx = (p.marketCtx ?? null) as WhaleMarketCtx | null;
   const hoursToEnd = ctx?.hoursToEnd ?? null;
+  const priceCents = Math.round(price * 100);
   return {
     alertId: row.id,
     kind: "whale",
     usd,
+    dedup:
+      marketDedupKey({
+        conditionId: p.conditionId,
+        outcome,
+        priceCents,
+        side,
+        nowSec: opts.nowSec,
+      }) ?? `alert:${row.id}`,
     text: composeWhalePost({
       usd,
       side,
       outcome,
       title,
-      priceCents: Math.round(price * 100),
+      priceCents,
       // impact24h 是比值(tradeUsd/24h量),模板要的是百分数。
       pct24h: ctx?.impact24h != null ? ctx.impact24h * 100 : null,
       liquidityUsd: ctx?.liquidity ?? null,
@@ -309,6 +375,7 @@ export async function runXBroadcastCycle(d: XBroadcastDeps): Promise<number> {
     sirenUsd: d.whaleSirenUsd,
     whaleTemplate: d.templates?.whale,
     consensusTemplate: d.templates?.consensus,
+    nowSec,
   };
   for (const row of rows) {
     const c = parseCandidate(d.db, row, parseOpts);
@@ -347,7 +414,7 @@ export async function runXBroadcastCycle(d: XBroadcastDeps): Promise<number> {
 
   let posted = 0;
   for (const c of candidates) {
-    const dedup = `alert:${c.alertId}`;
+    const dedup = c.dedup;
     const decision = quotaDecision(d.db, {
       kind: c.kind,
       hasLink: false,
@@ -357,8 +424,12 @@ export async function runXBroadcastCycle(d: XBroadcastDeps): Promise<number> {
       dailySpendCapUsd: d.dailySpendCapUsd,
       weeklySpendCapUsd: d.weeklySpendCapUsd,
     });
+    // 台账行的键分工:claim 行用市场级键(它就是去重锁),skipped 行一律
+    // 用 `alert:${id}`。混用会出事 —— 一条被配额拒掉的 skipped 行若占着
+    // 市场键,同市场后来那条合格的帖就再也抢不到锁了。
+    const alertKey = `alert:${c.alertId}`;
     if (!decision.ok) {
-      skip.run(c.kind, dedup, c.alertId, c.text, nowSec);
+      skip.run(c.kind, alertKey, c.alertId, c.text, nowSec);
       skipped++;
       console.log(
         `[xBroadcast] quota rejected alert=${c.alertId} kind=${c.kind}: ${decision.reason}`,
@@ -369,8 +440,12 @@ export async function runXBroadcastCycle(d: XBroadcastDeps): Promise<number> {
       claim.run(c.kind, dedup, c.alertId, c.text, costOf(false), nowSec)
         .changes === 0
     ) {
+      // 市场级键被占 = 同市场同方向同价格档本小时已有帖(或另一进程先到)。
+      // 两种情形都要落台账,否则这条告警会在 30 分钟窗口内每轮重扫。
+      skip.run(c.kind, alertKey, c.alertId, c.text, nowSec);
+      skipped++;
       console.log(
-        `[xBroadcast] skip alert=${c.alertId}: claimed by another process`,
+        `[xBroadcast] skip alert=${c.alertId} kind=${c.kind}: dedup '${dedup}' already claimed (same market this hour, or another process)`,
       );
       continue;
     }

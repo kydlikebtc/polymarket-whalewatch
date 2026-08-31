@@ -230,11 +230,13 @@ describe("runXBroadcastCycle", () => {
   it("permanent failure keeps the claim as failed (poison post cannot jam the queue)", async () => {
     const db = openDb(":memory:");
     recordAlert(db, "large", "bad", whalePayload(), NOW - 90);
+    // 真的换一个市场:只改 title 不改 conditionId 会被市场级去重压掉,
+    // 那样这个测试就不再证明「毒帖不堵队列」。
     recordAlert(
       db,
       "large",
       "good",
-      whalePayload({ title: "Second market" }),
+      whalePayload({ title: "Second market", conditionId: "0xc2" }),
       NOW - 60,
     );
     let first = true;
@@ -649,12 +651,154 @@ describe("日上限覆盖(whaleDailyCap/consensusDailyCap,/manage 可配)", () =
 
   it("consensusDailyCap=1:出厂不限的共识被覆盖后同样受限", async () => {
     const db = openDb(":memory:");
+    // 刻意用两个不同市场:同市场会先被市场级去重拦下,那样这个测试就
+    // 不再证明 cap 生效(见「市场级去重」一节)。
     recordAlert(db, "consensus", "c1", consensusPayload(), NOW - 120);
-    recordAlert(db, "consensus", "c2", consensusPayload(), NOW - 60);
+    recordAlert(
+      db,
+      "consensus",
+      "c2",
+      consensusPayload({ conditionId: "0xc7b" }),
+      NOW - 60,
+    );
     const client = fakeClient();
     expect(
       await runXBroadcastCycle(deps(db, client, { consensusDailyCap: 1 })),
     ).toBe(1);
     expect(statusCounts(db)).toEqual({ posted: 1, skipped: 1 });
+  });
+});
+
+// 线上实测(2026-08-31 @PolyWhaleFeedHQ):同一市场的多笔大单会发出多条
+// 近似帖 —— Napoli @71¢ 五分钟内三条、同市场战报四条,样本里 20% 是近似
+// 重复。X 的重复内容判定不要求逐字相同,模板化近似文本就够。去重锚点因此
+// 从「告警 id」上移到「市场 + 方向 + 价格档 + 小时桶」。
+describe("市场级去重(同市场同方向同价格档一小时一条)", () => {
+  function statuses(db: DB): string[] {
+    return (
+      db.prepare("SELECT status FROM x_posts ORDER BY id").all() as {
+        status: string;
+      }[]
+    ).map((r) => r.status);
+  }
+
+  it("同市场同价格档的三笔大单只发一条,其余落 skipped 台账", async () => {
+    const db = openDb(":memory:");
+    recordAlert(
+      db,
+      "large",
+      "n1",
+      whalePayload({ size: 400_000, price: 0.71 }),
+      NOW - 180,
+    );
+    recordAlert(
+      db,
+      "large",
+      "n2",
+      whalePayload({ size: 170_000, price: 0.71, transactionHash: "0xt2" }),
+      NOW - 120,
+    );
+    // 71¢ 与 72¢ 属于同一个 5¢ 档 —— 读者视角这是同一个信号。
+    recordAlert(
+      db,
+      "large",
+      "n3",
+      whalePayload({ size: 150_000, price: 0.72, transactionHash: "0xt3" }),
+      NOW - 60,
+    );
+    const client = fakeClient();
+    expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
+    expect(client.posts).toHaveLength(1);
+    // 被压掉的两条要有台账行,否则 30 分钟窗口内每轮都会重新解析重扫。
+    expect(statuses(db)).toEqual(["posted", "skipped", "skipped"]);
+  });
+
+  it("同市场但价格档不同 → 是两个信号,都发", async () => {
+    const db = openDb(":memory:");
+    recordAlert(
+      db,
+      "large",
+      "p1",
+      whalePayload({ size: 400_000, price: 0.71 }),
+      NOW - 120,
+    );
+    recordAlert(
+      db,
+      "large",
+      "p2",
+      whalePayload({ size: 300_000, price: 0.4, transactionHash: "0xt2" }),
+      NOW - 60,
+    );
+    const client = fakeClient();
+    expect(await runXBroadcastCycle(deps(db, client))).toBe(2);
+  });
+
+  it("同市场同价格档但跨过小时桶 → 下一小时可以再发一条", async () => {
+    const db = openDb(":memory:");
+    recordAlert(
+      db,
+      "large",
+      "h1",
+      whalePayload({ size: 400_000, price: 0.71 }),
+      NOW - 60,
+    );
+    const client = fakeClient();
+    expect(await runXBroadcastCycle(deps(db, client))).toBe(1);
+
+    recordAlert(
+      db,
+      "large",
+      "h2",
+      whalePayload({ size: 380_000, price: 0.71, transactionHash: "0xt2" }),
+      NOW + 3600 - 60,
+    );
+    expect(
+      await runXBroadcastCycle(deps(db, client, { nowSec: NOW + 3600 })),
+    ).toBe(1);
+    expect(client.posts).toHaveLength(2);
+  });
+
+  it("共识与大单落在同一市场时互不遮蔽(是两类内容)", async () => {
+    const db = openDb(":memory:");
+    recordAlert(
+      db,
+      "large",
+      "m1",
+      whalePayload({ conditionId: "0xsame", price: 0.56 }),
+      NOW - 120,
+    );
+    recordAlert(
+      db,
+      "consensus",
+      "m2",
+      consensusPayload({ conditionId: "0xsame" }),
+      NOW - 60,
+    );
+    const client = fakeClient();
+    expect(await runXBroadcastCycle(deps(db, client))).toBe(2);
+  });
+
+  it("payload 缺 conditionId → 退回按告警去重,绝不误压", async () => {
+    const db = openDb(":memory:");
+    recordAlert(
+      db,
+      "large",
+      "x1",
+      whalePayload({ conditionId: undefined, price: 0.71 }),
+      NOW - 120,
+    );
+    recordAlert(
+      db,
+      "large",
+      "x2",
+      whalePayload({
+        conditionId: undefined,
+        price: 0.71,
+        transactionHash: "0xt2",
+      }),
+      NOW - 60,
+    );
+    const client = fakeClient();
+    expect(await runXBroadcastCycle(deps(db, client))).toBe(2);
   });
 });

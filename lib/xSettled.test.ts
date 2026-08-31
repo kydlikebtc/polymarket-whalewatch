@@ -136,6 +136,19 @@ describe("runSettledCycle", () => {
     expect(client.replies).toHaveLength(1);
   });
 
+  // 线上实测(2026-08-31):引擎 60s 一轮 × 单轮 3 条 = 每分钟 3 条,
+  // 00:00:00–00:06:09 六分钟发了 17 条战报。这是自动化刷屏的教科书特征,
+  // 而那批帖合计只有 13 次浏览。单轮降到 1 条,让节奏散开。
+  it("单轮至多补发一条战报(每分钟 3 条是刷屏特征)", async () => {
+    const db = openDb(":memory:");
+    seedSignal(db, { alertKey: "s1", xPostId: "1900000101", won: true });
+    seedSignal(db, { alertKey: "s2", xPostId: "1900000102", won: false });
+    seedSignal(db, { alertKey: "s3", xPostId: "1900000103", won: true });
+    const client = fakeClient();
+    expect(await runSettledCycle(deps(db, client))).toBe(1);
+    expect(client.replies).toHaveLength(1);
+  });
+
   it("未结算的信号不发", async () => {
     const db = openDb(":memory:");
     const id = seedSignal(db, {

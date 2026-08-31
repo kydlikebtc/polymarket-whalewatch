@@ -67,13 +67,14 @@ describe("GET params/defaults", () => {
       whaleMinTradeUsd: 50_000,
       whaleDailyCap: DAILY_CAP.whale,
       whaleSirenUsd: 250_000,
-      consensusDailyCap: null,
+      consensusDailyCap: DAILY_CAP.consensus,
       pregameDailyCap: DAILY_CAP.pregame,
       pregameMinH: 1,
       pregameMaxH: 6,
       settledDailyCap: DAILY_CAP.settled,
       weeklyUtcHour: 13,
       pulseUtcHour: 14,
+      scorecardUtcHour: 14,
     });
     expect(j.defaults).toEqual(j.params);
     expect(j.budgetUsd).toBe(15);
@@ -87,6 +88,7 @@ describe("GET params/defaults", () => {
       pregame: null,
       weekly: null,
       settled: null,
+      scorecard: null,
       pulse: null,
       divergence: null,
     });

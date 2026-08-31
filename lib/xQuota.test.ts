@@ -153,7 +153,7 @@ describe("quotaDecision", () => {
     ).toBe(true);
   });
 
-  it("enforces per-kind daily caps (whale 20 / pregame 3), consensus uncapped", () => {
+  it("enforces per-kind daily caps — consensus included (uncapped only when the operator says so)", () => {
     const db = openDb(":memory:");
     for (let i = 0; i < DAILY_CAP.whale; i++) {
       insert(db, {
@@ -181,8 +181,8 @@ describe("quotaDecision", () => {
         nowSec: NOW,
       }).ok,
     ).toBe(true);
-    // consensus 无日上限(天然稀有),只受预算约束。
-    for (let i = 0; i < 40; i++) {
+    // consensus 出厂也有上限(首版「天然稀有 ⇒ 不限」已被线上数据证伪)。
+    for (let i = 0; i < DAILY_CAP.consensus; i++) {
       insert(db, {
         kind: "consensus",
         dedup: `c${i}`,
@@ -191,14 +191,39 @@ describe("quotaDecision", () => {
         ts: NOW,
       });
     }
+    const consensus = quotaDecision(db, {
+      kind: "consensus",
+      hasLink: false,
+      budgetUsd: 15,
+      nowSec: NOW,
+    });
+    expect(consensus.ok).toBe(false);
+    if (!consensus.ok) expect(consensus.reason).toContain("daily cap");
+    // 「不限」仍然表达得出来 —— 运营者显式传 null 即可(/manage 的空输入)。
     expect(
       quotaDecision(db, {
         kind: "consensus",
         hasLink: false,
         budgetUsd: 15,
         nowSec: NOW,
+        dailyCap: null,
       }).ok,
     ).toBe(true);
+  });
+
+  // 线上实测(2026-08-31 @PolyWhaleFeedHQ):共识出厂「不限」是每天约 96 条
+  // 帖的主要来源(14 小时里 22 条共识),而每帖只有约 11 次浏览、0 点赞。
+  // 出厂默认必须自带天花板 —— 「稀有」是对信号的假设,不是对发帖量的保证。
+  it("每一类都有出厂日上限,四类合计 ≤ 25 条/天", () => {
+    for (const kind of ["whale", "consensus", "pregame", "settled"]) {
+      expect(DAILY_CAP[kind]).toBeGreaterThanOrEqual(1);
+    }
+    const total =
+      DAILY_CAP.whale +
+      DAILY_CAP.consensus +
+      DAILY_CAP.pregame +
+      DAILY_CAP.settled;
+    expect(total).toBeLessThanOrEqual(25);
   });
 
   it("a new UTC month resets the ledger", () => {

@@ -10,6 +10,7 @@ import { DAILY_CAP } from "./xQuota";
 import { PREGAME_MIN_H, PREGAME_MAX_H } from "./xPregame";
 import { WEEKLY_POST_UTC_HOUR } from "./xWeekly";
 import { PULSE_POST_UTC_HOUR } from "./xPulse";
+import { SCORECARD_POST_UTC_HOUR } from "./xScorecard";
 import { WHALE_SIREN_USD } from "./xComposer";
 
 // env 派生的两个默认值(生产里来自 X_MONTHLY_BUDGET_USD / X_MIN_TRADE_USD)。
@@ -32,13 +33,14 @@ describe("defaultXParams", () => {
       whaleMinTradeUsd: 50_000,
       whaleDailyCap: DAILY_CAP.whale,
       whaleSirenUsd: WHALE_SIREN_USD,
-      consensusDailyCap: null,
+      consensusDailyCap: DAILY_CAP.consensus,
       pregameDailyCap: DAILY_CAP.pregame,
       pregameMinH: PREGAME_MIN_H,
       pregameMaxH: PREGAME_MAX_H,
       settledDailyCap: DAILY_CAP.settled,
       weeklyUtcHour: WEEKLY_POST_UTC_HOUR,
       pulseUtcHour: PULSE_POST_UTC_HOUR,
+      scorecardUtcHour: SCORECARD_POST_UTC_HOUR,
     });
   });
 
@@ -71,6 +73,7 @@ describe("getXBroadcastParams", () => {
       settledDailyCap: 8,
       weeklyUtcHour: 9,
       pulseUtcHour: 16,
+      scorecardUtcHour: 18,
     };
     setXBroadcastParams(db, p);
     expect(getXBroadcastParams(db, ENV)).toEqual(p);
@@ -112,7 +115,7 @@ describe("getXBroadcastParams", () => {
     expect(got.whaleMinTradeUsd).toBe(ENV.whaleMinTradeUsd);
     expect(got.whaleDailyCap).toBe(DAILY_CAP.whale);
     expect(got.whaleSirenUsd).toBe(WHALE_SIREN_USD);
-    expect(got.consensusDailyCap).toBeNull();
+    expect(got.consensusDailyCap).toBe(DAILY_CAP.consensus);
     expect(got.pregameDailyCap).toBe(6);
     expect(got.settledDailyCap).toBe(1);
     expect(got.weeklyUtcHour).toBe(WEEKLY_POST_UTC_HOUR);

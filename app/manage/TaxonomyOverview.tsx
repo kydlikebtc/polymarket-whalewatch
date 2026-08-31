@@ -184,7 +184,7 @@ export function PipelinesOverview({
       no: "🅒",
       name: "𝕏 播报",
       carries:
-        "① 大单/共识帖 · ② 战报 · 赛前聚合 · 周报(公共获客,非订阅方管线)",
+        "① 大单/共识帖 · ② 战报 + 每日战报榜 · 赛前聚合 · 周报(公共获客,非订阅方管线)",
       manage: "授权账号主备/内容类型开关/发帖历史",
       status: "见区块内",
       jump: "x",
@@ -341,7 +341,12 @@ export function RoutingMatrix({
         },
         { text: "恒开(strategies,按 key 范围)", jump: "keys" },
         { text: `端点 ${wh("strategy")} 个勾选`, jump: "keys" },
-        { text: `战报 ${on(routing.xKinds.settled === true)}`, jump: "x" },
+        {
+          text: `战报 ${on(routing.xKinds.settled === true)} · 战报榜 ${on(
+            routing.xKinds.scorecard === true,
+          )}`,
+          jump: "x",
+        },
       ],
     },
   ];

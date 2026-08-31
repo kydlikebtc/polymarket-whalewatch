@@ -47,6 +47,7 @@ interface XParams {
   settledDailyCap: number;
   weeklyUtcHour: number;
   pulseUtcHour: number;
+  scorecardUtcHour: number;
 }
 
 interface HistogramDay {
@@ -86,6 +87,7 @@ const KINDS: { kind: string; label: string }[] = [
   { kind: "pregame", label: "⏰ 赛前聚合" },
   { kind: "weekly", label: "📊 周报成绩单" },
   { kind: "settled", label: "✅ 结算战报" },
+  { kind: "scorecard", label: "📋 每日战报榜" },
   { kind: "pulse", label: "📈 异常市场日榜" },
   { kind: "divergence", label: "⚔️ 小单vs鲸鱼分歧" },
 ];
@@ -103,7 +105,9 @@ function kindHint(kind: string, p: XParams): string {
     case "weekly":
       return `每周一 ${String(p.weeklyUtcHour).padStart(2, "0")}:00 UTC 后图卡 + 链接,唯一的 $0.20 帖`;
     case "settled":
-      return `回复自己发过的信号帖,补上结果(赢输都发),至多 ${p.settledDailyCap} 条/天。默认关`;
+      return `回复自己发过的信号帖,补上结果(赢输都发),至多 ${p.settledDailyCap} 条/天。自回复没有独立分发 —— 它是可核验的凭证层,曝光靠「每日战报榜」。默认关`;
+    case "scorecard":
+      return `每日 ${String(p.scorecardUtcHour).padStart(2, "0")}:00 UTC 后把昨日全部结算聚成一条主帖(几战几胜 + 代表行,有输单必带),每天至多 1 条,0 结算的日子静默。默认关`;
     case "pulse":
       return `每日 ${String(p.pulseUtcHour).padStart(2, "0")}:00 UTC 后发昨日最异常市场(异常分四分量拆解,与 /pulse 页同源),每天至多 1 条。默认关`;
     case "divergence":
@@ -131,6 +135,9 @@ const PARAM_FIELDS: Record<
   ],
   weekly: [{ key: "weeklyUtcHour", label: "周一", suffix: "点(UTC)后发" }],
   settled: [{ key: "settledDailyCap", label: "日上限", suffix: "条" }],
+  scorecard: [
+    { key: "scorecardUtcHour", label: "每日", suffix: "点(UTC)后发" },
+  ],
   // 日榜与分歧共用同一发帖时刻(同一底座、同一节奏);字段挂在日榜卡下,
   // 分歧卡 hint 里已写明共用。
   pulse: [{ key: "pulseUtcHour", label: "每日", suffix: "点(UTC)后发" }],
@@ -152,6 +159,7 @@ const PARAM_LABELS: Record<keyof XParams, string> = {
   settledDailyCap: "战报日上限",
   weeklyUtcHour: "周报发帖时刻",
   pulseUtcHour: "脉搏日帖时刻",
+  scorecardUtcHour: "战报榜发帖时刻",
 };
 
 // 空串合法(= 不限)的可空参数;其余字段空串是校验错误。
@@ -179,6 +187,7 @@ function toForm(p: XParams): ParamForm {
     pregameMinH: String(p.pregameMinH),
     pregameMaxH: String(p.pregameMaxH),
     pulseUtcHour: String(p.pulseUtcHour),
+    scorecardUtcHour: String(p.scorecardUtcHour),
     settledDailyCap: String(p.settledDailyCap),
     weeklyUtcHour: String(p.weeklyUtcHour),
   };

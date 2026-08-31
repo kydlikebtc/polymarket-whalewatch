@@ -17,6 +17,7 @@ import { DAILY_CAP } from "./xQuota";
 import { PREGAME_MIN_H, PREGAME_MAX_H } from "./xPregame";
 import { WEEKLY_POST_UTC_HOUR } from "./xWeekly";
 import { PULSE_POST_UTC_HOUR } from "./xPulse";
+import { SCORECARD_POST_UTC_HOUR } from "./xScorecard";
 import { WHALE_SIREN_USD } from "./xComposer";
 
 export interface XBroadcastParams {
@@ -31,7 +32,13 @@ export interface XBroadcastParams {
   whaleDailyCap: number;
   /** 巨鲸 🚨 警报级抬头分档线($):单笔达到它换 🚨 图标,只影响文案。 */
   whaleSirenUsd: number;
-  /** 共识日上限;null = 不限(出厂行为:共识天然稀有)。 */
+  /**
+   * 共识日上限;null = 不限。
+   *
+   * 出厂**有**上限(2026-08-31 起,见 xQuota.DAILY_CAP 的实测注释)——
+   * 「共识天然稀有」这个首版假设被线上数据证伪。null 仍是合法存量值,
+   * 运营者可以显式选择不限。
+   */
   consensusDailyCap: number | null;
   /** 赛前聚合日上限(条/天)。 */
   pregameDailyCap: number;
@@ -45,6 +52,8 @@ export interface XBroadcastParams {
   weeklyUtcHour: number;
   /** 市场脉搏日帖时刻(每日的 UTC 整点,0-23;日榜与分歧两类共用)。 */
   pulseUtcHour: number;
+  /** 每日战报榜的发帖时刻(每日的 UTC 整点,0-23)。 */
+  scorecardUtcHour: number;
 }
 
 /** env 派生的两个默认值(lib/config 解析后传入,本模块不碰 process.env)。 */
@@ -61,13 +70,14 @@ export function defaultXParams(env: XParamEnvDefaults): XBroadcastParams {
     whaleMinTradeUsd: env.whaleMinTradeUsd,
     whaleDailyCap: DAILY_CAP.whale,
     whaleSirenUsd: WHALE_SIREN_USD,
-    consensusDailyCap: null,
+    consensusDailyCap: DAILY_CAP.consensus,
     pregameDailyCap: DAILY_CAP.pregame,
     pregameMinH: PREGAME_MIN_H,
     pregameMaxH: PREGAME_MAX_H,
     settledDailyCap: DAILY_CAP.settled,
     weeklyUtcHour: WEEKLY_POST_UTC_HOUR,
     pulseUtcHour: PULSE_POST_UTC_HOUR,
+    scorecardUtcHour: SCORECARD_POST_UTC_HOUR,
   };
 }
 
@@ -128,6 +138,9 @@ export function getXBroadcastParams(
   if (isCap(p.settledDailyCap)) out.settledDailyCap = p.settledDailyCap;
   if (isUtcHour(p.weeklyUtcHour)) out.weeklyUtcHour = p.weeklyUtcHour;
   if (isUtcHour(p.pulseUtcHour)) out.pulseUtcHour = p.pulseUtcHour;
+  if (isUtcHour(p.scorecardUtcHour)) {
+    out.scorecardUtcHour = p.scorecardUtcHour;
+  }
 
   // 窗口倒挂(手改库才可能出现):两端一起回落 —— 空窗口会让赛前线静默
   // 消失,比参数被重置更难察觉。

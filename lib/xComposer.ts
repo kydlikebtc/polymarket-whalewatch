@@ -315,6 +315,7 @@ export const TEMPLATE_VOCAB: Record<
   | "consensus"
   | "pregame"
   | "settled"
+  | "scorecard"
   | "weekly"
   | "pulse"
   | "divergence",
@@ -355,6 +356,9 @@ export const TEMPLATE_VOCAB: Record<
     "stance",
     "tags",
   ],
+  // scorecard 无 {title}(全日汇总,没有单一市场)—— 与 weekly 同属
+  // 「无标题锚点」的一类,见 xTemplates.TITLELESS_KINDS。
+  scorecard: ["day", "settled", "wins", "hitRate", "rows", "stance", "tags"],
   weekly: [
     "week",
     "settled",
@@ -866,6 +870,116 @@ export function composeWeeklyPost(i: WeeklyPostInput): string {
   );
 }
 
+// ---- 每日战报榜(2026-08-31)------------------------------------------------
+
+export interface ScorecardRow {
+  won: boolean;
+  title: string;
+  /** 名义回报(%)。输单或入场价缺失时传 null —— 只报事实,绝不编数字。 */
+  roiPct: number | null;
+}
+
+export interface ScorecardPostInput {
+  /** "Aug 30 (UTC)" —— 与 pulse 日帖同一口径。 */
+  dayLabel: string;
+  settled: number;
+  wins: number;
+  /** 代表行,调用方按戏剧性降序传;composer 按长度从后往前丢。 */
+  rows: ScorecardRow[];
+  /** 自定义文案模板(/manage 可配):null/省略 = 内置文案。 */
+  template?: string | null;
+}
+
+const SCORECARD_STANCE = "Win or lose, every call gets its receipt.";
+const SCORECARD_TAGS = "#Polymarket #PredictionMarkets";
+// 单条代表行的标题预算(加权)。一条超长标题不该把整帖挤爆,更不该把
+// 「几战几胜」这行挤掉 —— 战绩行才是这帖的主体。
+const SCORECARD_ROW_TITLE_MAX = 64;
+/** 代表行上限:再多就成列表帖了,读者只扫前几行。 */
+const SCORECARD_MAX_ROWS = 3;
+
+function clipWeighted(s: string, budget: number): string {
+  if (weightedLength(s) <= budget) return s;
+  let used = 0;
+  let keep = 0;
+  for (const ch of [...s]) {
+    const cw = weightedLength(ch);
+    // 预留 2:省略号在加权口径下占 2。
+    if (used + cw > budget - 2) break;
+    used += cw;
+    keep++;
+  }
+  return [...s].slice(0, keep).join("") + "…";
+}
+
+function scorecardLine(r: ScorecardRow): string {
+  const roi = r.won && r.roiPct != null ? ` +${Math.round(r.roiPct)}%` : "";
+  return `${r.won ? "✅" : "❌"}${roi} ${clipWeighted(sanitizeTitle(r.title), SCORECARD_ROW_TITLE_MAX)}`;
+}
+
+/**
+ * 每日战报榜 —— 把一天的结算战果聚成一条**主帖**。
+ *
+ *   📋 THE CARD — Aug 30 (UTC)
+ *
+ *   12 settled · 8 hit · 67%
+ *
+ *   ✅ +138% Will Sunderland AFC win on 2026-08-30?
+ *   ❌ Will SSC Napoli win on 2026-08-30?
+ *
+ *   Win or lose, every call gets its receipt.
+ *
+ *   #Polymarket #PredictionMarkets
+ *
+ * 为什么要有这一类(2026-08-31 线上实测):逐条战报走 self-reply,17 条合计
+ * 只有 13 次浏览 —— 自回复在 X 上没有独立分发,「赢输都报」这个卖点因此
+ * 对时间线完全不可见。self-reply 继续留着当可核验的凭证(thread 里点开
+ * 原帖就能对),这条主帖负责让它被看见。两层分工,不是二选一。
+ *
+ * 降级阶梯:丢代表行(3→0)→ 丢立场行。战绩行与抬头永不丢。
+ */
+export function composeScorecardPost(i: ScorecardPostInput): string {
+  const hitPct = i.settled > 0 ? Math.round((i.wins / i.settled) * 100) : 0;
+  const head = `📋 THE CARD — ${i.dayLabel}`;
+  const record = `${i.settled} settled · ${i.wins} hit · ${hitPct}%`;
+  const lines = i.rows.map(scorecardLine);
+  const build = (k: number, stance: boolean) =>
+    collapseBlank(
+      `${head}\n\n${record}\n\n` +
+        (k > 0 ? `${lines.slice(0, k).join("\n")}\n\n` : "") +
+        (stance ? `${SCORECARD_STANCE}\n\n` : "") +
+        SCORECARD_TAGS,
+    );
+  if (i.template) {
+    // 与 weekly 同款「无 title」路径(不走 fitPost 截断);带 URL 或超 280
+    // 都回退内置 —— 成本口子与折叠帖两条红线在这里同样适用。
+    const out = collapseBlank(
+      renderTemplate(i.template, {
+        day: i.dayLabel,
+        settled: String(i.settled),
+        wins: String(i.wins),
+        hitRate: `${hitPct}%`,
+        rows: lines.slice(0, SCORECARD_MAX_ROWS).join("\n"),
+        stance: SCORECARD_STANCE,
+        tags: SCORECARD_TAGS,
+      }),
+    );
+    if (
+      !/https?:\/\//i.test(out) &&
+      weightedLength(out) <= X_POST_MAX_CHARS &&
+      out !== ""
+    ) {
+      return out;
+    }
+  }
+  for (let k = Math.min(lines.length, SCORECARD_MAX_ROWS); k >= 0; k--) {
+    const out = build(k, true);
+    if (weightedLength(out) <= X_POST_MAX_CHARS) return out;
+  }
+  // 兜底:抬头 + 战绩行 + 标签,恒 ≤280(标题不参与,没有可撑爆的变量)。
+  return build(0, false);
+}
+
 // 19 档种子名 → 英文(与 lib/db.ts seeds v4 一一对应;新档缺映射时回退原名,
 // 宁可中文名出现在英文帖里也不显示错误翻译)。
 // ---- 市场脉搏日帖(内容引擎,2026-08-27) ------------------------------------
@@ -885,8 +999,9 @@ const PULSE_MONTHS = [
   "Dec",
 ];
 
-/** "2026-08-26" → "Aug 26 (UTC)"。解析失败原样返回 —— 日期串坏了也不炸帖。 */
-function pulseDayLabel(day: string): string {
+/** "2026-08-26" → "Aug 26 (UTC)"。解析失败原样返回 —— 日期串坏了也不炸帖。
+ *  日榜与每日战报榜共用,读者在同一个账号里看到的日期写法必须一致。 */
+export function utcDayLabel(day: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
   if (!m) return day;
   return `${PULSE_MONTHS[Number(m[2]) - 1]} ${Number(m[3])} (UTC)`;
@@ -942,12 +1057,12 @@ export function composePulsePost(i: PulsePostInput): string {
     subcategory: i.subcategory,
     title: i.title,
   });
-  const head = `📊 MARKET PULSE — ${pulseDayLabel(i.day)}`;
+  const head = `📊 MARKET PULSE — ${utcDayLabel(i.day)}`;
   if (i.template) {
     const out = renderCustom(
       i.template,
       {
-        day: pulseDayLabel(i.day),
+        day: utcDayLabel(i.day),
         score: String(i.score),
         why,
         runners,

@@ -305,12 +305,12 @@ export const DICT_GUIDE: Record<string, string> = {
     "Take the verifiable record off-site — embed cards, the Telegram channel, and 𝕏 broadcasting.",
   "三张零脚本嵌入卡：/embed/record（战绩）、/embed/status（状态）、/embed/selftest（自测判决）——自包含 HTML、60 秒缓存、带署名回链。":
     "Three zero-script embed cards: /embed/record (record), /embed/status (status), /embed/selftest (self-test verdict) — self-contained HTML, 60-second cache, attribution backlink.",
-  "Telegram 频道实时推送分档信号；𝕏 自动播报带结算自回复与周报卡（默认关，后台开关）。":
-    "The Telegram channel pushes tiered signals in real time; 𝕏 auto-broadcasting carries settlement self-replies and a weekly report card (off by default, toggled in ops).",
+  "Telegram 频道实时推送分档信号；𝕏 自动播报带结算自回复、每日战报榜与周报卡（默认关，后台开关）。":
+    "The Telegram channel pushes tiered signals in real time; 𝕏 auto-broadcasting carries settlement self-replies, a daily card and a weekly report card (off by default, toggled in ops).",
   "嵌入卡复制 iframe 片段即用，theme=dark 换暗色；Telegram 从导航顶栏进频道。":
     "Embed cards work by copying the iframe snippet; theme=dark switches the palette; the Telegram channel is reachable from the top nav.",
   "嵌入卡刻意 noindex——它是分发面不是搜索位；卡上的「Data as of」是数据时刻,别当实时读。":
     "Embed cards are deliberately noindex — they are a distribution surface, not a search slot; the card's \"Data as of\" is the data moment, don't read it as live.",
-  "𝕏 播报的每条结算自回复都是公开的自我打分——错了也回帖,这是频道存在的前提而非缺陷。":
-    "Every settlement self-reply on 𝕏 is public self-grading — wrong calls get replied to as well; that is the channel's premise, not a defect.",
+  "𝕏 播报的每条结算自回复都是公开的自我打分——错了也回帖,这是频道存在的前提而非缺陷;自回复是挂在原帖下的凭证,每日战报榜才是让它被看见的那一层。":
+    "Every settlement self-reply on 𝕏 is public self-grading — wrong calls get replied to as well; that is the channel's premise, not a defect. The self-reply is the receipt pinned under the original post; the daily card is the layer that makes it visible.",
 };

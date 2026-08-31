@@ -78,6 +78,20 @@ describe("validateXTemplate", () => {
     expect(validateXTemplate("weekly", "{week} {url}").ok).toBe(true);
   });
 
+  it("scorecard 无 {title} 但同样禁链接 —— 成本口子的边界是 kind,不是「有没有标题锚点」", () => {
+    // 无标题锚点:不要求 {title}(与 weekly 同一类)。
+    expect(validateXTemplate("scorecard", "{day} {settled} {tags}").ok).toBe(
+      true,
+    );
+    // 但绝不因此顺带拿到 weekly 的带链接许可($0.20/条 = 13 倍成本)。
+    const r = validateXTemplate(
+      "scorecard",
+      "{day} https://whalewatch.wired.fund {tags}",
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("链接");
+  });
+
   it("底座超长被拦(样本渲染估算)", () => {
     const fat = `${"Very long fixed copy. ".repeat(20)}{title}`;
     const r = validateXTemplate("pregame", fat);
