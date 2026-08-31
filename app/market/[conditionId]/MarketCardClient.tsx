@@ -18,8 +18,8 @@ import type { PulseBoardTag } from "../../../lib/marketPulse";
 // `day` 那个**已收盘的完整 UTC 日**。这个差别写在 title 里,不靠读者猜。
 function PulseTags({ pulse }: { pulse: NonNullable<Payload["pulse"]> }) {
   const { t } = useLang();
-  const primary = pulse.category != null ? catLabel(pulse.category) : null;
-  const sub = pulse.subcategory != null ? subLabel(pulse.subcategory) : null;
+  const primary = pulse.category != null ? t(catLabel(pulse.category)) : null;
+  const sub = pulse.subcategory != null ? t(subLabel(pulse.subcategory)) : null;
   const boardLabel = (k: PulseBoardTag): string =>
     k === "anomaly"
       ? t("异常")

@@ -204,7 +204,7 @@ export function PulseOverview({ report }: { report: PulsePayload }) {
       <StatCard label={t("最激辩品类")}>
         <div className="kpi-value">{hottest ? hottest.score : "—"}</div>
         <div className="kpi-sub" style={ellipsis}>
-          {hottest ? catLabel(hottest.key) : t("确信指数暂不可用")}
+          {hottest ? t(catLabel(hottest.key)) : t("确信指数暂不可用")}
         </div>
       </StatCard>
       <StatCard label={t("最异常市场")}>
@@ -277,6 +277,11 @@ function BoardTagChip({ kind }: { kind: BoardTag }) {
 // (ui.tsx SideTag:BUY 绿 / SELL 红),给「政治」发一个红 chip 会被读成
 // 「跌」。一级用 brand 上色、二级留灰,层级靠既有色阶而不是新造一套品类
 // 调色板 —— 八个品类要八种在明暗两套主题下都成立的颜色,那是另一个活。
+// catLabel/subLabel 的输出是全站的**规范中文键**(它把 gamma 的英文标签映射
+// 成中文),显示前必须再过一次 t() 才能在英文界面回到英文 —— 否则英文页面上
+// 只有词表里有的品类会显示中文(Sports→体育),词表外的反而透传英文(Iran),
+// 一行里两种语言。这是 /follow DeepAnalysis 与 /wallet 档案页的既有写法。
+// t(变量) 逃得过 i18n coverage 闸,译文由 deep/home/wallet 三个分片保证。
 function CategoryTags({
   category,
   subcategory,
@@ -284,13 +289,15 @@ function CategoryTags({
   category: string | null;
   subcategory: string | null;
 }) {
-  const primary = catLabel(category);
-  const sub = subcategory ? subLabel(subcategory) : "";
+  const { t } = useLang();
+  const primary = t(catLabel(category));
+  const sub = subcategory ? t(subLabel(subcategory)) : "";
   return (
     <>
       <Tag variant="brand">{primary}</Tag>
       {/* 二级与一级同名时不重复发一个 chip —— 与 catLabelFine 的既有去重
-          规则同一条(categoryLabel.ts:72),换了渲染形式不换语义。 */}
+          规则同一条(categoryLabel.ts:72),换了渲染形式不换语义。去重在
+          译后比较:两个英文标签可能译到同一中文,也可能反过来。 */}
       {sub !== "" && sub !== primary && <Tag>{sub}</Tag>}
     </>
   );
@@ -398,7 +405,7 @@ export function ConvictionBoard({
           <tbody>
             {rows.map((c) => (
               <tr key={c.key || "__other"}>
-                <td style={{ fontWeight: 500 }}>{catLabel(c.key)}</td>
+                <td style={{ fontWeight: 500 }}>{t(catLabel(c.key))}</td>
                 <td
                   className="is-right num mono"
                   style={{ fontSize: "var(--t-lg)", fontWeight: 600 }}
