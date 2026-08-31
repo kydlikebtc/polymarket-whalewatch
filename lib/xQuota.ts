@@ -11,13 +11,21 @@ import { utcWeekStart } from "./followAnalysis";
 export const COST_TEXT_USD = 0.015;
 export const COST_LINK_USD = 0.2;
 
-// 每日帖数上限的**出厂默认**,按 kind。无键 = 不限(consensus 天然稀有、
-// weekly 每周一条,由各自 dedup 约束)。whale 20 给赛前/共识留出席位:
-// $15/月 ≈ 33 帖/天,大单流最容易把配额打光,cap 在 kind 层比在优先级层
-// 实现简单得多。运营者可在 /manage 覆盖(lib/xParams),调用方经
+// 每日帖数上限的**出厂默认**,按 kind。无键 = 不限(weekly 每周一条,由
+// dedup 约束)。运营者可在 /manage 覆盖(lib/xParams),调用方经
 // QuotaInput.dailyCap 传入;这里只在没人传时兜底。
+//
+// 数值的由来(2026-08-31 @PolyWhaleFeedHQ 线上实测后重定):
+// 首版是 whale 20 / consensus 不限,实际跑出每天约 96 条帖 —— 14 小时的
+// 采样里 22 条共识 + 13 条大单 + 17 条战报,合计 466 次浏览、0 点赞、0 转推,
+// 单帖触达率 0.17%(4820 粉丝)。「共识天然稀有」这个假设被证伪:稀有的是
+// 信号质量,不是信号条数。少发不掉流量 —— 那 96 条只换来约 800 次曝光,
+// 砍到 20 条只要每帖到 40 次浏览就是净赚,而单帖曝光正是被刷屏压着的那项。
+// 四类合计 22 条/天(由 xQuota.test 的合计闸钉住 ≤25)。
 export const DAILY_CAP: Record<string, number> = {
-  whale: 20,
+  whale: 6,
+  // 出厂**有**上限:见上,「稀有」是对信号的假设,不能当发帖量的保证。
+  consensus: 8,
   pregame: 3,
   // 战报量天然受"发过多少信号"约束,但开关刚打开时会有历史积压,
   // 加个日 cap 防止一次性刷屏。

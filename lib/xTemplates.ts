@@ -25,9 +25,18 @@ export const DEFAULT_X_TEMPLATES: XTemplates = {
   pregame: null,
   weekly: null,
   settled: null,
+  scorecard: null,
   pulse: null,
   divergence: null,
 };
+
+/**
+ * 没有单一市场标题的 kind —— 校验时不要求 {title},也不走 fitPost 的截断
+ * 保护(它们的变量都是短量,composer 自带长度阶梯)。
+ *   · weekly:全站周汇总,还是唯一允许 {url} 的一类;
+ *   · scorecard:全日战果汇总。
+ */
+const TITLELESS_KINDS = new Set<XPostKind>(["weekly", "scorecard"]);
 
 const CONFIG_KEY = "x_broadcast_templates";
 
@@ -117,6 +126,17 @@ const SAMPLE_VARS: Record<XPostKind, Record<string, string>> = {
     stance: "We post every result, wins and losses.",
     tags: "#Polymarket #MLB",
   },
+  scorecard: {
+    day: "Aug 30 (UTC)",
+    settled: "12",
+    wins: "8",
+    hitRate: "67%",
+    rows:
+      "✅ +138% Will Sunderland AFC win on 2026-08-30?\n" +
+      "❌ Will SSC Napoli win on 2026-08-30?",
+    stance: "Win or lose, every call gets its receipt.",
+    tags: "#Polymarket #PredictionMarkets",
+  },
   weekly: {
     week: "Aug 10–16",
     settled: "42",
@@ -146,10 +166,9 @@ const SAMPLE_VARS: Record<XPostKind, Record<string, string>> = {
 
 /** 模板渲染预览(样本数据)。UI 展示用,与保存校验同一份样本。 */
 export function previewXTemplate(kind: XPostKind, tpl: string): string {
-  const vars =
-    kind === "weekly"
-      ? SAMPLE_VARS.weekly
-      : { ...SAMPLE_VARS[kind], title: "Will Bitcoin hit $150,000 by Dec 31?" };
+  const vars = TITLELESS_KINDS.has(kind)
+    ? SAMPLE_VARS[kind]
+    : { ...SAMPLE_VARS[kind], title: "Will Bitcoin hit $150,000 by Dec 31?" };
   return collapseBlank(renderTemplate(tpl, vars));
 }
 
@@ -168,19 +187,22 @@ export function validateXTemplate(
       error: `未知占位符 {${[...unknown].join("} {")}} —— ${kind} 可用:{${TEMPLATE_VOCAB[kind].join("} {")}}`,
     };
   }
-  if (kind !== "weekly") {
+  // URL 闸独立于「有没有 {title}」:唯一的例外是 weekly(那是刻意的
+  // $0.20 导流帖)。scorecard 同属无标题一类,但绝不能因此顺带拿到带链接
+  // 的许可 —— 成本口子的边界是 kind,不是「有没有标题锚点」。
+  if (kind !== "weekly" && /https?:\/\//i.test(tpl)) {
+    return {
+      ok: false,
+      error:
+        "模板不能包含链接:带链接帖 $0.20/条(无链接的 13 倍),成本口子在模板层焊死;只有周报允许 {url}",
+    };
+  }
+  if (!TITLELESS_KINDS.has(kind)) {
     const titles = (tpl.match(/\{title\}/g) ?? []).length;
     if (titles !== 1) {
       return {
         ok: false,
         error: `模板必须恰好包含一个 {title}(当前 ${titles} 个)—— 它是超长标题截断保护的锚点`,
-      };
-    }
-    if (/https?:\/\//i.test(tpl)) {
-      return {
-        ok: false,
-        error:
-          "模板不能包含链接:带链接帖 $0.20/条(无链接的 13 倍),成本口子在模板层焊死;只有周报允许 {url}",
       };
     }
     // 底座(除标题外的固定部分)≤278 加权:fitPost 截标题的前提,超了连
@@ -195,7 +217,7 @@ export function validateXTemplate(
       };
     }
   } else {
-    const full = weightedLength(previewXTemplate("weekly", tpl));
+    const full = weightedLength(previewXTemplate(kind, tpl));
     if (full > X_POST_MAX_CHARS) {
       return {
         ok: false,

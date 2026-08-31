@@ -6,6 +6,8 @@ import {
   composePregamePost,
   composeWeeklyPost,
   composeSettlementPost,
+  composeScorecardPost,
+  X_POST_MAX_CHARS,
   usdCompact,
   strategyEn,
   STRATEGY_EN,
@@ -949,5 +951,65 @@ describe("文案模板(template)", () => {
     );
     const fat = compose("weekly", `${"long weekly copy ".repeat(30)}{url}`);
     expect(fat).toContain("WEEKLY REPORT"); // 回退内置
+  });
+});
+
+// ---- 每日战报榜(2026-08-31)-----------------------------------------------
+//
+// 为什么新增这一类:结算战报走 self-reply,线上实测 17 条合计只有 13 次浏览
+// —— 自回复在 X 上没有独立分发,「赢输都报」这个卖点因此对时间线完全不可见。
+// 把一天的战果聚成一条**主帖**,receipts 仍留在各自 thread 里可核验。
+describe("composeScorecardPost", () => {
+  const rows = [
+    {
+      won: true,
+      title: "Will Sunderland AFC win on 2026-08-30?",
+      roiPct: 138,
+    },
+    { won: false, title: "Will SSC Napoli win on 2026-08-30?", roiPct: null },
+  ];
+
+  it("抬头 + 战绩行 + 代表行 + 立场行,且不超 280", () => {
+    const out = composeScorecardPost({
+      dayLabel: "Aug 30 (UTC)",
+      settled: 12,
+      wins: 8,
+      rows,
+    });
+    expect(out.startsWith("📋 THE CARD — Aug 30 (UTC)")).toBe(true);
+    expect(out).toContain("12 settled · 8 hit · 67%");
+    // 赢的行带名义回报(读者一眼看到幅度);输的行只报事实,不编回报率。
+    expect(out).toContain("✅ +138% Will Sunderland AFC win on 2026-08-30?");
+    expect(out).toContain("❌ Will SSC Napoli win on 2026-08-30?");
+    expect(out).toContain("#Polymarket");
+    expect(weightedLength(out)).toBeLessThanOrEqual(X_POST_MAX_CHARS);
+  });
+
+  it("代表行过长时逐级丢行,战绩行永远保住", () => {
+    const long =
+      "Will this absurdly long market question about something that nobody would ever fit into a tweet resolve YES before the end of the year 2026?";
+    const out = composeScorecardPost({
+      dayLabel: "Aug 30 (UTC)",
+      settled: 40,
+      wins: 20,
+      rows: [
+        { won: true, title: long, roiPct: 100 },
+        { won: false, title: long, roiPct: null },
+        { won: true, title: long, roiPct: 50 },
+      ],
+    });
+    expect(weightedLength(out)).toBeLessThanOrEqual(X_POST_MAX_CHARS);
+    expect(out).toContain("40 settled · 20 hit · 50%");
+  });
+
+  it("没有代表行也能发(战绩行本身就是内容)", () => {
+    const out = composeScorecardPost({
+      dayLabel: "Aug 30 (UTC)",
+      settled: 3,
+      wins: 0,
+      rows: [],
+    });
+    expect(out).toContain("3 settled · 0 hit · 0%");
+    expect(weightedLength(out)).toBeLessThanOrEqual(X_POST_MAX_CHARS);
   });
 });

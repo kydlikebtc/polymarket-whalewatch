@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 516 commits, 2026-06-23 → 2026-08-31. Test suite at the end of that range: 2002 tests across
-156 files (`npm test`).
+Scope: 517 commits, 2026-06-23 → 2026-08-31. Test suite at the end of that range: 2020 tests across
+157 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -36,6 +36,39 @@ Scope: 516 commits, 2026-06-23 → 2026-08-31. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-08-31 — X broadcast: measured the live account, then cut the volume it was drowning in
+
+The `@PolyWhaleFeedHQ` timeline was read post-by-post for the first time since it went live, and the
+numbers were bad in a specific, fixable way: **56 posts over 14 hours drew 466 views, 0 likes, 0
+reposts and 0 bookmarks** — a 0.17% reach against 4,820 followers. Three causes, all of them ours:
+
+- **Duplicate posts.** The ledger de-duplicated on `alert:<id>`, so one market taking several whale
+  fills produced several near-identical posts — $284K / $121K / $107K on the same outcome at the
+  same price inside five minutes, and one settled market posting its result four times. About a
+  fifth of the sample. The dedup anchor moved up to **market + side + 5¢ price band + hour bucket**;
+  suppressed alerts still get a `skipped` ledger row, because the cycle's rescan guard keys on
+  `alert_id`, not on the dedup key. Missing `conditionId` falls back to per-alert dedup — a dirty
+  payload must never collapse two unrelated markets into one post.
+- **Volume.** Factory caps were whale 20 and consensus **uncapped** ("consensus is naturally rare"),
+  which in production meant ~96 posts/day. That assumption was about signal quality, not post count,
+  and the data killed it: caps are now whale 6, consensus 8, pre-game 3, settled 5 — 22/day, with a
+  test pinning the sum ≤25. `SETTLED_PER_CYCLE` dropped 3 → 1: at a 60-second cycle it was posting
+  three replies a minute, and the live account showed 17 of them inside six minutes.
+- **Invisible receipts.** Settlement reports post as self-replies, and self-replies get essentially
+  no distribution on X — 17 of them drew **13 views between them**. "We grade our own calls" is the
+  pinned tweet's whole pitch and it was reaching nobody. New post kind **📋 每日战报榜**
+  (`lib/xScorecard.ts`): once a day, one top-level post aggregating the previous UTC day's
+  settlements — `12 settled · 8 hit · 67%` plus representative lines picked so that **a losing day
+  always shows a loss** (sorting by magnitude would let wins take every slot, which is exactly how
+  "just the record" stops being true). The self-reply layer stays — it is the receipt you can check
+  by opening the thread; the card is the layer that gets seen. Nominal return uses the same formula
+  as the self-reply, including its refusal to invent a return for SELL wins, so the thread and the
+  card can never show two different numbers for one trade.
+
+Off by default, like every new post kind. `scorecardUtcHour` is tunable in `/manage`, and the
+scorecard template is title-less like the weekly one — but the link ban had to be hoisted out of the
+"has a `{title}`" branch first, or it would have inherited weekly's $0.20 link licence by accident.
 
 ### 2026-08-31 — Market pulse: five boards become five tabs, and our own verdicts become tags
 

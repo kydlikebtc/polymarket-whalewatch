@@ -14,6 +14,7 @@ export type XPostKind =
   | "pregame"
   | "weekly"
   | "settled"
+  | "scorecard"
   | "pulse"
   | "divergence";
 
@@ -44,6 +45,11 @@ export const X_KINDS: { kind: XPostKind; label: string; hint: string }[] = [
     hint: "对已发过的信号帖回复战果(赢输都发),形成「说了什么 → 后来怎样」的 thread。只回自己的帖",
   },
   {
+    kind: "scorecard",
+    label: "📋 每日战报榜(非信号线)",
+    hint: "每日一帖:把昨天所有结算战果聚成一条主帖(几战几胜 + 代表行)。战报自回复没有独立分发,这条才是给时间线看的",
+  },
+  {
     kind: "pulse",
     label: "📊 异常市场日榜(市场汇总,非信号线)",
     hint: "每日一帖:昨日最异常市场 + 四分量拆解(/pulse 同源)。数据就绪后在设定时刻发",
@@ -66,6 +72,8 @@ export const DEFAULT_X_KINDS: XKindSwitches = {
   pregame: true,
   weekly: true,
   settled: false,
+  // 每日战报榜(2026-08-31)同 settled 纪律:新能力默认关。
+  scorecard: false,
   // 内容引擎两类(2026-08-27)同 settled 纪律:新能力默认关,运营者显式
   // 打开才开始往时间线上发东西。
   pulse: false,

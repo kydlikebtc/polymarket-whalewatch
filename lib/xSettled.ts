@@ -31,8 +31,15 @@ import { costOf, quotaDecision } from "./xQuota";
  */
 export const SETTLED_MAX_AGE_SEC = 7 * 86400;
 
-/** 单轮上限:避免积压的历史信号在开关刚打开时一次性刷屏。 */
-export const SETTLED_PER_CYCLE = 3;
+/**
+ * 单轮上限:避免积压的历史信号一次性刷屏。
+ *
+ * 首版是 3,配上 60s 的引擎轮次就是**每分钟 3 条** —— 2026-08-31 线上实测
+ * 到 00:00:00–00:06:09 六分钟连发 17 条战报,那批帖合计只有 13 次浏览。
+ * 分钟级连发是自动化刷屏最明显的特征,降到 1 让节奏自然散开(积压仍会被
+ * 逐轮消化,只是慢,而战报本就不争时效)。
+ */
+export const SETTLED_PER_CYCLE = 1;
 
 export interface XSettledDeps {
   db: DB;

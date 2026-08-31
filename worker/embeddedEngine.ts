@@ -67,6 +67,7 @@ import { projectBusSignals } from "../lib/signalBus";
 import { runXBroadcastCycle } from "../lib/xBroadcast";
 import { runPregameCycle } from "../lib/xPregame";
 import { runSettledCycle } from "../lib/xSettled";
+import { runScorecardCycle } from "../lib/xScorecard";
 import { maybeWeeklyPost } from "../lib/xWeekly";
 import { runPulseCycle } from "../lib/xPulse";
 
@@ -749,12 +750,25 @@ export function startAlertEngine(): void {
               ...spendCaps,
             })
           : 0;
+        // 每日战报榜(默认关):到点后把昨日战果聚成一条**主帖**。与上面的
+        // self-reply 是两层 —— 那层是挂在原帖下的凭证,这层负责让它被看见
+        // (自回复在 X 上没有独立分发,见 lib/xScorecard 文件头)。
+        const card = kinds.scorecard
+          ? await runScorecardCycle({
+              db,
+              client: xClient,
+              budgetUsd: params.budgetUsd,
+              postUtcHour: params.scorecardUtcHour,
+              template: templates.scorecard,
+              ...spendCaps,
+            })
+          : false;
         // 账号活跃度打点(/manage 据此显示「最近发帖」)。只对库里的授权
         // 账号打点 —— env 回退模式没有对应的行。
         if (
           creds.source === "db" &&
           creds.userId &&
-          (posted > 0 || weekly || settled > 0 || pulsePosted > 0)
+          (posted > 0 || weekly || settled > 0 || pulsePosted > 0 || card)
         ) {
           markPosted(db, creds.userId, Math.floor(Date.now() / 1000));
         }

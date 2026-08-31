@@ -62,6 +62,7 @@ describe("getXKindSwitches", () => {
       pregame: false,
       weekly: true,
       settled: false,
+      scorecard: false,
       pulse: false,
       divergence: false,
     });
@@ -84,6 +85,7 @@ describe("getXKindSwitches", () => {
       pregame: true,
       weekly: false,
       settled: false,
+      scorecard: false,
       pulse: false,
       divergence: false,
     });

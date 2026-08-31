@@ -31,23 +31,23 @@ A whale on Polymarket rarely announces themselves. They split a big position int
 
 ## ✨ At a glance
 
-|     | Capability                 | What it catches                                                                    |
-| :-: | :------------------------- | :--------------------------------------------------------------------------------- |
-| 🔔  | **Large-trade alerts**     | Big executed fills, pushed to Telegram in seconds, tiered by USD size              |
-| 🧩  | **Split-buy detection**    | Positions built from many sub-threshold orders — invisible to single-fill monitors |
-| 🆕  | **Fresh-wallet flagging**  | Verified address lifespan + new-wallet badges on every row                         |
-| 🎯  | **Insider-hunt filters**   | New wallet **＋** favorable odds **＋** pre-settlement rush                        |
-| 🏆  | **Smart-money whitelist**  | Auto-seeded daily from the official profit leaderboards, 🏆-tagged live            |
-| 🔭  | **Discovery channels**     | Skilled-but-small wallets the boards structurally miss, behind an admission gate   |
-| 🔥  | **Consensus detection**    | ≥N whitelist wallets independently buying the SAME outcome                         |
-| ⚖️  | **Disagreement detection** | Smart money split across OPPOSING outcomes — a quality-weighted balance            |
-| 📈  | **Track records**          | Settled win-rate · authoritative net PnL on every wallet, plus a full dossier      |
-| 📐  | **Validation loop**        | 1h/24h follow-through + settlement result on **every** alert it fired              |
-| 🧾  | **Strategy centre**        | 19 paper strategies incl. 6 reverse controls, executed against real order books    |
-| 📜  | **Public scorecard**       | Signals actually published, hashed into a daily append-only digest chain           |
-| 🔌  | **Signals API**            | Machine feed with realtime/delayed tiers, per-key scoping, HMAC webhooks           |
-|  𝕏  | **Auto-broadcast**         | Whale fills, consensus, pre-game roundups and a weekly report card to X            |
-| 🩺  | **Ops hardening**          | Read-only public guard, rate limits, daily snapshots, dead-man's switch            |
+|     | Capability                 | What it catches                                                                                  |
+| :-: | :------------------------- | :----------------------------------------------------------------------------------------------- |
+| 🔔  | **Large-trade alerts**     | Big executed fills, pushed to Telegram in seconds, tiered by USD size                            |
+| 🧩  | **Split-buy detection**    | Positions built from many sub-threshold orders — invisible to single-fill monitors               |
+| 🆕  | **Fresh-wallet flagging**  | Verified address lifespan + new-wallet badges on every row                                       |
+| 🎯  | **Insider-hunt filters**   | New wallet **＋** favorable odds **＋** pre-settlement rush                                      |
+| 🏆  | **Smart-money whitelist**  | Auto-seeded daily from the official profit leaderboards, 🏆-tagged live                          |
+| 🔭  | **Discovery channels**     | Skilled-but-small wallets the boards structurally miss, behind an admission gate                 |
+| 🔥  | **Consensus detection**    | ≥N whitelist wallets independently buying the SAME outcome                                       |
+| ⚖️  | **Disagreement detection** | Smart money split across OPPOSING outcomes — a quality-weighted balance                          |
+| 📈  | **Track records**          | Settled win-rate · authoritative net PnL on every wallet, plus a full dossier                    |
+| 📐  | **Validation loop**        | 1h/24h follow-through + settlement result on **every** alert it fired                            |
+| 🧾  | **Strategy centre**        | 19 paper strategies incl. 6 reverse controls, executed against real order books                  |
+| 📜  | **Public scorecard**       | Signals actually published, hashed into a daily append-only digest chain                         |
+| 🔌  | **Signals API**            | Machine feed with realtime/delayed tiers, per-key scoping, HMAC webhooks                         |
+|  𝕏  | **Auto-broadcast**         | Whale fills, consensus, pre-game roundups, a daily settlement card and a weekly report card to X |
+| 🩺  | **Ops hardening**          | Read-only public guard, rate limits, daily snapshots, dead-man's switch                          |
 
 ---
 
@@ -78,7 +78,7 @@ A whale on Polymarket rarely announces themselves. They split a big position int
 - **Telegram** — tiered large-fill alerts enriched with market context (`占24h量 18% · 流动性 $229k · 距结算 5h`), consensus pushes, a daily 🩺 self-check, and an interactive bot: DM it a market link and it replies with a signal card. Delivery targets are managed in the console, with a paid realtime channel and a public delayed channel carrying the _same fields_ — only the delay differs.
 - **Signals API** (`/api/signals`) — a machine feed serving only already-persisted state, so consumer traffic can never eat into the engine's upstream budget. Keys are issued per subscriber (stored as sha256, revocable individually), scoped to signal types server-side, and tiered `realtime` / `delayed`. Failures degrade to a **structurally complete empty feed flagged unhealthy**, so a consumer can never mistake an outage for a quiet day. Contract: [`docs/api-access.md`](docs/api-access.md), rendered in-app at `/api-docs`.
 - **Webhooks** — HMAC-signed (`X-Signature: sha256=…`) push for realtime-tier keys, with 4xx treated as permanent failure and 5xx retried.
-- **𝕏 auto-broadcast** — whale fills, consensus, pre-game roundups, a Monday report-card image, and self-replies posting the settled result of earlier posts (wins _and_ losses). The `alerts` table doubles as the post queue, so an X outage can never touch the Telegram path.
+- **𝕏 auto-broadcast** — whale fills, consensus, pre-game roundups, a Monday report-card image, self-replies posting the settled result of earlier posts (wins _and_ losses), and a daily card that aggregates the day's settlements into one top-level post. The two settlement layers are deliberate: the self-reply is the receipt anyone can check by opening the thread, the daily card is what actually reaches a timeline — self-replies get almost no distribution on X. Posts are de-duplicated per market, side and price band per hour, so a market taking three whale fills at the same price produces one post, not three. The `alerts` table doubles as the post queue, so an X outage can never touch the Telegram path.
 
 ### Layer 5 — running it 7×24
 
@@ -171,7 +171,9 @@ Only the **app-level** key pair is required; the posting account is authorized s
 #   X_OG_ORIGIN=http://127.0.0.1:3000   # where the worker fetches /api/og/weekly
 ```
 
-2026 pay-per-use pricing: $0.015 per text post, $0.20 per link post (only the weekly report card carries a link), so $15/month ≈ 33 posts/day. Daily caps: whale 20, pre-game 3, settled self-replies 5; consensus is naturally rare and uncapped. Set the same cap in the X developer dashboard as a platform-side backstop.
+2026 pay-per-use pricing: $0.015 per text post, $0.20 per link post (only the weekly report card carries a link), so $15/month ≈ 33 posts/day. Daily caps: whale 6, consensus 8, pre-game 3, settled self-replies 5 — 22/day across the four. Set the same cap in the X developer dashboard as a platform-side backstop.
+
+Those caps were re-cut on 2026-08-31 after measuring the live account: the first-generation defaults (whale 20, consensus **uncapped** on the assumption that consensus is naturally rare) produced ~96 posts/day, which drew 466 views, 0 likes and 0 reposts across a 56-post sample — a 0.17% reach against 4,820 followers, with about a fifth of the posts near-duplicates of each other. Posting less is not the trade-off it looks like: per-post reach is the thing the duplicate volume was suppressing.
 
 Every environment variable is documented in [`.env.example`](.env.example).
 
