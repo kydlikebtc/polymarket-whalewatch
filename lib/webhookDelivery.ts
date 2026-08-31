@@ -30,6 +30,11 @@ export const SignalEventV1Schema = z.object({
   v: z.literal(1),
   /** strategy_signals.id —— 消费方幂等去重键(配合 event)。 */
   id: z.number(),
+  // 对外契约里 event 值域是**开放集**(api-access.md §10:消费方必须跳过
+  // 未知值)。这里的封闭枚举只约束我们自己的出站面。将来加动作种类(如
+  // 主动卖出 exit)的最小清单:此枚举 + 专属数据块(模式同 settle 的
+  // 非该事件时 null)+ signalCatalog 的 events(名录先行,再开投递)+
+  // signalDelivery 循环加段 + strategyFeed.events[] 加查询 + 文档 §8.4/§10。
   event: z.enum(["entry", "settle"]),
   emittedAt: z.number(),
   strategy: z.object({

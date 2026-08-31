@@ -286,7 +286,9 @@ active 条目对上号，也可复用同一个卡片渲染。差别只在末尾�
     幂等键同 (id, event))。entry 按 emittedAt、settle 按 settledTs 各 48h 窗,
     事件自身时刻倒序、同刻 settle 在前,无 LIMIT。active[] 在结算后把行撤走
     (状态视图),只轮询的消费方此前因此看不到兑现动作 —— 触发用这里,
-    别用视图。对外口径见 api-access.md §8.4 */ ],
+    别用视图。event 值域是开放集(将来可能加主动卖出 exit,数据块模式同
+    settle 的 null 惯例;新值先进名录再进通道),消费方须跳过未知值 ——
+    前向兼容纪律与对外口径见 api-access.md §8.4/§10 */ ],
   "recordByStrategy": {
     "6": { "name": "巨鲸", "source": "heavy",
            "record": { "settled": 41, "wins": 26, "implied": 22.9,
