@@ -31,7 +31,7 @@ export default function CalibrationPage() {
     const cats = report?.byCategory ?? [];
     return [
       { value: "overall", label: t("总体") },
-      ...cats.map((g) => ({ value: g.key, label: catLabel(g.key) })),
+      ...cats.map((g) => ({ value: g.key, label: t(catLabel(g.key)) })),
     ];
   }, [report, t]);
 
