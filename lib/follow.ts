@@ -446,6 +446,18 @@ function parseStrategy(
 export const parseStrategyForTest = parseStrategy;
 
 /**
+ * runFollowCycle 的轮次结果(内部契约,不是对外 API 字段)。sigReconciled 是
+ * 结算对账(reconcileSignalSettlements)本轮补齐的台账行数 —— 它持续非零是
+ * 「结算回填路径正在坏(SQLITE_BUSY/磁盘)」的唯一信号,此前只藏在
+ * `[follow] cycle done` 的 stdout 里;升格进返回值,engine 级日志才接得到。
+ */
+export interface FollowCycleResult {
+  opened: number;
+  settled: number;
+  sigReconciled: number;
+}
+
+/**
  * 一轮跟单模拟:
  *  1. 空白名单(getSmart().size===0)→ 直接 no-op,与 consensus 一致(种子未跑/失败
  *     时不应假装无信号)。
@@ -477,10 +489,13 @@ export const parseStrategyForTest = parseStrategy;
  *     下轮再试。红线:formation_price/markout 只用于归因展示,绝不参与 realized_pnl。
  *     这段不走第 4 步的轮内缓存 —— 按 (asset, formation_ts+Δ) 取,key 天然与开仓
  *     取价不同,且单仓失败要能逐仓重试(缓存的失败驱逐语义与"整批各自重试"不匹配)。
+ *  7. 结算对账兜底(第 5 步之后):第 5 步的台账回填被吞后仓位已不在 open 集合,
+ *     reconcileSignalSettlements 每轮一条 JOIN 把「仓位 settled、台账 settled=0」
+ *     补齐;补齐行数作为 sigReconciled 进返回值(对账本身抛错 → 0,只 warn)。
  */
 export async function runFollowCycle(
   deps: FollowCycleDeps,
-): Promise<{ opened: number; settled: number }> {
+): Promise<FollowCycleResult> {
   const {
     db,
     fetchWindow,
@@ -508,7 +523,7 @@ export async function runFollowCycle(
   if (smart.size === 0) {
     // 空白名单短路:同 runConsensusCycle —— 没有可信钱包就没有可跟的共识。
     console.warn("[follow] 白名单为空,本轮不开仓/结算(等待聪明钱种子完成)");
-    return { opened: 0, settled: 0 };
+    return { opened: 0, settled: 0, sigReconciled: 0 };
   }
 
   const stratRows = db
@@ -1007,7 +1022,7 @@ export async function runFollowCycle(
   console.log(
     `[follow] cycle done · strategies=${strategies.length} · opened=${opened} · settled=${settled} · sigReconciled=${sigReconciled} · markouts=${markouts} · tiltSnapshots=${tiltWritten} · tiltPruned=${tiltPruned}`,
   );
-  return { opened, settled };
+  return { opened, settled, sigReconciled };
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { openDb, type DB } from "./db";
 import {
   backfillSignalSettlement,
+  countStraySettlements,
   reconcileSignalSettlements,
   recordStrategySignal,
   strategyRecord30d,
@@ -796,8 +797,9 @@ describe("runFollowCycle × strategy_signals 接线", () => {
         }),
         nowSec: 3600,
       });
-      // 纸面结算是主流程:两处台账故障都杀不死它。
-      expect(r).toEqual({ opened: 0, settled: 1 });
+      // 纸面结算是主流程:两处台账故障都杀不死它。对账本身抛错 → 补齐计数
+      // 保持 0(不编造数字),故障由 warn 日志承担。
+      expect(r).toEqual({ opened: 0, settled: 1, sigReconciled: 0 });
       const pos = db
         .prepare(
           "SELECT status, realized_pnl FROM follow_positions WHERE condition_id='c1'",
@@ -886,6 +888,78 @@ describe("runFollowCycle × wallets_json 接线(向前落库)", () => {
       const byWallet = new Map(wallets.map((w) => [w.wallet, w]));
       expect(byWallet.get("w1")).toEqual({ wallet: "w1", netUsd: 6_000, score: 80 });
       expect(byWallet.get("w2")).toEqual({ wallet: "w2", netUsd: 6_000, score: 75 });
+    }
+  });
+});
+
+describe("countStraySettlements —— 运营页对账读数(与 reconcileSignalSettlements 同一 JOIN 谓词)", () => {
+  // 对账补齐次数只活在 worker stdout 里;运营页要的是「当前仍漏网多少行」这个
+  // 能直接查库得到的读数 —— 对账每轮兜底,正常恒为 0,持续 >0 = 回填路径在坏。
+  const position = (db: DB, cid: string, status: "open" | "settled"): number =>
+    Number(
+      db
+        .prepare(
+          `INSERT INTO follow_positions
+             (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,
+              size_usd,shares,status,exit_ts,exit_price,realized_pnl)
+           VALUES (1,?,'Yes','tok',0,0.63,500,793.65,?,?,?,?)`,
+        )
+        .run(
+          cid,
+          status,
+          status === "settled" ? 9000 : null,
+          status === "settled" ? 1 : null,
+          status === "settled" ? 293.65 : null,
+        ).lastInsertRowid,
+    );
+
+  it("空库 0;仓位 settled 而台账 settled=0 计 1;open 仓/已回填行/无因果链老行不计;对账补齐后归 0", () => {
+    const db = openDb(":memory:");
+    expect(countStraySettlements(db)).toBe(0);
+    const stray = position(db, "c1", "settled");
+    recordStrategySignal(db, input({ positionId: stray, conditionId: "c1" }));
+    const open = position(db, "c2", "open");
+    recordStrategySignal(db, input({ positionId: open, conditionId: "c2" }));
+    const done = position(db, "c3", "settled");
+    recordStrategySignal(db, input({ positionId: done, conditionId: "c3" }));
+    backfillSignalSettlement(db, done, {
+      settledTs: 9000,
+      exitPrice: 1,
+      realizedPnl: 293.65,
+    });
+    // 台账上线前的老行没有 position_id,无从判定 —— 不计。
+    recordStrategySignal(db, input({ positionId: null, conditionId: "c4" }));
+    expect(countStraySettlements(db)).toBe(1);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(reconcileSignalSettlements(db)).toBe(1);
+    } finally {
+      log.mockRestore();
+    }
+    expect(countStraySettlements(db)).toBe(0);
+    db.close();
+  });
+
+  it("结果列含 NULL 的自相矛盾行:对账跳过不补,但读数照样计入 —— 它正是要人工核查的那种漏网", () => {
+    const db = openDb(":memory:");
+    const bad = Number(
+      db
+        .prepare(
+          `INSERT INTO follow_positions
+             (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,
+              size_usd,shares,status,exit_ts,exit_price,realized_pnl)
+           VALUES (1,'c1','Yes','tok',0,0.63,500,793.65,'settled',NULL,NULL,NULL)`,
+        )
+        .run().lastInsertRowid,
+    );
+    recordStrategySignal(db, input({ positionId: bad, conditionId: "c1" }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(reconcileSignalSettlements(db)).toBe(0);
+      expect(countStraySettlements(db)).toBe(1);
+    } finally {
+      warn.mockRestore();
+      db.close();
     }
   });
 });

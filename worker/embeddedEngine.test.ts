@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   computeMinTimestamp,
+  followCycleSummary,
   maybeStartupPing,
   STARTUP_PING_HTML,
 } from "./embeddedEngine";
@@ -52,5 +53,31 @@ describe("maybeStartupPing (opt-in connectivity check)", () => {
       expect.any(Error),
     );
     errSpy.mockRestore();
+  });
+});
+
+describe("followCycleSummary (engine-level follow cycle log line)", () => {
+  // The engine used to print `[engine] follow cycle` only when opened>0 ||
+  // settled>0, so a round that merely reconciled stray settlements was silent
+  // at engine level — and a persistently non-zero sigReconciled is the ONLY
+  // sign that the settlement backfill path is failing (SQLITE_BUSY / disk).
+  it("an all-zero cycle stays silent (null) — nothing happened, nothing to log", () => {
+    expect(
+      followCycleSummary({ opened: 0, settled: 0, sigReconciled: 0 }),
+    ).toBeNull();
+  });
+
+  it("opened/settled > 0 → one line carrying all three counters", () => {
+    const line = followCycleSummary({ opened: 2, settled: 1, sigReconciled: 0 });
+    expect(line).toContain("[engine] follow cycle");
+    expect(line).toContain("opened 2");
+    expect(line).toContain("settled 1");
+    expect(line).toContain("sigReconciled 0");
+  });
+
+  it("a pure reconcile round (only sigReconciled > 0) is no longer silent and names the counter", () => {
+    const line = followCycleSummary({ opened: 0, settled: 0, sigReconciled: 3 });
+    expect(line).not.toBeNull();
+    expect(line).toContain("sigReconciled 3");
   });
 });

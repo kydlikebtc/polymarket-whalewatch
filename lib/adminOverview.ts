@@ -4,7 +4,7 @@ import { DIGEST_DAY_KEY, DIGEST_PREV_KEY } from "./signalDigest";
 import type { SignalRecord } from "./signalRecord";
 import { strategyCode } from "./strategyCodes";
 import { sourceOf } from "./strategyFeed";
-import { strategyRecord30d } from "./strategySignals";
+import { countStraySettlements, strategyRecord30d } from "./strategySignals";
 import { getTelegramHealth, type TelegramHealth } from "./telegramHealth";
 
 // /manage 运营页的数据层(admin 视角,与 /record 的公开口径刻意分开):
@@ -309,6 +309,22 @@ export function buildBusLedger(db: DB, limit = 20): BusLedgerRow[] {
   });
 }
 
+/**
+ * 结算对账读数(strategy_signals × follow_positions)。对账补齐次数只活在 worker
+ * stdout(`[engine] follow cycle … sigReconciled`),这里给的是能直接查库得到的
+ * 两项,页面据此高亮:
+ *   - stray:仓位已 settled 而台账仍 settled=0 的行数。对账每轮兜底,正常恒为 0;
+ *     持续 >0 = 回填路径在坏(SQLITE_BUSY/磁盘)或有对账拒碰的自相矛盾行,
+ *     看 [follow] 日志的「对账补齐 / 对账写入失败」。
+ *   - tsMismatch7d:近 7d 已结算台账行里 settled_ts 与仓位 exit_ts 偏差 >300s
+ *     (或仓位 exit_ts 为 NULL)的行数。正常结算与对账两条路径都写仓位 exit_ts
+ *     —— 下游 7d 陈旧闸 / 48h 窗口据此判新鲜,应恒为 0。
+ */
+export interface SettlementReconcile {
+  stray: number;
+  tsMismatch7d: number;
+}
+
 export interface AdminSignalOverview {
   updatedAt: number;
   strategies: StrategyPushRow[];
@@ -325,10 +341,16 @@ export interface AdminSignalOverview {
     activeKeys: number;
     /** 由 route 按部署配置传入的通道清单 + 各自积压(未配置通道不出现)。 */
     channels: ChannelBacklog[];
+    /** 结算对账读数,见 SettlementReconcile。 */
+    settlementReconcile: SettlementReconcile;
   };
 }
 
 const RECENT_LIMIT = 20;
+// 结算对账 tsMismatch 的窗口与容差:只盯最近 7 天的回填行为;两条回填路径都写
+// 仓位 exit_ts,300s 是给「同轮时钟差」留的余量,超过即口径漂移。
+const RECONCILE_WINDOW_SEC = 7 * 86_400;
+const SETTLED_TS_TOLERANCE_SEC = 300;
 
 /** 推送开关(本页唯一的写操作)。未知 id 返回 false。 */
 export function setStrategyPush(
@@ -484,6 +506,24 @@ export function buildAdminSignalOverview(
       .prepare("SELECT COUNT(*) AS n FROM api_keys WHERE revoked_at IS NULL")
       .get() as { n: number }
   ).n;
+  // 结算对账:stray 与 reconcileSignalSettlements 同一谓词(lib/strategySignals);
+  // tsMismatch7d 只查已结算行,exit_ts 为 NULL 的 JOIN 行同样算偏差(仓位没
+  // 结算时刻却有已结算的台账,是同一种口径漂移)。
+  const settlementReconcile: SettlementReconcile = {
+    stray: countStraySettlements(db),
+    tsMismatch7d: (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM strategy_signals s
+           JOIN follow_positions p ON p.id = s.position_id
+           WHERE s.settled = 1 AND s.settled_ts >= ?
+             AND (p.exit_ts IS NULL OR ABS(s.settled_ts - p.exit_ts) > ?)`,
+        )
+        .get(nowSec - RECONCILE_WINDOW_SEC, SETTLED_TS_TOLERANCE_SEC) as {
+        n: number;
+      }
+    ).n,
+  };
   const engineStartedAtRaw = cfg("engine_started_at");
   const engineStartedAt =
     engineStartedAtRaw != null && Number.isFinite(Number(engineStartedAtRaw))
@@ -502,6 +542,7 @@ export function buildAdminSignalOverview(
       signalsLast24h,
       activeKeys,
       channels,
+      settlementReconcile,
     },
   };
 }
