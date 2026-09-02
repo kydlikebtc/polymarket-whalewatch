@@ -1,11 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { openDb } from "./db";
+import { openDb, type DB } from "./db";
 import {
   backfillSignalSettlement,
+  reconcileSignalSettlements,
   recordStrategySignal,
   strategyRecord30d,
   type StrategySignalInput,
@@ -241,6 +242,228 @@ describe("backfillSignalSettlement 结算回填", () => {
     expect(row.settled_ts).toBe(2000);
     expect(row.won).toBe(1);
     db.close();
+  });
+});
+
+describe("reconcileSignalSettlements 结算对账(回填漏网兜底)", () => {
+  // 复现的库形状:结算段 UPDATE follow_positions 成功,紧随其后的
+  // backfillSignalSettlement 抛错(SQLITE_BUSY/磁盘)被 try/catch 吞掉 ——
+  // 仓位已 settled、台账行仍 settled=0。下一轮结算集只取 open 仓,这个仓
+  // 不会再被处理;没有对账,这行就永久卡死。
+  const settledPosition = (
+    db: DB,
+    o: {
+      cid: string;
+      exitTs: number | null;
+      exitPrice: number | null;
+      pnl: number | null;
+    },
+  ): number =>
+    Number(
+      db
+        .prepare(
+          `INSERT INTO follow_positions
+             (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,
+              size_usd,shares,status,exit_ts,exit_price,realized_pnl)
+           VALUES (1,?,'Yes','tok',0,0.63,500,793.65,'settled',?,?,?)`,
+        )
+        .run(o.cid, o.exitTs, o.exitPrice, o.pnl).lastInsertRowid,
+    );
+  type LedgerResult = {
+    settled: number;
+    settled_ts: number | null;
+    exit_price: number | null;
+    won: number | null;
+    realized_pnl: number | null;
+  };
+  const ledger = (db: DB, pid: number): LedgerResult =>
+    db
+      .prepare(
+        "SELECT settled, settled_ts, exit_price, won, realized_pnl FROM strategy_signals WHERE position_id = ?",
+      )
+      .get(pid) as LedgerResult;
+
+  it("仓位 settled、台账 settled=0 → 补齐且与仓位一致;open 仓与已结算行不动;再跑一次 0 行(幂等)", () => {
+    const db = openDb(":memory:");
+    // 漏网行:仓位 exit_ts=9000 / exit=1 / pnl=+293.65,台账没回填。
+    const stray = settledPosition(db, {
+      cid: "c1",
+      exitTs: 9000,
+      exitPrice: 1,
+      pnl: 293.65,
+    });
+    recordStrategySignal(db, input({ positionId: stray, conditionId: "c1" }));
+    // 对照 1:仍 open 的仓 —— 台账理应保持 settled=0。
+    const open = Number(
+      db
+        .prepare(
+          "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status) VALUES (1,'c2','Yes','tok2',0,0.5,500,1000,'open')",
+        )
+        .run().lastInsertRowid,
+    );
+    recordStrategySignal(db, input({ positionId: open, conditionId: "c2" }));
+    // 对照 2:正常路径已回填的行(settled_ts=5000 与仓位 exit_ts=5500 故意
+    // 不同)—— 结算是一次性事实,对账不得用仓位值改写它。
+    const done = settledPosition(db, {
+      cid: "c3",
+      exitTs: 5500,
+      exitPrice: 0,
+      pnl: -500,
+    });
+    recordStrategySignal(db, input({ positionId: done, conditionId: "c3" }));
+    backfillSignalSettlement(db, done, {
+      settledTs: 5000,
+      exitPrice: 0,
+      realizedPnl: -500,
+    });
+
+    expect(reconcileSignalSettlements(db)).toBe(1);
+
+    // settled_ts 是仓位的 exit_ts(真实结算时刻),不是对账时刻:下游 7d 陈旧闸 /
+    // 48h 窗口据此决定还发不发,迟到的兑现不能伪装成新鲜的。
+    expect(ledger(db, stray)).toEqual({
+      settled: 1,
+      settled_ts: 9000,
+      exit_price: 1,
+      won: 1,
+      realized_pnl: 293.65,
+    });
+    expect(ledger(db, open).settled).toBe(0);
+    expect(ledger(db, done).settled_ts).toBe(5000);
+
+    // 幂等:第二次无事可做,已补齐的行也不再被触碰。
+    expect(reconcileSignalSettlements(db)).toBe(0);
+    expect(ledger(db, stray).settled_ts).toBe(9000);
+    db.close();
+  });
+
+  it("won 三态走 backfillSignalSettlement 同一条路:pnl<0→0、pnl=0→null", () => {
+    const db = openDb(":memory:");
+    const lost = settledPosition(db, {
+      cid: "c1",
+      exitTs: 9000,
+      exitPrice: 0,
+      pnl: -500,
+    });
+    const push = settledPosition(db, {
+      cid: "c2",
+      exitTs: 9000,
+      exitPrice: 0.63,
+      pnl: 0,
+    });
+    recordStrategySignal(db, input({ positionId: lost, conditionId: "c1" }));
+    recordStrategySignal(db, input({ positionId: push, conditionId: "c2" }));
+
+    expect(reconcileSignalSettlements(db)).toBe(2);
+
+    expect(ledger(db, lost)).toEqual({
+      settled: 1,
+      settled_ts: 9000,
+      exit_price: 0,
+      won: 0,
+      realized_pnl: -500,
+    });
+    expect(ledger(db, push)).toEqual({
+      settled: 1,
+      settled_ts: 9000,
+      exit_price: 0.63,
+      won: null,
+      realized_pnl: 0,
+    });
+    db.close();
+  });
+
+  it("结果列任一为 NULL(exit_ts/exit_price/realized_pnl)的自相矛盾行:跳过不计数、台账保持 settled=0;N 行合并成一条 warn 且逐行带 signal/position id", () => {
+    const db = openDb(":memory:");
+    // 先垫一条无台账的仓位,让 position id 与 signal id 错开 —— 否则两个序列
+    // 都从 1 起,「signal 1」「position 1」互换也能通过断言,守不住日志契约。
+    settledPosition(db, { cid: "c0", exitTs: 1, exitPrice: 1, pnl: 1 });
+    const noPrice = settledPosition(db, {
+      cid: "c1",
+      exitTs: 9000,
+      exitPrice: null,
+      pnl: null,
+    });
+    const noTs = settledPosition(db, {
+      cid: "c2",
+      exitTs: null,
+      exitPrice: 1,
+      pnl: 293.65,
+    });
+    const sidNoPrice = recordStrategySignal(
+      db,
+      input({ positionId: noPrice, conditionId: "c1" }),
+    );
+    const sidNoTs = recordStrategySignal(
+      db,
+      input({ positionId: noTs, conditionId: "c2" }),
+    );
+    expect(sidNoPrice).not.toBe(noPrice);
+    expect(sidNoTs).not.toBe(noTs);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(reconcileSignalSettlements(db)).toBe(0);
+      expect(ledger(db, noPrice).settled).toBe(0);
+      // exit_ts 缺失也不编造时间戳:编出来的 settled_ts 会让一条来路不明的兑现
+      // 同时穿过 7d 陈旧闸与 48h 窗口,以「刚刚认账」的姿态推给下游。
+      expect(ledger(db, noTs).settled).toBe(0);
+      // 排查线索:坏行不会自愈,逐行逐轮喊会淹掉日志 —— 每轮一条汇总 warn,
+      // 逐行带 signal id 与 position id(成对出现,互换即不匹配)。
+      expect(warn).toHaveBeenCalledTimes(1);
+      const msg = String(warn.mock.calls[0][0]);
+      expect(msg).toContain("[follow]");
+      expect(msg).toContain(`signal ${sidNoPrice} / position ${noPrice}`);
+      expect(msg).toContain(`signal ${sidNoTs} / position ${noTs}`);
+    } finally {
+      warn.mockRestore();
+      db.close();
+    }
+  });
+
+  it("单行写入抛错只 warn(带两个 id)并继续同批其它行;故障消失后下一轮补齐", () => {
+    const db = openDb(":memory:");
+    settledPosition(db, { cid: "c0", exitTs: 1, exitPrice: 1, pnl: 1 }); // id 错开
+    const cursed = settledPosition(db, {
+      cid: "c1",
+      exitTs: 9000,
+      exitPrice: 1,
+      pnl: 293.65,
+    });
+    const fine = settledPosition(db, {
+      cid: "c2",
+      exitTs: 9000,
+      exitPrice: 0,
+      pnl: -500,
+    });
+    const sidCursed = recordStrategySignal(
+      db,
+      input({ positionId: cursed, conditionId: "c1" }),
+    );
+    recordStrategySignal(db, input({ positionId: fine, conditionId: "c2" }));
+    expect(sidCursed).not.toBe(cursed);
+    // 真实故障注入(不 mock):触发器让「这一行」的 UPDATE 抛错,模拟单行 BUSY/IO。
+    db.exec(
+      `CREATE TRIGGER boom BEFORE UPDATE ON strategy_signals
+         WHEN NEW.position_id = ${cursed}
+       BEGIN SELECT RAISE(ABORT, 'boom'); END`,
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(reconcileSignalSettlements(db)).toBe(1);
+      expect(ledger(db, fine).settled).toBe(1);
+      expect(ledger(db, cursed).settled).toBe(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain(
+        `signal ${sidCursed} / position ${cursed}`,
+      );
+      // 故障消失 → 下一轮自愈。
+      db.exec("DROP TRIGGER boom");
+      expect(reconcileSignalSettlements(db)).toBe(1);
+      expect(ledger(db, cursed).settled).toBe(1);
+    } finally {
+      warn.mockRestore();
+      db.close();
+    }
   });
 });
 
@@ -498,6 +721,102 @@ describe("runFollowCycle × strategy_signals 接线", () => {
     expect(sig.won).toBe(1);
     expect(sig.realized_pnl).toBeGreaterThan(0);
     db.close();
+  });
+
+  it("回填漏网兜底:仓位已 settled 而台账 settled=0 → 下一轮对账补齐(不依赖 open 仓集合)", async () => {
+    const db = openDb(":memory:");
+    // 复现「结算 UPDATE 成功、backfillSignalSettlement 抛错被吞」之后的库形状:
+    // 仓位 settled(exit_ts=3000),台账行还停在 settled=0。
+    const pid = Number(
+      db
+        .prepare(
+          `INSERT INTO follow_positions
+             (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,
+              size_usd,shares,status,exit_ts,exit_price,realized_pnl)
+           VALUES (1,'c1','Yes','tok',0,0.63,500,793.65,'settled',3000,1,293.65)`,
+        )
+        .run().lastInsertRowid,
+    );
+    recordStrategySignal(db, input({ positionId: pid }));
+    // 空窗口、无 meta:没有 open 仓,结算段本身零工作 —— 对账仍须跑。
+    const r = await runFollowCycle({
+      db,
+      fetchWindow: async () => ({ trades: [] }),
+      getSmart: smart,
+      fetchPrice: async () => null,
+      getMeta: async () => ({}),
+      nowSec: 3600,
+    });
+    expect(r.settled).toBe(0);
+    const sig = db
+      .prepare(
+        "SELECT settled, settled_ts, exit_price, won, realized_pnl FROM strategy_signals WHERE position_id = ?",
+      )
+      .get(pid);
+    expect(sig).toEqual({
+      settled: 1,
+      settled_ts: 3000,
+      exit_price: 1,
+      won: 1,
+      realized_pnl: 293.65,
+    });
+    db.close();
+  });
+
+  it("台账整表故障:同一轮里结算回填与对账双双抛错,都只 warn,纸面结算照常完成", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      "INSERT INTO follow_positions (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,size_usd,shares,status) VALUES (1,'c1','Yes','tok',0,0.5,500,1000,'open')",
+    ).run();
+    // 删表 = 结算段的 backfillSignalSettlement 与末尾的对账在同一轮里都会抛。
+    db.exec("DROP TABLE strategy_signals");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const r = await runFollowCycle({
+        db,
+        fetchWindow: async () => ({ trades: [] }),
+        getSmart: smart,
+        fetchPrice: async () => null,
+        getMeta: async () => ({
+          c1: {
+            conditionId: "c1",
+            closed: true,
+            outcomePrices: [1, 0],
+            outcomes: ["Yes", "No"],
+            clobTokenIds: ["tok", "tok-no"],
+            volume24hr: null,
+            liquidity: null,
+            endDate: null,
+            category: null,
+            feesEnabled: false,
+            feeType: null,
+            feeSchedule: null,
+            umaDisputed: false,
+          },
+        }),
+        nowSec: 3600,
+      });
+      // 纸面结算是主流程:两处台账故障都杀不死它。
+      expect(r).toEqual({ opened: 0, settled: 1 });
+      const pos = db
+        .prepare(
+          "SELECT status, realized_pnl FROM follow_positions WHERE condition_id='c1'",
+        )
+        .get() as { status: string; realized_pnl: number };
+      expect(pos.status).toBe("settled");
+      expect(pos.realized_pnl).toBeCloseTo(500);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("[follow] strategy_signals 结算回填失败"),
+        expect.anything(),
+      );
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("[follow] strategy_signals 结算对账失败"),
+        expect.anything(),
+      );
+    } finally {
+      warn.mockRestore();
+      db.close();
+    }
   });
 });
 
