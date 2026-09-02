@@ -418,3 +418,125 @@ describe("buildEventLedger —— ① 原始事件线的统一台账", () => {
     expect(rows.filter((r) => r.type === "discovery")).toHaveLength(5);
   });
 });
+
+describe("buildAdminSignalOverview — 结算对账读数(ops.settlementReconcile)", () => {
+  // 对账补齐次数(sigReconciled)只活在 worker stdout 里,靠 grep 太被动。运营页
+  // 要的是两个能直接查库得到的读数:
+  //   (a) stray —— 仓位 settled 而台账 settled=0 的 JOIN 计数。对账每轮兜底,
+  //       正常恒为 0;持续 >0 = 回填路径在坏(SQLITE_BUSY/磁盘)。
+  //   (b) tsMismatch7d —— 近 7d 已结算台账行里 settled_ts 与仓位 exit_ts 偏差
+  //       >300s 的行数。正常结算与对账两条路径都写仓位 exit_ts,应恒为 0。
+  const NOW = 1_000_000;
+  const position = (
+    db: DB,
+    o: { cid: string; status: "open" | "settled"; exitTs?: number },
+  ): number =>
+    Number(
+      db
+        .prepare(
+          `INSERT INTO follow_positions
+             (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,
+              size_usd,shares,status,exit_ts,exit_price,realized_pnl)
+           VALUES (?,?,'Yes','tok',0,0.63,500,793.65,?,?,?,?)`,
+        )
+        .run(
+          idOf(db, "巨鲸"),
+          o.cid,
+          o.status,
+          o.status === "settled" ? (o.exitTs ?? NOW) : null,
+          o.status === "settled" ? 1 : null,
+          o.status === "settled" ? 293.65 : null,
+        ).lastInsertRowid,
+    );
+  const signal = (
+    db: DB,
+    o: { cid: string; positionId: number; settledTs?: number },
+  ) => {
+    const id = recordStrategySignal(db, {
+      strategyId: idOf(db, "巨鲸"),
+      positionId: o.positionId,
+      conditionId: o.cid,
+      outcome: "Yes",
+      outcomeIndex: 0,
+      asset: "tok",
+      title: `T-${o.cid}`,
+      slug: "s",
+      eventSlug: "e",
+      formationTs: NOW - 60,
+      referencePrice: 0.6,
+      walletCount: 1,
+      totalNetUsd: 52_000,
+      entryPrice: 0.63,
+      sizeUsd: 500,
+      emittedAt: NOW,
+    });
+    if (id == null) throw new Error("seed 冲突");
+    if (o.settledTs != null) {
+      db.prepare(
+        "UPDATE strategy_signals SET settled=1, settled_ts=?, exit_price=1, won=1, realized_pnl=293.65 WHERE id=?",
+      ).run(o.settledTs, id);
+    }
+  };
+
+  it("空库:两项都是 0", () => {
+    const db = openDb(":memory:");
+    const o = buildAdminSignalOverview(db, { nowSec: NOW });
+    expect(o.ops.settlementReconcile).toEqual({ stray: 0, tsMismatch7d: 0 });
+    db.close();
+  });
+
+  it("stray:仓位 settled 而台账 settled=0 的行计入;open 仓与已回填行不计", () => {
+    const db = openDb(":memory:");
+    signal(db, {
+      cid: "stray",
+      positionId: position(db, { cid: "stray", status: "settled", exitTs: NOW - 100 }),
+    });
+    signal(db, {
+      cid: "open",
+      positionId: position(db, { cid: "open", status: "open" }),
+    });
+    signal(db, {
+      cid: "done",
+      positionId: position(db, { cid: "done", status: "settled", exitTs: NOW - 200 }),
+      settledTs: NOW - 200,
+    });
+    const o = buildAdminSignalOverview(db, { nowSec: NOW });
+    expect(o.ops.settlementReconcile).toEqual({ stray: 1, tsMismatch7d: 0 });
+    db.close();
+  });
+
+  it("tsMismatch7d:近 7d 已结算行里 settled_ts 与仓位 exit_ts 偏差 >300s 才计;300s 内不计;7d 窗口外不计", () => {
+    const db = openDb(":memory:");
+    // 一致(两条回填路径的正常形状)。
+    signal(db, {
+      cid: "same",
+      positionId: position(db, { cid: "same", status: "settled", exitTs: NOW - 1000 }),
+      settledTs: NOW - 1000,
+    });
+    // 300s 以内的小偏差不计。
+    signal(db, {
+      cid: "near",
+      positionId: position(db, { cid: "near", status: "settled", exitTs: NOW - 2000 }),
+      settledTs: NOW - 1800,
+    });
+    // 偏差 600s → 计入。
+    signal(db, {
+      cid: "far",
+      positionId: position(db, { cid: "far", status: "settled", exitTs: NOW - 3000 }),
+      settledTs: NOW - 2400,
+    });
+    // 同样偏差但 settled_ts 在 7d 窗口之外 → 不计(只盯最近的回填行为)。
+    signal(db, {
+      cid: "old",
+      positionId: position(db, {
+        cid: "old",
+        status: "settled",
+        exitTs: NOW - 8 * 86_400 - 1000,
+      }),
+      settledTs: NOW - 8 * 86_400,
+    });
+    const o = buildAdminSignalOverview(db, { nowSec: NOW });
+    expect(o.ops.settlementReconcile).toEqual({ stray: 0, tsMismatch7d: 1 });
+    db.close();
+  });
+});

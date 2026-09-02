@@ -29,7 +29,7 @@ import {
   collectFirehoseEvidence,
 } from "../lib/discovery";
 import { maybeDailyDiscovery } from "../lib/admission";
-import { runFollowCycle } from "../lib/follow";
+import { runFollowCycle, type FollowCycleResult } from "../lib/follow";
 import { fetchAskBook } from "../lib/orderBook";
 import { fetchPriceAt, fetchPriceSeries } from "../lib/priceHistory";
 import { runExitSimBackfill } from "../lib/exitCounterfactual";
@@ -136,6 +136,21 @@ export function computeMinTimestamp(
  * - Reads conditions fresh from the `config` table every cycle, so dashboard
  *   edits take effect on the next poll.
  */
+/**
+ * follow 轮的 engine 级摘要行。全零轮静默(null)—— 5 分钟一轮,无事不刷屏。
+ * 但 sigReconciled>0 的「纯对账轮」不再静默:结算回填被吞(SQLITE_BUSY/磁盘)
+ * 后由对账补齐,这个计数持续非零是回填路径在坏的唯一信号,此前只藏在
+ * `[follow] cycle done` 里靠 grep 才看得到。运营页同一读数见
+ * lib/adminOverview.ts ops.settlementReconcile。
+ */
+export function followCycleSummary(r: FollowCycleResult): string | null {
+  if (r.opened === 0 && r.settled === 0 && r.sigReconciled === 0) return null;
+  const base = `[engine] follow cycle: opened ${r.opened}, settled ${r.settled}, sigReconciled ${r.sigReconciled}`;
+  return r.sigReconciled > 0
+    ? `${base} (结算回填漏网已由对账补齐;持续非零 = 回填路径在坏,查 [follow] 日志的「对账补齐 / 对账写入失败」)`
+    : base;
+}
+
 export function startAlertEngine(): void {
   if (started) return;
   started = true;
@@ -371,7 +386,7 @@ export function startAlertEngine(): void {
       // an untrustworthy (shortened) window. Own try/catch: a follow failure
       // must never disturb the consensus cadence either.
       try {
-        const { opened, settled } = await runFollowCycle({
+        const followResult = await runFollowCycle({
           db,
           fetchWindow: async () => ({
             trades: win.trades,
@@ -388,11 +403,10 @@ export function startAlertEngine(): void {
           fetchBook: (asset) => fetchAskBook(asset),
           getMeta: (cids) => getMarketMeta(db, cids),
         });
-        if (opened > 0 || settled > 0) {
-          console.log(
-            `[engine] follow cycle: opened ${opened}, settled ${settled}`,
-          );
-        }
+        // 全零轮静默;sigReconciled>0 的纯对账轮也要在 engine 级可见 —— 见
+        // followCycleSummary 的函数头注释。
+        const followLine = followCycleSummary(followResult);
+        if (followLine) console.log(followLine);
       } catch (e) {
         console.error("[engine] follow cycle error", e);
       }

@@ -19,7 +19,8 @@ import { gradeRows, type SignalRecord } from "./signalRecord";
 //      台账故障只 warn,绝不影响纸面开仓/结算主流程。
 //   4. 纪律 3 的代价是回填可能被吞:仓位已 settled 而台账仍 settled=0,且下轮
 //      结算集只取 open 仓不会再碰它。reconcileSignalSettlements 每轮一条 JOIN
-//      对账兜底(仓位行是真相),同样 try/catch 只 warn。
+//      对账兜底(仓位行是真相),同样 try/catch 只 warn。补齐次数只活在 worker
+//      stdout;运营页用 countStraySettlements(同一谓词)读「当前仍漏网几行」。
 
 export interface StrategySignalInput {
   strategyId: number;
@@ -117,6 +118,15 @@ export function backfillSignalSettlement(
   return res.changes === 1;
 }
 
+/**
+ * 「漏网」的唯一定义:台账 settled=0 而仓位已 settled(仓位行是真相)。
+ * reconcileSignalSettlements 据此补齐,countStraySettlements 据此给运营页读数
+ * —— 同一段 SQL,补的和数的永远是同一批行。
+ */
+const STRAY_SETTLEMENT_JOIN = `FROM strategy_signals s
+       JOIN follow_positions p ON p.id = s.position_id
+       WHERE s.settled = 0 AND p.status = 'settled'`;
+
 /** reconcileSignalSettlements 的 JOIN 行:台账 id + 仓位侧的结算结果列。 */
 interface StraySettlementRow {
   signal_id: number;
@@ -154,9 +164,7 @@ export function reconcileSignalSettlements(db: DB): number {
   const strays = db
     .prepare(
       `SELECT s.id AS signal_id, s.position_id, p.exit_ts, p.exit_price, p.realized_pnl
-       FROM strategy_signals s
-       JOIN follow_positions p ON p.id = s.position_id
-       WHERE s.settled = 0 AND p.status = 'settled'`,
+       ${STRAY_SETTLEMENT_JOIN}`,
     )
     .all() as StraySettlementRow[];
   let fixed = 0;
@@ -195,6 +203,22 @@ export function reconcileSignalSettlements(db: DB): number {
     );
   }
   return fixed;
+}
+
+/**
+ * 运营页读数:当前仍漏网的行数(与 reconcileSignalSettlements 同一谓词)。
+ *
+ * 对账每轮兜底,所以正常恒为 0;持续 >0 只有两种解释,都要人看:回填路径在坏
+ * (SQLITE_BUSY/磁盘,对账写入同样失败),或存在对账拒绝触碰的自相矛盾行
+ * (仓位结果列 NULL,见 reconcileSignalSettlements 的「不制造事实」)。后者
+ * 刻意计入而不剔除 —— 剔除等于把需要人工核查的行藏起来。
+ */
+export function countStraySettlements(db: DB): number {
+  return (
+    db.prepare(`SELECT COUNT(*) AS n ${STRAY_SETTLEMENT_JOIN}`).get() as {
+      n: number;
+    }
+  ).n;
 }
 
 /**

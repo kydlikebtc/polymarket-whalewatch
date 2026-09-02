@@ -5,6 +5,7 @@ import type { AdminSignalOverview } from "../../lib/adminOverview";
 import { loopMeta } from "../loopMeta";
 import { StatCard } from "../ui";
 import { Dot, SectionHead } from "./bits";
+import { reconcileCardView } from "./reconcileView";
 import { agoText } from "./shared";
 
 // 区块:健康度。引擎循环心跳(/api/health,页面统一拉取后传入 —— 与状态条
@@ -42,6 +43,8 @@ export default function HealthSection({
   health: HealthReport | null;
   ops: AdminSignalOverview["ops"] | null;
 }) {
+  // 结算对账卡的色/句由纯函数决定(./reconcileView,有测试);这里只负责摆。
+  const reconcile = ops ? reconcileCardView(ops.settlementReconcile) : null;
   return (
     <section
       id="health"
@@ -174,6 +177,35 @@ export default function HealthSection({
               </div>
             )}
           </StatCard>
+          {reconcile && (
+            <StatCard label="结算对账 · 漏网">
+              {/* 对账补齐次数(sigReconciled)只活在 worker stdout;这里是能直接
+                  查库的读数:仓位已结算而台账未回填的行数。非零即高亮,并直接
+                  给出排查入口 —— 不让运营者再去猜该 grep 哪段日志。 */}
+              <div className="kpi-value" style={{ fontSize: "var(--t-lg)" }}>
+                <Dot tone={reconcile.tone}>
+                  <span
+                    className={
+                      ops.settlementReconcile.stray > 0 ? "num down" : "num"
+                    }
+                  >
+                    {ops.settlementReconcile.stray}
+                  </span>
+                </Dot>
+              </div>
+              <div className="kpi-sub">{reconcile.sub}</div>
+              <div
+                className="kpi-sub"
+                style={
+                  ops.settlementReconcile.tsMismatch7d > 0
+                    ? { color: "var(--warn-500)" }
+                    : undefined
+                }
+              >
+                近 7d 时间戳偏差 {ops.settlementReconcile.tsMismatch7d} 行
+              </div>
+            </StatCard>
+          )}
           <StatCard label="存证链(每日 digest)">
             {ops.digest.day ? (
               <>

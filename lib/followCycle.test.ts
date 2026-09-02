@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { openDb } from "./db";
 import { readMarketTiltSnapshots, runFollowCycle } from "./follow";
+import { recordStrategySignal } from "./strategySignals";
 import type { SmartTag } from "./smartWallets";
 import type { MarketMeta } from "./gamma";
 import type { Trade } from "./types";
@@ -2363,5 +2364,94 @@ describe("runFollowCycle 反向对照档", () => {
         .all(rev),
     ).toHaveLength(0);
     db.close();
+  });
+});
+
+describe("runFollowCycle 返回值 sigReconciled(结算对账补齐行数)", () => {
+  // 结算对账(reconcileSignalSettlements)每轮在结算段末尾兜底。补齐次数此前只
+  // 活在 `[follow] cycle done` 那条 stdout 里 —— 而它持续非零是「结算回填路径
+  // 正在坏(SQLITE_BUSY/磁盘)」的唯一信号。升格进返回值,engine 级日志与运营
+  // 可见面才接得到,不必靠 grep 日志。
+  const strayRow = (db: ReturnType<typeof openDb>, cid: string): number => {
+    // 复现「结算 UPDATE 成功、backfillSignalSettlement 抛错被吞」之后的库形状:
+    // 仓位 settled(exit_ts=3000),台账行仍 settled=0。
+    const pid = Number(
+      db
+        .prepare(
+          `INSERT INTO follow_positions
+             (strategy_id,condition_id,outcome,asset,outcome_index,entry_price,
+              size_usd,shares,status,exit_ts,exit_price,realized_pnl)
+           VALUES (1,?,'Yes','tok',0,0.63,500,793.65,'settled',3000,1,293.65)`,
+        )
+        .run(cid).lastInsertRowid,
+    );
+    const sid = recordStrategySignal(db, {
+      strategyId: 1,
+      positionId: pid,
+      conditionId: cid,
+      outcome: "Yes",
+      outcomeIndex: 0,
+      asset: "tok",
+      title: "T",
+      slug: "s",
+      eventSlug: "e",
+      formationTs: 1000,
+      referencePrice: 0.6,
+      walletCount: 2,
+      totalNetUsd: 12000,
+      entryPrice: 0.63,
+      sizeUsd: 500,
+      emittedAt: 1800,
+    });
+    if (sid == null) throw new Error("台账种子冲突");
+    return pid;
+  };
+  // 空窗口、无 meta:开仓/结算段零工作,只剩对账在跑。
+  const quiet = (db: ReturnType<typeof openDb>) => ({
+    db,
+    fetchWindow: async () => ({ trades: [] }),
+    getSmart: smart,
+    fetchPrice: async () => null,
+    getMeta: async () => ({}),
+    nowSec: 3600,
+  });
+
+  it("无漏网行:返回值三字段齐全,sigReconciled=0", async () => {
+    const db = openDb(":memory:");
+    const r = await runFollowCycle(quiet(db));
+    expect(r).toEqual({ opened: 0, settled: 0, sigReconciled: 0 });
+    db.close();
+  });
+
+  it("漏网行(仓位 settled、台账 settled=0)→ sigReconciled=本轮补齐行数;下一轮归 0", async () => {
+    const db = openDb(":memory:");
+    strayRow(db, "c1");
+    strayRow(db, "c2");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const r1 = await runFollowCycle(quiet(db));
+      expect(r1).toEqual({ opened: 0, settled: 0, sigReconciled: 2 });
+      // 幂等:补齐过的行不再计数。
+      const r2 = await runFollowCycle(quiet(db));
+      expect(r2.sigReconciled).toBe(0);
+    } finally {
+      log.mockRestore();
+      db.close();
+    }
+  });
+
+  it("白名单为空短路:返回形状不因短路而缺字段(sigReconciled=0)", async () => {
+    const db = openDb(":memory:");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const r = await runFollowCycle({
+        ...quiet(db),
+        getSmart: () => new Map<string, SmartTag>(),
+      });
+      expect(r).toEqual({ opened: 0, settled: 0, sigReconciled: 0 });
+    } finally {
+      warn.mockRestore();
+      db.close();
+    }
   });
 });
