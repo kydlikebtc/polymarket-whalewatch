@@ -22,6 +22,7 @@ import { reverseCandidate } from "./reverse";
 import type { SmartTag } from "./smartWallets";
 import {
   backfillSignalSettlement,
+  reconcileSignalSettlements,
   recordStrategySignal,
 } from "./strategySignals";
 import { latestPriceByAsset } from "./trades";
@@ -915,6 +916,20 @@ export async function runFollowCycle(
     }
   }
 
+  // 结算对账兜底:上面的回填 try/catch 一旦真的吞了错,这个仓已经 settled、
+  // 不会再进下一轮的 openRows,台账行就永久卡在 settled=0 —— active[] 要挂满
+  // 48h,settle 事件(TG/webhook/events[])发不出去。每轮一条 JOIN 查询把「仓位
+  // settled、台账未 settled」的行按仓位结果补齐(无漏网零写入);放在 openRows
+  // 判断之外:漏网仓早已不在 open 集合里,且本轮刚吞掉的错本轮就能补。补齐用
+  // 的是仓位 exit_ts,补发与否仍由下游 7d 陈旧闸 / 48h 窗口决定 —— 超期漏网
+  // 修的是战绩口径与 active[] 清退,不是补发消息。同一容错纪律:只 warn。
+  let sigReconciled = 0;
+  try {
+    sigReconciled = reconcileSignalSettlements(db);
+  } catch (e) {
+    console.warn("[follow] strategy_signals 结算对账失败(不影响结算):", e);
+  }
+
   // markout 惰性回填:量化「形成 → 我们跟进」的延迟成本(formation+Δ 时刻的市价,
   // 与 formation_price 相减即 Δ 期 markout,由展示层计算)。open+settled 都要 ——
   // 已结算仓的形成后漂移同样是归因样本。每轮每列最多 MARKOUT_BATCH 仓防请求风暴
@@ -990,7 +1005,7 @@ export async function runFollowCycle(
   const tiltPruned = pruneMarketTiltHistory(db, nowSec);
 
   console.log(
-    `[follow] cycle done · strategies=${strategies.length} · opened=${opened} · settled=${settled} · markouts=${markouts} · tiltSnapshots=${tiltWritten} · tiltPruned=${tiltPruned}`,
+    `[follow] cycle done · strategies=${strategies.length} · opened=${opened} · settled=${settled} · sigReconciled=${sigReconciled} · markouts=${markouts} · tiltSnapshots=${tiltWritten} · tiltPruned=${tiltPruned}`,
   );
   return { opened, settled };
 }

@@ -17,6 +17,9 @@ import { gradeRows, type SignalRecord } from "./signalRecord";
 //      身份字段一经写入不再触碰;settled=0 守卫使回填天然一次性。
 //   3. 台账是下游功能:调用方(lib/follow.ts 接线处)必须 try/catch,任何
 //      台账故障只 warn,绝不影响纸面开仓/结算主流程。
+//   4. 纪律 3 的代价是回填可能被吞:仓位已 settled 而台账仍 settled=0,且下轮
+//      结算集只取 open 仓不会再碰它。reconcileSignalSettlements 每轮一条 JOIN
+//      对账兜底(仓位行是真相),同样 try/catch 只 warn。
 
 export interface StrategySignalInput {
   strategyId: number;
@@ -112,6 +115,86 @@ export function backfillSignalSettlement(
     )
     .run(s.settledTs, s.exitPrice, won, s.realizedPnl, positionId);
   return res.changes === 1;
+}
+
+/** reconcileSignalSettlements 的 JOIN 行:台账 id + 仓位侧的结算结果列。 */
+interface StraySettlementRow {
+  signal_id: number;
+  position_id: number;
+  exit_ts: number | null;
+  exit_price: number | null;
+  realized_pnl: number | null;
+}
+
+/**
+ * 结算对账(幂等兜底):补齐「仓位已 settled、台账仍 settled=0」的漏网行。
+ *
+ * 为什么会漏:runFollowCycle 结算段先 UPDATE follow_positions,再在 try/catch
+ * 里调 backfillSignalSettlement;回填一旦抛错(SQLITE_BUSY/磁盘)只 warn,而
+ * 下一轮结算集只取 status='open' 的仓 —— 这个仓不会再被处理,台账行永久卡在
+ * settled=0:active[] 里挂满 48h,signalDelivery 的 settle 段与 strategyFeed
+ * 的 events[] 发不出它的兑现事件。
+ *
+ * 口径:仓位行是真相(全仓库唯一的 settled 写入点在 lib/follow.ts,三列同写)。
+ * settled_ts 取仓位 exit_ts(真实结算时刻,不是对账时刻)—— 下游 7d 陈旧闸 /
+ * 48h 窗口据此决定还发不发,迟到的兑现不能伪装成新鲜的。won 三态经
+ * backfillSignalSettlement 同一条路径,不另写第二份规则。
+ *
+ * 不制造事实:仓位 exit_ts/exit_price/realized_pnl 任一为 NULL(status 与结果列
+ * 自相矛盾,正常路径不可达)→ 跳过。既不把 NULL 当结果写进台账,也不编造时间戳
+ * —— 编出来的 settled_ts 会让一条来路不明的兑现同时穿过两道闸,以「刚刚认账」
+ * 推给付费通道。坏行不会自愈,故每轮合并成一条 warn 列出全部 signal/position
+ * id(逐行逐轮喊会以 288 条/天淹掉日志)。
+ *
+ * 容错:单行写入抛错(BUSY/IO)只 warn(带两个 id)并继续同批其它行 —— 一行
+ * 故障不拖累整批,漏掉的下轮再补;SELECT 本身的故障由调用方 lib/follow.ts 的
+ * 外层 try/catch 兜住。成本:每轮一条 JOIN 查询;无漏网时零写入。返回补齐行数。
+ */
+export function reconcileSignalSettlements(db: DB): number {
+  const strays = db
+    .prepare(
+      `SELECT s.id AS signal_id, s.position_id, p.exit_ts, p.exit_price, p.realized_pnl
+       FROM strategy_signals s
+       JOIN follow_positions p ON p.id = s.position_id
+       WHERE s.settled = 0 AND p.status = 'settled'`,
+    )
+    .all() as StraySettlementRow[];
+  let fixed = 0;
+  const contradictory: string[] = [];
+  for (const r of strays) {
+    const tag = `signal ${r.signal_id} / position ${r.position_id}`;
+    if (r.exit_ts == null || r.exit_price == null || r.realized_pnl == null) {
+      contradictory.push(tag);
+      continue;
+    }
+    let ok: boolean;
+    try {
+      ok = backfillSignalSettlement(db, r.position_id, {
+        settledTs: r.exit_ts,
+        exitPrice: r.exit_price,
+        realizedPnl: r.realized_pnl,
+      });
+    } catch (e) {
+      console.warn(
+        `[follow] strategy_signals 对账写入失败(下轮重试):${tag}:`,
+        e,
+      );
+      continue;
+    }
+    // false = SELECT 之后被别处抢先回填(settled=0 守卫拦下)—— 不计数即幂等。
+    // 同步单进程下造不出这个竞态,无法单测,纯防御分支。
+    if (!ok) continue;
+    fixed++;
+    console.log(
+      `[follow] strategy_signals 对账补齐:${tag} · settled_ts=${r.exit_ts} · exit_price=${r.exit_price} · realized_pnl=${r.realized_pnl}`,
+    );
+  }
+  if (contradictory.length > 0) {
+    console.warn(
+      `[follow] strategy_signals 对账跳过 ${contradictory.length} 行(仓位已 settled 但 exit_ts/exit_price/realized_pnl 有 NULL,需人工核查):${contradictory.join("; ")}`,
+    );
+  }
+  return fixed;
 }
 
 /**
