@@ -1,7 +1,7 @@
 import { openDb } from "../../../../lib/db";
 import { checkFeedAccess } from "../../../../lib/feedAuth";
-import { createPromiseCache } from "../../../../lib/promiseCache";
 import { buildSignalCatalog } from "../../../../lib/signalCatalog";
+import { cachedCatalog } from "../../../../lib/signalCatalogCache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,22 +16,9 @@ export const dynamic = "force-dynamic";
 //
 // 零上游调用:全部字段来自本地 sqlite,一次突发打不进引擎的 data-api 预算。
 
-const CACHE_TTL_MS = 30_000;
-
-type Body = {
-  updatedAt: number;
-  tier: string;
-  signals: ReturnType<typeof buildSignalCatalog>;
-};
-
-// let 而非 const:测试要能把缓存清干净(越权隔离那条用例的全部意义就在于
-// 「先烤热、再换 key」,带着上一条用例的残留跑等于没测)。
-let catalogCache = createPromiseCache<Body>(CACHE_TTL_MS);
-
-/** 测试专用:丢弃当前缓存。 */
-export function __resetCatalogCache(): void {
-  catalogCache = createPromiseCache<Body>(CACHE_TTL_MS);
-}
+// 缓存与它的测试重置钩子住在 lib/signalCatalogCache.ts:路由文件的导出面被
+// App Router 限死在白名单里(GET/POST/runtime/dynamic…),多导一个字段就是构建
+// 期失败,所以这里只 import 使用,不导出任何非路由字段。
 
 export async function GET(req: Request) {
   const dbPath = process.env.DASH_DB ?? "data.sqlite";
@@ -57,18 +44,21 @@ export async function GET(req: Request) {
   // 排序后再拼,保证 ["a","b"] 与 ["b","a"] 命中同一份。
   const scopeKey = busTypes?.length ? [...busTypes].sort().join(",") : "all";
   try {
-    const body = await catalogCache(`catalog:${tier}:${scopeKey}`, async () => {
-      const db = openDb(dbPath);
-      try {
-        return {
-          updatedAt: Math.floor(Date.now() / 1000),
-          tier,
-          signals: buildSignalCatalog(db, { scopes: busTypes }),
-        };
-      } finally {
-        db.close();
-      }
-    });
+    const body = await cachedCatalog(
+      `catalog:${tier}:${scopeKey}`,
+      async () => {
+        const db = openDb(dbPath);
+        try {
+          return {
+            updatedAt: Math.floor(Date.now() / 1000),
+            tier,
+            signals: buildSignalCatalog(db, { scopes: busTypes }),
+          };
+        } finally {
+          db.close();
+        }
+      },
+    );
     return Response.json(body);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
