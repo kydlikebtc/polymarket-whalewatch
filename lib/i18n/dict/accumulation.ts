@@ -63,6 +63,8 @@ export const DICT_ACCUMULATION: Record<string, string> = {
   // Table headers (+ mobile data-labels)
   钱包: "Wallet",
   地址年龄: "Wallet age",
+  // 地址年龄并进钱包列后的合并列名（见 app/accumulation/page.tsx 表头注释）
+  "钱包 · 地址年龄": "Wallet · Age",
   战绩: "Record",
   "已结算市场胜率 · 已实现盈亏（🏆 = 聪明钱白名单）":
     "Settled-market win rate · realized PnL (🏆 = smart-money whitelist)",
@@ -70,7 +72,8 @@ export const DICT_ACCUMULATION: Record<string, string> = {
   标记: "Flags",
   "对冲嫌疑 = 同钱包也净买入了同市场的对侧结果；做市嫌疑 = 买卖高频交替。两类默认沉底":
     "Hedge suspicion = the wallet also net-bought the opposing outcome in this market; MM suspicion = rapid buy/sell flipping. Both sink to the bottom by default",
-  平均赔率: "Avg Odds",
+  // 表头缩短版：口径收进 (?) 的 title，列名不背长口径
+  赔率: "Odds",
   时间: "Time",
   点击按净买入排序: "Click to sort by net buy-in",
   点击按笔数排序: "Click to sort by fill count",
@@ -79,7 +82,9 @@ export const DICT_ACCUMULATION: Record<string, string> = {
   笔数: "Fills",
   单笔最大: "Max Single",
   毛买入: "Gross Buy",
-  "毛卖出(≥floor)": "Gross Sell (≥floor)",
+  毛卖出: "Gross Sell",
+  "结果名与标记跟在市场名下方：对冲嫌疑 = 同钱包也净买入了同市场的对侧结果；做市嫌疑 = 买卖高频交替。两类默认沉底":
+    "Outcome name and flags sit under the market name. Hedge suspect = the same wallet also net-bought the opposite outcome of this market; MM suspect = rapid buy/sell alternation. Both sink to the bottom by default",
   "仅统计 ≥ 精度 floor 的卖出——更小的卖单在此精度下不可见，净买入应视为上界":
     "Counts only sells ≥ the precision floor — smaller sells are invisible at this precision, so treat net buy-in as an upper bound",
 

@@ -261,6 +261,9 @@ const AccumRow = memo(function AccumRow({
         >
           {isOpen ? "▾" : "▸"}
         </td>
+        {/* 钱包 · 地址年龄同格：地址首尾省略后本来就短，年龄是它的属性
+            （这个钱包多新），两者读起来是一件事。合并省下一列的左右内边距，
+            宽度还给市场列 —— 见表头注释里的列宽预算。 */}
         <td>
           <WalletLink
             address={g.wallet ?? ""}
@@ -268,9 +271,9 @@ const AccumRow = memo(function AccumRow({
           >
             {shortWallet(g.wallet)}
           </WalletLink>
-        </td>
-        <td data-label={t("地址年龄")}>
-          <AgeBadge ageDays={age} />
+          <span style={{ marginLeft: "var(--s-2)" }}>
+            <AgeBadge ageDays={age} />
+          </span>
         </td>
         <td data-label={t("战绩")} onClick={(e) => e.stopPropagation()}>
           <WalletStatsBadge stats={stats} smart={smart} />
@@ -316,6 +319,40 @@ const AccumRow = memo(function AccumRow({
                 {t("巨鲸单")}
               </Tag>
             ) : null}
+            {/* 对冲 / 做市标记从独立的「标记」列挪到这里：它们是对这一笔
+                建仓的限定语（"这个方向可能不作数"），本来就该紧挨着市场·结果
+                读，独占一列既占宽度又离被限定的对象很远。琥珀 = 需留神的
+                口径，与徽章五类语义一致。 */}
+            {g.hedgeSuspect ? (
+              <span
+                title={
+                  t(
+                    "同钱包在同市场的对侧结果也有净买入——对冲/套利嫌疑，方向意图存疑。",
+                  ) +
+                  (g.hedgeAdjustedNetUsd != null
+                    ? t(
+                        "按 1−价格 折算对侧买入后，本方向净买入约 ${n}（仅二元市场折算）。",
+                        { n: fmtUsd(g.hedgeAdjustedNetUsd) },
+                      )
+                    : t("多结果市场仅标记不折算。")) +
+                  t("默认沉底")
+                }
+                style={{ cursor: "help" }}
+              >
+                <Tag variant="warn">{t("对冲?")}</Tag>
+              </span>
+            ) : null}
+            {g.mmSuspect ? (
+              <span
+                title={t(
+                  "买卖高频交替（换向率 {pct}%，仅统计 ≥floor 的可见单，实际只高不低）——更像做市库存管理而非定向建仓。默认沉底",
+                  { pct: Math.round(g.flipRate * 100) },
+                )}
+                style={{ cursor: "help" }}
+              >
+                <Tag variant="warn">{t("做市?")}</Tag>
+              </span>
+            ) : null}
             <span style={{ whiteSpace: "nowrap" }}>
               <MarketSlugActions
                 slug={g.slug}
@@ -325,54 +362,10 @@ const AccumRow = memo(function AccumRow({
             </span>
           </div>
         </td>
-        <td data-label={t("标记")}>
-          {g.hedgeSuspect || g.mmSuspect ? (
-            <span
-              style={{
-                display: "flex",
-                gap: "var(--s-1)",
-                flexWrap: "wrap",
-              }}
-            >
-              {g.hedgeSuspect ? (
-                <span
-                  title={
-                    t(
-                      "同钱包在同市场的对侧结果也有净买入——对冲/套利嫌疑，方向意图存疑。",
-                    ) +
-                    (g.hedgeAdjustedNetUsd != null
-                      ? t(
-                          "按 1−价格 折算对侧买入后，本方向净买入约 ${n}（仅二元市场折算）。",
-                          { n: fmtUsd(g.hedgeAdjustedNetUsd) },
-                        )
-                      : t("多结果市场仅标记不折算。")) +
-                    t("默认沉底")
-                  }
-                  style={{ cursor: "help" }}
-                >
-                  <Tag variant="warn">{t("对冲?")}</Tag>
-                </span>
-              ) : null}
-              {g.mmSuspect ? (
-                <span
-                  title={t(
-                    "买卖高频交替（换向率 {pct}%，仅统计 ≥floor 的可见单，实际只高不低）——更像做市库存管理而非定向建仓。默认沉底",
-                    { pct: Math.round(g.flipRate * 100) },
-                  )}
-                  style={{ cursor: "help" }}
-                >
-                  <Tag variant="warn">{t("做市?")}</Tag>
-                </span>
-              ) : null}
-            </span>
-          ) : (
-            <span className="faint">—</span>
-          )}
-        </td>
         {/* 赔率 = 价格，不是警示：中性色、常规字重、与正文同字号。 */}
         <td
           className="mono is-right"
-          data-label={t("平均赔率")}
+          data-label={t("赔率")}
           title={t("按 size 加权的平均买入价（赔率）")}
         >
           {g.avgBuyPrice.toFixed(3)}
@@ -416,7 +409,7 @@ const AccumRow = memo(function AccumRow({
             这里为 0 时压成 muted，>0 时与其它金额同色。 */}
         <td
           className={g.sellUsd > 0 ? "mono is-right" : "mono is-right muted"}
-          data-label={t("毛卖出(≥floor)")}
+          data-label={t("毛卖出")}
         >
           ${fmtUsd(g.sellUsd)}
         </td>
@@ -424,7 +417,7 @@ const AccumRow = memo(function AccumRow({
       {isOpen ? (
         <tr>
           <td
-            colSpan={13}
+            colSpan={11}
             style={{
               padding: "0 var(--s-4) var(--s-4) var(--s-10)",
               borderBottom: "1px solid var(--ww-border)",
@@ -926,8 +919,15 @@ export default function AccumulationPage() {
               <thead>
                 <tr>
                   <th style={{ width: 28, padding: "var(--s-2) var(--s-1)" }} />
-                  <th>{t("钱包")}</th>
-                  <th>{t("地址年龄")}</th>
+                  {/* 地址年龄并进钱包列、标记并进市场格的 meta 行(设计稿帧 02
+                      的处理)。这是列宽预算逼出来的,不是省事:设计系统的硬规则
+                      是「固定列之和 + 市场列最小宽 + gap×(n−1) + 32 ≤ 1076」,
+                      13 列时实测表宽 1147 > 容器 1078,不但冒出横向滚动条,
+                      「市场 · 结果」还只分到 111px —— 市场名被压成七八行,而
+                      市场名恰恰是本表唯一永不截断的文本。两处合并各省一列的
+                      左右内边距,把宽度还给市场列;没有删任何数据、没有动
+                      任何排序键。 */}
+                  <th>{t("钱包 · 地址年龄")}</th>
                   <th
                     title={t(
                       "已结算市场胜率 · 已实现盈亏（🏆 = 聪明钱白名单）",
@@ -935,15 +935,19 @@ export default function AccumulationPage() {
                   >
                     {t("战绩")}
                   </th>
-                  <th>{t("市场 · 结果")}</th>
                   <th
                     title={t(
-                      "对冲嫌疑 = 同钱包也净买入了同市场的对侧结果；做市嫌疑 = 买卖高频交替。两类默认沉底",
+                      "结果名与标记跟在市场名下方：对冲嫌疑 = 同钱包也净买入了同市场的对侧结果；做市嫌疑 = 买卖高频交替。两类默认沉底",
                     )}
                   >
-                    {t("标记")}
+                    {t("市场 · 结果")}
                   </th>
-                  <th className="is-right">{t("平均赔率")}</th>
+                  <th
+                    className="is-right"
+                    title={t("按 size 加权的平均买入价（赔率）")}
+                  >
+                    {t("赔率")}
+                  </th>
                   <th className="is-right">{t("时间")}</th>
                   <th
                     className="is-sortable is-right"
@@ -977,13 +981,15 @@ export default function AccumulationPage() {
                     {t("毛买入")}
                     {sortArrow("buyUsd")}
                   </th>
+                  {/* 口径收进 (?) 的 title：表头永远 nowrap，长口径写进列名
+                      会把这一列钉宽到 122px（实测），那份宽度该给市场列。 */}
                   <th
                     className="is-right"
                     title={t(
                       "仅统计 ≥ 精度 floor 的卖出——更小的卖单在此精度下不可见，净买入应视为上界",
                     )}
                   >
-                    {t("毛卖出(≥floor)")}
+                    {t("毛卖出")}
                   </th>
                 </tr>
               </thead>

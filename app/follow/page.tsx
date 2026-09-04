@@ -3198,13 +3198,22 @@ function StrategyDetailDialog({
 
 /* --------------------------------------------------------- list view */
 
-// 列表视图(卡片/列表切换新增):一族一张白卡,卡头写族名 + 档数 + 这一族在
-// 验证什么假设,卡内一张表。族序按 FAMILY_ORDER(信息强度递减)+ 族内原有
-// 顺序,复用 groups——与卡片视图同一份分组结果,保证两种视图的策略顺序看
-// 起来是"同一件事的两种画法",不是两套互相对不上的排序。
+// 列表视图(卡片/列表切换):**全部档位一张整表,不按族分小节**。
+// 行序按信号族分组(FAMILY_ORDER,信息强度递减)+ 族内原有顺序,复用 groups
+// ——与卡片视图同一份分组结果,保证两种视图的策略顺序看起来是"同一件事的
+// 两种画法",不是两套互相对不上的排序。族名以灰底名称标签的形式跟在策略名
+// 后面,不独占一列(实测过:族独立成列要额外吃一份列内边距,而族名最多 4 字,
+// 并进策略格更省宽度)。
+//
+// 为什么不切成"一族一张卡":列表视图存在的意义就是"12 档并排横向对比"。
+// 一旦按族切成四张卡,每张卡自带一份表头,同一列在四张卡里各自算列宽,
+// 结算净值/ROI/胜率这些数就不再上下对齐 —— 横向对比这件事当场作废,
+// 那正是卡片视图已经在做的事,两种视图会退化成同一种。这条已裁决过一次
+// (Etherscan 换皮时被改成分族卡片,用户实测后要求改回),列表不重开讨论。
+//
 // **不提供点列头排序**:小样本下按 ROI/结算净值排序,会让"3 仓刚好赢 2 仓"
 // 的运气档窜到第一名,排序动作本身就在撒谎——这与卡片"不做排序,固定按信号
-// 族分组"是同一条已裁决的口径,列表不重新开一次这个讨论。
+// 族分组"是同一条已裁决的口径。
 function StrategyListView({
   groups,
   leaderId,
@@ -3213,115 +3222,82 @@ function StrategyListView({
   leaderId: number | null;
 }) {
   const { t } = useLang();
-  if (groups.length === 0) {
+  const rows = groups.flatMap((g) =>
+    g.items.map((s) => ({ s, familyTitle: g.meta.title })),
+  );
+  if (rows.length === 0) {
     return <div className="ds-empty">{t("暂无启用中的跟单策略")}</div>;
   }
-  // 一族一张白卡:卡内标题条(族名 + 档数 + 这一族在验证什么假设)+ 一张表。
-  // 族不再占表里的一列——族名放在卡头,列宽全部还给"策略 · 门槛"那一格,
-  // 门槛说明才有地方完整换行。
   return (
-    <>
-      {groups.map((g) => (
-        <div
-          key={g.key}
-          className="ds-card"
-          style={{ overflow: "hidden", marginBottom: "var(--s-4)" }}
-        >
-          <div className="card-bar">
-            <span style={{ fontWeight: 600 }}>{t(g.meta.title)}</span>
-            <span style={{ color: "var(--ww-text-muted)" }}>
-              {t("{n} 档", { n: g.items.length })}
-            </span>
-            <span
-              style={{
-                minWidth: 0,
-                color: "var(--ww-text-muted)",
-                fontSize: "var(--t-base)",
-                lineHeight: "var(--lh-note)",
-              }}
+    <div className="ds-table-wrap">
+      <table className="ds-table">
+        <thead>
+          <tr>
+            {/* emoji + 名字 + 族标签 + 状态徽章 + 门槛说明全部收进一格:
+                      门槛说明是这张表里唯一需要换行的文本,给它整整一列的宽度。 */}
+            <th>{t("策略 · 门槛")}</th>
+            <th
+              className="is-right"
+              title={t("已结算仓位累计已实现盈亏(不含持仓浮盈)")}
             >
-              {t(g.meta.blurb)}
-            </span>
-          </div>
-          <div
-            className="ds-table-wrap"
-            style={{
-              border: 0,
-              borderRadius: 0,
-              boxShadow: "none",
-              background: "transparent",
-            }}
-          >
-            <table className="ds-table">
-              <thead>
-                <tr>
-                  {/* emoji + 名字 + 状态徽章 + 门槛说明全部收进一格:门槛
-                      说明是这张表里唯一需要换行的文本,给它整整一列的宽度。 */}
-                  <th>{t("策略 · 门槛")}</th>
-                  <th
-                    className="is-right"
-                    title={t("已结算仓位累计已实现盈亏(不含持仓浮盈)")}
-                  >
-                    <ThHelp>{t("结算净值")}</ThHelp>
-                  </th>
-                  <th
-                    className="is-right"
-                    title={t("结算净值 ÷ 已投入本金(仅已结算仓)")}
-                  >
-                    <ThHelp>ROI</ThHelp>
-                  </th>
-                  <th
-                    className="is-right"
-                    title={t(
-                      "结算净值 ÷ 峰值占用资金 × 365 ÷ 运行天数。短窗口/小样本外推极不可靠,仅供横向对比",
-                    )}
-                  >
-                    <ThHelp>{t("平均年化")}</ThHelp>
-                  </th>
-                  <th
-                    title={t(
-                      "盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间与已结算样本量。50% / 8 仓 和 58% / 24 仓不该长得一样重,区间宽度就是这份轻重;平局不计入分母",
-                    )}
-                  >
-                    <ThHelp>{t("胜率 · Wilson 95%CI")}</ThHelp>
-                  </th>
-                  <th
-                    className="is-right"
-                    title={t("净值曲线从峰值到后续谷底的最大跌幅(美元)")}
-                  >
-                    <ThHelp>{t("最大回撤")}</ThHelp>
-                  </th>
-                  <th
-                    className="is-right"
-                    title={t(
-                      "= 历史峰值占用 × 1.25(按单仓金额向上取整);推导细节与五档精确回放见「详情 → 账户推演」",
-                    )}
-                  >
-                    <ThHelp>{t("建议额度")}</ThHelp>
-                  </th>
-                  <th
-                    className="is-right"
-                    title={t("当前持仓待结算数 / 策略运行天数")}
-                  >
-                    <ThHelp>{t("持有 / 运行")}</ThHelp>
-                  </th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {g.items.map((s) => (
-                  <StrategyListRow
-                    key={s.id}
-                    s={s}
-                    leading={s.id === leaderId}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ))}
-    </>
+              <ThHelp>{t("结算净值")}</ThHelp>
+            </th>
+            <th
+              className="is-right"
+              title={t("结算净值 ÷ 已投入本金(仅已结算仓)")}
+            >
+              <ThHelp>ROI</ThHelp>
+            </th>
+            <th
+              className="is-right"
+              title={t(
+                "结算净值 ÷ 峰值占用资金 × 365 ÷ 运行天数。短窗口/小样本外推极不可靠,仅供横向对比",
+              )}
+            >
+              <ThHelp>{t("平均年化")}</ThHelp>
+            </th>
+            <th
+              title={t(
+                "盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间与已结算样本量。50% / 8 仓 和 58% / 24 仓不该长得一样重,区间宽度就是这份轻重;平局不计入分母",
+              )}
+            >
+              <ThHelp>{t("胜率 · Wilson 95%CI")}</ThHelp>
+            </th>
+            <th
+              className="is-right"
+              title={t("净值曲线从峰值到后续谷底的最大跌幅(美元)")}
+            >
+              <ThHelp>{t("最大回撤")}</ThHelp>
+            </th>
+            <th
+              className="is-right"
+              title={t(
+                "= 历史峰值占用 × 1.25(按单仓金额向上取整);推导细节与五档精确回放见「详情 → 账户推演」",
+              )}
+            >
+              <ThHelp>{t("建议额度")}</ThHelp>
+            </th>
+            <th
+              className="is-right"
+              title={t("当前持仓待结算数 / 策略运行天数")}
+            >
+              <ThHelp>{t("持有 / 运行")}</ThHelp>
+            </th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ s, familyTitle }) => (
+            <StrategyListRow
+              key={s.id}
+              s={s}
+              familyTitle={familyTitle}
+              leading={s.id === leaderId}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -3339,9 +3315,11 @@ function StrategyListView({
 // 各自持有自己的 open/close,不是页面级"当前打开哪一条"的单一状态)。
 function StrategyListRow({
   s,
+  familyTitle,
   leading,
 }: {
   s: FollowStrategyView;
+  familyTitle: string;
   leading: boolean;
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
@@ -3369,6 +3347,10 @@ function StrategyListRow({
           <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
             {t(s.name)}
           </span>
+          {/* 族名:灰底名称标签。整表不按族切小节(见 StrategyListView 顶部
+              注释),族归属就得在行内可读 —— 而族是这一档的身份属性(它验证
+              的是哪一类假设),不是状态,所以是灰底 name tag 不是语义色徽章。 */}
+          <Tag>{t(familyTitle)}</Tag>
           {/* 与卡片视图同一判定(=== true):反向档在列表里同样一眼可辨,
               正/反成对读战绩是这批档位存在的意义。灰底名称标签 —— 它是
               档位的身份属性,不是状态。 */}
@@ -4371,8 +4353,9 @@ export default function FollowPage() {
               </section>
             ))
           ) : (
-            // 列表:一族一张卡(见 StrategyListView 顶部注释),行序仍按信号族
-            // 分组(与卡片视图共用同一份 groups)。
+            // 列表:全部档位一张整表,不按族分小节(见 StrategyListView 顶部
+            // 注释)。行序仍按信号族分组(与卡片视图共用同一份 groups),族名
+            // 以灰底标签跟在策略名后。
             <section style={{ marginBottom: "var(--s-5)" }}>
               <StrategyListView groups={groups} leaderId={leaderId} />
             </section>
