@@ -36,6 +36,14 @@
 
   /* 面与线 */
   --ww-surface: #fff; /* 卡片、顶栏、页面底 */
+  /* 画布顶部的极淡冷灰渐变 —— 实测 etherscan.io 的 main 元素上挂着
+     linear-gradient(rgb(250,251,253) 0, rgba(246,247,248,0) 1360px)。
+     设计稿把它简化成了「全页纯白」,漏掉了这一层;但它正是白卡能从画布上
+     「浮」起来的原因 —— 卡是 #fff,画布顶部是 #fafbfd,两者差一点点,
+     卡的边框与那层又散又淡的阴影才有东西可衬。往下 1360px 渐隐到纯白,
+     所以长页面滚到下方仍是白底,不会变成一张灰纸。 */
+  --ww-canvas-tint: #fafbfd;
+  --ww-canvas-tint-end: rgba(246, 247, 248, 0);
   --ww-surface-muted: #f8f9fa; /* 标签底、空态底、说明条底、禁用钮底 */
   --ww-surface-sunken: #f1f3f5; /* 链尾框 / 行内代码底 */
   --ww-border: #e9ecef; /* 卡片 / 行 / 控件边框 —— 全站唯一实线边框色 */
@@ -242,7 +250,17 @@ html {
 
 body {
   margin: 0;
-  background: var(--ww-surface);
+  /* 底色白 + 顶部那层渐变（见 --ww-canvas-tint 注释）。etherscan 把渐变挂在
+     <main> 上（在 sticky 页头之下）；我们挂在 body 上 —— 顶栏是不透明白底
+     且 sticky，会自己盖住最上面那 64px，效果等同，但少一层只为背景存在的
+     包裹元素，也不必让 /wallet、/market 那种有两个 .ds-main 兄弟的页面
+     各自去承担背景。 */
+  background-color: var(--ww-surface);
+  background-image: linear-gradient(
+    var(--ww-canvas-tint) 0,
+    var(--ww-canvas-tint-end) 1360px
+  );
+  background-repeat: no-repeat;
   color: var(--ww-text);
   font-family: var(--ww-font);
   font-size: 15px; /* 正文 15 —— 表格自己降到 14 */
@@ -1488,6 +1506,16 @@ tr:hover .copy-btn,
   background: var(--ww-surface-muted);
   color: var(--ww-link);
   text-decoration: none;
+}
+/* 当前项 —— 蓝字 + 白底 + 左侧 2px 蓝轨（--rail-active）。
+   这是设计系统里唯一开了「彩色左边条」口子的地方：§4 禁的是**表格行**的
+   彩色左边条（那会破坏「每一行平等」），而目录项本来就有主次，蓝轨是
+   Etherscan 侧栏当前项的原生写法。用 aria-current 驱动，不用 :target ——
+   后者只在点击后生效，滚动进入某节时不亮。 */
+.doc-toc a[aria-current="true"] {
+  background: var(--ww-surface);
+  color: var(--ww-link);
+  box-shadow: var(--rail-active);
 }
 
 .doc-prose {
