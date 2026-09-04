@@ -3259,11 +3259,12 @@ function StrategyListView({
               <ThHelp>{t("平均年化")}</ThHelp>
             </th>
             <th
+              className="is-right"
               title={t(
-                "盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间与已结算样本量。50% / 8 仓 和 58% / 24 仓不该长得一样重,区间宽度就是这份轻重;平局不计入分母",
+                "盈利仓 ÷(盈利+亏损)仓,括号内为已结算样本量(样本不足前面加 ⚠);平局不计入分母。Wilson 95% 置信区间在「详情」里 —— 区间文本挤不进表格一行",
               )}
             >
-              <ThHelp>{t("胜率 · Wilson 95%CI")}</ThHelp>
+              <ThHelp>{t("胜率")}</ThHelp>
             </th>
             <th
               className="is-right"
@@ -3332,68 +3333,71 @@ function StrategyListRow({
   const hasPlan = !!acct && acct.rows.length > 0 && acct.suggestedUsd != null;
   const state = classifyCardState(m);
   const empty = state === "empty";
+  const dash = <span className="muted">—</span>;
   return (
-    <tr>
-      {/* 行内只放「图标 + 名字 + 标签」—— 一眼认出是哪一档就够了。门槛说明
-          不再占一行正文:它是参数不是身份,读者真要核对门槛时会点「详情」
-          (弹窗里有全量 paramsHint)。这里保留在 title 里,悬停即可读,不占版面。 */}
-      <td
-        data-label={t("策略")}
-        className="cell-wrap"
-        title={cardParamsHint(s.params, t)}
-      >
+    <tr className={empty ? "muted" : undefined}>
+      {/* 一档一行,行高就是一行 —— 这张表存在的理由是「19 档并排横向对比」,
+          任何让单行变两行的东西都在削它的功能。所以:
+          不加 .cell-wrap(它会逼这一格换行)、名字与标签横向并排、
+          样本不足只在胜率格里用 ⚠ 标一次(不再额外挂一枚标签,那会把标签
+          挤到第二行)、门槛说明只进 title。 */}
+      <td data-label={t("策略")} title={cardParamsHint(s.params, t)}>
         <span
           style={{
-            display: "flex",
+            display: "inline-flex",
             alignItems: "center",
             gap: "var(--s-2)",
             flexWrap: "wrap",
           }}
         >
-          <span aria-hidden style={{ flex: "0 0 auto" }}>
-            {strategyEmoji(s.name)}
-          </span>
-          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
-            {t(s.name)}
-          </span>
+          <span aria-hidden>{strategyEmoji(s.name)}</span>
+          <span style={{ fontWeight: 600 }}>{t(s.name)}</span>
           {/* 族名:灰底名称标签。整表不按族切小节(见 StrategyListView 顶部
               注释),族归属就得在行内可读 —— 而族是这一档的身份属性(它验证
               的是哪一类假设),不是状态,所以是灰底 name tag 不是语义色徽章。 */}
           <Tag>{t(familyTitle)}</Tag>
           {/* 与卡片视图同一判定(=== true):反向档在列表里同样一眼可辨,
-              正/反成对读战绩是这批档位存在的意义。灰底名称标签 —— 它是
-              档位的身份属性,不是状态。 */}
+              正/反成对读战绩是这批档位存在的意义。 */}
           {s.params.reverse === true ? <Tag>{t("反向对照")}</Tag> : null}
-          {leading ? <Tag variant="up">{t("本窗口领先")}</Tag> : null}
-          {state === "low_sample" ? (
-            <Tag variant="warn">
-              {t("样本不足 · {n} 仓", { n: m.settledCount })}
-            </Tag>
+          {leading ? <Tag variant="brand">{t("领先")}</Tag> : null}
+          {/* 空档行六个战绩列全是「—」,这枚标签就是那六个「—」的成因,
+              少了它读者会以为这一档跑了但一分钱没赚。 */}
+          {empty ? (
+            <Tag>{m.openCount > 0 ? t("等待结算") : t("等待命中")}</Tag>
           ) : null}
-          {/* 与卡片视图同一判定:哨兵只亮 watch/degraded,两态同走琥珀。 */}
+          {/* 与卡片视图同一判定:哨兵只亮 watch/degraded。 */}
           {s.decay?.state === "degraded" ? (
             <Tag variant="warn">{t("⚠ 疑似衰变")}</Tag>
           ) : s.decay?.state === "watch" ? (
-            <Tag variant="warn">{t("衰变观察")}</Tag>
+            <Tag>{t("衰变观察")}</Tag>
           ) : null}
         </span>
       </td>
       {empty ? (
-        // 六个战绩列合成一句话:「—」是「判不了」不是零,六个并排的「—」
-        // 只会让人以为这一档跑了但一分钱没赚。持有 / 运行仍单独成格。
-        <td
-          colSpan={6}
-          style={{
-            textAlign: "center",
-            whiteSpace: "normal",
-            color: "var(--ww-text-muted)",
-            fontSize: "var(--t-base)",
-          }}
-        >
-          {m.openCount > 0
-            ? t("尚无已结算仓位 —— 战绩读数要等第一笔平仓")
-            : t("尚无仓位 —— 等待信号命中")}
-        </td>
+        // 六个战绩列各给一个「—」,不合成跨列的一句话:跨列会把这一行的
+        // 列对齐整个撕开,而「19 档同列上下对齐」正是这张表存在的理由。
+        // 「—」是判不了不是零 —— 成因由名字后面那枚「等待命中 / 等待结算」
+        // 标签承担,整行再走 tr.muted 降一档,读者不会误以为跑了没赚到。
+        <>
+          <td className="is-right" data-label={t("结算净值")}>
+            {dash}
+          </td>
+          <td className="is-right" data-label="ROI">
+            {dash}
+          </td>
+          <td className="is-right" data-label={t("平均年化")}>
+            {dash}
+          </td>
+          <td className="is-right" data-label={t("胜率")}>
+            {dash}
+          </td>
+          <td className="is-right" data-label={t("最大回撤")}>
+            {dash}
+          </td>
+          <td className="is-right" data-label={t("建议额度")}>
+            {dash}
+          </td>
+        </>
       ) : (
         <>
           <td className="is-right" data-label={t("结算净值")}>
@@ -3420,58 +3424,25 @@ function StrategyListRow({
               <span className="muted">—</span>
             )}
           </td>
-          {/* 胜率一格三层:百分数 + 样本量 · 比例条 · Wilson 区间。样本不足
-              的比例条走琥珀(读数存在但不该据此下判断),够样本走绿。 */}
-          <td data-label={t("胜率")} style={{ whiteSpace: "normal" }}>
+          {/* 胜率一格一行:百分数 + 括号里的已结算样本量,样本不足前面加 ⚠。
+              **Wilson 95% 区间不放这张表** —— 这是原版就裁决过的口径:区间
+              文本("95%CI 53–78%")挤不进一行,硬塞就得多起一层副行,而多一层
+              副行 × 19 行 = 这张表少一半可视档位。区间留在「详情」弹窗,
+              悬停本格 title 也能读到。 */}
+          <td
+            className="is-right"
+            data-label={t("胜率")}
+            title={[t("盈利仓 ÷(盈利+亏损)仓;平局不计入分母"), winRateCILabel(m)]
+              .filter(Boolean)
+              .join(" · ")}
+          >
             {m.winRate != null ? (
-              // 包一层 block:移动端堆叠卡把 td 变成 flex 行(标签在左、内容
-              // 在右),三个兄弟节点会被并排挤扁 —— 收进一个块级容器,标签
-              // 右边永远只有"一块内容"。
-              <span style={{ display: "block", minWidth: 0, flex: 1 }}>
-                <span
-                  style={{
-                    display: "flex",
-                    alignItems: "baseline",
-                    justifyContent: "space-between",
-                    gap: "var(--s-2)",
-                  }}
-                >
-                  <span>{Math.round(m.winRate * 100)}%</span>
-                  <span
-                    style={{
-                      fontSize: "var(--t-sm)",
-                      color: "var(--ww-text-muted)",
-                    }}
-                  >
-                    {t("{n} 仓", { n: m.settledCount })}
-                  </span>
+              <>
+                {Math.round(m.winRate * 100)}%{" "}
+                <span className="muted">
+                  ({state === "low_sample" ? `⚠ ${m.settledCount}` : m.settledCount})
                 </span>
-                <span
-                  className="split-bar"
-                  style={{ marginTop: 6 }}
-                  aria-hidden
-                >
-                  <span
-                    style={{
-                      width: `${Math.round(m.winRate * 100)}%`,
-                      background:
-                        state === "low_sample"
-                          ? "var(--ww-warn)"
-                          : "var(--ww-up)",
-                    }}
-                  />
-                </span>
-                <span
-                  style={{
-                    display: "block",
-                    marginTop: 3,
-                    fontSize: "var(--t-xs)",
-                    color: "var(--ww-text-muted)",
-                  }}
-                >
-                  {winRateCILabel(m)}
-                </span>
-              </span>
+              </>
             ) : (
               <span className="muted">—</span>
             )}
