@@ -6,6 +6,7 @@ import {
   MarketSlugActions,
   Modal,
   Segmented,
+  StatCard,
   Tag,
   WalletLink,
 } from "../ui";
@@ -184,8 +185,10 @@ function fmtAgo(tsSec: number, t: TFn): string {
 
 // Pool members graduate OUT of this list into the pool tab, so the funnel
 // statuses are binary: still watching, or permanently disqualified.
+// 徽章语义(readme §2.1):琥珀 = 需留神的口径 / 机器人;灰底 = 名称标签。
 function statusTag(status: CandidateRow["status"], t: TFn) {
-  if (status === "bot") return <Tag variant="warn">🤖 {t("做市机器人")}</Tag>;
+  if (status === "bot")
+    return <Tag variant="warn">🤖 {t("做市机器人 · 硬拒")}</Tag>;
   return <Tag>{t("候选中")}</Tag>;
 }
 
@@ -193,33 +196,6 @@ function statusTag(status: CandidateRow["status"], t: TFn) {
 function filterChipLabel(key: string, sample: WalletTag, t: TFn): string {
   if (key.startsWith("ch:")) return channelLabel(key.slice(3), t);
   return t(sample.label.replace(/ ×\d+$/, ""));
-}
-
-// ---------------------------------------------------------- funnel strip
-
-function FunnelArrow({ label }: { label: string }) {
-  return (
-    <div
-      aria-hidden
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        minWidth: 56,
-        flex: "0 0 auto",
-        gap: 2,
-      }}
-    >
-      <span
-        className="ds-hint"
-        style={{ fontSize: 11, textAlign: "center", lineHeight: 1.3 }}
-      >
-        {label}
-      </span>
-      <span style={{ color: "var(--n-500)", fontSize: 16 }}>→</span>
-    </div>
-  );
 }
 
 // ------------------------------------------------------- expandable detail
@@ -234,15 +210,20 @@ function EvidenceDetailRows({
   const { t } = useLang();
   return (
     <tr>
-      <td colSpan={colSpan} style={{ background: "var(--n-50)" }}>
+      <td colSpan={colSpan} style={{ background: "var(--ww-surface-muted)" }}>
         {evidence.length === 0 ? (
-          <div className="ds-hint" style={{ padding: "var(--s-2)" }}>
+          <div className="ds-empty">
             {t(
               "近 30 天无渠道证据 —— 经榜单播种入池（全局榜/分类榜），或证据已滚出 30 天窗口",
             )}
           </div>
         ) : (
-          <table className="ds-table" style={{ margin: "var(--s-2) 0" }}>
+          // 展开明细走嵌套紧凑表（13px 单元格）—— 它是主行的下一级，
+          // 与主表同字号会读成两张并列的表。
+          <table
+            className="ds-table ds-table--compact"
+            style={{ margin: "var(--s-2) 0" }}
+          >
             <thead>
               <tr>
                 <th style={{ width: 130 }}>{t("渠道")}</th>
@@ -262,17 +243,21 @@ function EvidenceDetailRows({
             <tbody>
               {evidence.map((e) => (
                 <tr key={`${e.channel}:${e.conditionId}`}>
-                  <td style={{ whiteSpace: "nowrap" }}>
-                    {channelLabel(e.channel, t)}
+                  <td style={{ whiteSpace: "nowrap" }} data-label={t("渠道")}>
+                    <Tag variant="default">{channelLabel(e.channel, t)}</Tag>
                   </td>
-                  <td style={{ whiteSpace: "normal", lineHeight: 1.5 }}>
+                  <td className="cell-wrap" data-label={t("证据")}>
                     {e.note}
                   </td>
                   {/* Full market title + outcome with the standard ⧉↗ pair —
                       the note above only carries a 40-char truncated title.
                       Legacy rows (no stored market context) fall back to a
                       muted em-dash and self-heal on re-observation. */}
-                  <td style={{ whiteSpace: "normal", maxWidth: 300 }}>
+                  <td
+                    className="cell-wrap"
+                    style={{ maxWidth: 300 }}
+                    data-label={t("市场 · 结果")}
+                  >
                     {e.title ? (
                       <>
                         {e.eventSlug ? (
@@ -287,8 +272,11 @@ function EvidenceDetailRows({
                           e.title
                         )}
                         <div
-                          className="kpi-sub"
-                          style={{ whiteSpace: "nowrap" }}
+                          style={{
+                            marginTop: 5,
+                            fontSize: "var(--t-sm)",
+                            color: "var(--ww-text-muted)",
+                          }}
                         >
                           {e.outcome ?? ""}
                           <MarketSlugActions
@@ -309,15 +297,16 @@ function EvidenceDetailRows({
                       </span>
                     )}
                   </td>
-                  <td className="mono is-right">
+                  <td className="mono is-right" data-label={t("金额")}>
                     ${Math.round(e.usd).toLocaleString("en-US")}
                   </td>
-                  <td className="mono is-right">
+                  <td className="mono is-right" data-label={t("价格")}>
                     {(e.price * 100).toFixed(1)}¢
                   </td>
                   <td
                     className="mono is-right"
                     style={{ whiteSpace: "nowrap" }}
+                    data-label={t("时间")}
                   >
                     {fmtAgo(e.ts, t)}
                   </td>
@@ -376,14 +365,18 @@ function ScorecardTable({
   t: (s: string, v?: Record<string, string | number>) => string;
 }) {
   const pts = (v: number) => (v * 100).toFixed(2);
-  const verdictText = (g: ScorecardGroup) =>
-    g.verdict === "pos"
-      ? t("✅ 显著为正")
-      : g.verdict === "neg"
-        ? t("❌ 显著为负")
-        : g.verdict === "flat"
-          ? t("○ 不显著")
-          : t("· 市场数不足");
+  // 徽章五类语义(readme §2.1):绿 = 通过/命中,红 = 反向,琥珀 = 样本不足,
+  // 灰底 = 名称标签(「不显著」是一个结论名,不是状态)。
+  const verdictBadge = (g: ScorecardGroup) =>
+    g.verdict === "pos" ? (
+      <Tag variant="up">{t("✅ 显著为正")}</Tag>
+    ) : g.verdict === "neg" ? (
+      <Tag variant="down">{t("❌ 显著为负")}</Tag>
+    ) : g.verdict === "flat" ? (
+      <Tag>{t("○ 不显著")}</Tag>
+    ) : (
+      <Tag variant="warn">{t("· 市场数不足")}</Tag>
+    );
   return (
     <div className="ds-table-wrap">
       <table className="ds-table ds-table--compact">
@@ -397,15 +390,18 @@ function ScorecardTable({
             <th className="is-right">{t("隐含")}</th>
             <th className="is-right">{t("费用")}</th>
             <th className="is-right">{t("净 edge ±95%(聚类)")}</th>
-            <th>{t("判定")}</th>
+            <th className="is-right">{t("判定")}</th>
           </tr>
         </thead>
         <tbody>
           {groups.map((g) => (
             <tr key={g.key}>
-              <td>{scorecardLabel(g.key, t)}</td>
+              <td className="cell-wrap" data-label={t("渠道")}>
+                {scorecardLabel(g.key, t)}
+              </td>
               <td
                 className="mono is-right"
+                data-label={t("告警行")}
                 title={t("smart {s} 条 · 共识成员 {c} 条", {
                   s: g.smartN,
                   c: g.consensusN,
@@ -413,16 +409,31 @@ function ScorecardTable({
               >
                 {g.n}
               </td>
-              <td className="mono is-right">{g.wallets}</td>
-              <td className="mono is-right">{g.markets}</td>
-              <td className="mono is-right">{pts(g.winRate)}%</td>
-              <td className="mono is-right">{pts(g.implied)}%</td>
-              <td className="mono is-right">{pts(g.feePts)}</td>
-              <td className="mono is-right">
+              <td className="mono is-right" data-label={t("钱包")}>
+                {g.wallets}
+              </td>
+              <td className="mono is-right" data-label={t("市场")}>
+                {g.markets}
+              </td>
+              <td className="mono is-right" data-label={t("胜率")}>
+                {pts(g.winRate)}%
+              </td>
+              <td className="mono is-right" data-label={t("隐含")}>
+                {pts(g.implied)}%
+              </td>
+              <td className="mono is-right" data-label={t("费用")}>
+                {pts(g.feePts)}
+              </td>
+              <td
+                className="mono is-right"
+                data-label={t("净 edge ±95%(聚类)")}
+              >
                 {pts(g.netEdge)} ±{" "}
                 {Number.isFinite(g.seC) ? pts(1.96 * g.seC) : "∞"}
               </td>
-              <td className="ds-hint">{verdictText(g)}</td>
+              <td className="is-right" data-label={t("判定")}>
+                {verdictBadge(g)}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -440,15 +451,29 @@ function ScorecardSection({
 }) {
   if (!sc) {
     return (
-      <div className="ds-hint">{t("记分卡数据不可用(旧部署或接口错误)。")}</div>
+      <div className="ds-empty">
+        {t("记分卡数据不可用(旧部署或接口错误)。")}
+      </div>
     );
   }
   const d = sc.disclosures;
   return (
     <div>
-      <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+      {/* 口径先行 —— 统计声明放在数据「前面」,不放脚注(readme §1)。
+          灰框 = 口径定义;琥珀框 = 读前必看的统计警告。 */}
+      <div className="ds-callout" style={{ marginBottom: "var(--s-3)" }}>
         {t(
           "每渠道的向前战绩:smart/共识告警只对在池钱包触发,每条已结算告警天然是该钱包在池期间的一次前向实验;按首发渠道(source)归组。逐行贡献 = 结算胜负 − 入场隐含 − 协议费(概率点/行),区间为市场聚类稳健口径。",
+        )}
+      </div>
+      <div
+        className="ds-callout ds-callout--warn"
+        style={{ marginBottom: "var(--s-4)" }}
+      >
+        ⚠️{" "}
+        {t(
+          "多重比较提醒:本表共 {g} 个分组,α=0.05 下期望假阳性 ≈ {e} 个 —— 单组「显著」在独立时间段复现之前只是候选假设;判定不接任何自动清退,动手走既有准入/重审路径。",
+          { g: sc.groupCount, e: (sc.groupCount * 0.05).toFixed(1) },
         )}
       </div>
       <ScorecardTable groups={sc.groups} t={t} />
@@ -456,14 +481,14 @@ function ScorecardSection({
         <>
           <div
             className="ds-label"
-            style={{ margin: "var(--s-4) 0 var(--s-2)" }}
+            style={{ margin: "var(--s-5) 0 var(--s-2)" }}
           >
             {t("全局榜 × 做市商横切(官方榜不区分做市商,该不该留由数据说话)")}
           </div>
           <ScorecardTable groups={sc.mmSplit} t={t} />
         </>
       )}
-      <div className="ds-hint muted" style={{ marginTop: "var(--s-3)" }}>
+      <div className="ds-callout" style={{ marginTop: "var(--s-4)" }}>
         {t(
           "已打分告警 {a} 条 → 展开 {r} 行;费用不可定价剔除 {f} 行(绝不当 0);「已离池」桶 {o} 行 —— 30 天老化与清退会删除钱包行,来源失联的历史告警不丢弃、单独成桶,桶的大小本身就是幸存者盲区的读数。",
           {
@@ -474,18 +499,11 @@ function ScorecardSection({
           },
         )}
       </div>
-      <div className="ds-hint muted" style={{ marginTop: "var(--s-2)" }}>
-        {t(
-          "多重比较提醒:本表共 {g} 个分组,α=0.05 下期望假阳性 ≈ {e} 个 —— 单组「显著」在独立时间段复现之前只是候选假设;判定不接任何自动清退,动手走既有准入/重审路径。",
-          { g: sc.groupCount, e: (sc.groupCount * 0.05).toFixed(1) },
-        )}
-      </div>
     </div>
   );
 }
 
 // ------------------------------------------------------------------ page
-
 
 // 名人堂 + 反指名单(2026-08-28 八件套):逐钱包前向战绩两榜。判定纪律与
 // 记分卡同源(CRVE + 扣费 + nc≥10);多重比较只披露不校正,页脚写明分母。
@@ -498,12 +516,13 @@ function LeagueSection({
 }) {
   if (!lg) {
     return (
-      <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
+      <div className="ds-empty" style={{ marginBottom: "var(--s-4)" }}>
         {t("名人堂数据缺失（接口错误兜底）。")}
       </div>
     );
   }
-  const pts = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}`;
+  const pts = (v: number) =>
+    `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}`;
   const leagueTable = (rows: LeagueRowView[]) => (
     <div className="ds-table-wrap" style={{ marginBottom: "var(--s-4)" }}>
       <table className="ds-table ds-table--compact">
@@ -520,34 +539,58 @@ function LeagueSection({
         <tbody>
           {rows.map((r) => (
             <tr key={r.wallet}>
-              <td>
-                <div style={{ fontWeight: 500 }}>
+              {/* 行没有任何行级强调:代号不加粗、净 edge 不跳字重 ——
+                  轻重只靠徽章颜色(readme §4)。 */}
+              <td className="cell-wrap" data-label={t("代号 / 钱包")}>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "var(--s-2)",
+                    flexWrap: "wrap",
+                  }}
+                >
                   {r.codename}
-                  {r.isMarketMaker && " 🤖"}
-                </div>
-                <div className="ds-hint mono">
+                  {r.isMarketMaker && (
+                    <Tag variant="warn">🤖 {t("做市机器人")}</Tag>
+                  )}
+                </span>
+                <div
+                  className="mono"
+                  style={{ marginTop: 5, fontSize: "var(--t-sm)" }}
+                >
                   <WalletLink address={r.wallet}>
                     {r.wallet.slice(0, 6)}…{r.wallet.slice(-4)}
                   </WalletLink>
                 </div>
               </td>
-              <td className="ds-hint">{scorecardLabel(r.channel, t)}</td>
-              <td className="mono is-right">
+              <td className="cell-wrap muted" data-label={t("渠道")}>
+                {scorecardLabel(r.channel, t)}
+              </td>
+              <td className="mono is-right" data-label={t("样本 n（市场）")}>
                 {r.n}（{r.markets}）
               </td>
-              <td className="mono is-right">{Math.round(r.winRate * 100)}%</td>
-              <td className="mono is-right" style={{ fontWeight: 600 }}>
+              <td className="mono is-right" data-label={t("胜率")}>
+                {Math.round(r.winRate * 100)}%
+              </td>
+              <td className="mono is-right" data-label={t("净 edge（点/仓）")}>
                 {pts(r.netEdge)} ±{(r.seC * 100).toFixed(1)}
               </td>
-              <td className="ds-hint">
+              <td className="cell-wrap" data-label={t("最佳 / 最惨一战")}>
                 {r.best && (
                   <div>
-                    ▲ {pts(r.best.contrib)} {r.best.title ?? ""}
+                    <span style={{ color: "var(--ww-up)" }}>
+                      ▲ {pts(r.best.contrib)}
+                    </span>{" "}
+                    <span className="muted">{r.best.title ?? ""}</span>
                   </div>
                 )}
                 {r.worst && (
-                  <div>
-                    ▼ {pts(r.worst.contrib)} {r.worst.title ?? ""}
+                  <div style={{ marginTop: 4 }}>
+                    <span style={{ color: "var(--ww-down)" }}>
+                      ▼ {pts(r.worst.contrib)}
+                    </span>{" "}
+                    <span className="muted">{r.worst.title ?? ""}</span>
                   </div>
                 )}
               </td>
@@ -559,11 +602,22 @@ function LeagueSection({
   );
   return (
     <section style={{ marginBottom: "var(--s-5)" }}>
+      {/* 统计声明放在数据「前面」,不放脚注(readme §1)。 */}
+      <div
+        className="ds-callout ds-callout--warn"
+        style={{ marginBottom: "var(--s-4)" }}
+      >
+        ⚠️{" "}
+        {t(
+          "口径：逐行贡献 = 结算(0/1) − 入场隐含 − 每股协议费；区间按市场聚簇（CRVE）；代号是确定性哈希的纯趣味展示，地址才是身份。多重比较：本页共检验 {w} 个 ≥10 市场的钱包，区间未做 Bonferroni 校正——两张名单是研究线索，不是交易结论。",
+          { w: lg.testedWallets },
+        )}
+      </div>
       <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
         {t("👑 名人堂 · 前向净 edge 显著为正")}
       </div>
       {lg.hall.length === 0 ? (
-        <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
+        <div className="ds-empty" style={{ marginBottom: "var(--s-4)" }}>
           {t("暂无净 edge 显著为正的钱包（≥10 市场才发判定）。")}
         </div>
       ) : (
@@ -573,18 +627,12 @@ function LeagueSection({
         {t("🪞 反指名单 · 前向净 edge 显著为负")}
       </div>
       {lg.fade.length === 0 ? (
-        <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
+        <div className="ds-empty">
           {t("暂无净 edge 显著为负的钱包——逆势少数边暂时还是孤例。")}
         </div>
       ) : (
         leagueTable(lg.fade)
       )}
-      <div className="ds-hint muted">
-        {t(
-          "口径：逐行贡献 = 结算(0/1) − 入场隐含 − 每股协议费；区间按市场聚簇（CRVE）；代号是确定性哈希的纯趣味展示，地址才是身份。多重比较：本页共检验 {w} 个 ≥10 市场的钱包，区间未做 Bonferroni 校正——两张名单是研究线索，不是交易结论。",
-          { w: lg.testedWallets },
-        )}
-      </div>
     </section>
   );
 }
@@ -712,43 +760,70 @@ export default function DiscoveryPage() {
     <WalletLink address={address}>{shortWallet(address)}</WalletLink>
   );
 
+  // 漏斗末段的比例条 —— 纯展示派生量(在池 = 全局榜 + 发现渠道)。
+  const poolTotal = data?.counts.poolTotal ?? null;
+  const poolGlobal = data?.counts.poolGlobal ?? null;
+  const poolDiscovery = data?.counts.poolDiscovery ?? null;
+  const globalPct =
+    poolTotal != null && poolTotal > 0 && poolGlobal != null
+      ? Math.min(100, Math.max(0, Math.round((poolGlobal / poolTotal) * 100)))
+      : null;
+  // 漏斗末段两个分支的可点文字(蓝 = 可点,readme §2.1)。
+  const poolLinkStyle = {
+    border: 0,
+    background: "none",
+    padding: 0,
+    font: "inherit",
+    color: "var(--ww-link)",
+    cursor: "pointer",
+  };
+
   return (
     <main className="ds-main">
-      <header style={{ marginBottom: "var(--s-5)" }}>
-        <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-          🔭 {t("聪明钱发现")}
-        </h1>
-        <div className="ds-hint">
-          {t(
-            "白名单之外的聪明钱候选漏斗：成交流涌现（共识同行 / 拆单建仓 / 内幕签名）+ 已结算市场早期赢家 + 分类榜专家。候选须 30 天内证据广度 ≥3 并通过战绩审查（做市机器人硬拒）才会入池。点击行展开证据明细。",
-          )}
+      {/* 页头区 —— 12px 小标(emoji 前缀)+ 24/600 标题 + 14px muted 描述。 */}
+      <header className="page-head">
+        <div>
+          <div className="page-head__eyebrow">
+            🔭 {t("白名单之外的候选漏斗")}
+          </div>
+          <h1 className="page-head__title">{t("聪明钱发现")}</h1>
+          <p className="page-head__desc">
+            {t(
+              "候选须 30 天内证据广度 ≥3 且通过战绩审查才入池。点击行展开证据明细。",
+            )}
+          </p>
         </div>
       </header>
 
       {error && (
-        <div className="ds-callout" style={{ marginBottom: "var(--s-4)" }}>
+        <div
+          className="ds-callout ds-callout--error"
+          style={{ marginBottom: "var(--s-4)" }}
+        >
           {t("加载失败：{msg}", { msg: error })}
         </div>
       )}
 
-      {/* Live funnel strip — the discovery pipeline with real counts.
-          Stages are clickable and drive the tabs/filters below. */}
-      <section
-        aria-label={t("发现漏斗")}
-        style={{
-          display: "flex",
-          alignItems: "stretch",
-          gap: "var(--s-2)",
-          flexWrap: "wrap",
-          marginBottom: "var(--s-2)",
-        }}
+      {/* 口径条 —— 琥珀框紧跟页头，放在数据「前面」，不放脚注。 */}
+      <div
+        className="ds-callout ds-callout--warn"
+        style={{ marginBottom: "var(--s-5)" }}
       >
-        <div className="kpi-card" style={{ flex: "1 1 130px" }}>
-          <div className="ds-label">{t("① 30 天证据")}</div>
+        ⚠️{" "}
+        {t(
+          "入池口径：成交流涌现（共识同行 / 拆单建仓 / 内幕签名）+ 已结算市场早期赢家 + 分类榜专家 → 复发广度 ≥3 → 战绩审查（胜率 ≥55% 且 ≥10 结算，或盈利且 ROI ≥5% 且 ≥5 结算）→ 做市机器人硬拒。分类榜旁路：六类 × 周/月榜前 25 免复发直接进闸门，只过战绩审查；在池成员每日按战绩重新认证，30 天不再合格自动出池——行为再现即可重新成为候选。",
+        )}
+      </div>
+
+      {/* KPI 分格卡 —— 漏斗四段按 01–04 编号，一张白卡内 1px 竖线分格。
+          箭头没了：编号本身就是顺序，分格线负责层级(readme §4/§5)。
+          02 / 04 两格仍是原来的入口，点击切视图并预置筛选。 */}
+      <section className="kpi" aria-label={t("发现漏斗")}>
+        <StatCard label={t("01 · 30 天证据")} icon="🔍">
           <div className="kpi-value">{data?.counts.evidenceRows ?? "—"}</div>
           <div className="kpi-sub">{t("成交流涌现 + 结算回溯")}</div>
-        </div>
-        <FunnelArrow label={t("聚合")} />
+        </StatCard>
+
         <div
           className="kpi-card"
           role="button"
@@ -756,163 +831,97 @@ export default function DiscoveryPage() {
           onClick={() => switchView("candidates")}
           onKeyDown={(e) => e.key === "Enter" && switchView("candidates")}
           style={{
-            flex: "1 1 130px",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "var(--s-3)",
             cursor: "pointer",
-            outline:
-              view === "candidates" ? "2px solid var(--brand-500)" : "none",
           }}
           title={t("查看候选漏斗列表")}
         >
-          <div className="ds-label">{t("② 候选钱包 →")}</div>
-          <div className="kpi-value">
-            {data?.counts.candidateWallets ?? "—"}
+          <span
+            aria-hidden
+            style={{ flex: "0 0 auto", fontSize: 20, lineHeight: 1.1 }}
+          >
+            👀
+          </span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="ds-label">{t("02 · 候选钱包")}</div>
+            <div className="kpi-value">
+              {data?.counts.candidateWallets ?? "—"}
+            </div>
+            <div className="kpi-sub">{t("纯观察 · 不进任何信号")}</div>
           </div>
-          <div className="kpi-sub">{t("纯观察 · 不进任何信号")}</div>
         </div>
-        <FunnelArrow label={t("复发≥3 · 战绩审查")} />
+
+        <StatCard label={t("03 · 准入闸门")} icon="🛡️">
+          <div className="kpi-value">{t("复发 ≥3")}</div>
+          <div className="kpi-sub">{t("机器人硬拒 · 分类榜旁路")}</div>
+        </StatCard>
+
         <div
           className="kpi-card"
-          style={{ flex: "1 1 130px", borderColor: "var(--warn-700)" }}
-          title={t(
-            "准入闸门：复发广度 ≥3 → 战绩审查（胜率≥55%&≥10结算 或 盈利&ROI≥5%&≥5结算）→ 做市机器人硬拒。分类榜走旁路：免复发、仅战绩审查。",
-          )}
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "var(--s-3)",
+          }}
         >
-          <div className="ds-label">{t("③ 准入闸门")}</div>
-          <div className="kpi-value" aria-hidden>
-            ⛩
-          </div>
-          <div className="kpi-sub">{t("机器人硬拒 · 分类榜旁路")}</div>
-        </div>
-        <FunnelArrow label={t("通过")} />
-        <div className="kpi-card" style={{ flex: "2 1 240px", padding: 0 }}>
-          <div style={{ padding: "var(--s-4) var(--s-4) 0" }}>
-            <div className="ds-label">
-              {t("④ 共识白名单池 · {n}", { n: data?.counts.poolTotal ?? "—" })}
-            </div>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              gap: "var(--s-2)",
-              padding: "var(--s-2) var(--s-4) var(--s-3)",
-            }}
+          <span
+            aria-hidden
+            style={{ flex: "0 0 auto", fontSize: 20, lineHeight: 1.1 }}
           >
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => switchView("members", ["src:leaderboard"])}
-              onKeyDown={(e) =>
-                e.key === "Enter" && switchView("members", ["src:leaderboard"])
-              }
-              style={{ flex: 1, cursor: "pointer" }}
-              title={t("查看全局榜成员（top-100 自带门槛，免审查）")}
-            >
-              <div className="kpi-value">{data?.counts.poolGlobal ?? "—"}</div>
-              <div className="kpi-sub">🏛 {t("全局榜")} →</div>
+            🏆
+          </span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="ds-label">{t("04 · 共识白名单池")}</div>
+            <div className="kpi-value" style={{ color: "var(--ww-link)" }}>
+              {poolTotal ?? "—"}{" "}
+              <span
+                style={{
+                  fontSize: "var(--t-base)",
+                  color: "var(--ww-text-muted)",
+                }}
+              >
+                ={" "}
+                <button
+                  type="button"
+                  style={poolLinkStyle}
+                  onClick={() => switchView("members", ["src:leaderboard"])}
+                  title={t("查看全局榜成员（top-100 自带门槛，免审查）")}
+                >
+                  {t("{n} 榜", { n: poolGlobal ?? "—" })}
+                </button>{" "}
+                +{" "}
+                <button
+                  type="button"
+                  style={poolLinkStyle}
+                  onClick={() => switchView("members", ["grp:discovery"])}
+                  title={t("查看发现渠道产出的成员（分类榜专家 + 漏斗毕业生）")}
+                >
+                  {t("{n} 发现", { n: poolDiscovery ?? "—" })}
+                </button>
+              </span>
             </div>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => switchView("members", ["grp:discovery"])}
-              onKeyDown={(e) =>
-                e.key === "Enter" && switchView("members", ["grp:discovery"])
-              }
-              style={{ flex: 1, cursor: "pointer" }}
-              title={t("查看发现渠道产出的成员（分类榜专家 + 漏斗毕业生）")}
-            >
-              <div className="kpi-value" style={{ color: "var(--up-700)" }}>
-                {data?.counts.poolDiscovery ?? "—"}
+            {globalPct != null && (
+              <div className="split-bar" style={{ marginTop: "var(--s-2)" }}>
+                <span
+                  style={{
+                    flex: `0 0 ${globalPct}%`,
+                    background: "var(--ww-border-dashed)",
+                  }}
+                />
+                <span style={{ flex: 1, background: "var(--ww-link)" }} />
               </div>
-              <div className="kpi-sub">🔭 {t("发现渠道")} →</div>
-            </div>
+            )}
           </div>
         </div>
       </section>
 
-      {/* Signal-density trend (P0.9): fired ÷ avg window volume per day.
-          Falling density under stable heat = thresholds drifted out of tune;
-          falling heat with stable density = the market itself cooled. */}
-      {density && density.length > 0 && (
-        <section
-          aria-label={t("信号密度")}
-          style={{ marginBottom: "var(--s-4)" }}
-        >
-          <div
-            className="ds-label"
-            style={{ marginBottom: "var(--s-2)" }}
-            title={t(
-              "左侧列 = 共识信号引擎（每日推送 ÷ 当日平均 6h 窗口成交量，$1M 归一——窗口滚动重叠不能求和，平均窗口量是热度的无偏代理）；「新证据」列 = 发现渠道当日首次入账的候选证据行。密度随热度同跌 = 市场降温；热度稳定密度独跌 = 阈值需重校",
-            )}
-          >
-            📈 {t("信号密度（14 天） · 共识推送 ÷ 平均窗口量 + 发现渠道日产出")}
-          </div>
-          <div className="ds-table-wrap">
-            <table className="ds-table">
-              <thead>
-                <tr>
-                  <th>{t("日期")}</th>
-                  <th className="is-right">{t("共识轮")}</th>
-                  <th className="is-right">{t("平均窗口量")}</th>
-                  <th className="is-right">{t("原始组")}</th>
-                  <th className="is-right">{t("分歧剔除")}</th>
-                  <th className="is-right">{t("推送")}</th>
-                  <th
-                    className="is-right"
-                    title={t("推送 ÷ 平均窗口量（条/$1M）")}
-                  >
-                    {t("密度")}
-                  </th>
-                  <th
-                    className="is-right"
-                    title={t(
-                      "发现渠道（共识同行/拆单建仓/内幕签名/早期赢家）当日首次入账的证据行数",
-                    )}
-                  >
-                    {t("新证据")}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {density.map((d) => (
-                  <tr key={d.day}>
-                    <td className="mono">{d.day}</td>
-                    <td className="mono is-right">{d.cycles}</td>
-                    <td className="mono is-right">
-                      ${(d.avgWindowUsd / 1_000_000).toFixed(2)}M
-                    </td>
-                    <td className="mono is-right">{d.rawGroups}</td>
-                    <td className="mono is-right muted">
-                      {d.contestedDropped}
-                    </td>
-                    <td className="mono is-right">{d.fired}</td>
-                    <td className="mono is-right">
-                      {t("{n} 条/$1M", { n: d.perM.toFixed(2) })}
-                    </td>
-                    <td className="mono is-right">{d.evidenceNew}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-      <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
-        🏅{" "}
-        {t(
-          "分类榜旁路：六类 × 周/月榜前 25 直接进闸门（榜单排名即复发证据，仅过战绩审查） · ↺ 在池成员每日按战绩重新认证，30 天不再合格自动出池——行为再现即可重新成为候选",
-        )}
-      </div>
-
-      {/* Controls: tab toggle + search */}
-      <div
-        style={{
-          display: "flex",
-          gap: "var(--s-3)",
-          alignItems: "center",
-          flexWrap: "wrap",
-          marginBottom: "var(--s-3)",
-        }}
-      >
+      {/* 筛选条 —— 一行：视图切换(互斥,Segmented) │ 标签筛选(任选子集的
+          24px 芯片) …… 右对齐的搜索与「标签说明」。设计稿把三者收在同一
+          行，中间用 1px 竖线分隔；筛选条不是卡，它是主表卡的参数，加一层
+          框会被读成第二块内容。 */}
+      <div className="filter-bar" style={{ marginTop: "var(--s-5)" }}>
         <Segmented<View>
           ariaLabel={t("视图切换")}
           value={view}
@@ -933,87 +942,116 @@ export default function DiscoveryPage() {
               value: "scorecard",
             },
             {
-              label: t("👑 名人堂"),
+              // emoji 不放在按钮上（readme §1）—— 👑 留给下面的 12px 小标。
+              label: t("名人堂"),
               value: "league",
             },
           ]}
         />
-        <input
-          className="ds-input"
-          style={{ minWidth: 260, flex: "0 1 340px" }}
-          placeholder={t("搜索地址 / 市场 / 标签…")}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label={t("搜索")}
-        />
-        <button
-          className="ds-btn"
-          onClick={() => setTagHelpOpen(true)}
-          title={t("查看全部钱包标签的定义（与说明页同一数据源）")}
-        >
-          🏷 {t("标签说明")}
-        </button>
-        {(activeTags.size > 0 || q) && (
-          <span className="ds-hint">
-            {t("{shown}/{total} 条匹配", {
-              shown: filtered.length,
-              total: rows.length,
-            })}
-            <button
-              className="ds-btn"
-              style={{ marginLeft: "var(--s-2)" }}
-              onClick={() => {
-                setActiveTags(new Set());
-                setQuery("");
+        {/* 标签筛选 —— 任选子集（多选 = AND）。名称标签形态保留标签自身的
+            语义色（琥珀 = 机器人），选中态走蓝描边（readme §2.1）；与左侧
+            互斥的 Segmented 之间隔一条 1px 竖线，形态不同不会读成同一族。 */}
+        {chipStats.length > 0 && (
+          <>
+            <span
+              aria-hidden
+              style={{
+                flex: "0 0 auto",
+                width: 1,
+                height: 20,
+                background: "var(--ww-border)",
+                margin: "0 var(--s-1)",
+              }}
+            />
+            <span
+              role="group"
+              aria-label={t("标签筛选")}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "var(--s-2)",
+                minWidth: 0,
               }}
             >
-              {t("清除")}
-            </button>
-          </span>
+              {chipStats.map(([key, s]) => {
+                const active = activeTags.has(key);
+                return (
+                  <button
+                    key={key}
+                    onClick={() => toggleTag(key)}
+                    aria-pressed={active}
+                    style={{
+                      border: "none",
+                      background: "none",
+                      padding: 0,
+                      cursor: "pointer",
+                      lineHeight: 0,
+                    }}
+                    title={`${t("{label} — {n} 个钱包", { label: filterChipLabel(key, s.sample, t), n: s.wallets })}${active ? t("（点击取消）") : ""}`}
+                  >
+                    <Tag variant={active ? "brand" : tagVariant(s.sample)}>
+                      {filterChipLabel(key, s.sample, t)} {s.wallets}
+                    </Tag>
+                  </button>
+                );
+              })}
+            </span>
+          </>
         )}
-      </div>
-
-      {/* Tag filter chips (multi-select = AND) */}
-      {chipStats.length > 0 && (
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "var(--s-1)",
-            alignItems: "center",
-            marginBottom: "var(--s-3)",
-          }}
-        >
-          <span className="ds-label" style={{ marginRight: "var(--s-1)" }}>
-            {t("标签筛选")}
-          </span>
-          {chipStats.map(([key, s]) => {
-            const active = activeTags.has(key);
-            return (
+        <span className="filter-bar__right">
+          {(activeTags.size > 0 || q) && (
+            <span
+              className="ds-hint"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "var(--s-2)",
+              }}
+            >
+              {t("{shown}/{total} 条匹配", {
+                shown: filtered.length,
+                total: rows.length,
+              })}
               <button
-                key={key}
-                onClick={() => toggleTag(key)}
-                aria-pressed={active}
-                style={{
-                  border: "none",
-                  background: "none",
-                  padding: 0,
-                  cursor: "pointer",
-                  outline: active ? "2px solid var(--brand-500)" : "none",
-                  outlineOffset: 1,
-                  borderRadius: "var(--r-sm)",
+                className="ds-btn ds-btn--sm"
+                onClick={() => {
+                  setActiveTags(new Set());
+                  setQuery("");
                 }}
-                title={`${t("{label} — {n} 个钱包", { label: filterChipLabel(key, s.sample, t), n: s.wallets })}${active ? t("（点击取消）") : ""}`}
               >
-                <Tag variant={active ? "brand" : tagVariant(s.sample)}>
-                  {filterChipLabel(key, s.sample, t)}{" "}
-                  <span className="mono">{s.wallets}</span>
-                </Tag>
+                {t("清除")}
               </button>
-            );
-          })}
-        </div>
-      )}
+            </span>
+          )}
+          <input
+            className="ds-input"
+            style={{ width: 240, maxWidth: "100%" }}
+            placeholder={t("搜索地址 / 市场 / 标签…")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label={t("搜索")}
+          />
+          {/* 「标签说明」是一个次要入口，蓝字即可点 —— 按钮上不放 emoji。 */}
+          <button
+            type="button"
+            onClick={() => setTagHelpOpen(true)}
+            title={t("查看全部钱包标签的定义（与说明页同一数据源）")}
+            style={{
+              border: 0,
+              background: "none",
+              padding: 0,
+              font: "inherit",
+              fontSize: "var(--t-md)",
+              color: "var(--ww-link)",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {t("标签说明")}
+          </button>
+        </span>
+      </div>
 
       {/* Active view table */}
       {view === "scorecard" && <ScorecardSection sc={data?.scorecard} t={t} />}
@@ -1023,7 +1061,7 @@ export default function DiscoveryPage() {
           <table className="ds-table">
             <thead>
               <tr>
-                <th style={{ width: 130 }}>{t("钱包")}</th>
+                <th style={{ width: 150 }}>{t("钱包")}</th>
                 <th>{t("标签")}</th>
                 <th
                   className="is-right"
@@ -1035,59 +1073,93 @@ export default function DiscoveryPage() {
                   {t("复发广度")}
                 </th>
                 <th>{t("最近证据")}</th>
-                <th style={{ width: 130 }}>{t("状态")}</th>
+                <th className="is-right" style={{ width: 170 }}>
+                  {t("状态")}
+                </th>
               </tr>
             </thead>
             <tbody>
               {(filtered as CandidateRow[]).map((c) => (
                 <Fragment key={c.address}>
+                  {/* 行没有任何行级强调：没有左边线、没有字号跳档、没有整行
+                      染色 —— 轻重全靠状态徽章的颜色。 */}
                   <tr
                     onClick={() => toggleExpand(c.address)}
                     style={{ cursor: "pointer" }}
                     title={t("点击展开证据明细")}
                   >
-                    <td>{walletCell(c.address)}</td>
-                    <td>
+                    <td data-label={t("钱包")}>{walletCell(c.address)}</td>
+                    <td className="cell-wrap" data-label={t("标签")}>
                       <WalletTagChips tags={c.tags} max={4} />
                     </td>
-                    <td className="mono is-right">{c.totalMarkets}</td>
+                    <td className="mono is-right" data-label={t("复发广度")}>
+                      {c.totalMarkets}
+                    </td>
+                    {/* 市场名 / 证据说明永不截断：换行、顶对齐，时间落到副行。 */}
                     <td
-                      style={{
-                        whiteSpace: "normal",
-                        maxWidth: 380,
-                        lineHeight: 1.5,
-                      }}
+                      className="cell-wrap"
+                      style={{ maxWidth: 380 }}
+                      data-label={t("最近证据")}
                     >
                       {c.latestNote}
-                      <span
-                        className="ds-hint"
-                        style={{ marginLeft: "var(--s-2)" }}
+                      <div
+                        style={{
+                          marginTop: 5,
+                          fontSize: "var(--t-sm)",
+                          color: "var(--ww-text-muted)",
+                        }}
                       >
                         {fmtAgo(c.lastTs, t)}
-                      </span>
+                      </div>
                     </td>
-                    <td>{statusTag(c.status, t)}</td>
+                    <td className="is-right" data-label={t("状态")}>
+                      {statusTag(c.status, t)}
+                    </td>
                   </tr>
                   {expanded.has(c.address) && (
                     <EvidenceDetailRows evidence={c.evidence} colSpan={5} />
                   )}
                 </Fragment>
               ))}
+              {loading && filtered.length === 0 && (
+                <tr>
+                  <td colSpan={5}>
+                    <div className="ds-empty">{t("加载中…")}</div>
+                  </td>
+                </tr>
+              )}
+              {/* 空态给内容也给出路，绝不留一片空白。 */}
               {!loading && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="ds-hint">
-                    {rows.length === 0
-                      ? t(
-                          "暂无候选 —— 证据由共识循环（每 5 分钟）与每日已结算市场扫描持续积累",
-                        )
-                      : t("无匹配 —— 试试清除搜索或标签筛选")}
+                  <td colSpan={5}>
+                    <div className="ds-empty">
+                      {rows.length === 0
+                        ? t(
+                            "暂无候选 —— 证据由共识循环（每 5 分钟）与每日已结算市场扫描持续积累",
+                          )
+                        : t("无匹配 —— 试试清除搜索或标签筛选")}
+                      {(activeTags.size > 0 || q) && (
+                        <div style={{ marginTop: "var(--s-3)" }}>
+                          <button
+                            className="ds-btn ds-btn--sm"
+                            onClick={() => {
+                              setActiveTags(new Set());
+                              setQuery("");
+                            }}
+                          >
+                            {t("清除")}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+          {/* 卡底说明条 —— 灰 = 口径 / 装载上限说明。 */}
           {data && data.counts.candidateWallets > data.candidates.length && (
-            <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            <div className="note-strip">
               {t("仅加载复发广度前 {n} 名（30 天窗口内共 {m} 个候选钱包）", {
                 n: data.candidates.length,
                 m: data.counts.candidateWallets,
@@ -1130,13 +1202,17 @@ export default function DiscoveryPage() {
                     style={{ cursor: "pointer" }}
                     title={t("点击展开证据明细")}
                   >
-                    <td>{walletCell(a.address)}</td>
-                    <td>
+                    <td data-label={t("钱包")}>{walletCell(a.address)}</td>
+                    <td className="cell-wrap" data-label={t("标签")}>
                       <WalletTagChips tags={a.tags} max={4} />
                       {(a.styleTags ?? []).length > 0 && (
                         <span
-                          className="ds-hint"
-                          style={{ display: "block", marginTop: 2 }}
+                          style={{
+                            display: "block",
+                            marginTop: 5,
+                            fontSize: "var(--t-sm)",
+                            color: "var(--ww-text-muted)",
+                          }}
                         >
                           {(a.styleTags ?? [])
                             .map((k) => styleLabel(k, t))
@@ -1144,31 +1220,48 @@ export default function DiscoveryPage() {
                         </span>
                       )}
                     </td>
-                    <td className="mono is-right">
-                      {a.score != null ? Math.round(a.score) : "—"}
+                    {/* `—` 是「判不了」，不是零 —— 用 muted 与真实 0 分家。 */}
+                    <td className="mono is-right" data-label={t("评分")}>
+                      {a.score != null ? (
+                        Math.round(a.score)
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
                     </td>
-                    <td className="mono is-right">
-                      {a.winRate != null
-                        ? `${Math.round(a.winRate * 100)}%`
-                        : "—"}
+                    <td className="mono is-right" data-label={t("胜率")}>
+                      {a.winRate != null ? (
+                        `${Math.round(a.winRate * 100)}%`
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
                     </td>
+                    {/* 净盈亏是真正的盈亏方向，涨绿跌红成立（成本类才中性）。 */}
                     <td
                       className="mono is-right"
+                      data-label={t("净盈亏")}
                       style={
                         a.netPnl != null
                           ? {
                               color:
                                 a.netPnl >= 0
-                                  ? "var(--up-700)"
-                                  : "var(--down-700)",
+                                  ? "var(--ww-up)"
+                                  : "var(--ww-down)",
                             }
                           : undefined
                       }
                     >
-                      {a.netPnl != null ? fmtSignedUsdCompact(a.netPnl) : "—"}
+                      {a.netPnl != null ? (
+                        fmtSignedUsdCompact(a.netPnl)
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
                     </td>
-                    <td className="mono is-right">
-                      {a.updatedAt != null ? fmtAgo(a.updatedAt, t) : "—"}
+                    <td className="mono is-right" data-label={t("最近确认")}>
+                      {a.updatedAt != null ? (
+                        fmtAgo(a.updatedAt, t)
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
                     </td>
                   </tr>
                   {expanded.has(a.address) && (
@@ -1176,32 +1269,155 @@ export default function DiscoveryPage() {
                   )}
                 </Fragment>
               ))}
+              {loading && filtered.length === 0 && (
+                <tr>
+                  <td colSpan={6}>
+                    <div className="ds-empty">{t("加载中…")}</div>
+                  </td>
+                </tr>
+              )}
               {!loading && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="ds-hint">
-                    {rows.length === 0
-                      ? t(
-                          "暂无 —— 候选通过准入审查（复发 ≥3 + 战绩闸）或分类榜播种后出现在这里",
-                        )
-                      : t("无匹配 —— 试试清除搜索或标签筛选")}
+                  <td colSpan={6}>
+                    <div className="ds-empty">
+                      {rows.length === 0
+                        ? t(
+                            "暂无 —— 候选通过准入审查（复发 ≥3 + 战绩闸）或分类榜播种后出现在这里",
+                          )
+                        : t("无匹配 —— 试试清除搜索或标签筛选")}
+                      {(activeTags.size > 0 || q) && (
+                        <div style={{ marginTop: "var(--s-3)" }}>
+                          <button
+                            className="ds-btn ds-btn--sm"
+                            onClick={() => {
+                              setActiveTags(new Set());
+                              setQuery("");
+                            }}
+                          >
+                            {t("清除")}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+          {/* 卡底琥珀条 —— `—` 的三种成因写在数据旁边，不写在脚注里。 */}
+          <div className="note-strip note-strip--warn">
+            ⚠️{" "}
+            {t(
+              "评分 / 胜率 / 净盈亏 的 — 是「判不了」，不是零：该钱包还没有回填战绩快照（榜单播种的成员在首次重认证后补齐）。最近确认 的 — 表示来源未记录确认时间。",
+            )}
+          </div>
         </div>
       ) : null}
+
+      {/* Signal-density trend (P0.9): fired ÷ avg window volume per day.
+          Falling density under stable heat = thresholds drifted out of tune;
+          falling heat with stable density = the market itself cooled.
+          位置：漏斗页的骨架是「KPI → 筛选条 → 主表卡」，密度趋势是主表
+          之外的第二块数据，因此移到主表下方，不再插在筛选条之前。 */}
+      {density && density.length > 0 && (
+        <section
+          aria-label={t("信号密度")}
+          style={{ marginTop: "var(--s-6)", marginBottom: "var(--s-4)" }}
+        >
+          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+            📈 {t("信号密度（14 天） · 共识推送 ÷ 平均窗口量 + 发现渠道日产出")}
+          </div>
+          {/* 口径先行：原本只挂在小标的 title 上，触屏读不到 —— 提成常驻灰框。 */}
+          <div className="ds-callout" style={{ marginBottom: "var(--s-3)" }}>
+            {t(
+              "左侧列 = 共识信号引擎（每日推送 ÷ 当日平均 6h 窗口成交量，$1M 归一——窗口滚动重叠不能求和，平均窗口量是热度的无偏代理）；「新证据」列 = 发现渠道当日首次入账的候选证据行。密度随热度同跌 = 市场降温；热度稳定密度独跌 = 阈值需重校",
+            )}
+          </div>
+          <div className="ds-table-wrap">
+            <table className="ds-table">
+              <thead>
+                <tr>
+                  <th>{t("日期")}</th>
+                  <th className="is-right">{t("共识轮")}</th>
+                  <th className="is-right">{t("平均窗口量")}</th>
+                  <th className="is-right">{t("原始组")}</th>
+                  <th className="is-right">{t("分歧剔除")}</th>
+                  <th className="is-right">{t("推送")}</th>
+                  <th
+                    className="is-right"
+                    title={t("推送 ÷ 平均窗口量（条/$1M）")}
+                  >
+                    {t("密度")}
+                  </th>
+                  <th
+                    className="is-right"
+                    title={t(
+                      "发现渠道（共识同行/拆单建仓/内幕签名/早期赢家）当日首次入账的证据行数",
+                    )}
+                  >
+                    {t("新证据")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {density.map((d) => (
+                  <tr key={d.day}>
+                    <td className="mono" data-label={t("日期")}>
+                      {d.day}
+                    </td>
+                    <td className="mono is-right" data-label={t("共识轮")}>
+                      {d.cycles}
+                    </td>
+                    <td className="mono is-right" data-label={t("平均窗口量")}>
+                      ${(d.avgWindowUsd / 1_000_000).toFixed(2)}M
+                    </td>
+                    <td className="mono is-right" data-label={t("原始组")}>
+                      {d.rawGroups}
+                    </td>
+                    <td
+                      className="mono is-right muted"
+                      data-label={t("分歧剔除")}
+                    >
+                      {d.contestedDropped}
+                    </td>
+                    <td className="mono is-right" data-label={t("推送")}>
+                      {d.fired}
+                    </td>
+                    <td className="mono is-right" data-label={t("密度")}>
+                      {t("{n} 条/$1M", { n: d.perM.toFixed(2) })}
+                    </td>
+                    <td className="mono is-right" data-label={t("新证据")}>
+                      {d.evidenceNew}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {/* Tag definitions dialog — same data source as /glossary (WALLET_TAGS) */}
       <Modal
         open={tagHelpOpen}
         onClose={() => setTagHelpOpen(false)}
-        title={`🏷 ${t("钱包标签说明")}`}
+        title={
+          <>
+            <span className="ds-label" style={{ display: "block" }}>
+              🏷 {t("标签说明")}
+            </span>
+            <span style={{ display: "block", marginTop: 4 }}>
+              {t("钱包标签说明")}
+            </span>
+          </>
+        }
         width={720}
       >
-        <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+        {/* 说明文字里原来写着「点击下方标签可直接按其筛选当前列表」，
+            但这张表从来不可点 —— 改成实际成立的一句。 */}
+        <div className="ds-callout" style={{ marginBottom: "var(--s-4)" }}>
           {t(
-            "与「说明」页同一数据源；悬停任意标签也能看到一句话提示。点击下方标签可直接按其筛选当前列表。",
+            "与「说明」页同一数据源；列表与筛选条里的任意标签，悬停都能看到同一句提示。",
           )}
         </div>
         <div className="ds-table-wrap">
@@ -1217,11 +1433,15 @@ export default function DiscoveryPage() {
               {/* 词表串（name/kind/detail）过 t()，译文由 glossary 分片统一供给。 */}
               {WALLET_TAGS.map((w) => (
                 <tr key={w.keyPrefix}>
-                  <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>
-                    {w.icon} {t(w.name)}
+                  <td style={{ whiteSpace: "nowrap" }} data-label={t("标签")}>
+                    <Tag>
+                      {w.icon} {t(w.name)}
+                    </Tag>
                   </td>
-                  <td style={{ whiteSpace: "nowrap" }}>{t(w.kind)}</td>
-                  <td style={{ whiteSpace: "normal", lineHeight: 1.6 }}>
+                  <td style={{ whiteSpace: "nowrap" }} data-label={t("类别")}>
+                    {t(w.kind)}
+                  </td>
+                  <td className="cell-wrap" data-label={t("定义")}>
                     {t(w.detail)}
                   </td>
                 </tr>

@@ -102,24 +102,16 @@ export default async function Page({ params }: Props) {
     <>
       <script type="application/ld+json">{breadcrumb}</script>
       {s.hasData ? (
+        // 服务端快照 —— 给爬虫的本地只读摘要,渲染在客户端卡片之上。
+        // 视觉上刻意收成一条灰色说明条:它与下面的页头讲同一个市场,做成
+        // 白卡就会有两个同等分量的标题在打架(层级来自分格线,不来自字号)。
         <section className="ds-main" style={{ paddingBottom: 0 }}>
-          <div
-            className="ds-card"
-            style={{
-              padding: "var(--s-4)",
-              display: "grid",
-              gap: "var(--s-2)",
-            }}
-          >
+          <div className="ds-callout" style={{ display: "grid", gap: 4 }}>
             <div className="ds-label">市场快照 · market snapshot (local)</div>
-            <div style={{ fontSize: "var(--t-sm)", fontWeight: 600 }}>
+            <div style={{ color: "var(--ww-text)", overflowWrap: "anywhere" }}>
               {name}
             </div>
-            {zhBits.length > 0 ? (
-              <div style={{ fontSize: "var(--t-sm)" }}>
-                {zhBits.join(" · ")}
-              </div>
-            ) : null}
+            {zhBits.length > 0 ? <div>{zhBits.join(" · ")}</div> : null}
           </div>
         </section>
       ) : null}

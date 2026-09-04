@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLang } from "../i18n";
 import { loopMeta } from "../loopMeta";
-import { CopyButton } from "../ui";
+import { CopyButton, StatCard } from "../ui";
 
 // /status —— 公开状态页(参考 status.claude.com 的信息层次:整体横幅 →
 // 逐组件状态 → 事实脚注)。
@@ -112,8 +112,8 @@ export default function StatusPage() {
   }, [load]);
 
   const loops = health?.loops ?? [];
-  // 异常组件列表 —— 横幅的计数与点名共用同一份,不会出现「说 2 个异常
-  // 却只列出 1 个」这种自相矛盾。
+  // 异常组件列表 —— 页头徽章的计数与红条里的点名共用同一份,不会出现
+  // 「说 2 个异常却只列出 1 个」这种自相矛盾。
   const degraded = loops.filter((l) => l.stale);
   const uptimeDays =
     health?.startedAt != null
@@ -121,6 +121,15 @@ export default function StatusPage() {
       : null;
 
   const tone = health == null ? "muted" : health.ok ? "up" : "down";
+  // 状态页只认绿 / 红 / 灰三态 —— 多一档颜色就多一次「这个黄的到底算不算
+  // 事」的犹豫。emoji 只落在徽章内与 KPI 图标位这两个允许的位置。
+  const toneIcon = tone === "up" ? "✅" : tone === "down" ? "❌" : "⏳";
+  const tonePill =
+    tone === "up"
+      ? "status-pill status-pill--up"
+      : tone === "down"
+        ? "status-pill status-pill--down"
+        : "status-pill";
   const headline =
     health == null
       ? t("正在获取状态…")
@@ -132,17 +141,50 @@ export default function StatusPage() {
 
   return (
     <main className="ds-main status-page">
-      <header style={{ marginBottom: "var(--s-5)" }}>
-        <h1 style={{ fontSize: "var(--t-2xl)", margin: 0 }}>{t("系统状态")}</h1>
-        <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-          {t("监控引擎各循环的实时心跳。信号 feed 的 healthy 位与本页同源。")}
+      {/* 页头 —— 12px 小标（emoji 前缀 + 刷新节奏）· 24/600 标题 · 14px 描述；
+          右侧动作位放整体状态徽章。旧皮那条整幅彩色横幅在这套皮里没有位置：
+          层级只来自 1px 分格线与 12px 小标，不来自大色块与字号跳档。 */}
+      <header className="page-head">
+        <div>
+          <div className="page-head__eyebrow">
+            <span aria-hidden>📡</span>
+            <span>
+              {t("每 30 秒自动刷新")}
+              {refreshedAt != null
+                ? ` · ${t("更新于")} ${new Date(
+                    refreshedAt * 1000,
+                  ).toLocaleTimeString()}`
+                : ""}
+            </span>
+          </div>
+          <h1 className="page-head__title">{t("系统状态")}</h1>
+          <p className="page-head__desc">
+            {t("监控引擎各循环的实时心跳。信号 feed 的 healthy 位与本页同源。")}
+          </p>
+        </div>
+        <div className="page-head__actions">
+          <span
+            className={tonePill}
+            style={{
+              gap: "var(--s-1)",
+              height: 32,
+              padding: "0 var(--s-3)",
+              borderRadius: 8,
+              fontSize: "var(--t-base)",
+            }}
+          >
+            <span aria-hidden>{toneIcon}</span>
+            {headline}
+          </span>
         </div>
       </header>
 
+      {/* 口径与异常声明放在数据「前面」，不放脚注。
+          网络失败（琥珀）与引擎停跳（红）永远是两条，不合并成一个红条。 */}
       {fetchError && (
         <div
           className="ds-callout ds-callout--warn"
-          style={{ marginBottom: "var(--s-4)" }}
+          style={{ marginBottom: "var(--s-5)" }}
         >
           {t("无法获取状态（{err}）—— 下方为最后一次成功读取的结果。", {
             err: fetchError,
@@ -150,167 +192,239 @@ export default function StatusPage() {
         </div>
       )}
 
-      <section className={`status-banner status-banner--${tone}`}>
-        <span className={`status-orb status-orb--${tone}`} aria-hidden />
-        <div>
-          <div className="status-banner__title">{headline}</div>
-          <div className="status-banner__sub">
-            {health == null
-              ? " "
-              : health.ok
-                ? uptimeDays != null
-                  ? t("本次进程已连续运行 {d} 天", { d: uptimeDays.toFixed(1) })
-                  : " "
-                : degraded.length > 0
-                  ? degraded.map((l) => t(loopMeta(l.loop).label)).join(" · ")
-                  : (health.reason ?? health.error ?? " ")}
-          </div>
+      {health != null && !health.ok && (
+        <div
+          className="ds-callout ds-callout--error"
+          style={{ marginBottom: "var(--s-5)" }}
+        >
+          {degraded.length > 0
+            ? t("停跳组件：{list}", {
+                list: degraded
+                  .map((l) => t(loopMeta(l.loop).label))
+                  .join(" · "),
+              })
+            : (health.reason ?? health.error ?? t("引擎未在运行"))}
         </div>
-      </section>
-
-      {cont && (
-        <section className="cont-card">
-          <div className="cont-head">
-            <div>
-              <div className="cont-title">
-                {t("数据连续性 · 30 天起算时钟")}
-              </div>
-              <div className="ds-hint">
-                {t(
-                  "攒满 {n} 个不间断 UTC 日后重推所有策略阈值 —— 这是全站 edge 数字的前置闸门。",
-                  { n: cont.gateDays },
-                )}
-              </div>
-            </div>
-            <div className="cont-streak">
-              <span className="cont-streak__num mono">
-                {cont.streakClipped ? "≥" : ""}
-                {cont.streakDays}
-              </span>
-              <span className="cont-streak__unit">{t("天")}</span>
-            </div>
-          </div>
-
-          {cont.recordStartDay == null ? (
-            <div className="ds-hint">
-              {t("尚无循环记录 —— 引擎从未在这个库上跑过共识循环。")}
-            </div>
-          ) : (
-            <>
-              <div className="cont-gate">
-                {cont.gateReached ? (
-                  <span className="status-pill status-pill--up">
-                    {t("已达标 · 自 {d} 起连续覆盖", {
-                      d: cont.streakStartDay ?? "—",
-                    })}
-                  </span>
-                ) : cont.streakDays > 0 ? (
-                  <>
-                    <div className="cont-progress" aria-hidden>
-                      <div
-                        className="cont-progress__fill"
-                        style={{
-                          width: `${Math.min(100, (cont.streakDays / cont.gateDays) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                    <span className="ds-hint" style={{ whiteSpace: "nowrap" }}>
-                      {t("起算日 {d}（UTC）· 距 30 天闸门还差 {n} 天", {
-                        d: cont.streakStartDay ?? "—",
-                        n: cont.gateDays - cont.streakDays,
-                      })}
-                    </span>
-                  </>
-                ) : (
-                  <span className="ds-hint">
-                    {t("连续覆盖尚未形成 —— 从下一个完整 UTC 日重新起算")}
-                  </span>
-                )}
-                <span
-                  className={`status-pill ${cont.todayCoveredSoFar ? "status-pill--up" : "status-pill--down"}`}
-                >
-                  {cont.todayCoveredSoFar
-                    ? t("今天进行中 · 暂无断档")
-                    : t("今天进行中 · 已出现断档，今天将不计入")}
-                </span>
-              </div>
-
-              <div className="cont-strip">
-                {cont.days.map((d) => (
-                  <span
-                    key={d.day}
-                    className={`cont-cell cont-cell--${d.status}`}
-                    title={
-                      d.status === "covered"
-                        ? t("{d} · 覆盖 · {n} 轮", { d: d.day, n: d.cycles })
-                        : d.status === "gap"
-                          ? t("{d} · 断档 · 最长停顿 {t}", {
-                              d: d.day,
-                              t: durText(d.maxGapSec),
-                            })
-                          : d.status === "partial"
-                            ? t("{d} · 记录起点日（从中途开始，不计入）", {
-                                d: d.day,
-                              })
-                            : d.status === "pre"
-                              ? t("{d} · 早于记录起点", { d: d.day })
-                              : t("{d} · 今天 · 进行中", { d: d.day })
-                    }
-                  />
-                ))}
-              </div>
-              <div className="cont-legend">
-                <span>
-                  <span className="cont-cell cont-cell--covered" /> {t("覆盖")}
-                </span>
-                <span>
-                  <span className="cont-cell cont-cell--gap" /> {t("断档")}
-                </span>
-                <span>
-                  <span className="cont-cell cont-cell--partial" />{" "}
-                  {t("起点日")}
-                </span>
-                <span>
-                  <span className="cont-cell cont-cell--pre" /> {t("无记录")}
-                </span>
-                <span>
-                  <span className="cont-cell cont-cell--pending" /> {t("今天")}
-                </span>
-              </div>
-              <div className="ds-hint">
-                {t(
-                  "判定：共识循环每 5 分钟落一轮实测时间戳，相邻两轮间隔超过 {t} 即记断档 —— 与下表判停跳同一把尺；跨午夜的断档两天都不计入；按 UTC 日历日。记录始于 {d}。",
-                  { t: durText(cont.tolSec), d: cont.recordStartDay },
-                )}
-              </div>
-              {origin && (
-                <details style={{ marginTop: "var(--s-3)" }}>
-                  <summary className="ds-hint" style={{ cursor: "pointer" }}>
-                    {t("嵌入此徽章")}
-                  </summary>
-                  <div className="embed-snippet">
-                    <code>{`<iframe src="${origin}/embed/status" width="360" height="96" style="border:0" loading="lazy" title="WhaleWatch status"></iframe>`}</code>
-                    <CopyButton
-                      text={`<iframe src="${origin}/embed/status" width="360" height="96" style="border:0" loading="lazy" title="WhaleWatch status"></iframe>`}
-                    />
-                  </div>
-                  <div className="ds-hint">
-                    {t(
-                      "嵌入卡 60 秒缓存、无脚本、自带署名回链；加 ?theme=dark 得深色版。",
-                    )}
-                  </div>
-                </details>
-              )}
-            </>
-          )}
-        </section>
       )}
 
-      <div className="ds-table-wrap" style={{ marginBottom: "var(--s-4)" }}>
+      {/* 三格 KPI（状态页页型）—— 运行时长 / 数据连续性 / 今日断档。
+          值 18px 常规字重、与正文同字体，不加粗、不放大、不用等宽。 */}
+      <section className="kpi" style={{ marginBottom: "var(--s-5)" }}>
+        <StatCard label={t("运行时长")} icon={toneIcon}>
+          <div className="kpi-value">
+            {uptimeDays != null ? (
+              t("{d} 天", { d: uptimeDays.toFixed(1) })
+            ) : (
+              <span className="faint">—</span>
+            )}
+          </div>
+          <div className="kpi-sub">{t("本次进程连续运行")}</div>
+        </StatCard>
+
+        <StatCard label={t("数据连续性")} icon="📅">
+          <div
+            className="kpi-value"
+            style={
+              cont
+                ? {
+                    color: cont.gateReached ? "var(--ww-up)" : "var(--ww-link)",
+                  }
+                : undefined
+            }
+          >
+            {cont ? (
+              t("{n} / {g} 天", {
+                n: `${cont.streakClipped ? "≥" : ""}${cont.streakDays}`,
+                g: cont.gateDays,
+              })
+            ) : (
+              <span className="faint">—</span>
+            )}
+          </div>
+          <div className="kpi-sub">
+            {cont == null
+              ? t("连续性数据未就绪")
+              : cont.gateReached
+                ? t("已达标 · 自 {d} 起连续覆盖", {
+                    d: cont.streakStartDay ?? "—",
+                  })
+                : cont.streakDays > 0
+                  ? t("起算日 {d}（UTC）· 距 30 天闸门还差 {n} 天", {
+                      d: cont.streakStartDay ?? "—",
+                      n: cont.gateDays - cont.streakDays,
+                    })
+                  : t("连续覆盖尚未形成 —— 从下一个完整 UTC 日重新起算")}
+          </div>
+        </StatCard>
+
+        <StatCard
+          label={t("今日断档")}
+          icon={cont != null && !cont.todayCoveredSoFar ? "🔔" : "🔕"}
+        >
+          <div
+            className="kpi-value"
+            style={
+              cont != null && !cont.todayCoveredSoFar
+                ? { color: "var(--ww-down)" }
+                : undefined
+            }
+          >
+            {cont == null ? (
+              <span className="faint">—</span>
+            ) : cont.todayCoveredSoFar ? (
+              t("0 次")
+            ) : (
+              t("已出现断档")
+            )}
+          </div>
+          <div className="kpi-sub">
+            {cont == null
+              ? t("连续性数据未就绪")
+              : t("相邻两轮间隔超过 {t} 即记断档", { t: durText(cont.tolSec) })}
+          </div>
+        </StatCard>
+      </section>
+
+      {/* 30 天起算时钟 —— 卡内标题条 → 格子条 → 图例 → 卡底口径条。
+          条带每一格背后都是 cycle_metrics 的原始行，不是推测式 uptime。
+          overflow:hidden 是必需的：标题条的下边线与卡底说明条的灰底都要被
+          12px 圆角裁住，否则卡片四角会被方角的条子顶掉。 */}
+      <section
+        className="ds-card"
+        style={{ marginBottom: "var(--s-5)", overflow: "hidden" }}
+      >
+        <div
+          className="card-bar"
+          style={{ fontWeight: 600, gap: "var(--s-1)" }}
+        >
+          <span aria-hidden>📅</span>
+          <span>{t("30 天起算时钟 · 按 UTC 日历日")}</span>
+        </div>
+
+        {/* 三种缺数据的成因分开说：还没取到 / 取到了但库里没有循环记录 /
+            有记录。空态永远给内容和出路，不整块消失 —— 卡片凭空出现或
+            消失会让页面在数据到达时整屏跳动。 */}
+        {cont == null ? (
+          <div style={{ padding: "18px var(--s-4)" }}>
+            <div className="ds-empty">
+              <div>{t("连续性数据尚未就绪")}</div>
+              <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
+                {t(
+                  "正在读取 /api/continuity —— 取不到时这里保留上一次成功的结果。",
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            {cont.recordStartDay == null ? (
+              <div style={{ padding: "18px var(--s-4)" }}>
+                <div className="ds-empty">
+                  <div>
+                    {t("尚无循环记录 —— 引擎从未在这个库上跑过共识循环。")}
+                  </div>
+                  <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
+                    {t("共识循环落下第一轮时间戳后，这里会出现第一格。")}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div style={{ padding: "18px var(--s-4)" }}>
+                  <div className="cont-strip">
+                    {cont.days.map((d) => (
+                      <span
+                        key={d.day}
+                        className={`cont-cell cont-cell--${d.status}`}
+                        title={
+                          d.status === "covered"
+                            ? t("{d} · 覆盖 · {n} 轮", {
+                                d: d.day,
+                                n: d.cycles,
+                              })
+                            : d.status === "gap"
+                              ? t("{d} · 断档 · 最长停顿 {t}", {
+                                  d: d.day,
+                                  t: durText(d.maxGapSec),
+                                })
+                              : d.status === "partial"
+                                ? t("{d} · 记录起点日（从中途开始，不计入）", {
+                                    d: d.day,
+                                  })
+                                : d.status === "pre"
+                                  ? t("{d} · 早于记录起点", { d: d.day })
+                                  : t("{d} · 今天 · 进行中", { d: d.day })
+                        }
+                      />
+                    ))}
+                  </div>
+                  <div className="cont-legend">
+                    <span>
+                      <span className="cont-cell cont-cell--covered" />{" "}
+                      {t("覆盖")}
+                    </span>
+                    <span>
+                      <span className="cont-cell cont-cell--gap" /> {t("断档")}
+                    </span>
+                    <span>
+                      <span className="cont-cell cont-cell--partial" />{" "}
+                      {t("起点日")}
+                    </span>
+                    <span>
+                      <span className="cont-cell cont-cell--pre" />{" "}
+                      {t("无记录")}
+                    </span>
+                    <span>
+                      <span className="cont-cell cont-cell--pending" />{" "}
+                      {t("今天")}
+                    </span>
+                  </div>
+                  {origin && (
+                    <details style={{ marginTop: "var(--s-4)" }}>
+                      <summary
+                        className="ds-hint"
+                        style={{ cursor: "pointer" }}
+                      >
+                        {t("嵌入此徽章")}
+                      </summary>
+                      <div className="embed-snippet">
+                        <code>{`<iframe src="${origin}/embed/status" width="360" height="96" style="border:0" loading="lazy" title="WhaleWatch status"></iframe>`}</code>
+                        <CopyButton
+                          text={`<iframe src="${origin}/embed/status" width="360" height="96" style="border:0" loading="lazy" title="WhaleWatch status"></iframe>`}
+                        />
+                      </div>
+                      <div className="ds-hint">
+                        {t(
+                          "嵌入卡 60 秒缓存、无脚本、自带署名回链；加 ?theme=dark 得深色版。",
+                        )}
+                      </div>
+                    </details>
+                  )}
+                </div>
+
+                <div className="note-strip">
+                  {t(
+                    "判定：共识循环每 5 分钟落一轮实测时间戳，相邻两轮间隔超过 {t} 即记断档 —— 与下表判停跳同一把尺；跨午夜的断档两天都不计入；按 UTC 日历日。记录始于 {d}。",
+                    { t: durText(cont.tolSec), d: cont.recordStartDay },
+                  )}{" "}
+                  {t(
+                    "攒满 {n} 个不间断 UTC 日后重推所有策略阈值 —— 这是全站 edge 数字的前置闸门。",
+                    { n: cont.gateDays },
+                  )}
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </section>
+
+      {/* 心跳表 —— 行没有任何行级强调（无左边线、无字号跳档、无整行染色），
+          轻重全靠状态徽章的颜色。 */}
+      <div className="ds-table-wrap">
         <table className="ds-table">
           <thead>
             <tr>
-              <th>{t("组件")}</th>
+              <th>{t("循环")}</th>
               <th>{t("状态")}</th>
               <th className="is-right">{t("最近心跳")}</th>
               <th className="is-right">{t("今日轮次")}</th>
@@ -320,10 +434,22 @@ export default function StatusPage() {
           <tbody>
             {loops.length === 0 ? (
               <tr>
-                <td colSpan={5}>
-                  <span className="muted">
-                    {health == null ? t("加载中…") : t("无循环心跳记录")}
-                  </span>
+                <td colSpan={5} style={{ padding: "var(--s-3) var(--s-4)" }}>
+                  <div className="ds-empty">
+                    <div>
+                      {health == null ? t("加载中…") : t("无循环心跳记录")}
+                    </div>
+                    <div
+                      className="ds-hint"
+                      style={{ marginTop: "var(--s-1)" }}
+                    >
+                      {health == null
+                        ? t("正在读取 /api/health")
+                        : t(
+                            "引擎还没写过心跳 —— 若它刚重启，等一个循环周期再看。",
+                          )}
+                    </div>
+                  </div>
                 </td>
               </tr>
             ) : (
@@ -331,46 +457,85 @@ export default function StatusPage() {
                 const meta = loopMeta(l.loop);
                 return (
                   <tr key={l.loop}>
-                    <td>
-                      <div style={{ fontWeight: 500 }}>{t(meta.label)}</div>
-                      <div className="ds-hint">{t(meta.cadence)}</div>
+                    {/* 循环名 + 节奏副行。副行是 12px（表内副行统一档），
+                        不是 13px —— 它跟主行是同一件事的两半，不该看起来
+                        像另一句说明。循环名走 .cell-wrap：名字永不截断。 */}
+                    <td className="cell-wrap">
+                      <div>{t(meta.label)}</div>
+                      <div
+                        className="ds-hint"
+                        style={{ marginTop: 2, fontSize: "var(--t-sm)" }}
+                      >
+                        {t(meta.cadence)}
+                      </div>
                     </td>
-                    <td>
+                    <td data-label={t("状态")}>
                       {l.stale ? (
                         <>
-                          <span className="status-pill status-pill--down">
+                          <span
+                            className="status-pill status-pill--down"
+                            style={{ gap: "var(--s-1)" }}
+                          >
+                            <span aria-hidden>❌</span>
                             {l.missing ? t("从未启动") : t("停跳")}
                           </span>
-                          {/* 停跳时说清楚「你会少看到什么」——「outcome_backfill
+                          {/* 停顿时说清楚「你会少看到什么」——「outcome_backfill
                               stale」对读者毫无意义,「战绩会停在旧数字」才有。 */}
-                          <div className="ds-hint">{t(meta.impact)}</div>
+                          <div
+                            className="ds-hint cell-wrap"
+                            style={{ marginTop: 4, fontSize: "var(--t-sm)" }}
+                          >
+                            {t(meta.impact)}
+                          </div>
                         </>
                       ) : (
-                        <span className="status-pill status-pill--up">
+                        <span
+                          className="status-pill status-pill--up"
+                          style={{ gap: "var(--s-1)" }}
+                        >
+                          <span aria-hidden>✅</span>
                           {t("正常")}
                         </span>
                       )}
                     </td>
-                    <td className="is-right num mono">
+                    <td
+                      className="is-right"
+                      data-label={t("最近心跳")}
+                      title={t("阈值 {n}", { n: durText(l.staleAfterSec) })}
+                      style={{ whiteSpace: "nowrap" }}
+                    >
                       {l.missing ? (
-                        <span className="muted">—</span>
+                        <span className="faint">—</span>
                       ) : (
-                        durText(l.ageSec)
+                        <>
+                          {durText(l.ageSec)}{" "}
+                          <span
+                            className="ds-hint"
+                            style={{ fontSize: "var(--t-sm)" }}
+                          >
+                            / {durText(l.staleAfterSec)}
+                          </span>
+                        </>
                       )}
-                      <div className="ds-hint">
-                        {t("阈值 {n}", { n: durText(l.staleAfterSec) })}
-                      </div>
                     </td>
-                    <td className="is-right num mono">
+                    <td
+                      className="is-right"
+                      data-label={t("今日轮次")}
+                      style={{ whiteSpace: "nowrap" }}
+                    >
                       {l.cycles == null || l.missing ? (
-                        <span className="muted">—</span>
+                        <span className="faint">—</span>
                       ) : (
                         l.cycles.toLocaleString()
                       )}
                     </td>
-                    <td className="is-right num mono">
+                    <td
+                      className="is-right"
+                      data-label={t("今日最长停顿")}
+                      style={{ whiteSpace: "nowrap" }}
+                    >
                       {l.maxGapSec == null || l.missing ? (
-                        <span className="muted">—</span>
+                        <span className="faint">—</span>
                       ) : (
                         durText(l.maxGapSec)
                       )}
@@ -381,23 +546,18 @@ export default function StatusPage() {
             )}
           </tbody>
         </table>
-      </div>
 
-      <div className="ds-hint">
-        {refreshedAt != null && (
-          <>
-            {t("更新于")}{" "}
-            <span className="mono">
-              {new Date(refreshedAt * 1000).toLocaleTimeString()}
-            </span>
-            {" · "}
-            {t("每 30 秒自动刷新")}
-            {" · "}
-          </>
-        )}
-        {t(
-          "心跳表按循环只留存当日计数；跨日历史由共识循环逐轮落库的实测时间戳重建（上方连续性区）——每一格都有原始行背书，不做推测式 uptime。",
-        )}
+        {/* 卡底说明条 —— 灰底 13px/1.6。整条只有一处 600 字重：那句是本页
+            的立论（每个数字都有原始行背书），其余都是口径。 */}
+        <div className="note-strip">
+          {t(
+            "心跳表按循环只留存当日计数；跨日历史由共识循环逐轮落库的实测时间戳重建（上方连续性区）。",
+          )}{" "}
+          <strong style={{ fontWeight: 600, color: "var(--ww-text)" }}>
+            {t("每一格都有原始行背书，不做推测式 uptime。")}
+          </strong>{" "}
+          {t("表内的 — 是「判不了」不是零：该循环当日没有可用计数。")}
+        </div>
       </div>
     </main>
   );

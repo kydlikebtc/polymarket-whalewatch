@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { StatCard } from "../ui";
-import { Dot, SectionHead } from "./bits";
+import { SectionHead } from "./bits";
 import { authHeaders } from "./shared";
 
 // 区块:市场深度卡(/api/market-card/[cid])的预算与可观测。
@@ -117,9 +117,18 @@ export default function MarketCardSection({ token }: { token: string }) {
 
   if (!data || !draft) {
     return (
-      <section>
+      <section
+        className="ds-card"
+        style={{ padding: "var(--s-5)", marginBottom: "var(--s-5)" }}
+      >
         <SectionHead title="🎯 市场深度卡" />
-        <p className="ds-muted">加载中…</p>
+        {/* 空态给内容也给出路 —— 不返回 null,也不留一行孤零零的「加载中」。 */}
+        <div className="ds-empty">
+          正在读取预算与计数…
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            读不到通常是管理令牌失效,或 /api/admin/market-card 拒绝了本次请求。
+          </div>
+        </div>
       </section>
     );
   }
@@ -130,85 +139,96 @@ export default function MarketCardSection({ token }: { token: string }) {
   const throttled = data.effectiveBudget < data.settings.budgetPerMin;
 
   return (
-    <section>
+    <section
+      className="ds-card"
+      style={{ padding: "var(--s-5)", marginBottom: "var(--s-5)" }}
+    >
       <SectionHead title="🎯 市场深度卡" />
 
-      <p className="ds-muted" style={{ marginBottom: "var(--s-3)" }}>
-        计数是<strong>进程内累计</strong>,重启归零——它回答「这个进程活着这段
-        时间里预算花在哪了」,不是历史统计。
-      </p>
+      {/* 口径先行 —— 统计声明放在数据前面,不放脚注（琥珀 = 读前必看）。 */}
+      <div
+        className="ds-callout ds-callout--warn"
+        style={{ marginBottom: "var(--s-4)" }}
+      >
+        计数是<b>进程内累计</b>,重启归零 ——
+        它回答「这个进程活着这段时间里预算花在哪了」,不是历史统计。
+      </div>
 
-      <div className="kpi-grid">
-        <StatCard label="零上游命中">
-          <div className="ds-num">
+      {/* KPI 分格卡:一张白卡 N 等分,格间 1px 竖线;值 18px 常规字重。 */}
+      <section className="kpi">
+        <StatCard label="零上游命中" icon="🎯">
+          <div className="kpi-value">
             {s.hit}
-            {hitRate != null && (
-              <span className="ds-muted" style={{ fontSize: "0.8em" }}>
-                {" "}
-                · {hitRate}%
-              </span>
-            )}
+            {hitRate != null && <span className="muted"> · {hitRate}%</span>}
           </div>
+          <div className="kpi-sub">窗口还新鲜,一次上游都没打</div>
         </StatCard>
-        <StatCard label="热续 / 冷启">
-          <div className="ds-num">
+        <StatCard label="热续 / 冷启" icon="🔥">
+          <div className="kpi-value">
             {s.warm} / {s.cold}
           </div>
         </StatCard>
-        <StatCard label="降级(发了旧卡)">
-          <div className="ds-num">{s.degraded}</div>
+        <StatCard label="降级（发了旧卡）" icon="🕰">
+          <div className="kpi-value">{s.degraded}</div>
         </StatCard>
-        <StatCard label="拒绝(429)">
-          <div className="ds-num">
-            <Dot tone={s.refused > 0 ? "warn" : "muted"}>{s.refused}</Dot>
+        <StatCard label="拒绝（429）" icon="🚧">
+          <div
+            className="kpi-value"
+            style={s.refused > 0 ? { color: "var(--ww-warn)" } : undefined}
+          >
+            {s.refused}
           </div>
         </StatCard>
-        <StatCard label="工作集 / 存档">
-          <div className="ds-num">
+        <StatCard label="工作集 / 存档" icon="📦">
+          <div className="kpi-value">
             {s.workingSet} / {data.archivedWindows}
           </div>
         </StatCard>
-        <StatCard label="此刻生效额度">
-          <div className="ds-num">
-            <Dot tone={throttled ? "warn" : "up"}>
-              {data.effectiveBudget}/min
-            </Dot>
+        <StatCard label="此刻生效额度" icon="⛽">
+          <div
+            className="kpi-value"
+            style={throttled ? { color: "var(--ww-warn)" } : undefined}
+          >
+            {data.effectiveBudget}/min
+          </div>
+          <div className="kpi-sub">
+            配置上限 {data.settings.budgetPerMin}/min
           </div>
         </StatCard>
-      </div>
+      </section>
 
       {throttled && (
-        <p className="ds-muted" style={{ marginTop: "var(--s-2)" }}>
-          ⚠️ 生效额度低于配置值:引擎
+        <div
+          className="ds-callout ds-callout--warn"
+          style={{ marginTop: "var(--s-4)" }}
+        >
+          生效额度低于配置值:引擎
           {data.staleLoops.length > 0
             ? `有循环停跳(${data.staleLoops.join(", ")}),预算已归零`
             : "循环出现漂移,预算已降到 25%"}
-          。卡片永远给引擎让路——引擎断更时继续取令牌是在加深故障。
-        </p>
+          。卡片永远给引擎让路 —— 引擎断更时继续取令牌是在加深故障。
+        </div>
       )}
 
       {s.refused > 0 && (
-        <p className="ds-muted" style={{ marginTop: "var(--s-2)" }}>
+        <div className="ds-callout" style={{ marginTop: "var(--s-3)" }}>
           有请求被拒:若持续非零,说明预算或工作集上限该往上调了。
-        </p>
+        </div>
       )}
 
-      <div style={{ marginTop: "var(--s-4)" }}>
-        <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+      <div style={{ marginTop: "var(--s-5)" }}>
+        <div className="ds-label" style={{ marginBottom: "var(--s-3)" }}>
           参数
         </div>
         {FIELDS.map((f) => (
           <label
             key={f.key}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "var(--s-3)",
-              marginBottom: "var(--s-2)",
-              flexWrap: "wrap",
-            }}
+            className="filter-row"
+            style={{ marginBottom: "var(--s-3)" }}
           >
-            <span style={{ minWidth: "7rem" }}>{f.label}</span>
+            <span className="filter-row__label" style={{ minWidth: "7rem" }}>
+              {f.label}
+            </span>
             <input
               type="number"
               className="ds-input"
@@ -218,23 +238,21 @@ export default function MarketCardSection({ token }: { token: string }) {
                 setDraft({ ...draft, [f.key]: Number(e.target.value) })
               }
             />
-            <span className="ds-muted" style={{ fontSize: "0.85em" }}>
-              {f.hint}(默认 {data.defaults[f.key]})
+            <span className="ds-hint">
+              {f.hint}（默认 {data.defaults[f.key]}）
             </span>
           </label>
         ))}
-        <button
-          className="ds-btn"
-          onClick={() => void save()}
-          disabled={saving}
-        >
-          {saving ? "保存中…" : "保存"}
-        </button>
-        {note && (
-          <span className="ds-muted" style={{ marginLeft: "var(--s-3)" }}>
-            {note}
-          </span>
-        )}
+        <div className="filter-row" style={{ marginTop: "var(--s-4)" }}>
+          <button
+            className="ds-btn ds-btn--primary"
+            onClick={() => void save()}
+            disabled={saving}
+          >
+            {saving ? "保存中…" : "保存"}
+          </button>
+          {note && <span className="ds-hint">{note}</span>}
+        </div>
       </div>
     </section>
   );

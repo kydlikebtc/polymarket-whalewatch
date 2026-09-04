@@ -7,14 +7,14 @@ import type { WalletTag } from "../lib/walletTags";
 
 // Shared renderer for derived wallet tags (lib/walletTags) — used by the
 // discovery funnel lists and the wallet dossier header so the two can never
-// drift. Color semantics follow the sitewide convention: amber = warning
-// (bot), brand = trusted standing (manual whitelist), green = graduated
-// through the discovery admission gate, neutral = attribution/evidence.
+// drift. 徽章五类语义固定(设计系统 §2.1):琥珀 = 需留神的口径(机器人)、
+// 绿 = 通过闸门(发现渠道毕业)、灰底 = 名称标签(Etherscan name tag,不表
+// 示状态)。手动白名单是「这个地址是谁」的名称标签而不是一个可点/选中
+// 状态,所以走灰底,不占蓝色 —— 蓝只留给可点 / 当前选中 / 对外发布。
 export function tagVariant(
   t: WalletTag,
 ): "default" | "brand" | "up" | "down" | "warn" {
   if (t.key === "bot") return "warn";
-  if (t.key === "whitelist") return "brand";
   if (t.key.startsWith("src:discovered:")) return "up";
   return "default";
 }

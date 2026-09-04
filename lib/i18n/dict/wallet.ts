@@ -1,6 +1,7 @@
 // wallet 页字典分片 —— 键=中文原文,值=英文译文。由该页改造代理独家填写。
 export const DICT_WALLET: Record<string, string> = {
   // -------- header:身份标签与来源链接
+  "🕵️ 钱包档案": "🕵️ Wallet dossier",
   "🏆 聪明钱": "🏆 Smart money",
   " · 评分 {n}": " · score {n}",
   " · 手动白名单": " · manual whitelist",
@@ -19,6 +20,28 @@ export const DICT_WALLET: Record<string, string> = {
     "⚠️ Upstream API temporarily unavailable — showing locally stored data first.",
   "{n}s 后自动重试": "Auto-retrying in {n}s",
   立即重试: "Retry now",
+
+  // -------- 概览双栏卡(Etherscan 地址页语法:概览 / 更多信息)
+  "概览 · 已结算口径": "Overview · settled basis",
+  更多信息: "More info",
+  "近 {d} 天告警": "Alerts in {d}d",
+  本工具发出: "Sent by this tool",
+  "{n} 个活仓": "{n} live positions",
+  "总市值 ${v}": "Market value ${v}",
+  初动留存率: "Initial-move retention",
+  "95% 区间 {lo}–{hi}% · {k} 个市场": "95% CI {lo}–{hi}% · {k} markets",
+  风格最像的池内钱包: "Most similar pool wallets",
+  "近 90 天告警样本 {n} 条": "{n} alert samples in 90d",
+
+  // -------- 页内分区导航(锚点跳转,非互斥切换)
+  档案分区导航: "Dossier sections",
+  专攻类别: "Focus categories",
+  买入赔率带: "Odds bands",
+  头部市场: "Top markets",
+  历史命中: "Past hits",
+  价格影响: "Price impact",
+  交易风格: "Trading style",
+  最近成交: "Recent trades",
 
   // -------- KPI 五卡
   已结算胜率: "Settled win rate",
@@ -46,11 +69,10 @@ export const DICT_WALLET: Record<string, string> = {
   拆单倾向: "Split-buy tendency",
   "买单中 <$1k 的占比": "Share of buys under $1k",
 
-  // -------- 当前持仓
-  "当前持仓（{n} 个活仓 · 总市值 ${v} · 浮动盈亏 ":
-    "Open positions ({n} live · market value ${v} · unrealized P/L ",
+  // -------- 当前持仓（卡内标题条走「· 分段」语法，不用全角括号）
+  "当前持仓 · {n} 个活仓 · 总市值 ${v} · 浮动盈亏 ":
+    "Open positions · {n} live · market value ${v} · unrealized P/L ",
   " · 仅前若干页": " · first pages only",
-  "）": ")",
   当前持仓: "Current position",
   "该钱包当前没有活跃持仓（或未查询到）":
     "No active positions for this wallet (or none found)",
@@ -61,10 +83,12 @@ export const DICT_WALLET: Record<string, string> = {
   现价: "Now",
   市值: "Value",
   浮动盈亏: "Unrealized P/L",
+  "建仓均价与现价是成本口径，一律中性色；只有浮动盈亏用涨绿跌红。":
+    "Entry price and current price are cost figures — always neutral in color; only unrealized P/L uses green-up / red-down.",
 
   // -------- 专攻类别 + 类别词元(catLabel/subLabel 译回英文原名;
   // 「体育·NBA」等合成串不进字典,组件按词元 t() 后合成)
-  "专攻类别（按头部市场成交额）": "Focus categories (by top-market volume)",
+  "专攻类别 · 按头部市场成交额": "Focus categories · by top-market volume",
   政治: "Politics",
   选举: "Elections",
   体育: "Sports",
@@ -97,21 +121,24 @@ export const DICT_WALLET: Record<string, string> = {
   地缘政治: "Geopolitics",
 
   // -------- 赔率带 / 头部市场
-  "买入赔率带分布（近 {n} 笔）": "Buy odds-band distribution (last {n} trades)",
+  "买入赔率带分布 · 近 {n} 笔": "Buy odds-band distribution · last {n} trades",
   "{n}笔": "{n} trades",
-  "头部市场（按成交额）": "Top markets (by volume)",
+  "头部市场 · 按成交额": "Top markets · by volume",
   市场: "Market",
   类别: "Category",
   买入: "Buy",
   卖出: "Sells",
   净买入: "Net buy",
   笔数: "Fills",
+  "类别栏的「—」= 上游没有给出分类标注，不是「其他」这一档。":
+    "A “—” in the Category column means upstream gave no category label — it is not the “Other” bucket.",
 
   // -------- 本工具历史命中 / 最近成交
-  "本工具历史命中（近 {d} 天 · {n}）":
-    "This tool's past hits (last {d} days · {n})",
+  "本工具历史命中 · 近 {d} 天 {n} 条":
+    "This tool's past hits · {n} in the last {d} days",
   "近 {d} 天内该钱包未触发过告警":
     "No alerts triggered by this wallet in the last {d} days",
+  看全站实时告警: "See the live alert stream",
   类型: "Type",
   方向: "Side",
   金额: "Amount",
@@ -119,9 +146,11 @@ export const DICT_WALLET: Record<string, string> = {
   时间: "Time",
   "💰 大单": "💰 Large trade",
   "🔥 共识": "🔥 Consensus",
-  "最近成交（20）": "Recent trades (20)",
+  "价格栏的「—」= 当时的告警载荷没有记录成交价，不是成交价为 0。":
+    "A “—” in the Price column means the alert payload recorded no fill price at the time — it does not mean the fill price was 0.",
+  "最近成交 · 近 {n} 笔": "Recent trades · last {n}",
   // 价格影响持久性(第二梯队八件套,2026-08-28)
-  "价格影响（告警后市场反应）": "Price impact (market reaction after alerts)",
+  "价格影响 · 告警后市场反应": "Price impact · market reaction after alerts",
   "样本不足：可测初动 {m} 条 · 覆盖 {k} 个市场（需 ≥8）":
     "Insufficient sample: {m} measurable moves across {k} markets (needs ≥8)",
   被市场跟随: "Followed by the market",
@@ -130,11 +159,15 @@ export const DICT_WALLET: Record<string, string> = {
   "初动留存率 {r}%（95% 区间 {lo}–{hi}%，{k} 个市场）":
     "Initial-move retention {r}% (95% CI {lo}–{hi}%, {k} markets)",
   "中位初动 +{a}¢ → 24h {b}¢": "Median initial move +{a}¢ → 24h {b}¢",
-  "口径：初动 = 告警后 10 分钟的方向化价移（≥2¢ 才可测），留住 = 24h 后保住初动一半以上；区间按市场聚簇。这是市场对他的反应的描述统计，不是任何跟随建议。":
-    "Definitions: initial move = direction-signed price change 10 minutes after the alert (≥2¢ to count), retained = 24h later at least half the move survives; CI clustered by market. Descriptive statistics of how the market reacted — never a suggestion to follow anyone.",
+  "中位初动 → 24h": "Median initial move → 24h",
+  // 口径条与免责句分家:后者在界面上加粗独立成句
+  "口径：初动 = 告警后 10 分钟的方向化价移（≥2¢ 才可测），留住 = 24h 后保住初动一半以上；区间按市场聚簇。":
+    "Definitions: initial move = direction-signed price change 10 minutes after the alert (≥2¢ to count), retained = 24h later at least half the move survives; CI clustered by market.",
+  "这是市场对他的反应的描述统计，不是任何跟随建议。":
+    "Descriptive statistics of how the market reacted — never a suggestion to follow anyone.",
   // 交易风格(第二梯队八件套,2026-08-28;词表与 discovery 页共用)
-  "交易风格（池内 · 近 90 天告警样本 {n} 条）":
-    "Trading style (pool member · {n} alert samples in 90d)",
+  "交易风格 · 池内 · 近 90 天告警样本 {n} 条":
+    "Trading style · pool member · {n} alert samples in 90d",
   "风格最像的池内钱包：": "Most similar pool wallets: ",
   "🎯 冷门猎手": "🎯 Longshot hunter",
   "⚖️ 中盘": "⚖️ Midrange",

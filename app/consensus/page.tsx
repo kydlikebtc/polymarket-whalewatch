@@ -2,9 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
-  Field,
   HoldingCell,
-  Icon,
   MarketSlugActions,
   Segmented,
   SoundToggle,
@@ -143,11 +141,33 @@ function ConsensusDetail({ group }: { group: ConsensusGroup }) {
     true,
   );
   return (
-    <>
-      <div className="ds-hint" style={{ margin: "var(--s-2) 0 var(--s-1)" }}>
-        {t("共识钱包（按净买入排序）")}
+    // 展开面板 = 设计稿里跟在主表卡下面的第二张卡:标题条(14/600 + 400 灰
+    // 续写)+ 紧凑表。行内不再有色块 / 🏆 前缀 —— 这张表里每一行都是白名单
+    // 钱包,前缀不携带信息。
+    <div
+      style={{
+        border: "1px solid var(--ww-border)",
+        borderRadius: "var(--r-md)",
+        overflow: "hidden",
+        background: "var(--ww-surface)",
+      }}
+    >
+      <div className="card-bar">
+        <span style={{ fontWeight: 600 }}>
+          {t("{outcome} 一侧展开", { outcome: group.outcome })}
+        </span>
+        <span className="ds-hint">
+          {t(" · {n} 个钱包 · 净买 ${net} · 建仓均价 {avg}", {
+            n: group.walletCount,
+            net: fmtUsd(group.totalNetUsd),
+            avg: group.avgBuyPrice.toFixed(3),
+          })}
+          {group.currentPrice != null
+            ? t(" · 现价 {cur}", { cur: group.currentPrice.toFixed(3) })
+            : ""}
+        </span>
       </div>
-      <table className="ds-table--compact" style={{ maxWidth: 720 }}>
+      <table className="ds-table--compact">
         <thead>
           <tr>
             <th>{t("钱包")}</th>
@@ -168,26 +188,26 @@ function ConsensusDetail({ group }: { group: ConsensusGroup }) {
             <tr key={w.wallet}>
               <td>
                 <WalletLink address={w.wallet}>
-                  <Icon s="🏆" /> {shortWallet(w.wallet)}
+                  {shortWallet(w.wallet)}
                 </WalletLink>
               </td>
-              <td className="mono is-right" data-label={t("评分")}>
-                {w.score != null ? Math.round(w.score) : "—"}
+              <td className="is-right" data-label={t("评分")}>
+                {w.score != null ? (
+                  Math.round(w.score)
+                ) : (
+                  <span className="faint">—</span>
+                )}
               </td>
-              <td className="mono is-right" data-label={t("净买入")}>
+              <td className="is-right" data-label={t("净买入")}>
                 ${fmtUsd(w.netUsd)}
               </td>
-              <td className="mono is-right" data-label={t("笔数")}>
+              <td className="is-right" data-label={t("笔数")}>
                 {w.buyCount}
               </td>
-              <td
-                className="mono is-right"
-                data-label={t("建仓均价")}
-                style={{ color: "var(--warn-700)" }}
-              >
+              <td className="is-right" data-label={t("建仓均价")}>
                 {w.avgBuyPrice.toFixed(3)}
               </td>
-              <td className="mono is-right" data-label={t("当前持仓")}>
+              <td className="is-right" data-label={t("当前持仓")}>
                 <HoldingCell
                   pos={
                     positions?.[w.wallet.toLowerCase()]?.[
@@ -201,7 +221,7 @@ function ConsensusDetail({ group }: { group: ConsensusGroup }) {
           ))}
         </tbody>
       </table>
-    </>
+    </div>
   );
 }
 
@@ -351,102 +371,35 @@ export default function ConsensusPage() {
 
   return (
     <main className="ds-main">
-      <header
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: "var(--s-4)",
-          marginBottom: "var(--s-4)",
-        }}
-      >
-        <div>
-          <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-            {t("🔥 共识 · ⚖️ 分歧")}
-          </h1>
-          <div className="ds-hint">
-            {t(
-              "白名单钱包在同一市场：同向买同一结果 = 共识，对立结果各自建仓 = 分歧（两者互斥）— 都比单笔大单更有说服力",
-            )}
-            {lastRefreshed
-              ? t(" · 最后刷新 {time}", { time: lastRefreshed })
-              : ""}
-            {loading ? (
-              <span style={{ color: "var(--warn-700)" }}>
-                {t(" · 加载中…")}
-              </span>
-            ) : null}
+      {/* 页头 —— 12px 小标(emoji 前缀)+ 24/600 标题 + 14px 说明,右侧动作。 */}
+      <header className="page-head">
+        <div style={{ minWidth: 0 }}>
+          <div className="page-head__eyebrow">
+            {t("🔥 白名单同向与对立建仓")}
           </div>
+          <h1 className="page-head__title">{t("共识 / 分歧")}</h1>
+          {/* 说明句照设计稿收成一句:同一市场里白名单站同一侧还是分站两侧,
+              天平两端各是谁的钱、谁更有战绩。 */}
+          <p className="page-head__desc">
+            {t(
+              "同一市场里白名单钱包站同一侧 = 共识，分站两侧 = 分歧（两者互斥）：天平两端各是谁的钱、谁更有战绩。",
+            )}
+          </p>
         </div>
-        <SoundToggle on={soundOn} onToggle={toggle} />
+        <div className="page-head__actions">
+          {lastRefreshed ? (
+            <span className="ds-hint">
+              {t("最后刷新 {time}", { time: lastRefreshed })}
+            </span>
+          ) : null}
+          {/* 加载中是过程,不是「需留神的口径」—— 琥珀留给口径与样本不足,
+              这里走 13px muted。 */}
+          {loading ? <span className="ds-hint">{t("加载中…")}</span> : null}
+          <SoundToggle on={soundOn} onToggle={toggle} />
+        </div>
       </header>
 
-      {/* Controls */}
-      <section
-        className="ds-card"
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: "var(--s-3)",
-          padding: "var(--s-4)",
-          marginBottom: "var(--s-5)",
-        }}
-      >
-        <Field label={t("时间窗")}>
-          <Segmented<Hours>
-            ariaLabel={t("时间窗")}
-            value={hours}
-            onChange={setHours}
-            options={([2, 6, 12] as Hours[]).map((h) => ({
-              label: `${h}h`,
-              value: h,
-            }))}
-          />
-        </Field>
-        <Field label={t("最少钱包")}>
-          <Segmented<number>
-            ariaLabel={t("最少钱包数")}
-            value={minWallets}
-            onChange={setMinWallets}
-            options={[2, 3, 4].map((n) => ({
-              label: t("≥{n} 个", { n }),
-              value: n,
-            }))}
-          />
-        </Field>
-        <Field label={t("每钱包净买")}>
-          <Segmented<number>
-            ariaLabel={t("每钱包净买入下限")}
-            value={minPerWalletUsd}
-            onChange={setMinPerWalletUsd}
-            options={PER_WALLET_PRESETS.map((p) => ({
-              label: <span className="mono">${fmtUsd(p)}</span>,
-              value: p,
-            }))}
-          />
-          <span style={{ flex: 1 }} />
-          <button className="ds-btn ds-btn--ghost" onClick={() => load()}>
-            {t("刷新")}
-          </button>
-          <label
-            className="ds-hint"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "var(--s-1)",
-              cursor: "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.checked)}
-            />
-            {t("自动刷新 30s")}
-          </label>
-        </Field>
-      </section>
-
+      {/* 口径条 —— 统计声明一律放在数据前面,不放脚注。 */}
       {data?.error ? (
         <div
           className="ds-callout ds-callout--error"
@@ -467,15 +420,44 @@ export default function ConsensusPage() {
         </div>
       ) : null}
 
+      {data?.truncated && data.effectiveSinceSec ? (
+        <div
+          className="ds-callout ds-callout--warn"
+          style={{ marginBottom: "var(--s-4)" }}
+        >
+          {t("⏱️ 成交太密集，API 回看深度已用满 — 本页基于")}{" "}
+          {t("完整覆盖的 {span}", {
+            span: fmtWindowSpan(data.effectiveSinceSec, t),
+          })}
+          {t("（自 {time} 起，买卖双侧均完整）检测", {
+            time: fmtTime(data.effectiveSinceSec),
+          })}
+        </div>
+      ) : null}
+
       {data ? (
         <section className="kpi" style={{ marginBottom: "var(--s-5)" }}>
-          <StatCard label={t("共识组数")}>
-            <div className="kpi-value">{groups.length}</div>
+          {/* KPI 分格卡 —— 一张白卡内 N 等分,格间 1px 竖线;20px emoji 图标位 +
+              12px 小标 + 18px 常规字重的值 + 13px 副行(一句话说清这个数是怎么
+              来的)。设计稿的天平页把「方向分歧」也摆在这一排:这一格读的是同
+              一次请求已经取回的 disagreement 长度,不新增取数。 */}
+          <StatCard label={t("共识组数")} icon="🔥">
+            <div className="kpi-value" style={{ color: "var(--ww-link)" }}>
+              {t("{n} 个", { n: groups.length })}
+            </div>
+            <div className="kpi-sub">
+              {t("≥{n} 个白名单同向", { n: minWallets })}
+            </div>
           </StatCard>
-          <StatCard label={t("合计净买入")}>
+          <StatCard label={t("方向分歧")} icon="⚖️">
+            <div className="kpi-value">{t("{n} 个", { n: disCount })}</div>
+            <div className="kpi-sub">{t("两侧各达门槛")}</div>
+          </StatCard>
+          <StatCard label={t("合计净买入")} icon="💰">
             <div className="kpi-value">${fmtUsd(totalNet)}</div>
+            <div className="kpi-sub">{t("窗口内共识组合计")}</div>
           </StatCard>
-          <StatCard label={t("白名单钱包")}>
+          <StatCard label={t("白名单钱包")} icon="🏆">
             <div
               className="kpi-value"
               onClick={() => setWhitelistOpen(true)}
@@ -490,80 +472,126 @@ export default function ConsensusPage() {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 4,
+                color: "var(--ww-link)",
               }}
             >
               {data.smartCount}
-              <span style={{ fontSize: 13, color: "var(--primary, #6366f1)" }}>
-                ▸
-              </span>
+              <span style={{ fontSize: 13 }}>▸</span>
             </div>
+            <div className="kpi-sub">{t("点击查看全部地址")}</div>
           </StatCard>
         </section>
       ) : null}
 
-      {data?.truncated && data.effectiveSinceSec ? (
-        <div className="ds-callout" style={{ marginBottom: "var(--s-4)" }}>
-          {t("⏱️ 成交太密集，API 回看深度已用满 — 本页基于")}{" "}
-          <strong>
-            {t("完整覆盖的 {span}", {
-              span: fmtWindowSpan(data.effectiveSinceSec, t),
-            })}
-          </strong>
-          {t("（自 {time} 起，买卖双侧均完整）检测", {
-            time: fmtTime(data.effectiveSinceSec),
-          })}
-        </div>
-      ) : null}
-
-      {/* Tab toggle — one section at a time so a long list never buries the
-          other. Both are already fetched; this only switches which is shown. */}
-      {data ? (
-        <div style={{ marginBottom: "var(--s-4)" }}>
-          <Segmented<View>
-            ariaLabel={t("共识或分歧")}
-            value={view}
-            onChange={setView}
-            options={[
-              {
-                label: (
-                  <span>
-                    <Icon s="🔥" /> {t("共识")} {groups.length}
-                  </span>
-                ),
-                value: "consensus",
-              },
-              {
-                label: (
-                  <span>
-                    <Icon s="⚖️" /> {t("分歧")} {disCount}
-                  </span>
-                ),
-                value: "disagreement",
-              },
-              {
-                label: (
-                  <span>
-                    <Icon s="📤" /> {t("离场")} {data?.exits?.length ?? 0}
-                  </span>
-                ),
-                value: "exits",
-              },
-            ]}
+      {/* 筛选条 —— 不是卡:它是主表卡的参数,不是与之并列的第二块内容。 */}
+      <div className="filter-bar">
+        <div className="filter-row">
+          <span className="filter-row__label">{t("时间窗")}</span>
+          <Segmented<Hours>
+            ariaLabel={t("时间窗")}
+            value={hours}
+            onChange={setHours}
+            options={([2, 6, 12] as Hours[]).map((h) => ({
+              label: `${h}h`,
+              value: h,
+            }))}
           />
-          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            {view === "consensus"
-              ? t("一边倒 · ≥{n} 个白名单钱包同向买入同一结果", {
-                  n: minWallets,
-                })
-              : view === "disagreement"
-                ? t(
-                    "同一市场对立结果都有聪明钱 · 按质量加权称天平（与共识互斥）",
-                  )
-                : t(
-                    "≥{n} 个池内钱包在同一结果上净卖出 · 窗内只见卖不见此前建仓——抓的就是减持老仓，但分不清获利了结与止损",
-                    { n: minWallets },
-                  )}
-          </div>
+        </div>
+        <div className="filter-row">
+          <span className="filter-row__label">{t("最少钱包")}</span>
+          <Segmented<number>
+            ariaLabel={t("最少钱包数")}
+            value={minWallets}
+            onChange={setMinWallets}
+            options={[2, 3, 4].map((n) => ({
+              label: t("≥{n} 个", { n }),
+              value: n,
+            }))}
+          />
+        </div>
+        <div className="filter-row">
+          <span className="filter-row__label">{t("每钱包净买")}</span>
+          <Segmented<number>
+            ariaLabel={t("每钱包净买入下限")}
+            value={minPerWalletUsd}
+            onChange={setMinPerWalletUsd}
+            options={PER_WALLET_PRESETS.map((p) => ({
+              label: `$${fmtUsd(p)}`,
+              value: p,
+            }))}
+          />
+        </div>
+        <div className="filter-bar__right">
+          {/* 原生 checkbox 保留(可聚焦、语义不变),视觉换成 32×18 胶囊开关。 */}
+          <label
+            className="ds-hint"
+            style={{
+              position: "relative",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--s-2)",
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+              style={{
+                position: "absolute",
+                left: 0,
+                top: "50%",
+                transform: "translateY(-50%)",
+                width: 32,
+                height: 18,
+                margin: 0,
+                opacity: 0,
+                cursor: "pointer",
+              }}
+            />
+            <span
+              className="ds-toggle"
+              data-on={autoRefresh ? "true" : "false"}
+              aria-hidden
+            />
+            {t("自动刷新 30s")}
+          </label>
+          <button className="ds-btn ds-btn--primary" onClick={() => load()}>
+            {t("刷新")}
+          </button>
+        </div>
+      </div>
+
+      {/* Tab 行 —— 同一批白名单行为的三个侧面(不是互斥筛选:数据一次取回,
+          这里只切换显示哪一面)。 */}
+      {data ? (
+        <div
+          className="ds-tabrow"
+          role="group"
+          aria-label={t("共识或分歧")}
+          style={{ marginBottom: "var(--s-4)" }}
+        >
+          <button
+            type="button"
+            aria-pressed={view === "consensus"}
+            onClick={() => setView("consensus")}
+          >
+            {t("共识")} {groups.length}
+          </button>
+          <button
+            type="button"
+            aria-pressed={view === "disagreement"}
+            onClick={() => setView("disagreement")}
+          >
+            {t("分歧")} {disCount}
+          </button>
+          <button
+            type="button"
+            aria-pressed={view === "exits"}
+            onClick={() => setView("exits")}
+          >
+            {t("离场")} {data?.exits?.length ?? 0}
+          </button>
         </div>
       ) : null}
 
@@ -571,170 +599,204 @@ export default function ConsensusPage() {
         {data && groups.length === 0 && !loading ? (
           <div className="ds-empty">
             {t("窗口内暂无聪明钱共识 — 出现时也会推送到实时告警")}
+            <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+              {t(
+                "把时间窗放宽到 12h、或把每钱包净买下限降到 $5,000 再看一次。",
+              )}{" "}
+              <a href="/alerts">{t("去实时告警 →")}</a>
+            </div>
           </div>
         ) : groups.length > 0 ? (
-          <div className="ds-table-wrap">
-            <table className="ds-table">
-              <thead>
-                <tr>
-                  <th style={{ width: 28, padding: "var(--s-2) var(--s-1)" }} />
-                  <th>{t("市场 · 结果")}</th>
-                  <th className="is-right">{t("钱包数")}</th>
-                  <th className="is-right">{t("合计净买入")}</th>
-                  <th
-                    className="is-right"
-                    title={t("按金额加权的聪明钱建仓均价")}
-                  >
-                    {t("建仓均价")}
-                  </th>
-                  <th className="is-right" title={t("Gamma 最新赔率")}>
-                    {t("现价")}
-                  </th>
-                  <th>{t("跟单空间")}</th>
-                  <th className="is-right">{t("最新时间")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {groups.map((g) => {
-                  const key = `${g.conditionId}:${g.outcome}`;
-                  const isOpen = expanded.has(key);
-                  const gap =
-                    g.currentPrice != null
-                      ? g.currentPrice - g.avgBuyPrice
-                      : null;
-                  // A price pinned at 0/1 means the event is decided even when
-                  // gamma's `closed` flag lags — either way "following" is moot.
-                  const settled =
-                    g.closed ||
-                    (g.currentPrice != null &&
-                      (g.currentPrice >= 0.999 || g.currentPrice <= 0.001));
-                  return (
-                    <Fragment key={key}>
-                      <tr
-                        onClick={() => toggleExpand(key)}
-                        style={{ cursor: "pointer" }}
-                        title={
-                          isOpen ? t("点击收起钱包明细") : t("点击展开钱包明细")
-                        }
-                      >
-                        <td
-                          className="muted col-expand"
-                          style={{
-                            padding: "var(--s-3) var(--s-1)",
-                            textAlign: "center",
-                            userSelect: "none",
-                          }}
+          <div className="ds-card" style={{ overflow: "hidden" }}>
+            <div className="card-bar">
+              <span style={{ fontWeight: 600 }}>
+                {t("共 {n} 组共识", { n: groups.length })}
+              </span>
+              <span className="ds-hint">
+                {t("一边倒 · ≥{n} 个白名单钱包同向买入同一结果", {
+                  n: minWallets,
+                })}
+              </span>
+            </div>
+            <div
+              className="ds-table-wrap"
+              style={{ border: 0, borderRadius: 0, boxShadow: "none" }}
+            >
+              <table className="ds-table">
+                <thead>
+                  <tr>
+                    <th
+                      style={{ width: 28, padding: "var(--s-2) var(--s-1)" }}
+                    />
+                    <th>{t("市场 · 结果")}</th>
+                    <th className="is-right">{t("钱包数")}</th>
+                    <th className="is-right">{t("合计净买入")}</th>
+                    <th
+                      className="is-right"
+                      title={t("按金额加权的聪明钱建仓均价")}
+                    >
+                      {t("建仓均价")}
+                    </th>
+                    <th className="is-right" title={t("Gamma 最新赔率")}>
+                      {t("现价")}
+                    </th>
+                    <th>{t("跟单空间")}</th>
+                    <th className="is-right">{t("最新时间")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groups.map((g) => {
+                    const key = `${g.conditionId}:${g.outcome}`;
+                    const isOpen = expanded.has(key);
+                    const gap =
+                      g.currentPrice != null
+                        ? g.currentPrice - g.avgBuyPrice
+                        : null;
+                    // A price pinned at 0/1 means the event is decided even
+                    // when gamma's `closed` flag lags — either way "following"
+                    // is moot.
+                    const settled =
+                      g.closed ||
+                      (g.currentPrice != null &&
+                        (g.currentPrice >= 0.999 || g.currentPrice <= 0.001));
+                    return (
+                      <Fragment key={key}>
+                        <tr
+                          onClick={() => toggleExpand(key)}
+                          style={{ cursor: "pointer" }}
+                          title={
+                            isOpen
+                              ? t("点击收起钱包明细")
+                              : t("点击展开钱包明细")
+                          }
                         >
-                          {isOpen ? "▾" : "▸"}
-                        </td>
-                        <td style={{ whiteSpace: "normal", maxWidth: 380 }}>
-                          {g.eventSlug ? (
-                            <a
-                              href={`https://polymarket.com/event/${g.eventSlug}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {g.title}
-                            </a>
-                          ) : (
-                            g.title
-                          )}
-                          {/* ⧉ copies the MARKET slug, ↗ opens the wired.fund
-                              trade page — same affordance as the 24h scanner.
-                              Kept on the one-line subtitle so it never
-                              orphan-wraps under a long title. */}
-                          <div
-                            className="kpi-sub"
-                            style={{ whiteSpace: "nowrap" }}
-                          >
-                            {g.outcome}
-                            {g.category
-                              ? ` · ${catLabelFineT(t, g.category, g.subcategory)}`
-                              : ""}
-                            <MarketSlugActions
-                              slug={g.slug}
-                              eventSlug={g.eventSlug}
-                              conditionId={g.conditionId}
-                            />
-                          </div>
-                        </td>
-                        <td className="mono is-right" data-label={t("钱包数")}>
-                          <span style={{ fontWeight: 700 }}>
-                            <Icon s="🔥" /> {g.walletCount}
-                          </span>
-                        </td>
-                        <td
-                          className="mono is-right"
-                          data-label={t("合计净买入")}
-                        >
-                          <span className="up" style={{ fontWeight: 700 }}>
-                            ${fmtUsd(g.totalNetUsd)}
-                          </span>
-                        </td>
-                        <td
-                          className="mono is-right"
-                          data-label={t("建仓均价")}
-                          style={{ color: "var(--warn-700)", fontWeight: 600 }}
-                        >
-                          {g.avgBuyPrice.toFixed(3)}
-                        </td>
-                        <td className="mono is-right" data-label={t("现价")}>
-                          {g.currentPrice != null
-                            ? g.currentPrice.toFixed(3)
-                            : "…"}
-                        </td>
-                        <td data-label={t("跟单空间")}>
-                          {gap == null ? (
-                            <span className="muted">—</span>
-                          ) : settled ? (
-                            // Settled market: following is moot — show whether
-                            // the smart-money consensus was RIGHT instead.
-                            g.currentPrice != null && g.currentPrice > 0.5 ? (
-                              <Tag variant="up">{t("已结算 ✓ 命中")}</Tag>
-                            ) : (
-                              <Tag variant="down">{t("已结算 ✗ 落空")}</Tag>
-                            )
-                          ) : gap <= FOLLOWABLE_GAP ? (
-                            <Tag variant="up">
-                              {t("仍可跟 {gap}¢", {
-                                gap: `${gap >= 0 ? "+" : ""}${(gap * 100).toFixed(1)}`,
-                              })}
-                            </Tag>
-                          ) : (
-                            <Tag variant="warn">
-                              {t("已跑 +{gap}¢", {
-                                gap: (gap * 100).toFixed(1),
-                              })}
-                            </Tag>
-                          )}
-                        </td>
-                        <td
-                          className="mono muted is-right"
-                          data-label={t("最新时间")}
-                        >
-                          {fmtTime(g.lastTs)}
-                        </td>
-                      </tr>
-                      {isOpen ? (
-                        <tr>
                           <td
-                            colSpan={8}
+                            className="muted col-expand"
                             style={{
-                              padding: "0 var(--s-3) var(--s-3) var(--s-10)",
-                              borderBottom: "1px solid var(--n-150)",
-                              background: "var(--n-50)",
+                              padding: "var(--s-3) var(--s-1)",
+                              textAlign: "center",
+                              userSelect: "none",
                             }}
                           >
-                            <ConsensusDetail group={g} />
+                            {isOpen ? "▾" : "▸"}
+                          </td>
+                          {/* 市场名 / 结果名永不截断:换行,最多两行,顶对齐。
+                              只有地址与哈希做首尾省略。 */}
+                          <td className="cell-wrap" style={{ maxWidth: 380 }}>
+                            {g.eventSlug ? (
+                              <a
+                                href={`https://polymarket.com/event/${g.eventSlug}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {g.title}
+                              </a>
+                            ) : (
+                              g.title
+                            )}
+                            {/* 结果名走灰底名称标签(Etherscan name tag,不表示
+                                状态);⧉ 复制 market slug、↗ 开交易页、🎯 开
+                                市场信号卡 —— 与 24h 扫描同一套 affordance。 */}
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                flexWrap: "wrap",
+                                gap: "var(--s-2)",
+                                marginTop: "var(--s-1)",
+                                fontSize: "var(--t-sm)",
+                                color: "var(--ww-text-muted)",
+                              }}
+                            >
+                              <Tag>{g.outcome}</Tag>
+                              {g.category ? (
+                                <span>
+                                  {catLabelFineT(t, g.category, g.subcategory)}
+                                </span>
+                              ) : null}
+                              <span>
+                                <MarketSlugActions
+                                  slug={g.slug}
+                                  eventSlug={g.eventSlug}
+                                  conditionId={g.conditionId}
+                                />
+                              </span>
+                            </div>
+                          </td>
+                          <td className="is-right" data-label={t("钱包数")}>
+                            {g.walletCount}
+                          </td>
+                          <td className="is-right" data-label={t("合计净买入")}>
+                            ${fmtUsd(g.totalNetUsd)}
+                          </td>
+                          <td className="is-right" data-label={t("建仓均价")}>
+                            {g.avgBuyPrice.toFixed(3)}
+                          </td>
+                          <td className="is-right" data-label={t("现价")}>
+                            {g.currentPrice != null ? (
+                              g.currentPrice.toFixed(3)
+                            ) : (
+                              <span className="faint">—</span>
+                            )}
+                          </td>
+                          <td data-label={t("跟单空间")}>
+                            {gap == null ? (
+                              <span className="faint">—</span>
+                            ) : settled ? (
+                              // Settled market: following is moot — show
+                              // whether the smart-money consensus was RIGHT.
+                              g.currentPrice != null && g.currentPrice > 0.5 ? (
+                                <Tag variant="up">{t("已结算 ✓ 命中")}</Tag>
+                              ) : (
+                                <Tag variant="down">{t("已结算 ✗ 落空")}</Tag>
+                              )
+                            ) : gap <= FOLLOWABLE_GAP ? (
+                              <Tag variant="up">
+                                {t("仍可跟 {gap}¢", {
+                                  gap: `${gap >= 0 ? "+" : ""}${(gap * 100).toFixed(1)}`,
+                                })}
+                              </Tag>
+                            ) : (
+                              <Tag variant="warn">
+                                {t("已跑 +{gap}¢", {
+                                  gap: (gap * 100).toFixed(1),
+                                })}
+                              </Tag>
+                            )}
+                          </td>
+                          <td
+                            className="muted is-right"
+                            data-label={t("最新时间")}
+                          >
+                            {fmtTime(g.lastTs)}
                           </td>
                         </tr>
-                      ) : null}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
+                        {isOpen ? (
+                          <tr>
+                            <td
+                              colSpan={8}
+                              style={{
+                                padding: "0 var(--s-4) var(--s-4)",
+                                background: "var(--ww-surface)",
+                              }}
+                            >
+                              <ConsensusDetail group={g} />
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {/* 「—」是判不了,不是零 —— 三种成因写在表下方的琥珀条里。 */}
+            <div className="note-strip note-strip--warn">
+              {t(
+                "现价栏的 — 表示该结果缺 asset、取不到价（不是加载中），跟单空间也随之判不了；明细里的 — 表示该钱包还没有已结算样本，评分算不出来，都不等于 0。建仓均价按金额加权；已结算的市场不再谈跟单空间，只标命中或落空。",
+              )}
+            </div>
           </div>
         ) : null}
       </div>
@@ -747,61 +809,99 @@ export default function ConsensusPage() {
 
       <div style={{ display: view === "exits" ? "block" : "none" }}>
         {data && (data.exits?.length ?? 0) === 0 && !loading ? (
-          <div className="ds-empty">{t("窗口内暂无池内钱包的集体离场")}</div>
+          <div className="ds-empty">
+            {t("窗口内暂无池内钱包的集体离场")}
+            <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+              {t(
+                "离场比建仓稀疏：把时间窗放宽到 12h、或把最少钱包降到 ≥2 个再看一次。",
+              )}
+            </div>
+          </div>
         ) : (data?.exits?.length ?? 0) > 0 ? (
-          <div className="ds-table-wrap">
-            <table className="ds-table">
-              <thead>
-                <tr>
-                  <th>{t("市场 / 结果")}</th>
-                  <th className="is-right">{t("离场钱包")}</th>
-                  <th className="is-right">{t("合计卖出")}</th>
-                  <th className="is-right">{t("卖出均价")}</th>
-                  <th>{t("钱包")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(data?.exits ?? []).map((g) => (
-                  <tr key={`${g.conditionId}:${g.outcome}`}>
-                    <td>
-                      <div style={{ fontWeight: 500 }}>
-                        {g.title}
-                        {g.slug && (
-                          <MarketSlugActions
-                            slug={g.slug}
-                            eventSlug={g.eventSlug || undefined}
-                          />
-                        )}
-                      </div>
-                      <div className="ds-hint">{g.outcome}</div>
-                    </td>
-                    <td className="is-right num mono">{g.walletCount}</td>
-                    <td
-                      className="is-right num mono"
-                      style={{ fontWeight: 600 }}
-                    >
-                      ${Math.round(g.totalSoldUsd).toLocaleString("en-US")}
-                    </td>
-                    <td className="is-right num mono">
-                      {(g.avgSellPrice * 100).toFixed(1)}¢
-                    </td>
-                    <td className="ds-hint mono">
-                      {g.wallets.slice(0, 3).map((w, i) => (
-                        <span key={w.wallet} style={{ whiteSpace: "nowrap" }}>
-                          {i > 0 && " · "}
-                          <WalletLink address={w.wallet}>
-                            {w.wallet.slice(0, 6)}…{w.wallet.slice(-4)}
-                          </WalletLink>
-                          {" $"}
-                          {Math.round(w.soldUsd / 1000)}k
-                        </span>
-                      ))}
-                      {g.wallets.length > 3 && " …"}
-                    </td>
+          <div className="ds-card" style={{ overflow: "hidden" }}>
+            <div className="card-bar">
+              <span style={{ fontWeight: 600 }}>
+                {t("共 {n} 组离场", { n: data?.exits?.length ?? 0 })}
+              </span>
+              <span className="ds-hint">
+                {t("≥{n} 个池内钱包在同一结果上净卖出", { n: minWallets })}
+              </span>
+            </div>
+            <div
+              className="ds-table-wrap"
+              style={{ border: 0, borderRadius: 0, boxShadow: "none" }}
+            >
+              <table className="ds-table">
+                <thead>
+                  <tr>
+                    <th>{t("市场 / 结果")}</th>
+                    <th className="is-right">{t("离场钱包")}</th>
+                    <th className="is-right">{t("合计卖出")}</th>
+                    <th className="is-right">{t("卖出均价")}</th>
+                    <th>{t("钱包")}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {(data?.exits ?? []).map((g) => (
+                    <tr key={`${g.conditionId}:${g.outcome}`}>
+                      <td className="cell-wrap" style={{ maxWidth: 380 }}>
+                        {g.title}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            gap: "var(--s-2)",
+                            marginTop: "var(--s-1)",
+                            fontSize: "var(--t-sm)",
+                            color: "var(--ww-text-muted)",
+                          }}
+                        >
+                          <Tag>{g.outcome}</Tag>
+                          {g.slug && (
+                            <span>
+                              <MarketSlugActions
+                                slug={g.slug}
+                                eventSlug={g.eventSlug || undefined}
+                              />
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="is-right" data-label={t("离场钱包")}>
+                        {g.walletCount}
+                      </td>
+                      <td className="is-right" data-label={t("合计卖出")}>
+                        ${Math.round(g.totalSoldUsd).toLocaleString("en-US")}
+                      </td>
+                      <td className="is-right" data-label={t("卖出均价")}>
+                        {(g.avgSellPrice * 100).toFixed(1)}¢
+                      </td>
+                      <td className="cell-wrap" data-label={t("钱包")}>
+                        {g.wallets.slice(0, 3).map((w, i) => (
+                          <span key={w.wallet} style={{ whiteSpace: "nowrap" }}>
+                            {i > 0 && " · "}
+                            <WalletLink address={w.wallet}>
+                              {w.wallet.slice(0, 6)}…{w.wallet.slice(-4)}
+                            </WalletLink>
+                            <span style={{ color: "var(--ww-text-muted)" }}>
+                              {" $"}
+                              {Math.round(w.soldUsd / 1000)}k
+                            </span>
+                          </span>
+                        ))}
+                        {g.wallets.length > 3 && " …"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="note-strip note-strip--warn">
+              {t(
+                "只统计窗口内的卖单：窗内看不到这些仓位此前是怎么建的，所以获利了结与止损在这里长得一模一样。卖出均价按金额加权。",
+              )}
+            </div>
           </div>
         ) : null}
       </div>

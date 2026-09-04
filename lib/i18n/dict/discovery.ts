@@ -49,6 +49,7 @@ export const DICT_DISCOVERY: Record<string, string> = {
 
   // 候选状态
   做市机器人: "Market-maker bot",
+  "做市机器人 · 硬拒": "Market-maker bot · rejected",
   候选中: "Candidate",
 
   // 证据明细子表
@@ -67,6 +68,22 @@ export const DICT_DISCOVERY: Record<string, string> = {
   "白名单之外的聪明钱候选漏斗：成交流涌现（共识同行 / 拆单建仓 / 内幕签名）+ 已结算市场早期赢家 + 分类榜专家。候选须 30 天内证据广度 ≥3 并通过战绩审查（做市机器人硬拒）才会入池。点击行展开证据明细。":
     "The smart-money candidate funnel beyond the whitelist: firehose emergence (consensus echo / split-buy entry / insider signature) + early winners in settled markets + category-board specialists. A candidate needs evidence breadth ≥3 within 30 days and must pass the track-record review (market-maker bots hard-rejected) to enter the pool. Click a row to expand its evidence detail.",
   "加载失败：{msg}": "Failed to load: {msg}",
+
+  // 页头（Etherscan 皮：12px 小标 + 24/600 标题 + 14px 描述）与口径条
+  白名单之外的候选漏斗: "The candidate funnel beyond the whitelist",
+  "候选须 30 天内证据广度 ≥3 且通过战绩审查才入池。点击行展开证据明细。":
+    "A candidate needs evidence breadth ≥3 within 30 days and must pass the track-record review to enter the pool. Click a row to expand its evidence detail.",
+  "入池口径：成交流涌现（共识同行 / 拆单建仓 / 内幕签名）+ 已结算市场早期赢家 + 分类榜专家 → 复发广度 ≥3 → 战绩审查（胜率 ≥55% 且 ≥10 结算，或盈利且 ROI ≥5% 且 ≥5 结算）→ 做市机器人硬拒。分类榜旁路：六类 × 周/月榜前 25 免复发直接进闸门，只过战绩审查；在池成员每日按战绩重新认证，30 天不再合格自动出池——行为再现即可重新成为候选。":
+    "Admission definitions: firehose emergence (consensus echo / split-buy entry / insider signature) + early winners in settled markets + category-board specialists → recurrence breadth ≥3 → track-record review (win rate ≥55% with ≥10 settled, or profitable with ROI ≥5% and ≥5 settled) → market-maker bots hard-rejected. Category-board bypass: the top 25 of each weekly/monthly board across six categories skip recurrence and go straight to the gate on track record alone; pool members re-certify daily and age out after 30 days without re-qualifying — recurring behavior makes them candidates again.",
+
+  // 漏斗 KPI 四格（Etherscan 皮：01–04 编号取代了原来的 ①②③④ + 箭头）
+  "01 · 30 天证据": "01 · 30-day evidence",
+  "02 · 候选钱包": "02 · Candidate wallets",
+  "03 · 准入闸门": "03 · Admission gate",
+  "04 · 共识白名单池": "04 · Consensus whitelist pool",
+  "复发 ≥3": "Recurrence ≥3",
+  "{n} 榜": "{n} from boards",
+  "{n} 发现": "{n} discovered",
 
   // 漏斗条
   发现漏斗: "Discovery funnel",
@@ -171,16 +188,25 @@ export const DICT_DISCOVERY: Record<string, string> = {
   最近确认: "Last confirmed",
   "暂无 —— 候选通过准入审查（复发 ≥3 + 战绩闸）或分类榜播种后出现在这里":
     "Empty — wallets appear here after a candidate passes admission (recurrence ≥3 + the track-record gate) or a category board seeds them",
+  "评分 / 胜率 / 净盈亏 的 — 是「判不了」，不是零：该钱包还没有回填战绩快照（榜单播种的成员在首次重认证后补齐）。最近确认 的 — 表示来源未记录确认时间。":
+    "A — under score / win rate / net PnL means “can't be judged”, not zero: no track-record snapshot has been backfilled for that wallet yet (board-seeded members get one at their first re-certification). A — under last confirmed means the source recorded no confirmation time.",
 
   // 标签说明弹窗(词表正文 name/kind/detail 的译文由 glossary 分片供给)
   钱包标签说明: "Wallet tag guide",
   "与「说明」页同一数据源；悬停任意标签也能看到一句话提示。点击下方标签可直接按其筛选当前列表。":
     "Same data source as the Glossary page; hovering any tag shows its one-line tip. Click a tag below to filter the current list by it.",
+  "与「说明」页同一数据源；列表与筛选条里的任意标签，悬停都能看到同一句提示。":
+    "Same data source as the Glossary page; hovering any tag in the lists or the filter bar shows this same tip.",
   类别: "Category",
   定义: "Definition",
 
   // 白名单弹窗(WhitelistDialog;「聪明钱白名单」标题键由 common 分片供给)
   " · {n} 个钱包": " · {n} wallets",
+  共识白名单池: "Consensus whitelist pool",
+  "{n} 个钱包": "{n} wallets",
+  "其中 {n} 个无投票权": "{n} of them carry no vote",
+  "「🤖 无投票权」= 做市机器人（成交市场数 ≥1000）：保留池成员资格以积累战绩数据，但做市流是库存再平衡、不是方向性观点，因此不计入共识 / 分歧投票。评分 / 胜率的 — 是「判不了」，不是零。":
+    "“🤖 no vote” = market-maker bot (≥1000 markets traded): it keeps pool membership so track-record data keeps accruing, but market-making flow is inventory rebalancing rather than a directional view, so it never counts toward consensus / split votes. A — under score / win rate means “can't be judged”, not zero.",
   "搜索地址…（0x…）": "Search address… (0x…)",
   搜索白名单地址: "Search whitelist addresses",
   "加载中…": "Loading…",
@@ -189,20 +215,28 @@ export const DICT_DISCOVERY: Record<string, string> = {
   无匹配地址: "No matching addresses",
   地址: "Address",
   手动: "manual",
+  // 手动白名单行(is_whitelist=1)不参与 30 天老化清退 —— 灰底名称标签写全
+  // 这层含义，比只写「手动」多一条读者真正关心的信息。
+  "手动 · 永不过期": "Manual · never expires",
   "做市机器人（成交市场数 ≥1000）：保留池成员资格积累战绩数据，但不计入共识/分歧投票——做市流是库存再平衡，不是方向性观点":
     "Market-maker bot (≥1000 markets traded): keeps pool membership to accrue track-record data, but never votes in consensus/split — market-making flow is inventory rebalancing, not a directional view",
   无投票权: "no vote",
   // 名人堂/反指(第二梯队八件套,2026-08-28)
   "👑 名人堂": "👑 Hall of fame",
-  "名人堂数据缺失（接口错误兜底）。": "League data missing (API error fallback).",
+  // 视图切换的按钮文案 —— emoji 不上按钮(readme §1),👑 只留在 12px 小标。
+  名人堂: "Hall of fame",
+  "名人堂数据缺失（接口错误兜底）。":
+    "League data missing (API error fallback).",
   "代号 / 钱包": "Codename / wallet",
   "样本 n（市场）": "n (markets)",
   "净 edge（点/仓）": "Net edge (pts/fill)",
   "最佳 / 最惨一战": "Best / worst call",
-  "👑 名人堂 · 前向净 edge 显著为正": "👑 Hall of fame · forward net edge significantly positive",
+  "👑 名人堂 · 前向净 edge 显著为正":
+    "👑 Hall of fame · forward net edge significantly positive",
   "暂无净 edge 显著为正的钱包（≥10 市场才发判定）。":
     "No wallet with significantly positive net edge yet (verdicts need ≥10 markets).",
-  "🪞 反指名单 · 前向净 edge 显著为负": "🪞 Fade list · forward net edge significantly negative",
+  "🪞 反指名单 · 前向净 edge 显著为负":
+    "🪞 Fade list · forward net edge significantly negative",
   "暂无净 edge 显著为负的钱包——逆势少数边暂时还是孤例。":
     "No wallet with significantly negative net edge yet — the contrarian-minority tier remains a lone example for now.",
   "口径：逐行贡献 = 结算(0/1) − 入场隐含 − 每股协议费；区间按市场聚簇（CRVE）；代号是确定性哈希的纯趣味展示，地址才是身份。多重比较：本页共检验 {w} 个 ≥10 市场的钱包，区间未做 Bonferroni 校正——两张名单是研究线索，不是交易结论。":

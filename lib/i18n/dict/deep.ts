@@ -78,6 +78,9 @@ export const DICT_DEEP: Record<string, string> = {
     "Small sample: only {n} settled (threshold {m}). Every read below is directional at best — take the win rate with its Wilson interval and the expectancy with its t-stat.",
 
   // ----------------------------------------------- ① 下注质量体检(KPI)
+  下注质量体检: "Bet quality check",
+  "· 六个读数 · 每项的口径在自己的 (?) 里":
+    "· six readings · each definition lives in its own (?)",
   "期望 / 仓": "Expectancy / pos",
   "全部已结算仓(含平局)单仓盈亏的算术平均。t 值 = 均值 ÷ 标准误:|t|≥2 约等于「均值显著异于 0」(95% 置信);胜率的 Wilson 区间管不了赔率不对称,期望的不确定性要看这里":
     "Arithmetic mean of per-position PnL across all settled positions (pushes included). t = mean ÷ standard error; |t|≥2 roughly reads as 'mean significantly different from 0' (95% confidence). The Wilson interval on win rate cannot capture odds asymmetry — expectancy uncertainty lives here",
@@ -172,6 +175,14 @@ export const DICT_DEEP: Record<string, string> = {
 
   // ------------------------------------ 赛道 edge 矩阵(EdgeMatrixTable)
   "全体样本 {n} 仓": "{n} pos in full sample",
+  "该策略在该赛道零仓 —— 与 edge 为 0 严格分家":
+    "Zero positions for this strategy on this track — strictly distinct from an edge of 0",
+  "⚠️ 「·」= 该策略在该赛道零仓,与 edge 为 0 严格分家;「—」= 该格全是平局,没有实际胜率可比,是判不了不是零;淡显的格子(<{n} 仓)也不是「没 edge」,是这一格还判不了 —— 矩阵是用来选下一档做什么的,不是给现有档打分的。":
+    "⚠️ '·' = zero positions for that strategy on that track, strictly distinct from an edge of 0. '—' = the cell is all pushes, so there is no actual win rate to compare — undecidable, not zero. Dimmed cells (<{n} pos) are not 'no edge' either, just not decidable yet — the matrix is for picking what to build next, not for scoring the existing tiers.",
+  "暂无可透视的赛道 — 有仓位结算后这里会给出「哪类信号在哪个赛道有 edge」的矩阵":
+    "No tracks to pivot on yet — once positions settle, this becomes the 'which signal has edge on which track' matrix",
+  "暂无可统计的赛道 — 有仓位结算后这里会逐赛道给出 edge、胜率与落袋":
+    "No track stats yet — once positions settle, edge, win rate and realized PnL appear here track by track",
   "{name} × {label}:{n} 仓 {rec},": "{name} × {label}: {n} pos {rec}, ",
   "胜率 {a}% vs 隐含 {b}%,": "win rate {a}% vs implied {b}%, ",
   "落袋 {pnl}": "realized {pnl}",

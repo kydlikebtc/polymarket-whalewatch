@@ -30,6 +30,32 @@ export const DICT_GLOSSARY: Record<string, string> = {
   含义: "Meaning",
   名词: "Term",
   解释: "Explanation",
+  // Etherscan 风版式(设计稿 17):页头小标 / 标题 / 计数描述 + 跳转条 +
+  // 五级阶梯卡 + 三组标签卡 + 双栏定义列表。
+  "名词级定义 · 板块级见「功能说明书」":
+    "Term-level definitions · section-level lives in the feature guide",
+  "说明 · 图标与名词": "Reference · icons & terms",
+  "{i} 个图标 · {w} 个钱包标签 · {n} 个名词。信号强度五级阶梯在最前，其余按出现顺序排列。":
+    "{i} icons · {w} wallet tags · {n} terms. The five-step signal ladder comes first; the rest follow the order they appear in.",
+  "共 {n} 条": "{n} entries",
+  跳到: "Jump to",
+  信号阶梯: "Signal ladder",
+  图标: "Icons",
+  钱包标签: "Wallet tags",
+  "· {n} 个": "· {n} total",
+  "· {n} 个 · 按成交 / 结算 / 交互排列":
+    "· {n} total · ordered by fill / settlement / interaction",
+  信号强度五级阶梯: "Five-step signal strength ladder",
+  "· 从「值得看一眼」到「值得停下来」":
+    '· from "worth a glance" to "worth stopping for"',
+  "单笔达阈值（默认 ≥$10k）":
+    "Single fill hits the threshold (≥$10k by default)",
+  "单笔 ≥$50k": "Single fill ≥$50k",
+  多笔小额累积净买入: "Net buy accumulated from many small fills",
+  白名单钱包在场: "A whitelisted wallet is in it",
+  "≥2 个白名单同向": "≥2 whitelisted wallets on the same side",
+  "阶梯只表示「本站认为该多看一眼」的程度，不表示胜率高低 —— 后者去信号战绩页。":
+    "The ladder only ranks how much extra attention this site thinks something deserves — not hit rate. For that, go to the signal record page.",
   "有人下了重注（最基础）": "someone placed a heavy bet (the most basic layer)",
   "有人在刻意隐藏地建仓（绕过单笔监控）":
     "someone is deliberately building a hidden position (dodging single-fill monitoring)",

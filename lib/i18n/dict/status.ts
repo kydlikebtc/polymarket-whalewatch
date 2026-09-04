@@ -13,8 +13,23 @@ export const DICT_STATUS: Record<string, string> = {
   "本次进程已连续运行 {d} 天": "Current process up for {d} days",
   "无法获取状态（{err}）—— 下方为最后一次成功读取的结果。":
     "Could not fetch status ({err}) — showing the last successful read below.",
+  "停跳组件：{list}": "Stalled components: {list}",
+
+  // 三格 KPI(运行时长 / 数据连续性 / 今日断档)
+  运行时长: "Uptime",
+  "{d} 天": "{d} days",
+  本次进程连续运行: "Current process, uninterrupted",
+  数据连续性: "Data continuity",
+  "{n} / {g} 天": "{n} / {g} days",
+  连续性数据未就绪: "Continuity data not loaded yet",
+  今日断档: "Interruptions today",
+  "0 次": "0 so far",
+  已出现断档: "Interrupted",
+  "相邻两轮间隔超过 {t} 即记断档":
+    "A gap over {t} between consecutive cycles counts as an interruption",
 
   组件: "Component",
+  循环: "Loop",
   状态: "Status",
   最近心跳: "Last heartbeat",
   今日轮次: "Cycles today",
@@ -26,14 +41,30 @@ export const DICT_STATUS: Record<string, string> = {
   从未启动: "Never started",
   "加载中…": "Loading…",
   无循环心跳记录: "No loop heartbeats recorded",
+  "正在读取 /api/health": "Reading /api/health",
+  "引擎还没写过心跳 —— 若它刚重启，等一个循环周期再看。":
+    "The engine has never written a heartbeat — if it just restarted, check back after one cycle.",
+  "表内的 — 是「判不了」不是零：该循环当日没有可用计数。":
+    'A "—" in this table means "cannot tell", not zero: the loop has no counter for today.',
 
   更新于: "Updated at",
   "每 30 秒自动刷新": "auto-refreshes every 30s",
   "心跳表按循环只留存当日计数；跨日历史由共识循环逐轮落库的实测时间戳重建（上方连续性区）——每一格都有原始行背书，不做推测式 uptime。":
     "Heartbeats keep same-day counters only; cross-day history is rebuilt from the consensus loop's per-cycle measured timestamps (the continuity section above) — every cell is backed by raw rows, never inferred uptime.",
+  // 上面那条整句拆成两半:后半句在说明条里是本页唯一一处 600 字重。
+  "心跳表按循环只留存当日计数；跨日历史由共识循环逐轮落库的实测时间戳重建（上方连续性区）。":
+    "Heartbeats keep same-day counters only; cross-day history is rebuilt from the consensus loop's per-cycle measured timestamps (the continuity section above).",
+  "每一格都有原始行背书，不做推测式 uptime。":
+    "Every cell is backed by raw rows — never inferred uptime.",
 
   // 数据连续性(30 天起算时钟)
   "数据连续性 · 30 天起算时钟": "Data continuity · the 30-day clock",
+  "30 天起算时钟 · 按 UTC 日历日": "The 30-day clock · UTC calendar days",
+  "共识循环落下第一轮时间戳后，这里会出现第一格。":
+    "The first cell appears once the consensus loop writes its first timestamp.",
+  连续性数据尚未就绪: "Continuity data not ready yet",
+  "正在读取 /api/continuity —— 取不到时这里保留上一次成功的结果。":
+    "Reading /api/continuity — if it fails, the last successful read stays on screen.",
   "攒满 {n} 个不间断 UTC 日后重推所有策略阈值 —— 这是全站 edge 数字的前置闸门。":
     "After {n} uninterrupted UTC days every strategy threshold gets re-derived — the gate in front of every edge figure on this site.",
   天: "days",

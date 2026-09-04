@@ -6,6 +6,11 @@ export const DICT_HOME: Record<string, string> = {
     "Queried live from Polymarket's public API (nothing stored)",
   " · 最后刷新 {time}": " · last refreshed {time}",
   " · 加载中…": " · loading…",
+  // Etherscan 风页头:12px 小标 + 24/600 标题 + ≤700px 描述
+  "实时扫描 · 不落库 · 时间 UTC": "Live scan · nothing stored · times in UTC",
+  大额成交扫描器: "Whale Trade Scanner",
+  "按金额、方向、时间窗、赔率与地址年龄筛出单笔大额成交；每一行都能点进钱包档案与市场信号卡。":
+    "Filter single large fills by size, side, time window, odds and wallet age — every row opens the wallet dossier and the market signal card.",
 
   // Filter controls
   金额: "Amount",
@@ -45,6 +50,18 @@ export const DICT_HOME: Record<string, string> = {
   笔: "trades",
   " · 地址年龄加载中，结果将随加载补全":
     " · wallet ages still loading; results fill in as they resolve",
+  // KPI 分格卡副行 / 卡内标题条（Etherscan 风改版）
+  "显示前 {n} 条": "Showing the first {n}",
+  已全部显示: "All rows shown",
+  "单笔 ≥ {amt}": "Per fill ≥ {amt}",
+  "买 / 卖 · 买方占 {pct}%": "Buy / sell · buy side {pct}%",
+  "共 {n} 笔符合筛选": "{n} fills match the filters",
+  "（显示前 {n} 条）": " (showing the first {n})",
+  "地址年龄加载中，结果将随加载补全":
+    "Wallet ages still loading; results fill in as they resolve",
+  // 降级态说明条（表下方琥珀条）——「—」是判不了，不是零
+  "「…」= 地址年龄 / 战绩仍在后台补齐，结果会自己填上；「—」= 判不了，不是零 —— 战绩列的「—」表示该钱包没有可统计的已结算市场，不代表 0 胜率。":
+    "“…” = wallet age / record still being filled in the background; it resolves on its own. “—” = undecidable, not zero — a “—” in the Record column means the wallet has no settled markets to score, not a 0% win rate.",
 
   // Table area states
   "上游缓存预热中，自动重试…":
@@ -53,6 +70,16 @@ export const DICT_HOME: Record<string, string> = {
     "Scanning {hours}h of trades — the first deep pull takes ~5-15s, please wait…",
   "该筛选条件下 {hours}h 内暂无成交":
     "No trades in the last {hours}h under these filters",
+  // 空态的「出路」—— 每个空态都给内容也给下一步
+  "首次深拉会把上游缓存烧热，重试通常就成了；也可以直接点「刷新」。":
+    "The first deep pull warms the upstream cache, so the retry usually goes through — or just hit Refresh.",
+  "嫌慢就把时间窗切到 1h：窗口越短，回看深度越浅。":
+    "Too slow? Switch the window to 1h — a shorter window needs less lookback.",
+  "试试降低金额门槛、把时间窗切到 24h，或清掉价格区间 / 类型 / 地址年龄这三项客户端筛选。":
+    "Try a lower amount floor, switch the window to 24h, or clear the price band / type / wallet-age client-side filters.",
+  "正在准备扫描…": "Getting the scan ready…",
+  "如果这里一直停着，点筛选条右侧的「刷新」重新发起一次拉取。":
+    "If this sticks, hit Refresh on the right of the filter bar to fire a fresh pull.",
 
   // Table header / row overflow
   点击按时间排序: "Click to sort by time",

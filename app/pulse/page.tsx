@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useLang } from "../i18n";
-import { Segmented } from "../ui";
+import { Tag } from "../ui";
 import {
   buildQueryString,
   parseChoiceParam,
@@ -126,22 +126,30 @@ export default function PulsePage() {
 
   return (
     <main className="ds-main">
-      <header style={{ marginBottom: "var(--s-5)" }}>
-        <h1 style={{ fontSize: "var(--t-2xl)", margin: 0 }}>{t("市场脉搏")}</h1>
-        <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-          {t(
-            "每 UTC 日收盘后重建的市场级聚合：先看整体情绪落在哪个品类，再落到具体哪些市场在异动，最后看这些量能要打几折。",
-          )}
-          {report?.latestDay && (
-            <>
-              {" "}
+      {/* 页头 —— 12px 小标（emoji 前缀承担语义）+ 24/600 标题 + 14px 描述；
+          右侧动作位放数据日期这枚灰底名称标签（它是事实，不是按钮）。 */}
+      <header className="page-head">
+        <div style={{ minWidth: 0 }}>
+          <div className="page-head__eyebrow">
+            {t("📊 每 UTC 日收盘后重建")}
+          </div>
+          <h1 className="page-head__title">{t("市场脉搏")}</h1>
+          <p className="page-head__desc">
+            {t(
+              "先看整体情绪落在哪个品类，再落到具体哪些市场在异动，最后看这些量能要打几折。",
+            )}
+          </p>
+        </div>
+        {report?.latestDay && (
+          <div className="page-head__actions">
+            <Tag>
               {t("数据到 {d}（UTC）· 底座已积累 {n} 天", {
                 d: report.latestDay,
                 n: report.dayCount,
               })}
-            </>
-          )}
-        </div>
+            </Tag>
+          </div>
+        )}
       </header>
 
       {error && (
@@ -149,10 +157,11 @@ export default function PulsePage() {
           {t("加载失败：{err}", { err: error })}
         </div>
       )}
-      {!report && !error && <div className="ds-hint">{t("加载中…")}</div>}
+      {!report && !error && <div className="ds-empty">{t("加载中…")}</div>}
 
       {report && report.latestDay == null && (
-        <div className="ds-callout">
+        // 底座还没攒够一个完整 UTC 日 —— 空态给出路（明天再来），不返回 null。
+        <div className="ds-empty">
           {t(
             "尚无聚合数据 —— 底座从部署后的第一个完整 UTC 日开始积累，明天再来。",
           )}
@@ -174,102 +183,114 @@ export default function PulsePage() {
 
           <PulseOverview report={report} />
 
-          {/* 五个选项在 375px 下必然放不下一行,按 globals.css 里那条既有约定
-              直接上 ds-segmented--wrap(「不管几个选项,装不下就换行」的通用
-              防御),不单独验证这次会不会溢出。 */}
-          <Segmented<BoardKey>
-            ariaLabel={t("市场脉搏榜单分区")}
-            className="ds-segmented--wrap"
-            options={[
-              ...(available.includes("conviction")
-                ? [
-                    {
-                      label: `${t("确信指数")} ${report.conviction?.categories.length ?? 0}`,
-                      value: "conviction" as BoardKey,
-                    },
-                  ]
-                : []),
-              {
-                label: `${t("异常日榜")} ${report.top.length}`,
-                value: "anomaly" as BoardKey,
-              },
-              {
-                label: `${t("方向分歧")} ${report.divergences.length}`,
-                value: "divergence" as BoardKey,
-              },
-              ...(available.includes("ghost")
-                ? [
-                    {
-                      label: `${t("无鲸异动")} ${(report.ghosts ?? []).length}`,
-                      value: "ghost" as BoardKey,
-                    },
-                  ]
-                : []),
-              ...(available.includes("wash")
-                ? [
-                    {
-                      label: `${t("洗量榜")} ${(report.washTop ?? []).length}`,
-                      value: "wash" as BoardKey,
-                    },
-                  ]
-                : []),
-            ]}
-            value={board}
-            onChange={setBoard}
-          />
+          {/* 榜单卡 —— 标签行在卡内顶部（设计稿：tab 行 → 标题条 → 表 →
+              说明条，一张卡装完一个榜）。五个榜是同一天脉搏的五个侧面，
+              不是互斥的参数选择，所以用 TabRow（蓝色浅底胶囊、无外框）而不是
+              Segmented；标签在 375px 下装不下会自动换行。 */}
+          <div className="ds-card" style={{ overflow: "hidden" }}>
+            <div
+              className="ds-tabrow"
+              role="group"
+              aria-label={t("市场脉搏榜单分区")}
+            >
+              {[
+                ...(available.includes("conviction")
+                  ? [
+                      {
+                        label: `01 ${t("确信指数")} ${report.conviction?.categories.length ?? 0}`,
+                        value: "conviction" as BoardKey,
+                      },
+                    ]
+                  : []),
+                {
+                  label: `02 ${t("异常日榜")} ${report.top.length}`,
+                  value: "anomaly" as BoardKey,
+                },
+                {
+                  label: `03 ${t("方向分歧")} ${report.divergences.length}`,
+                  value: "divergence" as BoardKey,
+                },
+                ...(available.includes("ghost")
+                  ? [
+                      {
+                        label: `04 ${t("无鲸异动")} ${(report.ghosts ?? []).length}`,
+                        value: "ghost" as BoardKey,
+                      },
+                    ]
+                  : []),
+                ...(available.includes("wash")
+                  ? [
+                      {
+                        label: `05 ${t("洗量榜")} ${(report.washTop ?? []).length}`,
+                        value: "wash" as BoardKey,
+                      },
+                    ]
+                  : []),
+              ].map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  aria-pressed={board === o.value}
+                  onClick={() => setBoard(o.value)}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
 
-          <div
-            style={{
-              minHeight: PANEL_MIN_HEIGHT,
-              marginTop: "var(--s-4)",
-              marginBottom: "var(--s-5)",
-            }}
-          >
-            {board === "conviction" && report.conviction && (
-              <ConvictionBoard
-                data={report.conviction}
-                expanded={!!expanded.conviction}
-                onToggle={() => toggle("conviction")}
-              />
-            )}
-            {board === "anomaly" && (
-              <AnomalyBoard
-                rows={report.top}
-                membership={membership}
-                expanded={!!expanded.anomaly}
-                onToggle={() => toggle("anomaly")}
-              />
-            )}
-            {board === "divergence" && (
-              <DivergenceBoard
-                rows={report.divergences}
-                membership={membership}
-                expanded={!!expanded.divergence}
-                onToggle={() => toggle("divergence")}
-              />
-            )}
-            {board === "ghost" && (
-              <GhostBoard
-                rows={report.ghosts ?? []}
-                membership={membership}
-                expanded={!!expanded.ghost}
-                onToggle={() => toggle("ghost")}
-              />
-            )}
-            {board === "wash" && (
-              <WashBoard
-                rows={report.washTop ?? []}
-                membership={membership}
-                expanded={!!expanded.wash}
-                onToggle={() => toggle("wash")}
-              />
-            )}
+            <div style={{ minHeight: PANEL_MIN_HEIGHT }}>
+              {board === "conviction" && report.conviction && (
+                <ConvictionBoard
+                  data={report.conviction}
+                  expanded={!!expanded.conviction}
+                  onToggle={() => toggle("conviction")}
+                />
+              )}
+              {board === "anomaly" && (
+                <AnomalyBoard
+                  rows={report.top}
+                  membership={membership}
+                  expanded={!!expanded.anomaly}
+                  onToggle={() => toggle("anomaly")}
+                />
+              )}
+              {board === "divergence" && (
+                <DivergenceBoard
+                  rows={report.divergences}
+                  membership={membership}
+                  expanded={!!expanded.divergence}
+                  onToggle={() => toggle("divergence")}
+                />
+              )}
+              {board === "ghost" && (
+                <GhostBoard
+                  rows={report.ghosts ?? []}
+                  membership={membership}
+                  expanded={!!expanded.ghost}
+                  onToggle={() => toggle("ghost")}
+                />
+              )}
+              {board === "wash" && (
+                <WashBoard
+                  rows={report.washTop ?? []}
+                  membership={membership}
+                  expanded={!!expanded.wash}
+                  onToggle={() => toggle("wash")}
+                />
+              )}
+            </div>
           </div>
 
-          <div className="ds-hint">
-            {t(
-              "全页共用口径：小单 = 单笔 $2k–10k（抓取下限之下的真散户不可见，因此只说「小单」）；鲸鱼 = 单笔 ≥$50k，与 heavy 信号同一把尺。各榜自身的公式与门槛，见该榜标题下的「口径」折叠。",
-            )}
+          {/* 全页共用的两把尺 —— 卡内灰色说明条，各榜自己的公式在各榜卡底。 */}
+          <div
+            className="ds-card"
+            style={{ overflow: "hidden", marginTop: "var(--s-5)" }}
+          >
+            <div className="note-strip" style={{ borderTop: 0 }}>
+              {t(
+                "全页共用口径：小单 = 单笔 $2k–10k（抓取下限之下的真散户不可见，因此只说「小单」）；鲸鱼 = 单笔 ≥$50k，与 heavy 信号同一把尺。各榜自身的公式与门槛见该榜卡底的说明条。",
+              )}
+            </div>
           </div>
         </>
       )}

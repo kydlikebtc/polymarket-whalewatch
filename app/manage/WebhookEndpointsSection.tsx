@@ -190,9 +190,10 @@ export default function WebhookEndpointsSection({
 
   return (
     <>
-      <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-        webhook 端点(realtime key 专属,连续失败 10
-        次自动熔断;熔断后先「测试」确认端点修好,再「恢复」)
+      <div className="ds-label">webhook 端点</div>
+      <div className="ds-hint" style={{ margin: "var(--s-1) 0 var(--s-3)" }}>
+        realtime key 专属,连续失败 10 次自动熔断；熔断后先「测试」确认端点修好,
+        再「恢复」。
       </div>
       {notice && (
         <div className="ds-callout" style={{ marginBottom: "var(--s-3)" }}>
@@ -256,95 +257,75 @@ export default function WebhookEndpointsSection({
             onChange={(e) => setWhSecret(e.target.value)}
           />
         </div>
-        <div>
-          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
-            推送类型(勾选须在 key 订阅范围内)
+        <div style={{ flexBasis: "100%" }}>
+          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+            推送类型（勾选须在 key 订阅范围内）
           </div>
-          <div style={{ display: "grid", gap: 4 }}>
+          {/* 任选子集 —— 一排描边钮 + 选中态蓝描边,不用互斥控件。
+              第二行是该类型下的 def 级细选（只订某一档）。 */}
+          <div style={{ display: "grid", gap: "var(--s-2)" }}>
             {SUBSCRIBABLE.map((o) => {
               const typeDefs = busDefs.filter((d) => d.sourceType === o.type);
               const typeChecked = whSubs.includes(o.type);
               return (
-                <div key={o.type}>
-                  <label
-                    style={{
-                      display: "inline-flex",
-                      gap: 6,
-                      alignItems: "center",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={typeChecked}
-                      onChange={(e) =>
-                        setWhSubs((prev) => {
-                          const rest = prev.filter(
-                            (x) =>
-                              x !== o.type &&
-                              // 勾整类型时清掉该类型下的 def 细选(类型=全部)
-                              !typeDefs.some((d) => `def:${d.id}` === x),
-                          );
-                          return e.target.checked ? [...rest, o.type] : rest;
-                        })
-                      }
-                    />
-                    <span>{o.label}</span>
-                    {typeDefs.length > 0 && (
-                      <span className="ds-hint">(整类型 = 全部档)</span>
-                    )}
-                  </label>
-                  {/* def 级细选:只订某一档。勾了整类型时无意义,置灰。 */}
-                  {typeDefs.length > 0 && (
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        gap: "var(--s-3)",
-                        marginLeft: "var(--s-5)",
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      {typeDefs.map((d) => {
-                        const ref = `def:${d.id}`;
-                        return (
-                          <label
-                            key={d.id}
-                            style={{
-                              display: "inline-flex",
-                              gap: 4,
-                              alignItems: "center",
-                              cursor: typeChecked ? "not-allowed" : "pointer",
-                              opacity: typeChecked ? 0.5 : 1,
-                            }}
-                            title={`仅订「${d.label}」(≥${d.threshold})这一档`}
-                          >
-                            <input
-                              type="checkbox"
-                              disabled={typeChecked}
-                              checked={whSubs.includes(ref)}
-                              onChange={(e) =>
-                                setWhSubs((prev) =>
-                                  e.target.checked
-                                    ? [...prev, ref]
-                                    : prev.filter((x) => x !== ref),
-                                )
-                              }
-                            />
-                            <span className="ds-hint">
-                              {d.label}(≥{d.threshold})
-                            </span>
-                          </label>
+                <div key={o.type} className="filter-row">
+                  <button
+                    type="button"
+                    aria-pressed={typeChecked}
+                    className={`ds-btn ds-btn--sm${typeChecked ? " ds-btn--active" : ""}`}
+                    title={
+                      typeDefs.length > 0
+                        ? "选中 = 整类型（全部档）"
+                        : undefined
+                    }
+                    onClick={() =>
+                      setWhSubs((prev) => {
+                        const rest = prev.filter(
+                          (x) =>
+                            x !== o.type &&
+                            // 勾整类型时清掉该类型下的 def 细选(类型=全部)
+                            !typeDefs.some((d) => `def:${d.id}` === x),
                         );
-                      })}
-                    </span>
+                        return typeChecked ? rest : [...rest, o.type];
+                      })
+                    }
+                  >
+                    {o.label}
+                  </button>
+                  {typeDefs.length > 0 && (
+                    <span className="ds-hint">整类型 = 全部档；或只选：</span>
                   )}
+                  {typeDefs.map((d) => {
+                    const ref = `def:${d.id}`;
+                    const on = whSubs.includes(ref);
+                    return (
+                      <button
+                        key={d.id}
+                        type="button"
+                        aria-pressed={on}
+                        disabled={typeChecked}
+                        className={`ds-btn ds-btn--sm${on ? " ds-btn--active" : ""}`}
+                        title={`仅订「${d.label}」(≥${d.threshold})这一档`}
+                        onClick={() =>
+                          setWhSubs((prev) =>
+                            prev.includes(ref)
+                              ? prev.filter((x) => x !== ref)
+                              : [...prev, ref],
+                          )
+                        }
+                      >
+                        {d.label}（≥{d.threshold}）
+                      </button>
+                    );
+                  })}
                 </div>
               );
             })}
           </div>
         </div>
+        {/* 描边白底 —— 本屏的主按钮是上方的「签发新 key」,每屏至多一个。 */}
         <button
-          className="ds-btn ds-btn--primary"
+          className="ds-btn"
           disabled={
             busy ||
             !whKeyId ||
@@ -357,9 +338,17 @@ export default function WebhookEndpointsSection({
           登记端点
         </button>
       </div>
-      {webhooks != null && webhooks.length > 0 && (
+      {webhooks == null || webhooks.length === 0 ? (
+        <div className="ds-empty">
+          尚无 webhook 端点。
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            端点只能挂在 realtime key 上 —— 上面选一把、填订户给的接收地址与
+            HMAC secret,再勾推送类型即可登记。
+          </div>
+        </div>
+      ) : (
         <div className="ds-table-wrap">
-          <table className="ds-table ds-table--compact">
+          <table className="ds-table">
             <thead>
               <tr>
                 <th className="is-right">#</th>
@@ -372,41 +361,36 @@ export default function WebhookEndpointsSection({
               </tr>
             </thead>
             <tbody>
+              {/* 行没有任何行级强调：停用/吊销不调暗整行,只靠状态徽章分轻重。 */}
               {webhooks.map((w) => (
-                <tr
-                  key={w.id}
-                  style={
-                    w.active !== 1 || w.key_revoked_at != null
-                      ? { opacity: 0.55 }
-                      : undefined
-                  }
-                >
-                  <td className="is-right num muted">{w.id}</td>
-                  <td style={{ whiteSpace: "nowrap" }}>
+                <tr key={w.id}>
+                  <td className="is-right muted" data-label="#">
+                    {w.id}
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }} data-label="key">
                     #{w.api_key_id} {w.key_label}
                   </td>
+                  {/* URL 是有意义的文本,不截断 —— 换行。只有钱包地址与
+                      交易哈希做首尾省略。 */}
                   <td
-                    className="mono"
-                    style={{
-                      maxWidth: 260,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                    title={w.url}
+                    className="cell-wrap"
+                    style={{ maxWidth: 280 }}
+                    data-label="URL"
                   >
                     {w.url}
                   </td>
-                  <td style={{ whiteSpace: "nowrap" }}>
+                  <td style={{ whiteSpace: "nowrap" }} data-label="推送类型">
                     {pushTypes(w.bus_types)}
                   </td>
-                  <td className="is-right num">
+                  <td className="is-right" data-label="连败">
                     {w.consecutive_failures}
                     {w.last_error && (
-                      <span className="ds-hint">({w.last_error})</span>
+                      <div className="ds-hint cell-wrap" title={w.last_error}>
+                        {w.last_error}
+                      </div>
                     )}
                   </td>
-                  <td>
+                  <td data-label="状态">
                     {w.key_revoked_at != null ? (
                       <Tag variant="down">key 已吊销</Tag>
                     ) : w.active === 1 ? (
@@ -473,6 +457,11 @@ export default function WebhookEndpointsSection({
               ))}
             </tbody>
           </table>
+          <div className="note-strip">
+            「连败」到 10 触发自动熔断（状态转「已停用」，不再投递）。恢复前先点
+            「测试」——「恢复」会把连败清零，端点没修好的话下一次失败会立刻二次
+            熔断。「停用」保留端点与投递史，「删除」连 HMAC secret 一并销毁。
+          </div>
         </div>
       )}
     </>

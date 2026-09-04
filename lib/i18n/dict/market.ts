@@ -115,4 +115,71 @@ export const DICT_MARKET: Record<string, string> = {
     "From the {d} (UTC) market-pulse daily boards, not the live window",
   "{d}（UTC）异常分 {s}/100": "Anomaly score {s}/100 on {d} (UTC)",
   "异常分 {s}": "Anomaly {s}",
+
+  // ===================================================================
+  // Etherscan 风改皮(设计稿 11「市场卡 · 粘贴落地页」/ 12「五段式信号卡」)
+  // 新增的文案。旧键留在上面没删:它们是上一版版式的措辞,删掉只会让回滚
+  // 时英文界面出洞,留着不占运行时成本。
+  // ===================================================================
+
+  // -------- 落地页(设计稿 11)
+  "🃏 单市场信号卡": "🃏 Single-market signal card",
+  "粘贴任何能指认一个市场的东西，10 秒看清聪明钱在这个市场里做了什么。":
+    "Paste anything that identifies a market — see in 10 seconds what smart money did in it.",
+  支持三种格式: "Three accepted formats",
+  事件链接: "Event URL",
+  卡里会告诉你: "What the card tells you",
+  "共识 / 分歧状态": "Consensus / disagreement state",
+  白名单站哪一侧: "Which side the whitelist is on",
+  谁在蚂蚁搬家: "Who is building a position in small bites",
+  留存敞口: "Retained exposure",
+  "净股数 × 买入均价": "Net shares × avg buy price",
+  新钱包异常流: "Fresh-wallet unusual flow",
+  "账龄 ≤7 天的重注": "Big bets from wallets ≤7 days old",
+  本工具告警战绩: "This tool's alert record",
+  "90 天内 · 含验证结果": "90 days · with verification",
+
+  // -------- 卡片页:口径条与 KPI(设计稿 12)
+  "窗口触顶截断：该市场窗口内的成交超过分页上限，下方所有计数与金额都是下界。":
+    "Window capped: this market's trades in the window exceeded the pagination limit — every count and amount below is a lower bound.",
+  "24h 量": "24h volume",
+  聪明钱这一侧: "Smart money is on this side",
+  窗口留存敞口: "Retained exposure in window",
+
+  // -------- 共识 / 分歧判定条
+  "{n} 个白名单钱包买入 {o}": "{n} whitelist wallets bought {o}",
+  "⚖️ 分歧": "⚖️ Disagreement",
+  "🤖 做市机器人不计入共识投票":
+    "🤖 Market-maker bots are excluded from consensus votes",
+
+  // -------- 五段的段名与口径后缀(段名 600、口径 400 muted,分两个键)
+  复盘: "Replay",
+  "价格曲线 × 本站告警 × 结算": "price curve × this site's alerts × settlement",
+  聪明钱留存敞口: "Smart-money retained exposure",
+  聪明钱窗口台账: "Smart-money window ledger",
+  "近 {h}h · 净股数 × 买入均价": "last {h}h · net shares × avg buy price",
+  "近 {h}h · 市场已结算": "last {h}h · market settled",
+  "≥3 笔 · 单笔 <$10k · 敞口 ≥$2k": "≥3 fills · <$10k each · ≥$2k exposure",
+  "≥3 笔 · 单笔 <$10k · 窗口净买入 ≥$2k":
+    "≥3 fills · <$10k each · ≥$2k net bought in window",
+  "账龄 ≤7 天 · 单笔 ≥$5k 买入": "age ≤7d · single buy ≥$5k",
+  本工具告警史: "This tool's alert history",
+
+  // -------- 表内标记与判定徽章
+  "🤖 做市": "🤖 MM",
+  疑似对冲: "Possible hedge",
+  "🤖 疑似做市": "🤖 Possible market making",
+  "✅ 命中": "✅ Hit",
+  "❌ 反向": "❌ Wrong side",
+  "➖ 平": "➖ Push",
+  "「—」是判不了，不是 0：价格一栏为空表示该信号缺 asset、当时取不到价；1h / 24h 为空表示那个时点还没有价格历史（信号太新或曲线不可用）。":
+    "A dash means undecidable, not zero: an empty price means the signal had no asset and no price could be read at the time; an empty 1h / 24h means no price history existed at that moment (signal too new, or the curve was unavailable).",
+
+  // -------- 01 复盘未加载态
+  拉一次价格曲线: "Fetch the price curve once",
+  "点一下才拉曲线 —— 这页对上游仍是零请求":
+    "Nothing is fetched until you click — this page stays at zero upstream requests",
+  "🐣 同批新钱包": "🐣 Fresh-wallet cohort",
+  "曲线为第一结果一侧 · 另一侧按 1−p 映射（标记带 ↔）":
+    "Curve shows the first outcome's side · the other side maps via 1−p (markers carry ↔)",
 };

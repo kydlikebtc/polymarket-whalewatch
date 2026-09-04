@@ -7,10 +7,12 @@ import { useEffect, useState, type ReactNode } from "react";
 export type Tone = "up" | "down" | "warn" | "muted";
 
 const DOT_BG: Record<Tone, string> = {
-  up: "var(--up-500)",
-  down: "var(--down-500)",
-  warn: "var(--warn-500)",
-  muted: "var(--n-300)",
+  up: "var(--ww-up)",
+  down: "var(--ww-down)",
+  // --warn-500 指向的是**描边**色 rgba(255,193,7,.6) —— 7px 的实心圆点用它
+  // 淡到看不见。琥珀的实体色是 --ww-warn(#b47d00),与琥珀徽章的文字同源。
+  warn: "var(--ww-warn)",
+  muted: "var(--ww-text-faint)",
 };
 
 /** 状态圆点(.ds-dot)+ 可选文字,语义色取 token。 */
@@ -39,6 +41,11 @@ export function Dot({ tone, children }: { tone: Tone; children?: ReactNode }) {
  *
  * 折叠态**不是空的**:summary 那行照常显示当前读数。折教学,不折状态 ——
  * 否则就不是折叠而是藏起来了。
+ *
+ * 视觉(Etherscan 风):它不再是一张独立的卡,而是分区导航卡内部的一条
+ * **卡内标题条**(.card-bar,12px 16px + 底边 1px)。层级来自那条 1px 分格线
+ * 与 14/600 的标题,不来自字号跳档或投影 —— 卡中卡会把「地图」和「主表」
+ * 并列成两块内容,而它其实是主表的抬头。
  */
 export function Foldable({
   storageKey,
@@ -76,47 +83,77 @@ export function Foldable({
   };
 
   return (
-    <section
-      className="ds-card"
-      style={{ marginBottom: open ? "var(--s-5)" : "var(--s-4)" }}
-    >
-      <div
+    <section style={{ borderBottom: "1px solid var(--ww-border)" }}>
+      {/* 整条标题条都是开关 —— 折叠态那行读数(summary)本来就是它的说明,
+          让人去瞄准一枚 30px 小钮是没必要的精细活。 */}
+      <button
+        type="button"
+        className="card-bar"
+        aria-expanded={open}
+        onClick={toggle}
         style={{
-          display: "flex",
+          width: "100%",
+          textAlign: "left",
           alignItems: "baseline",
-          gap: "var(--s-3)",
-          flexWrap: "wrap",
+          background: "transparent",
+          border: 0,
+          borderBottom: open ? "1px solid var(--ww-border)" : "none",
+          borderRadius: 0,
+          fontFamily: "inherit",
+          cursor: "pointer",
         }}
       >
-        <button
-          type="button"
-          className="ds-btn ds-btn--subtle ds-btn--sm"
-          aria-expanded={open}
-          onClick={toggle}
-        >
+        <span style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
           {open ? "▾" : "▸"} {title}
-        </button>
+        </span>
         {!open && summary && (
-          <span className="ds-hint" style={{ flex: "1 1 auto" }}>
+          <span className="ds-hint" style={{ minWidth: 0 }}>
             {summary}
           </span>
         )}
-      </div>
+        <span
+          style={{
+            marginLeft: "auto",
+            fontSize: "var(--t-base)",
+            color: "var(--ww-link)",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {open ? "收起" : "展开"}
+        </span>
+      </button>
       {open && (
         <>
+          {/* 说明条限宽 700 —— 与页头描述同一条规矩:1120 宽的一行中文能塞
+              六十多个字,读到行尾就找不着下一行的行首了。长段落走
+              text-wrap:pretty,不让末行只剩一两个字。 */}
           {hint && (
-            <div className="ds-hint" style={{ margin: "var(--s-3) 0" }}>
+            <div
+              className="ds-hint"
+              style={{
+                padding: "var(--s-3) var(--s-4)",
+                lineHeight: "var(--lh-note)",
+                maxWidth: 700,
+                textWrap: "pretty",
+                borderBottom: "1px solid var(--ww-border)",
+              }}
+            >
               {hint}
             </div>
           )}
-          <div style={{ marginTop: hint ? 0 : "var(--s-3)" }}>{children}</div>
+          {children}
         </>
       )}
     </section>
   );
 }
 
-/** 区块标题行:左侧标题 + 右侧补充(计数 Tag / 操作),间距按规范。 */
+/**
+ * 区块标题行:左侧标题 + 右侧补充(计数 Tag / 操作)+ 下方说明。
+ *
+ * 视觉:16 / 600 的卡片标题 + 一条 1px 分格线 —— 层级来自那条线,不来自
+ * 字号跳档。说明文字走 13px muted / 1.6 行高,限宽 700 以免长句拉成一行。
+ */
 export function SectionHead({
   title,
   aside,
@@ -127,7 +164,13 @@ export function SectionHead({
   hint?: ReactNode;
 }) {
   return (
-    <header style={{ marginBottom: "var(--s-4)" }}>
+    <header
+      style={{
+        marginBottom: "var(--s-4)",
+        paddingBottom: "var(--s-3)",
+        borderBottom: "1px solid var(--ww-border)",
+      }}
+    >
       <div
         style={{
           display: "flex",
@@ -137,13 +180,28 @@ export function SectionHead({
           flexWrap: "wrap",
         }}
       >
-        <h2 style={{ fontSize: "var(--t-lg)", fontWeight: 600, margin: 0 }}>
+        <h2
+          style={{
+            fontSize: "var(--t-lg)",
+            fontWeight: 600,
+            lineHeight: "var(--lh-tight)",
+            margin: 0,
+          }}
+        >
           {title}
         </h2>
         {aside}
       </div>
       {hint && (
-        <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
+        <div
+          className="ds-hint"
+          style={{
+            marginTop: "var(--s-2)",
+            maxWidth: 700,
+            lineHeight: "var(--lh-note)",
+            textWrap: "pretty",
+          }}
+        >
           {hint}
         </div>
       )}

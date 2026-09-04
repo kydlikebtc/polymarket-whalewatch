@@ -9,12 +9,21 @@ export const DICT_GUIDE: Record<string, string> = {
     'Three things per section: what it is, how to use it, how to read it. The reading blocks inherit the site-wide honesty discipline — every section spells out its basis, sample, and a "don\'t read it this way". Term-level definitions live in the',
   "；本页讲板块。": "; this page covers the sections.",
   目录: "Contents",
+  // Etherscan 风版式(设计稿 16):页头小标 + 短描述 + 计数钮 + 左侧锚点轨。
+  "板块级说明 · 名词级见「说明」":
+    "Section-level guide · term-level lives in Glossary",
+  "每个板块三件事：这是什么、怎么使用、怎么解读。解读块写清口径、样本与「别这么读」。":
+    'Three things per section: what it is, how to use it, how to read it. The reading block spells out the basis, the sample, and a "don\'t read it this way".',
+  "共 {n} 节": "{n} sections",
+  锚点目录: "On this page",
   这是什么: "What it is",
   怎么使用: "How to use",
   怎么解读: "How to read",
   "打开 →": "open →",
   "口径的完整论证散在设计文档与 CHANGELOG（GitHub 仓库 docs/），本页是它们的板块级摘要——两处冲突时以代码与测试为准。":
     "The full arguments behind each basis live in the design docs and CHANGELOG (docs/ in the GitHub repo); this page is their per-section digest — where they conflict, code and tests win.",
+  "页面保留纵向长页，可从头读到尾；左侧锚点目录粘顶。":
+    "The page stays one long scroll you can read end to end; the anchor list on the left sticks as you go.",
 
   // -------- 新板块 title(NAV 之外)
   钱包档案: "Wallet dossier",

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AdminSignalOverview } from "../../lib/adminOverview";
-import { Segmented, Tag } from "../ui";
+import { Tag } from "../ui";
 import AlertRulesSection from "./AlertRulesSection";
 import EventsSection from "./EventsSection";
 import ViewsSection from "./ViewsSection";
@@ -61,14 +61,17 @@ const TOKEN_DEBOUNCE_MS = 400;
 // 与接入文档 §6.1 同一套分类),第二步「投给谁」(下游管线)。此前五个 tab
 // 把两层揉在一起,策略开关/总线开关/TG 告警条件同住一个 tab,而 TG 目标、
 // API key、𝕏 又各占一个 —— 没有一张图回答「这条信号最终到谁手里」。
+// 标签前的 01–04 是**顺序**不是分类(分类用 ①②/🅐🅑🅒):四个分区有先后 ——
+// 先看产出什么,再看投给谁,再体检参数,最后看引擎活没活。设计稿 19 的分区
+// 条就是这么编号的。
 const TABS = [
-  { id: "lines", label: "🧭 对外产出" },
-  { id: "pipes", label: "🚚 下游管线" },
+  { id: "lines", label: "01 🧭 对外产出" },
+  { id: "pipes", label: "02 🚚 下游管线" },
   // 🧪 阈值重推独立成 tab(2026-08-28):它既不是信号线也不是管线,是月度
   // 参数体检 —— 有自己的动作(跑/下载)与整页报告,挤在 ② 底部会被 19 档
   // 大表推到三屏之外。
-  { id: "wf", label: "🧪 阈值重推" },
-  { id: "health", label: "🩺 健康度" },
+  { id: "wf", label: "03 🧪 阈值重推" },
+  { id: "health", label: "04 🩺 健康度" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -283,8 +286,8 @@ export default function ManagePage() {
         }}
       >
         管理令牌(x-admin-token)
-        {state === "unlocked" && <Tag variant="up">已验证</Tag>}
-        {state === "locked" && <Tag variant="warn">已锁定</Tag>}
+        {state === "unlocked" && <Tag variant="up">✅ 已验证</Tag>}
+        {state === "locked" && <Tag variant="warn">🔒 已锁定</Tag>}
       </div>
       <input
         id="manage-token"
@@ -304,79 +307,105 @@ export default function ManagePage() {
     </div>
   );
 
+  // 页尾出口:/status 与 /guide 都是「公开但不进导航」的页面,/manage 是它们
+  // 的常规入口。锁定态也放同一条 —— 说明书与引擎心跳没有秘密。
+  // 描边白底,不加 emoji(emoji 只住在灰底标签/KPI 图标位/12px 小标前缀)。
+  const exits = (
+    <div
+      style={{
+        display: "flex",
+        gap: "var(--s-2)",
+        flexWrap: "wrap",
+        marginTop: "var(--s-5)",
+      }}
+    >
+      <Link className="ds-btn" href="/status">
+        系统状态页 →
+      </Link>
+      <Link className="ds-btn" href="/guide">
+        功能说明书 →
+      </Link>
+    </div>
+  );
+
   // 锁定/验证中:只有标题、令牌框、以及一条去公开状态页的出口。
   // 没有 tab、没有 KPI、没有区块骨架 —— 这些标签本身就是运营结构的情报。
   if (state !== "unlocked") {
     return (
-      <main className="ds-main" style={{ maxWidth: 560 }}>
-        <header style={{ marginBottom: "var(--s-5)" }}>
-          <h1 style={{ fontSize: "var(--t-2xl)", margin: 0 }}>🔒 运营管理</h1>
-          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            本页需要管理令牌。令牌只存本浏览器,与 /alerts 配置面板共用。
+      <main className="ds-main" style={{ maxWidth: 620 }}>
+        <div className="page-head">
+          <div style={{ minWidth: 0 }}>
+            <div className="page-head__eyebrow">🔒 运营内部 · 不在导航栏</div>
+            <h1 className="page-head__title">运营管理</h1>
+            <p className="page-head__desc">
+              本页需要管理令牌。令牌只存本浏览器,与 /alerts 配置面板共用。
+            </p>
           </div>
-        </header>
+        </div>
+        {/* 口径先行:先说清「没有令牌也能看什么」,再放输入框。 */}
+        <div
+          className="ds-callout ds-callout--warn"
+          style={{ marginBottom: "var(--s-5)" }}
+        >
+          门后是运营结构本身(有哪些循环、几条投递通道、多少档策略、几把
+          key),所以未验证时整页不渲染。想确认引擎是否在正常运行不需要令牌 ——
+          走下面的公开状态页。
+        </div>
         <div className="ds-card" style={{ padding: "var(--s-5)" }}>
           {tokenField}
         </div>
-        <div className="ds-hint" style={{ marginTop: "var(--s-4)" }}>
-          想确认引擎是否在正常运行？这不需要令牌 ——{" "}
-          <Link href="/status">查看系统状态 →</Link>
-          <span className="muted"> · </span>
-          各板块怎么用怎么读？<Link href="/guide">📚 功能说明书 →</Link>
-        </div>
+        {exits}
       </main>
     );
   }
 
+  // 分区导航卡:主分区 tab → 地图(可折的总览条)→ 子分区 tab → 挂载说明。
+  // 四个分区是「同一个对象的多个侧面」,所以用 TabRow(蓝底胶囊)而不是
+  // Segmented —— Segmented 是互斥选择,TabRow 是换一面看。
+  const hasSub = tab === "lines" || tab === "pipes";
+
   return (
     <main className="ds-main">
-      <header style={{ marginBottom: "var(--s-5)" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--s-3)",
-            flexWrap: "wrap",
-          }}
-        >
-          <h1 style={{ fontSize: "var(--t-2xl)", margin: 0 }}>🛠 运营管理</h1>
-          <button
-            className="ds-btn ds-btn--subtle ds-btn--sm"
-            disabled={refreshing}
-            onClick={() => void loadAll()}
-          >
-            {refreshing ? "刷新中…" : "↻ 刷新"}
-          </button>
-          {refreshedAt != null && (
-            <span className="ds-hint mono">
-              更新于 {new Date(refreshedAt * 1000).toLocaleTimeString("zh-CN")}
-              <span className="muted"> · 每分钟自动</span>
-            </span>
-          )}
-          {/* 令牌已验证时只留一枚可点的 Tag —— 要换令牌再展开那张卡。 */}
+      <div className="page-head">
+        <div style={{ minWidth: 0 }}>
+          <div className="page-head__eyebrow">🛠 运营内部 · 不在导航栏</div>
+          <h1 className="page-head__title">运营管理</h1>
+          {/* 描述只留一句身份说明。刷新节奏不写在这里 —— 右侧动作区已经有
+              「时间 · 每分钟自动」,导航卡底的说明条又讲了「切分区即重拉」,
+              同一件事说三遍会把页头撑成两行。 */}
+          <p className="page-head__desc">
+            令牌只存本浏览器,与 /alerts 配置面板共用。
+          </p>
+        </div>
+        <div className="page-head__actions">
+          {/* 令牌已验证时只留一枚可点的绿徽章 —— 要换令牌再展开那张卡。
+              徽章是状态,不是按钮,所以借 .ds-tag 的皮而不是 .ds-btn。 */}
           <button
             type="button"
-            className="ds-btn ds-btn--subtle ds-btn--sm"
+            className="ds-tag ds-tag--up"
             aria-expanded={tokenOpen}
             title="令牌已验证。需要更换时点开"
             onClick={() => setTokenOpen((v) => !v)}
+            style={{ cursor: "pointer" }}
           >
             🔑 令牌已验证 {tokenOpen ? "▾" : "▸"}
           </button>
+          {/* 全页唯一的主按钮。 */}
+          <button
+            className="ds-btn ds-btn--primary"
+            disabled={refreshing}
+            onClick={() => void loadAll()}
+          >
+            {refreshing ? "刷新中…" : "刷新"}
+          </button>
+          {refreshedAt != null && (
+            <span className="ds-hint">
+              {new Date(refreshedAt * 1000).toLocaleTimeString("zh-CN")} ·
+              每分钟自动
+            </span>
+          )}
         </div>
-        {/* /status 不在全站导航里,/manage 是它唯一的常规入口 —— 所以这条
-            链接放在页头而不是只放在健康度区块内:运维在别的 tab 上发现数字
-            不对劲时,不该还要先切回健康度才找得到去处。 */}
-        {/* /guide 与 /status 同款「公开但不进导航」页面,/manage 页头是
-            它们的常规入口 —— 说明书没有秘密,锁定态也放同一条。 */}
-        <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-          无入口页面(不在导航栏)。令牌只存本浏览器,与 /alerts 配置面板共用。
-          <span className="muted"> · </span>
-          <Link href="/status">🩺 系统状态页 →</Link>
-          <span className="muted"> · </span>
-          <Link href="/guide">📚 功能说明书 →</Link>
-        </div>
-      </header>
+      </div>
 
       <StatusStrip health={health} overview={overview} onJump={jump} />
 
@@ -397,35 +426,102 @@ export default function ManagePage() {
         </div>
       )}
 
-      <div style={{ marginBottom: "var(--s-5)" }}>
-        <Segmented
-          options={TABS.map((x) => ({ value: x.id, label: x.label }))}
-          value={tab}
-          onChange={(v) => selectTab(v)}
-          ariaLabel="运营分区"
-          className="ds-segmented--wrap"
-        />
-      </div>
+      {/* 分区导航卡 —— 一张白卡装下「主分区 → 地图 → 子分区 → 挂载说明」,
+          四段之间靠 1px 分格线分层。此前它们是三块并列的独立元素(分段控件
+          + 一张总览卡 + 又一个分段控件),读起来像三件事,其实是一件。 */}
+      <section
+        className="ds-card"
+        style={{ overflow: "hidden", marginBottom: "var(--s-5)" }}
+      >
+        <div
+          className="ds-tabrow"
+          role="group"
+          aria-label="运营分区"
+          style={hasSub ? undefined : { borderBottom: "none" }}
+        >
+          {TABS.map((x) => (
+            <button
+              key={x.id}
+              type="button"
+              aria-pressed={tab === x.id}
+              onClick={() => selectTab(x.id)}
+            >
+              {x.label}
+            </button>
+          ))}
+        </div>
+        {tab === "lines" && (
+          <>
+            <SignalLinesOverview
+              overview={overview}
+              onJump={jump}
+              active={lineSub}
+            />
+            <div
+              className="ds-tabrow"
+              role="group"
+              aria-label="信号线子模块"
+              style={{ borderBottom: "none" }}
+            >
+              {LINE_SUBS.map((x) => (
+                <button
+                  key={x.id}
+                  type="button"
+                  aria-pressed={lineSub === x.id}
+                  onClick={() => selectLineSub(x.id)}
+                >
+                  {x.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {tab === "pipes" && (
+          <>
+            <PipelinesOverview
+              overview={overview}
+              onJump={jump}
+              active={pipeSub}
+            />
+            <RoutingMatrix
+              routing={routing}
+              busDefs={busDefs}
+              channels={overview?.ops.channels ?? null}
+              onJump={jump}
+            />
+            <div
+              className="ds-tabrow"
+              role="group"
+              aria-label="下游管线子模块"
+              style={{ borderBottom: "none" }}
+            >
+              {PIPE_SUBS.map((x) => (
+                <button
+                  key={x.id}
+                  type="button"
+                  aria-pressed={pipeSub === x.id}
+                  onClick={() => selectPipeSub(x.id)}
+                >
+                  {x.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {/* 中文长句写成字符串表达式:JSX 折行会渲染成一个空格,在汉字中间
+            夹出一道缝。 */}
+        <div className="note-strip">
+          {
+            "每次只挂载一个子模块 —— 分区与子分区记在本浏览器,切换即卸载重拉,所以下方看到的永远是刚取回的数,不是打开这一页那一刻的数。"
+          }
+        </div>
+      </section>
 
       {/* 每个 tab 只挂载自己的区块:各 Section 在挂载时拉取自己的数据,
           切走即卸载,回来重新拉 —— 运营页的数据本来就要求新鲜,重挂载
           顺带成了「切 tab 即刷新」。 */}
       {tab === "lines" && (
         <>
-          <SignalLinesOverview
-            overview={overview}
-            onJump={jump}
-            active={lineSub}
-          />
-          <div style={{ marginBottom: "var(--s-4)" }}>
-            <Segmented
-              options={LINE_SUBS.map((x) => ({ value: x.id, label: x.label }))}
-              value={lineSub}
-              onChange={(v) => selectLineSub(v)}
-              ariaLabel="信号线子模块"
-              className="ds-segmented--wrap"
-            />
-          </div>
           {lineSub === "events" && <EventsSection token={token} />}
           {lineSub === "signals" && (
             <SignalsSection
@@ -439,26 +535,6 @@ export default function ManagePage() {
       )}
       {tab === "pipes" && (
         <>
-          <PipelinesOverview
-            overview={overview}
-            onJump={jump}
-            active={pipeSub}
-          />
-          <RoutingMatrix
-            routing={routing}
-            busDefs={busDefs}
-            channels={overview?.ops.channels ?? null}
-            onJump={jump}
-          />
-          <div style={{ marginBottom: "var(--s-4)" }}>
-            <Segmented
-              options={PIPE_SUBS.map((x) => ({ value: x.id, label: x.label }))}
-              value={pipeSub}
-              onChange={(v) => selectPipeSub(v)}
-              ariaLabel="下游管线子模块"
-              className="ds-segmented--wrap"
-            />
-          </div>
           {pipeSub === "card" && <MarketCardSection token={token} />}
           {pipeSub === "tg" && (
             <>
@@ -478,6 +554,8 @@ export default function ManagePage() {
       {tab === "health" && (
         <HealthSection health={health} ops={overview?.ops ?? null} />
       )}
+
+      {exits}
     </main>
   );
 }

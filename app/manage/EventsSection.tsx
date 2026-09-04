@@ -218,9 +218,14 @@ export default function EventsSection({ token }: { token: string }) {
       ) : null}
 
       {typesView.kind === "error" ? (
-        <div className="ds-empty">{typesView.message}</div>
+        <div className="ds-empty">
+          {typesView.message}
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            这是服务端的原话 —— 通常是管理令牌失效。换令牌后本区块自动重试。
+          </div>
+        </div>
       ) : typesView.kind === "loading" ? (
-        <div className="ds-empty">加载中…</div>
+        <div className="ds-empty">正在读取事件类型与阈值…</div>
       ) : (
         <div
           style={{
@@ -233,13 +238,11 @@ export default function EventsSection({ token }: { token: string }) {
             const typeDefs = defs.filter((d) => d.sourceType === t.type);
             const anyOn = typeDefs.some((d) => d.enabled);
             return (
+              // 卡片一律白底 —— 启不启用靠徽章说话,不给整块内容染色。
               <div
                 key={t.type}
                 className="ds-card"
-                style={{
-                  padding: "var(--s-4)",
-                  background: anyOn ? "var(--up-50)" : "var(--n-50)",
-                }}
+                style={{ padding: "var(--s-4)" }}
               >
                 <div
                   style={{
@@ -251,21 +254,28 @@ export default function EventsSection({ token }: { token: string }) {
                   }}
                 >
                   <div style={{ display: "grid", gap: 2 }}>
-                    <span style={{ fontWeight: 500 }}>
-                      {t.label}{" "}
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "var(--s-2)",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {t.label}
                       {!t.available ? <Tag variant="warn">待接入</Tag> : null}
                       {t.available && (
                         <Tag variant={anyOn ? "up" : undefined}>
                           {anyOn
                             ? `${typeDefs.filter((d) => d.enabled).length} 档启用`
-                            : "关(无启用定义)"}
+                            : "关（无启用定义）"}
                         </Tag>
                       )}
                     </span>
                     <span className="ds-hint">{t.hint}</span>
                   </div>
                   <div className="ds-hint" style={{ textAlign: "right" }}>
-                    <div className="num">近 24h 事件 {counts[t.type] ?? 0}</div>
+                    <div>近 24h 事件 {counts[t.type] ?? 0}</div>
                     {routing && t.available && (
                       <div style={{ marginTop: 4 }}>
                         {pipeCells(t.type, routing, anyOn).map((c) => (
@@ -291,19 +301,17 @@ export default function EventsSection({ token }: { token: string }) {
                           alignItems: "center",
                           flexWrap: "wrap",
                           padding: "var(--s-2) 0",
-                          borderTop: "1px solid var(--n-150)",
+                          borderTop: "1px solid var(--ww-border)",
                         }}
                       >
                         <span
-                          className="mono ds-hint"
+                          className="ds-hint"
                           style={{ minWidth: 56 }}
                           title="webhook 端点可用 def:<id> 单独订阅这一档"
                         >
                           def:{d.id}
                         </span>
-                        <span style={{ minWidth: 90, fontWeight: 500 }}>
-                          {d.label}
-                        </span>
+                        <span style={{ minWidth: 90 }}>{d.label}</span>
                         <span
                           style={{
                             display: "inline-flex",
@@ -339,8 +347,10 @@ export default function EventsSection({ token }: { token: string }) {
                             {t.threshold?.unit ?? ""}
                           </span>
                         </span>
+                        {/* 描边白底 —— 本屏没有主按钮；启用是「点亮」不是
+                            「提交」,危险方向（停用会断投递）才上红。 */}
                         <button
-                          className={`ds-btn ds-btn--sm ${d.enabled ? "ds-btn--danger" : "ds-btn--primary"}`}
+                          className={`ds-btn ds-btn--sm${d.enabled ? " ds-btn--danger" : ""}`}
                           disabled={busy === `d${d.id}`}
                           onClick={() => {
                             if (
@@ -392,10 +402,11 @@ export default function EventsSection({ token }: { token: string }) {
                         paddingTop: "var(--s-2)",
                         borderTop:
                           typeDefs.length > 0
-                            ? "1px solid var(--n-150)"
+                            ? "1px solid var(--ww-border)"
                             : undefined,
                       }}
                     >
+                      <span className="filter-row__label">新增一档</span>
                       <input
                         className="ds-input"
                         style={{ width: 130 }}
@@ -434,7 +445,7 @@ export default function EventsSection({ token }: { token: string }) {
                         </span>
                       </span>
                       <button
-                        className="ds-btn ds-btn--sm ds-btn--primary"
+                        className="ds-btn ds-btn--sm"
                         disabled={
                           busy === `new:${t.type}` ||
                           !(draft[`nl:${t.type}`] ?? "").trim() ||
@@ -469,24 +480,35 @@ export default function EventsSection({ token }: { token: string }) {
         </div>
       )}
 
-      <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-        最近 20 条事件台账 · 去向
-        <span className="muted">
-          （大额/共识源自 alerts,发现源自总线;TG 先发后记无逐行记录,配置见 🅐;𝕏
-          与总线→webhook 有逐行记录）
-        </span>
+      <div className="ds-label">最近 20 条事件台账 · 去向</div>
+      {/* 口径先行：这张表的「去向」列不是全景,读之前先知道少了哪一路。 */}
+      <div
+        className="ds-callout ds-callout--warn"
+        style={{ margin: "var(--s-2) 0 var(--s-4)" }}
+      >
+        大额/共识源自 alerts，发现源自总线。<b>TG 先发后记，没有逐行记录</b> ——
+        这张表看不到它，配置见 🅐；𝕏 与总线 → webhook 才有逐行记录。
       </div>
       {ledgerView.kind === "error" ? (
-        <div className="ds-empty">{ledgerView.message}</div>
+        <div className="ds-empty">
+          {ledgerView.message}
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            这是服务端的原话 —— 通常是管理令牌失效。换令牌后本区块自动重试。
+          </div>
+        </div>
       ) : ledgerView.kind === "loading" ? (
-        <div className="ds-empty">加载中…</div>
+        <div className="ds-empty">正在读取事件台账…</div>
       ) : ledgerView.data.length === 0 ? (
         <div className="ds-empty">
-          台账暂无事件（进料条件未命中,或引擎尚未运行）。
+          台账暂无事件。
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            要么进料条件一条都没命中，要么引擎还没跑起来 —— 去 /status
+            看循环有没有在跳。
+          </div>
         </div>
       ) : (
         <div className="ds-table-wrap">
-          <table className="ds-table ds-table--compact">
+          <table className="ds-table">
             <thead>
               <tr>
                 <th>时间</th>
@@ -501,37 +523,38 @@ export default function EventsSection({ token }: { token: string }) {
             <tbody>
               {ledgerView.data.map((r) => (
                 <tr key={`${r.type}:${r.id}`}>
-                  <td className="ds-hint mono" style={{ whiteSpace: "nowrap" }}>
+                  <td
+                    className="muted"
+                    style={{ whiteSpace: "nowrap" }}
+                    data-label="时间"
+                  >
                     {timeText(r.emittedAt)}
                   </td>
-                  <td style={{ whiteSpace: "nowrap" }}>
+                  <td style={{ whiteSpace: "nowrap" }} data-label="类型">
                     {TYPE_LABEL[r.type] ?? r.type}
                   </td>
+                  {/* 市场名 / 结果名永不截断 —— 换行,最多两行,顶对齐。 */}
                   <td
-                    style={{
-                      maxWidth: 220,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                    title={r.title ?? undefined}
+                    className="cell-wrap"
+                    style={{ maxWidth: 260 }}
+                    data-label="市场"
                   >
-                    {r.title ?? <span className="muted">—</span>}
+                    {r.title ?? <span className="faint">—</span>}
                   </td>
-                  <td style={{ whiteSpace: "nowrap" }}>
-                    {r.outcome ?? <span className="muted">—</span>}
+                  <td className="cell-wrap" data-label="方向">
+                    {r.outcome ?? <span className="faint">—</span>}
                   </td>
-                  <td className="mono" style={{ whiteSpace: "nowrap" }}>
-                    {r.summary || <span className="muted">—</span>}
+                  <td className="cell-wrap" data-label="摘要">
+                    {r.summary || <span className="faint">—</span>}
                   </td>
-                  <td style={{ whiteSpace: "nowrap" }}>
+                  <td style={{ whiteSpace: "nowrap" }} data-label="𝕏">
                     {r.type === "discovery" ? (
                       <span className="muted" title="发现事件不接 𝕏">
                         不适用
                       </span>
                     ) : r.xStatus == null ? (
                       <span
-                        className="muted"
+                        className="faint"
                         title="未发帖(开关关/配额/未命中)"
                       >
                         —
@@ -542,7 +565,10 @@ export default function EventsSection({ token }: { token: string }) {
                       </Tag>
                     )}
                   </td>
-                  <td style={{ whiteSpace: "nowrap" }}>
+                  <td
+                    style={{ whiteSpace: "nowrap" }}
+                    data-label="总线 → webhook"
+                  >
                     {!r.bus.projected ? (
                       <span
                         className="muted"
@@ -579,6 +605,13 @@ export default function EventsSection({ token }: { token: string }) {
               ))}
             </tbody>
           </table>
+          <div className="note-strip">
+            <span className="faint">—</span> 是「判不了」不是零：𝕏
+            列的它表示这条根本没进发帖流程（开关关 / 配额吃满 /
+            未命中阈值），市场与方向列的它表示这类事件本来就不带该字段。
+            「未入总线」= 类型未开启或事件早于开启时刻；「入总线 · 未投递」=
+            没有端点勾选该类型，或事件早于端点登记（不回灌）。
+          </div>
         </div>
       )}
     </section>

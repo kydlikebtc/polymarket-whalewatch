@@ -364,4 +364,63 @@ export const DICT_FOLLOW: Record<string, string> = {
     "Baseline {a}¢ → recent {b}¢ · {n} market points",
   "序贯监控这档策略是否在失效:已结算仓折成市场级观察点(同市场多仓共享同一次结算,只算一点),前段做基线,后段跑单侧 CUSUM 盯下行漂移。观察线 2.5σ、报警线 4σ;逐仓贡献与 walk-forward 同口径((已实现−协议费)÷份额,概率点)。哨兵只亮牌,不自动停用任何档 —— 生产参数永不自动改":
     "Sequentially monitors whether this tier is decaying: settled positions fold into market-level observation points (positions in one market share a single settlement — one point), the earlier stretch forms the baseline, and a one-sided CUSUM watches the rest for downward drift. Watch line 2.5σ, alarm line 4σ; per-position contribution matches walk-forward ((realized − fee) ÷ shares, probability points). The sentinel only raises flags — it never auto-disables a tier; production parameters are never auto-modified",
+  // ============================================================ Etherscan 风
+  // 换皮那一轮新增的文案(页头小标 / 卡内标题条的口径半句 / 卡底说明条 /
+  // 徽章与空态)。键=中文原文,与 app/follow/page.tsx 的 t() 字面量逐字一致。
+  "📈 模拟策略 · 不动真金": "📈 Simulated strategies · no real money",
+  "现价进场 · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)。按信号族分组,族序 = 信息强度递减:共识 → 异常大额 → 分歧 → 钱包画像;带「反向对照」标的档位对同一信号买对面,与正向档成对读战绩。各档持仓有重叠,战绩不可跨档相加。":
+    "Enters at market · holds to settlement · fixed $/signal · settled P&L only (no unrealized). Grouped by signal family, ordered by decreasing information strength: consensus → outsized fills → disagreement → wallet profile; tiers tagged 「inverse control」 buy the opposite side of the same signal and should be read paired with their forward tier. Tiers overlap — records cannot be summed across tiers.",
+  "⚠️ 按报价快照纸面成交,不含盘口执行成本(价差 / 深度),盈亏偏乐观 —— 实测估计见「执行滑点」列与单档详情的成本分解。新鲜度窗口因档而异,默认 15 分钟,详见各档详情。":
+    "⚠️ Fills are paper fills against a quote snapshot; book execution costs (spread / depth) are excluded, so P&L reads optimistic — see the 「Execution slippage」 column and each tier's cost breakdown for the measured estimate. The freshness window varies by tier (15 minutes by default); see each tier's detail.",
+  "四族默认全开,可任选子集叠画":
+    "All four families on by default — overlay any subset",
+  按策略筛选: "Filter by strategy",
+  "{n} 档": "{n} tiers",
+  "策略 · 门槛": "Strategy · thresholds",
+  "胜率 · Wilson 95%CI": "Win rate · Wilson 95% CI",
+  "盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间与已结算样本量。50% / 8 仓 和 58% / 24 仓不该长得一样重,区间宽度就是这份轻重;平局不计入分母":
+    "Winning positions ÷ (winning + losing) positions · Wilson 95% confidence interval plus the settled sample size. 50% over 8 positions and 58% over 24 should not carry the same weight — the interval width is that weight; pushes are excluded from the denominator",
+  "样本不足 · {n} 仓": "Small sample · {n} settled",
+  // 「{n} 仓」由 deep 分片持有("{n} pos"),跨分片同键必须同值 —— 这里
+  // 不重复建键,列表视图胜率格直接复用它。
+  "尚无已结算仓位 —— 战绩读数要等第一笔平仓":
+    "No settled positions yet — the record columns wait for the first close",
+  "尚无仓位 —— 等待信号命中": "No positions yet — waiting for a signal to hit",
+  "备付现金 · 无杠杆": "Cash on hand · no leverage",
+  "容量(+1¢) ~${a} · n={n}": "Depth(+1¢) ~${a} · n={n}",
+  "序贯监控这档策略是否在失效:已结算仓折成市场级观察点,前段做基线,后段跑单侧 CUSUM 盯下行漂移。哨兵只亮牌,不自动停用任何档":
+    "Sequentially monitors whether this tier is decaying: settled positions fold into market-level observation points, the earlier stretch forms the baseline, and a one-sided CUSUM watches the rest for downward drift. The sentinel only raises flags — it never auto-disables a tier",
+  "push 不进分母": "pushes excluded from the denominator",
+  平均年化的分母: "the denominator of Avg annualized",
+  "全部读数同一网格、同一字号 —— 这里没有主次,谁重要取决于读者在问什么。成本类三项(追价 / 协议费 / 容量)一律中性色:追价成本为负不标绿(那通常意味着行情已反向、接了飞刀,不是捡便宜),为正也不标红(是成本,不是亏损);只有均延迟成本在 |¢差| > 10¢ 时转琥珀,与开仓侧默认偏离护栏同一分界。带 n= 的三项必须连样本量一起读。":
+    "Every reading shares one grid and one type size — there is no ranking here; what matters depends on what the reader is asking. The three cost readings (chase / protocol fee / capacity) are always neutral in color: a negative chase cost is not green (it usually means the market already turned and we caught a falling knife, not a bargain), and a positive one is not red (it is a cost, not a loss); only avg delay cost turns amber above |¢diff| > 10¢, the same boundary as the default entry-deviation guardrail. The three readings carrying n= must always be read together with their sample size.",
+  "链的起点 · 已结算仓口径": "Start of the chain · settled-positions basis",
+  "n={n} · 检测 + 执行延迟": "n={n} · detection + execution latency",
+  "n={n} · 跨价差 + 吃深度": "n={n} · crossing the spread + eating depth",
+  "⚠️ 口径范围:三项都只在协议费已知的那批已结算仓上计算,而不是拿部分覆盖的费用去减全量盈亏 —— 那会得到一个介于两档之间、无法解释的数。协议费自 2026-08 起才采集、老仓不回填,所以这一档目前只覆盖一个子集,随着老仓陆续结算完毕会自然收敛到全量。":
+    "⚠️ Scope: all three are computed only over the settled positions whose protocol fee is known, rather than subtracting partially covered fees from full P&L — that would produce a number sitting between two bases and explaining nothing. Protocol fees have only been collected since 2026-08 and old positions are not backfilled, so this basis currently covers a subset; it converges to the full set as the old positions settle out.",
+  "错过 {n}": "{n} missed",
+  错过的钱: "Money missed",
+  "资金不够而错过的那些信号,事后按已结算口径合计的盈亏 —— 中性色:是「没接住」,不是亏损":
+    "Settled-basis P&L of the signals that were missed for lack of funds — neutral in color: this is money not caught, not a loss",
+  "该策略尚无操作历史 —— 信号命中并开出第一仓后,这里会按时间倒序记录买入与兑现":
+    "No action history for this tier yet — once a signal hits and the first position opens, buys and settlements are logged here newest-first",
+  "买入 = 信号触发后现价开仓(绿);兑现 = 市场结算平仓(蓝)。输赢由右侧「金额 / 盈亏」的颜色回答,不由动作徽章回答":
+    "Buy = opened at market after the signal fired (green); Settle = closed at market resolution (blue). Win or loss is answered by the color of 「Amount / P&L」 on the right, not by the action badge",
+  "「金额 / 盈亏」一列两义:买入行是金额、兑现行是盈亏 —— 保留一列但给动作徽章上色,靠色块区分而不是靠读者猜。仅记录已执行动作,被护栏 / 新鲜度闸门拦下的信号不在此列。":
+    "「Amount / P&L」 carries two meanings: buy rows show the amount, settle rows show P&L — one column, but the action badge is colored so the split is visible rather than guessed. Only executed actions are logged; signals stopped by the guardrail or the freshness gate never appear here.",
+  "· 累计已实现盈亏 · 不含持仓浮盈":
+    "· cumulative realized P&L · excludes unrealized",
+  "结算点本身才是真实数据,曲线只是连接方式 —— 口径是「只在结算这一刻发生变化」。平滑曲线看着更像连续过程,所以标记点比线更醒目;这里一次只画一条线、画布接近全宽,标记半径固定不随点数收缩。":
+    "The settlement points are the real data; the curve is only how they are joined — the basis is 「the value changes only at the moment of settlement」. A smooth curve reads like a continuous process, so the markers are drawn more prominently than the line; this chart draws one line at near-full width, and the marker radius stays fixed no matter how many points there are.",
+  "· 每项的口径在自己的 (?) 里": "· each reading's basis lives in its own (?)",
+  "· 这一档的钱从哪赢来的": "· where this tier's money came from",
+  "· 四项口径不同,不是同口径数字的简单相加":
+    "· the four use different bases — they are not a like-for-like sum",
+  "· 建议 ${v} · Polymarket 无杠杆":
+    "· suggested ${v} · Polymarket has no leverage",
+  "· 倒序 · 纸面模拟,无真实成交":
+    "· newest first · paper simulation, no real fills",
+  "· 复用首页同一套表 + 二级切换":
+    "· the same tables as the home page, with a second-level toggle",
 };

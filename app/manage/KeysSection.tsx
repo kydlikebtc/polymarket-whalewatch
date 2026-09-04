@@ -146,13 +146,17 @@ export default function KeysSection({ token }: { token: string }) {
     <section
       id="keys"
       className="ds-card"
-      style={{ marginBottom: "var(--s-5)", scrollMarginTop: "var(--s-6)" }}
+      style={{
+        padding: "var(--s-5)",
+        marginBottom: "var(--s-5)",
+        scrollMarginTop: "var(--s-6)",
+      }}
     >
       <SectionHead
         title="🅑 API key 与 webhook"
         aside={
           keys && (
-            <span className="ds-hint num">
+            <span className="ds-hint">
               有效 {keys.filter((k) => k.revokedAt == null).length} / 共{" "}
               {keys.length}
             </span>
@@ -185,16 +189,18 @@ export default function KeysSection({ token }: { token: string }) {
         </div>
       )}
       {issued && (
-        <div className="ds-callout" style={{ marginBottom: "var(--s-4)" }}>
+        <div
+          className="ds-callout ds-callout--warn"
+          style={{ marginBottom: "var(--s-4)" }}
+        >
           <b>✅ 已签发 #{issued.id}</b> —— 明文只显示这一次,请立即复制保存:
           <div
-            className="mono"
             style={{
               margin: "var(--s-2) 0",
               padding: "var(--s-2) var(--s-3)",
-              background: "var(--n-50)",
-              border: "1px solid var(--n-150)",
-              borderRadius: "var(--r-sm, 6px)",
+              background: "var(--ww-surface-sunken)",
+              border: "1px solid var(--ww-border)",
+              borderRadius: "var(--r-sm)",
               wordBreak: "break-all",
               userSelect: "all",
               display: "flex",
@@ -246,36 +252,34 @@ export default function KeysSection({ token }: { token: string }) {
           />
         </div>
         <div style={{ flexBasis: "100%" }}>
-          <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
+          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
             订阅信号类型（不勾 = 不限，拿全部）
           </div>
-          <div style={{ display: "flex", gap: "var(--s-3)", flexWrap: "wrap" }}>
-            {KEY_SCOPES.map((o) => (
-              <label
-                key={o.type}
-                style={{
-                  display: "inline-flex",
-                  gap: 6,
-                  alignItems: "center",
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={subs.includes(o.type)}
-                  onChange={(e) =>
+          {/* 任选子集 —— 一排描边钮 + 选中态蓝描边（.ds-btn--active）。
+              这里刻意不用 Segmented：那是互斥控件,会让人以为只能选一个。 */}
+          <div className="filter-bar" style={{ marginBottom: "var(--s-2)" }}>
+            {KEY_SCOPES.map((o) => {
+              const on = subs.includes(o.type);
+              return (
+                <button
+                  key={o.type}
+                  type="button"
+                  aria-pressed={on}
+                  className={`ds-btn ds-btn--sm${on ? " ds-btn--active" : ""}`}
+                  onClick={() =>
                     setSubs((prev) =>
-                      e.target.checked
-                        ? [...prev, o.type]
-                        : prev.filter((x) => x !== o.type),
+                      prev.includes(o.type)
+                        ? prev.filter((x) => x !== o.type)
+                        : [...prev, o.type],
                     )
                   }
-                />
-                <span>{o.label}</span>
-              </label>
-            ))}
+                >
+                  {o.label}
+                </button>
+              );
+            })}
           </div>
-          <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
+          <div className="ds-hint">
             过滤在服务端执行：没订阅的类型，该 key 在 /api/signals 与 webhook
             上都拿不到，不需要订阅方自己筛。
           </div>
@@ -290,12 +294,22 @@ export default function KeysSection({ token }: { token: string }) {
       </div>
 
       {keys == null ? (
-        <div className="ds-empty">需要有效管理令牌后加载。</div>
+        <div className="ds-empty">
+          需要有效管理令牌后加载。
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            令牌在页头「🔑 令牌已验证」里更换；服务端认了才算认。
+          </div>
+        </div>
       ) : keys.length === 0 ? (
-        <div className="ds-empty">尚无 key。</div>
+        <div className="ds-empty">
+          尚无 key。
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            填上方「订户备注」并选 tier 后点「签发新 key」，明文只显示一次。
+          </div>
+        </div>
       ) : (
         <div className="ds-table-wrap" style={{ marginBottom: "var(--s-5)" }}>
-          <table className="ds-table ds-table--compact">
+          <table className="ds-table">
             <thead>
               <tr>
                 <th className="is-right">#</th>
@@ -305,18 +319,22 @@ export default function KeysSection({ token }: { token: string }) {
                 <th>签发</th>
                 <th>最近使用</th>
                 <th>状态</th>
-                <th></th>
+                {/* 操作列的表头不留空 —— 移动堆叠卡靠 data-label 说「操作」,
+                    桌面表头也得说同一句话（与 🅑 端点表、𝕏 账号表同一张脸）。 */}
+                <th className="is-right">操作</th>
               </tr>
             </thead>
             <tbody>
+              {/* 行没有任何行级强调：已吊销不调暗整行,只靠状态徽章分轻重。 */}
               {keys.map((k) => (
-                <tr
-                  key={k.id}
-                  style={k.revokedAt != null ? { opacity: 0.55 } : undefined}
-                >
-                  <td className="is-right num muted">{k.id}</td>
-                  <td style={{ fontWeight: 600 }}>{k.label}</td>
-                  <td>
+                <tr key={k.id}>
+                  <td className="is-right muted" data-label="#">
+                    {k.id}
+                  </td>
+                  <td className="cell-wrap" data-label="备注">
+                    {k.label}
+                  </td>
+                  <td data-label="tier">
                     <Tag variant={k.tier === "realtime" ? "brand" : "default"}>
                       {k.tier}
                     </Tag>
@@ -336,17 +354,25 @@ export default function KeysSection({ token }: { token: string }) {
                       <span className="muted">不限</span>
                     )}
                   </td>
-                  <td className="ds-hint mono">{timeText(k.createdAt)}</td>
-                  <td className="ds-hint">{agoText(k.lastUsedAt)}</td>
-                  <td>
+                  <td className="muted" data-label="签发">
+                    {timeText(k.createdAt)}
+                  </td>
+                  <td className="muted" data-label="最近使用">
+                    {agoText(k.lastUsedAt)}
+                  </td>
+                  <td data-label="状态">
                     {k.revokedAt != null ? (
                       <Tag variant="down">已吊销</Tag>
                     ) : (
                       <Tag variant="up">有效</Tag>
                     )}
                   </td>
-                  <td>
-                    {k.revokedAt == null && (
+                  <td
+                    className="is-right"
+                    data-label="操作"
+                    style={{ whiteSpace: "nowrap" }}
+                  >
+                    {k.revokedAt == null ? (
                       <button
                         className="ds-btn ds-btn--sm ds-btn--danger"
                         disabled={busy}
@@ -354,12 +380,19 @@ export default function KeysSection({ token }: { token: string }) {
                       >
                         吊销
                       </button>
+                    ) : (
+                      <span className="faint">—</span>
                     )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <div className="note-strip">
+            「最近使用」的 <span className="faint">—</span> 是「从没被用过」,
+            不是零 —— 签发了但订户还没接。已吊销的行留在表里做审计痕迹,不会
+            被清理。
+          </div>
         </div>
       )}
 

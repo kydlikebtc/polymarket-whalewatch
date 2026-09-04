@@ -162,15 +162,20 @@ interface Payload {
 const fmtUsd = (v: number) => Math.round(v).toLocaleString("en-US");
 const fmtShares = (v: number) => Math.round(v).toLocaleString("en-US");
 const fmtCents = (p: number) => `${+(p * 100).toFixed(1)}¢`;
+// 变化写成 `41.9 → 44.1¢`(§1 数字格式):区间里只有末位带单位,前一位裸数字。
+const fmtCentsNum = (p: number) => `${+(p * 100).toFixed(1)}`;
 const fmtTime = (sec: number, locale: string) =>
   new Date(sec * 1000).toLocaleString(locale, { hour12: false });
 const shortWallet = (w: string) =>
   w.length > 12 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w;
 
-const TYPE_ICON: Record<string, string> = {
-  large: "💰",
-  smart: "🏆",
-  consensus: "🔥",
+// 信号类型的中文名 —— emoji 不裸放在正文里,收进灰底名称标签(§1)。
+// 措辞与译文沿用 /wallet 档案页的同一张表(键已在 wallet 分片),两页说同
+// 一件事就不该有两套说法;未知类型回退原始 type 串,不编造名字。
+const TYPE_LABEL: Record<string, string> = {
+  large: "💰 大单",
+  smart: "🏆 聪明钱",
+  consensus: "🔥 共识",
 };
 
 export default function MarketCard() {
@@ -201,7 +206,7 @@ export default function MarketCard() {
   if (error) {
     return (
       <main className="ds-main">
-        <div className="ds-callout">
+        <div className="ds-callout ds-callout--error">
           {t("加载失败：")}
           {error}
         </div>
@@ -224,385 +229,693 @@ export default function MarketCard() {
     meta?.endDate != null
       ? (Date.parse(meta.endDate) - Date.now()) / 3_600_000
       : null;
+  // 窗口留存敞口 KPI —— 就是下面 02 表按结果分组的合计,没有第二个口径。
+  // 结算后服务端已把敞口归零(见 lib/marketBrief),那时这一格不出现。
+  const exposureTotal = brief.smartFlow.reduce(
+    (s, f) => s + f.totalExposureUsd,
+    0,
+  );
+  const showExposureKpi = !brief.settled && exposureTotal > 0;
+  // KPI 用的几个只读投影 —— 只为把 meta 的可空性收在一处,取值口径不变。
+  const outcomes = meta?.outcomes ?? [];
+  const prices = meta?.outcomePrices ?? [];
+  const vol24h = meta?.volume24hr ?? null;
+  const liquidity = meta?.liquidity ?? null;
+  // 现价格里哪一侧是聪明钱站的那一侧 —— 蓝 = 当前选中(§2.1),纯展示派生。
+  const smartSide = cls.kind === "consensus" ? cls.group.outcome : null;
+  const pulseBoardTagged =
+    data.pulse != null &&
+    (data.pulse.boards.length > 0 || data.pulse.anomalyScore != null);
 
   return (
     <main className="ds-main">
-      <header style={{ marginBottom: "var(--s-4)" }}>
-        <div className="ds-hint" style={{ marginBottom: "var(--s-1)" }}>
-          <Link href="/market">{t("🎯 市场信号卡")}</Link> ·{" "}
-          {t("窗口近 {h}h · {n} 笔 ≥$500 成交", {
-            h: win.hours,
-            n: win.trades,
-          })}
-          {win.truncated ? t("（窗口触顶截断，指标为下界）") : ""}
-        </div>
-        <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-2)" }}>
-          {identity?.title ?? data.conditionId}
-        </h1>
-        {/* 标签自成一行,不塞进 h1。h1 是 28px 字号 / 42px 行高,而 .ds-tag 固定
-            20px 高:塞进去就有三套并存的对齐上下文(裸 Tag 按基线、包裹层按
-            vertical-align、tooltip 那层又按 flex item),实测垂直中心差 6.5px。
-            单独一行 + align-items:center 一次性消掉,顺带与 /pulse 榜单行的
-            「标题 → 标签行 → 灰色提示」同一个版式。 */}
-        {(meta?.closed || data.pulse) && (
+      {/* 页头 —— 12px 小标(带 emoji 前缀)· 24/600 标题 · 标签与 slug 同一行。
+          align-items 覆盖成 flex-start:这一页的页头左栏会长到三四行(市场名
+          可能换行),底对齐会把小标推得离标题很远。 */}
+      <header className="page-head" style={{ alignItems: "flex-start" }}>
+        <div style={{ minWidth: 0 }}>
+          <div className="page-head__eyebrow">
+            <Link href="/market">{t("🎯 市场信号卡")}</Link>
+            <span aria-hidden>·</span>
+            <span>
+              {t("窗口近 {h}h · {n} 笔 ≥$500 成交", {
+                h: win.hours,
+                n: win.trades,
+              })}
+            </span>
+          </div>
+          {/* 市场名永不截断(§1.1):换行,顶对齐 */}
+          <h1 className="page-head__title" style={{ overflowWrap: "anywhere" }}>
+            {identity?.title ?? data.conditionId}
+          </h1>
+          {/* 标签自成一行,不塞进 h1。h1 是 24px 字号,而 .ds-tag 固定 22px 高:
+              塞进去就有三套并存的对齐上下文(裸 Tag 按基线、包裹层按
+              vertical-align、tooltip 那层又按 flex item),实测垂直中心差 6.5px。
+              单独一行 + align-items:center 一次性消掉。slug 与口径句一并收进
+              这一行(设计稿 12):页头下面紧跟 KPI,不再留一条孤零零的灰行。 */}
           <div
             style={{
               display: "flex",
               alignItems: "center",
               flexWrap: "wrap",
-              gap: "var(--s-1)",
-              marginBottom: "var(--s-2)",
+              gap: "var(--s-2)",
+              marginTop: "var(--s-2)",
+              fontSize: "var(--t-sm)",
+              color: "var(--ww-text-muted)",
             }}
           >
             {meta?.closed && <Tag>{t("已结算")}</Tag>}
             {data.pulse && <PulseTags pulse={data.pulse} />}
+            {/* 口径先行:榜单标记是已收盘那个 UTC 日的判定,不是此刻窗口。
+                原来只写在 tooltip 里,触屏读者看不到 —— 提到明面上。 */}
+            {pulseBoardTagged && data.pulse && (
+              <span>
+                {t("{d}（UTC）的市场脉搏日榜判定，不是此刻窗口", {
+                  d: data.pulse.day,
+                })}
+              </span>
+            )}
+            {identity && (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "var(--s-1)",
+                  minWidth: 0,
+                  color: "var(--ww-link)",
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {identity.slug}
+                <MarketSlugActions
+                  slug={identity.slug}
+                  eventSlug={identity.eventSlug}
+                />
+              </span>
+            )}
           </div>
-        )}
-        <div className="ds-hint mono">
-          {identity && (
-            <>
-              {identity.slug}{" "}
-              <MarketSlugActions
-                slug={identity.slug}
-                eventSlug={identity.eventSlug}
-              />{" "}
-              ·{" "}
-            </>
-          )}
-          {meta?.volume24hr != null && (
-            <>{t("24h 量 ${v} · ", { v: fmtUsd(meta.volume24hr) })}</>
-          )}
-          {meta?.liquidity != null && (
-            <>{t("流动性 ${v} · ", { v: fmtUsd(meta.liquidity) })}</>
-          )}
-          {hoursToEnd != null && hoursToEnd > 0 && (
-            <>
-              {t("距结算")}{" "}
-              {hoursToEnd < 48
-                ? `${Math.round(hoursToEnd)}h`
-                : t("{n}天", { n: Math.round(hoursToEnd / 24) })}
-            </>
-          )}
         </div>
       </header>
 
-      {/* Current prices */}
-      {meta && meta.outcomes.length > 0 && (
+      {/* 统计声明放数据前面(§5 口径条),不放脚注 */}
+      {win.truncated && (
+        <div
+          className="ds-callout ds-callout--warn"
+          style={{ marginBottom: "var(--s-5)" }}
+        >
+          {t(
+            "窗口触顶截断：该市场窗口内的成交超过分页上限，下方所有计数与金额都是下界。",
+          )}
+        </div>
+      )}
+
+      {/* KPI 分格卡 —— 现价各一格 + 24h 量 + 窗口留存敞口 */}
+      {(outcomes.length > 0 || vol24h != null || showExposureKpi) && (
         <section className="kpi" style={{ marginBottom: "var(--s-4)" }}>
-          {meta.outcomes.slice(0, 4).map((o, i) => (
-            <StatCard key={o} label={t("现价 · {o}", { o })}>
-              <div className="kpi-value">
-                {meta.outcomePrices[i] != null
-                  ? fmtCents(meta.outcomePrices[i])
-                  : "—"}
+          {outcomes.slice(0, 4).map((o, i) => {
+            const isSmart = smartSide != null && smartSide === o;
+            return (
+              <StatCard
+                key={o}
+                icon={isSmart ? "🔵" : "⚪"}
+                label={t("现价 · {o}", { o })}
+              >
+                <div
+                  className="kpi-value"
+                  style={isSmart ? { color: "var(--ww-link)" } : undefined}
+                >
+                  {prices[i] != null ? (
+                    fmtCents(prices[i])
+                  ) : (
+                    // 「—」是判不了(缺 asset 不可取价),不是 0（§1.2）
+                    <span className="faint">—</span>
+                  )}
+                </div>
+                {isSmart && <div className="kpi-sub">{t("聪明钱这一侧")}</div>}
+              </StatCard>
+            );
+          })}
+          {vol24h != null && (
+            <StatCard icon="💰" label={t("24h 量")}>
+              <div className="kpi-value">${fmtUsd(vol24h)}</div>
+              <div className="kpi-sub">
+                {liquidity != null && (
+                  <>{t("流动性 ${v} · ", { v: fmtUsd(liquidity) })}</>
+                )}
+                {hoursToEnd != null && hoursToEnd > 0 && (
+                  <>
+                    {t("距结算")}{" "}
+                    {hoursToEnd < 48
+                      ? `${Math.round(hoursToEnd)}h`
+                      : t("{n}天", { n: Math.round(hoursToEnd / 24) })}
+                  </>
+                )}
               </div>
             </StatCard>
-          ))}
+          )}
+          {showExposureKpi && (
+            <StatCard icon="🏆" label={t("窗口留存敞口")}>
+              <div className="kpi-value">${fmtUsd(exposureTotal)}</div>
+              <div className="kpi-sub">
+                {brief.smartFlow
+                  .map(
+                    (f) =>
+                      `${f.outcome} ${Math.round(
+                        (f.totalExposureUsd / exposureTotal) * 100,
+                      )}%`,
+                  )
+                  .join(" / ")}
+              </div>
+            </StatCard>
+          )}
         </section>
       )}
 
-      {/* Classification */}
+      {/* 共识 / 分歧判定条 —— 一张白卡:徽章担语义色,句子担事实,
+          右侧灰底名称标签列出参与的钱包与评分。 */}
       <section style={{ marginBottom: "var(--s-4)" }}>
-        {cls.kind === "consensus" && (
-          <div className="ds-callout">
-            🔥 <b>{t("聪明钱共识")}</b>
-            {t("：{n} 个白名单钱包买入 ", { n: cls.group.walletCount })}
-            <b>{cls.group.outcome}</b>
-            {t(" · 合计净买入 ${v} · 均价 {p}", {
-              v: fmtUsd(cls.group.totalNetUsd),
-              p: fmtCents(cls.group.avgBuyPrice),
-            })}
-          </div>
-        )}
-        {cls.kind === "disagreement" && (
-          <div className="ds-callout">
-            ⚖️ <b>{t("聪明钱分歧")}</b>
-            {t("（{tilt}）：", {
-              tilt: t(cls.market.tilt === "lopsided" ? "一边倒" : "势均力敌"),
-            })}
-            {/* 结算后这个金额仍是真话,但只在「窗口内投入了多少」这层为真 ——
-                裸 $ 会被读成「现在还押着这么多」,所以补上口径词。检测器本身
-                不动(与告警链路共用),只改称谓。 */}
-            {cls.market.sides.map((s) => (
-              <span key={s.outcome} style={{ marginRight: "var(--s-3)" }}>
-                {brief.settled
-                  ? t("{o} {n} 钱包 · 窗口净买入 ${v}", {
-                      o: s.outcome,
-                      n: s.walletCount,
-                      v: fmtUsd(s.netUsd),
-                    })
-                  : t("{o} {n} 钱包 ${v}", {
-                      o: s.outcome,
-                      n: s.walletCount,
-                      v: fmtUsd(s.netUsd),
-                    })}
+        <div
+          className="ds-card"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--s-3)",
+            flexWrap: "wrap",
+            padding: "14px var(--s-4)",
+            fontSize: "var(--t-md)",
+          }}
+        >
+          {cls.kind === "consensus" && (
+            <>
+              <Tag variant="up">{t("🔥 共识")}</Tag>
+              <span>
+                <span style={{ fontWeight: 600 }}>
+                  {t("{n} 个白名单钱包买入 {o}", {
+                    n: cls.group.walletCount,
+                    o: cls.group.outcome,
+                  })}
+                </span>
+                {t(" · 合计净买入 ${v} · 均价 {p}", {
+                  v: fmtUsd(cls.group.totalNetUsd),
+                  p: fmtCents(cls.group.avgBuyPrice),
+                })}
               </span>
-            ))}
-          </div>
-        )}
-        {cls.kind === "none" && (
-          <div className="ds-hint">
-            {t("窗口内无聪明钱共识/分歧（阈值：≥2 白名单钱包各 ≥$5k 敞口）")}
+              <span
+                style={{
+                  display: "flex",
+                  gap: "var(--s-1)",
+                  marginLeft: "auto",
+                  flexWrap: "wrap",
+                }}
+              >
+                {cls.group.wallets.map((w) =>
+                  w.score != null ? (
+                    <Tag key={w.wallet}>
+                      {shortWallet(w.wallet)} · {Math.round(w.score)}
+                    </Tag>
+                  ) : (
+                    // 没有评分的那一枚整枚压暗(设计稿 12)。灰底标签本身不表示
+                    // 状态,这里压暗的是字:「—」是判不了、不是 0 分,与旁边那些
+                    // 真有分数的标签同亮度会被读成「评分等于 —」。
+                    <span
+                      key={w.wallet}
+                      className="ds-tag"
+                      style={{ color: "var(--ww-text-muted)" }}
+                    >
+                      {shortWallet(w.wallet)} · —
+                    </span>
+                  ),
+                )}
+              </span>
+            </>
+          )}
+          {cls.kind === "disagreement" && (
+            <>
+              <Tag>{t("⚖️ 分歧")}</Tag>
+              <span>
+                <span style={{ fontWeight: 600 }}>
+                  {cls.market.tilt === "lopsided" ? t("一边倒") : t("势均力敌")}
+                </span>
+                {" · "}
+                {/* 结算后这个金额仍是真话,但只在「窗口内投入了多少」这层为真
+                    —— 裸 $ 会被读成「现在还押着这么多」,所以补上口径词。
+                    检测器本身不动(与告警链路共用),只改称谓。 */}
+                {cls.market.sides.map((s) => (
+                  <span key={s.outcome} style={{ marginRight: "var(--s-3)" }}>
+                    {brief.settled
+                      ? t("{o} {n} 钱包 · 窗口净买入 ${v}", {
+                          o: s.outcome,
+                          n: s.walletCount,
+                          v: fmtUsd(s.netUsd),
+                        })
+                      : t("{o} {n} 钱包 ${v}", {
+                          o: s.outcome,
+                          n: s.walletCount,
+                          v: fmtUsd(s.netUsd),
+                        })}
+                  </span>
+                ))}
+              </span>
+            </>
+          )}
+          {cls.kind === "none" && (
+            <span className="muted">
+              {t("窗口内无聪明钱共识/分歧（阈值：≥2 白名单钱包各 ≥$5k 敞口）")}
+            </span>
+          )}
+        </div>
+        {cls.kind !== "none" && (
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            {t("🤖 做市机器人不计入共识投票")}
           </div>
         )}
       </section>
 
-      {/* Smart-money retained exposure — 结算后标题与口径都改写为「台账」,
+      {/* 01 复盘 —— 点击才拉曲线,市场卡自身零上游的纪律不被稀释;
+          曲线不可变,服务端 10 分钟缓存按市场去重。 */}
+      <ReplaySection conditionId={conditionId} />
+
+      {/* 02 Smart-money retained exposure — 结算后标题与口径都改写为「台账」,
           因为「留存」在结算后不成立(见 lib/marketBrief 结算闸门)。 */}
       <section style={{ marginBottom: "var(--s-4)" }}>
-        <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-          {brief.settled
-            ? t("🏆 聪明钱窗口台账（近 {h}h · 市场已结算）", { h: win.hours })
-            : t("🏆 聪明钱留存敞口（近 {h}h · 净股数 × 买入均价）", {
-                h: win.hours,
-              })}
-        </div>
+        {/* 口径条放数据前面(§5),不放脚注 */}
         {brief.settled && (
-          <div className="ds-hint" style={{ marginBottom: "var(--s-2)" }}>
+          <div
+            className="ds-callout ds-callout--warn"
+            style={{ marginBottom: "var(--s-3)" }}
+          >
             {t(
               "市场已结算——敞口一律归零。赎回（REDEEM）不走成交流水，无法从买卖推算，故不再声称任何仓位「仍持有」；下方净股数与买入均价仍是窗口内的成交事实。",
             )}
           </div>
         )}
-        {brief.smartFlow.length === 0 ? (
-          <div className="ds-empty">{t("窗口内无白名单钱包留仓")}</div>
-        ) : (
-          <div className="ds-table-wrap">
-            <table className="ds-table">
-              <thead>
-                <tr>
-                  <th>{t("结果")}</th>
-                  <th>{t("钱包")}</th>
-                  {/* 结算后这一列若还印 $0 就是一排废数字;换成净股数,
-                      台账才留得住「谁押得最大」这个唯一还成立的事实。 */}
-                  <th className="is-right">
-                    {brief.settled ? t("窗口净股数") : t("敞口")}
-                  </th>
-                  <th className="is-right">{t("买入均价")}</th>
-                  <th className="is-right">{t("评分/胜率")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {brief.smartFlow.flatMap((f) =>
-                  f.wallets.map((w, i) => (
-                    <tr key={`${f.outcome}:${w.wallet}`}>
-                      <td>
-                        {i === 0 ? (
-                          <b>
-                            {f.outcome} ·{" "}
-                            {brief.settled
-                              ? fmtShares(f.totalNetShares)
-                              : `$${fmtUsd(f.totalExposureUsd)}`}
-                          </b>
-                        ) : (
-                          ""
-                        )}
-                      </td>
-                      <td>
-                        <WalletLink address={w.wallet}>
-                          {shortWallet(w.wallet)}
-                        </WalletLink>
-                        {w.isMarketMaker && (
+        <div className="ds-card" style={{ overflow: "hidden" }}>
+          <SectionBar
+            n="02"
+            title={brief.settled ? t("聪明钱窗口台账") : t("聪明钱留存敞口")}
+            note={
+              brief.settled
+                ? t("近 {h}h · 市场已结算", { h: win.hours })
+                : t("近 {h}h · 净股数 × 买入均价", { h: win.hours })
+            }
+          />
+          {brief.smartFlow.length === 0 ? (
+            <div className="ds-empty" style={{ border: 0, borderRadius: 0 }}>
+              {t("窗口内无白名单钱包留仓")}
+            </div>
+          ) : (
+            <div
+              className="ds-table-wrap"
+              style={{ border: 0, borderRadius: 0, boxShadow: "none" }}
+            >
+              <table className="ds-table">
+                <thead>
+                  <tr>
+                    <th>{t("结果")}</th>
+                    <th>{t("钱包")}</th>
+                    {/* 结算后这一列若还印 $0 就是一排废数字;换成净股数,
+                        台账才留得住「谁押得最大」这个唯一还成立的事实。 */}
+                    <th className="is-right">
+                      {brief.settled ? t("窗口净股数") : t("敞口")}
+                    </th>
+                    <th className="is-right">{t("买入均价")}</th>
+                    <th className="is-right">{t("评分/胜率")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {brief.smartFlow.flatMap((f) =>
+                    f.wallets.map((w, i) => (
+                      <tr key={`${f.outcome}:${w.wallet}`}>
+                        {/* 组首行才印结果与合计;行内不加粗,层级靠分格线 */}
+                        <td data-label={t("结果")}>
+                          {i === 0 ? (
+                            <>
+                              {f.outcome}{" "}
+                              <span className="muted">
+                                {brief.settled
+                                  ? fmtShares(f.totalNetShares)
+                                  : `$${fmtUsd(f.totalExposureUsd)}`}
+                              </span>
+                            </>
+                          ) : (
+                            ""
+                          )}
+                        </td>
+                        <td data-label={t("钱包")}>
                           <span
-                            className="muted"
-                            title={t(
-                              "做市机器人：池内保留但不计入共识/分歧投票",
-                            )}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "var(--s-2)",
+                            }}
                           >
-                            {" "}
-                            🤖
+                            <WalletLink address={w.wallet}>
+                              {shortWallet(w.wallet)}
+                            </WalletLink>
+                            {w.isMarketMaker && (
+                              <span
+                                title={t(
+                                  "做市机器人：池内保留但不计入共识/分歧投票",
+                                )}
+                                style={{ display: "inline-flex" }}
+                              >
+                                <Tag variant="warn">{t("🤖 做市")}</Tag>
+                              </span>
+                            )}
                           </span>
-                        )}
-                      </td>
-                      <td className="mono is-right">
-                        {brief.settled
-                          ? fmtShares(w.netShares)
-                          : `$${fmtUsd(w.exposureUsd)}`}
-                      </td>
-                      <td className="mono is-right">
-                        {fmtCents(w.avgBuyPrice)}
-                      </td>
-                      <td className="mono is-right muted">
-                        {w.score != null ? Math.round(w.score) : "—"}
-                        {w.winRate != null
-                          ? ` / ${Math.round(w.winRate * 100)}%`
-                          : ""}
-                      </td>
-                    </tr>
-                  )),
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
+                        </td>
+                        <td
+                          className="mono is-right"
+                          data-label={
+                            brief.settled ? t("窗口净股数") : t("敞口")
+                          }
+                        >
+                          {brief.settled
+                            ? fmtShares(w.netShares)
+                            : `$${fmtUsd(w.exposureUsd)}`}
+                        </td>
+                        <td
+                          className="mono is-right"
+                          data-label={t("买入均价")}
+                        >
+                          {fmtCents(w.avgBuyPrice)}
+                        </td>
+                        <td
+                          className="mono is-right muted"
+                          data-label={t("评分/胜率")}
+                        >
+                          {w.score != null ? (
+                            Math.round(w.score)
+                          ) : (
+                            <span className="faint">—</span>
+                          )}
+                          {w.winRate != null
+                            ? ` / ${Math.round(w.winRate * 100)}%`
+                            : ""}
+                        </td>
+                      </tr>
+                    )),
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </section>
 
-      {/* Split-buy accumulators — 结算后只是改称谓:「拆单买入」是窗口内的
+      {/* 03 Split-buy accumulators — 结算后只是改称谓:「拆单买入」是窗口内的
           行为观察,结算改变不了它;不成立的只有「敞口(still held)」这个词。 */}
       <section style={{ marginBottom: "var(--s-4)" }}>
-        <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-          {brief.settled
-            ? t("🧩 拆单累计（≥3 笔 · 单笔 <$10k · 窗口净买入 ≥$2k）")
-            : t("🧩 拆单累计（≥3 笔 · 单笔 <$10k · 敞口 ≥$2k）")}
-        </div>
-        {brief.accum.length === 0 ? (
-          <div className="ds-empty">{t("窗口内无拆单累计")}</div>
-        ) : (
-          <div className="ds-table-wrap">
-            <table className="ds-table">
-              <thead>
-                <tr>
-                  <th>{t("钱包")}</th>
-                  <th>{t("结果")}</th>
-                  <th className="is-right">
-                    {brief.settled ? t("窗口净买入") : t("敞口")}
-                  </th>
-                  <th className="is-right">{t("笔数")}</th>
-                  <th className="is-right">{t("均价")}</th>
-                  <th>{t("标记")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {brief.accum.map((g) => (
-                  <tr key={`${g.wallet}:${g.outcome}`}>
-                    <td>
-                      <WalletLink address={g.wallet}>
-                        {shortWallet(g.wallet)}
-                      </WalletLink>
-                    </td>
-                    <td>{g.outcome}</td>
-                    <td className="mono is-right">${fmtUsd(g.exposureUsd)}</td>
-                    <td className="mono is-right">{g.buyCount}</td>
-                    <td className="mono is-right">{fmtCents(g.avgBuyPrice)}</td>
-                    <td className="muted">
-                      {g.hedgeSuspect ? t("对冲? ") : ""}
-                      {g.mmSuspect ? t("做市?") : ""}
-                    </td>
+        <div className="ds-card" style={{ overflow: "hidden" }}>
+          <SectionBar
+            n="03"
+            title={t("拆单累计")}
+            note={
+              brief.settled
+                ? t("≥3 笔 · 单笔 <$10k · 窗口净买入 ≥$2k")
+                : t("≥3 笔 · 单笔 <$10k · 敞口 ≥$2k")
+            }
+          />
+          {brief.accum.length === 0 ? (
+            <div className="ds-empty" style={{ border: 0, borderRadius: 0 }}>
+              {t("窗口内无拆单累计")}
+            </div>
+          ) : (
+            <div
+              className="ds-table-wrap"
+              style={{ border: 0, borderRadius: 0, boxShadow: "none" }}
+            >
+              <table className="ds-table">
+                <thead>
+                  <tr>
+                    <th>{t("钱包")}</th>
+                    <th>{t("结果")}</th>
+                    <th className="is-right">
+                      {brief.settled ? t("窗口净买入") : t("敞口")}
+                    </th>
+                    <th className="is-right">{t("笔数")}</th>
+                    <th className="is-right">{t("均价")}</th>
+                    <th className="is-right">{t("标记")}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody>
+                  {brief.accum.map((g) => (
+                    <tr key={`${g.wallet}:${g.outcome}`}>
+                      <td data-label={t("钱包")}>
+                        <WalletLink address={g.wallet}>
+                          {shortWallet(g.wallet)}
+                        </WalletLink>
+                      </td>
+                      <td data-label={t("结果")}>{g.outcome}</td>
+                      <td
+                        className="mono is-right"
+                        data-label={brief.settled ? t("窗口净买入") : t("敞口")}
+                      >
+                        ${fmtUsd(g.exposureUsd)}
+                      </td>
+                      <td className="mono is-right" data-label={t("笔数")}>
+                        {g.buyCount}
+                      </td>
+                      <td className="mono is-right" data-label={t("均价")}>
+                        {fmtCents(g.avgBuyPrice)}
+                      </td>
+                      {/* 标记 = 需留神的口径 → 琥珀描边(§2.1) */}
+                      <td className="is-right" data-label={t("标记")}>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            gap: "var(--s-1)",
+                            justifyContent: "flex-end",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          {g.hedgeSuspect && (
+                            <Tag variant="warn">{t("疑似对冲")}</Tag>
+                          )}
+                          {g.mmSuspect && (
+                            <Tag variant="warn">{t("🤖 疑似做市")}</Tag>
+                          )}
+                          {!g.hedgeSuspect && !g.mmSuspect && (
+                            <span className="faint">·</span>
+                          )}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </section>
 
-      {/* Fresh-wallet unusual flow */}
+      {/* 04 Fresh-wallet unusual flow */}
       <section style={{ marginBottom: "var(--s-4)" }}>
-        <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-          {t("🆕 新钱包异常流（账龄 ≤7 天 · 单笔 ≥$5k 买入）")}
-        </div>
-        {freshFlow.length === 0 ? (
-          <div className="ds-empty">{t("窗口内无新钱包大额买入")}</div>
-        ) : (
-          <div className="ds-table-wrap">
-            <table className="ds-table">
-              <thead>
-                <tr>
-                  <th>{t("钱包")}</th>
-                  <th className="is-right">{t("账龄")}</th>
-                  <th>{t("结果")}</th>
-                  <th className="is-right">{t("金额")}</th>
-                  <th className="is-right">{t("价格")}</th>
-                  <th className="is-right">{t("时间")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {freshFlow.map((f) => (
-                  <tr key={`${f.wallet}:${f.ts}`}>
-                    <td>
-                      <WalletLink address={f.wallet}>
-                        {shortWallet(f.wallet)}
-                      </WalletLink>
-                    </td>
-                    <td className="mono is-right">
-                      🆕{" "}
-                      {f.ageDays < 1
-                        ? t("{n}小时", { n: Math.round(f.ageDays * 24) })
-                        : t("{n}天", { n: Math.round(f.ageDays) })}
-                    </td>
-                    <td>{f.outcome}</td>
-                    <td className="mono is-right">${fmtUsd(f.usd)}</td>
-                    <td className="mono is-right">{fmtCents(f.price)}</td>
-                    <td className="mono is-right muted">
-                      {fmtTime(f.ts, dtLocale)}
-                    </td>
+        <div className="ds-card" style={{ overflow: "hidden" }}>
+          <SectionBar
+            n="04"
+            title={t("新钱包异常流")}
+            note={t("账龄 ≤7 天 · 单笔 ≥$5k 买入")}
+          />
+          {freshFlow.length === 0 ? (
+            <div className="ds-empty" style={{ border: 0, borderRadius: 0 }}>
+              {t("窗口内无新钱包大额买入")}
+            </div>
+          ) : (
+            <div
+              className="ds-table-wrap"
+              style={{ border: 0, borderRadius: 0, boxShadow: "none" }}
+            >
+              <table className="ds-table">
+                <thead>
+                  <tr>
+                    <th>{t("钱包")}</th>
+                    <th>{t("账龄")}</th>
+                    <th>{t("结果")}</th>
+                    <th className="is-right">{t("金额")}</th>
+                    <th className="is-right">{t("价格")}</th>
+                    <th className="is-right">{t("时间")}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody>
+                  {freshFlow.map((f) => (
+                    <tr key={`${f.wallet}:${f.ts}`}>
+                      <td data-label={t("钱包")}>
+                        <WalletLink address={f.wallet}>
+                          {shortWallet(f.wallet)}
+                        </WalletLink>
+                      </td>
+                      {/* 新钱包 = 需留神的口径 → 琥珀描边,emoji 收在标签内 */}
+                      <td data-label={t("账龄")}>
+                        <Tag variant="warn">
+                          🆕{" "}
+                          {f.ageDays < 1
+                            ? t("{n}小时", { n: Math.round(f.ageDays * 24) })
+                            : t("{n}天", { n: Math.round(f.ageDays) })}
+                        </Tag>
+                      </td>
+                      <td data-label={t("结果")}>{f.outcome}</td>
+                      <td className="mono is-right" data-label={t("金额")}>
+                        ${fmtUsd(f.usd)}
+                      </td>
+                      <td className="mono is-right" data-label={t("价格")}>
+                        {fmtCents(f.price)}
+                      </td>
+                      <td
+                        className="mono is-right muted"
+                        data-label={t("时间")}
+                      >
+                        {fmtTime(f.ts, dtLocale)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </section>
 
-      {/* Tool's own alert history */}
+      {/* 05 Tool's own alert history */}
       <section style={{ marginBottom: "var(--s-4)" }}>
-        <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-          {t("📐 本工具告警史（90 天内 · 含验证结果）")}
+        <div className="ds-card" style={{ overflow: "hidden" }}>
+          <SectionBar
+            n="05"
+            title={t("本工具告警史")}
+            note={t("90 天内 · 含验证结果")}
+          />
+          {history.length === 0 ? (
+            <div className="ds-empty" style={{ border: 0, borderRadius: 0 }}>
+              {t("该市场暂无本工具告警")}
+            </div>
+          ) : (
+            <>
+              <div
+                className="ds-table-wrap"
+                style={{ border: 0, borderRadius: 0, boxShadow: "none" }}
+              >
+                <table className="ds-table">
+                  <thead>
+                    <tr>
+                      <th>{t("时间")}</th>
+                      <th>{t("类型")}</th>
+                      <th>{t("方向")}</th>
+                      <th className="is-right">{t("金额")}</th>
+                      <th className="is-right">{t("价格")}</th>
+                      <th
+                        className="is-right"
+                        title={t("信号后 1h / 24h 市场价")}
+                      >
+                        1h / 24h
+                      </th>
+                      <th
+                        className="is-right"
+                        title={t("结算验证：✅ 命中 ❌ 反向 ➖ 平")}
+                      >
+                        {t("结算")}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((h, i) => (
+                      <tr key={i}>
+                        <td className="mono muted" data-label={t("时间")}>
+                          {fmtTime(h.createdAt, dtLocale)}
+                        </td>
+                        {/* 信号类型 = 名称标签(灰底，不表示状态)，emoji 收在标签内 */}
+                        <td data-label={t("类型")}>
+                          <Tag>{t(TYPE_LABEL[h.type] ?? h.type)}</Tag>
+                        </td>
+                        {/* 方向是金融含义：BUY 绿 / SELL 红（§2.1） */}
+                        <td data-label={t("方向")}>
+                          <span className={h.side === "SELL" ? "down" : "up"}>
+                            {h.side} · {h.outcome}
+                          </span>
+                        </td>
+                        <td className="mono is-right" data-label={t("金额")}>
+                          ${fmtUsd(h.usd)}
+                        </td>
+                        <td className="mono is-right" data-label={t("价格")}>
+                          {h.price != null ? (
+                            fmtCents(h.price)
+                          ) : (
+                            <span className="faint">—</span>
+                          )}
+                        </td>
+                        {/* 变化写成 41.9 → 44.1¢（§1 数字格式）。这一列不上
+                            涨绿跌红：它是「信号发出后市场怎么走」的读数，
+                            方向判定归右边的结算徽章。 */}
+                        <td className="mono is-right" data-label="1h / 24h">
+                          {h.price1h != null ? (
+                            fmtCentsNum(h.price1h)
+                          ) : (
+                            <span className="faint">—</span>
+                          )}
+                          {" → "}
+                          {h.price24h != null ? (
+                            fmtCents(h.price24h)
+                          ) : (
+                            <span className="faint">—</span>
+                          )}
+                        </td>
+                        <td className="is-right" data-label={t("结算")}>
+                          {!h.resolved ? (
+                            // 「还没到结果」不是一种判定 —— 压暗的灰底标签,
+                            // 与 ✅/❌ 那两枚有语义色的判定分开(设计稿 12)。
+                            <span
+                              className="ds-tag"
+                              style={{ color: "var(--ww-text-muted)" }}
+                            >
+                              {t("待结算")}
+                            </span>
+                          ) : h.won == null ? (
+                            <Tag>{t("➖ 平")}</Tag>
+                          ) : h.won ? (
+                            <Tag variant="up">{t("✅ 命中")}</Tag>
+                          ) : (
+                            <Tag variant="down">{t("❌ 反向")}</Tag>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* 「—」是判不了，不是 0 —— 三种成因写在表下方的琥珀条里（§1.2） */}
+              <div className="note-strip note-strip--warn">
+                {t(
+                  "「—」是判不了，不是 0：价格一栏为空表示该信号缺 asset、当时取不到价；1h / 24h 为空表示那个时点还没有价格历史（信号太新或曲线不可用）。",
+                )}
+              </div>
+            </>
+          )}
         </div>
-        {history.length === 0 ? (
-          <div className="ds-empty">{t("该市场暂无本工具告警")}</div>
-        ) : (
-          <div className="ds-table-wrap">
-            <table className="ds-table">
-              <thead>
-                <tr>
-                  <th>{t("时间")}</th>
-                  <th>{t("类型")}</th>
-                  <th>{t("方向")}</th>
-                  <th className="is-right">{t("金额")}</th>
-                  <th className="is-right">{t("价格")}</th>
-                  <th className="is-right" title={t("信号后 1h / 24h 市场价")}>
-                    1h / 24h
-                  </th>
-                  <th
-                    className="is-right"
-                    title={t("结算验证：✅ 命中 ❌ 反向 ➖ 平")}
-                  >
-                    {t("结算")}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((h, i) => (
-                  <tr key={i}>
-                    <td className="mono muted">
-                      {fmtTime(h.createdAt, dtLocale)}
-                    </td>
-                    <td>
-                      {TYPE_ICON[h.type] ?? ""} {h.type}
-                    </td>
-                    <td>
-                      {h.side === "SELL" ? t("🔴卖") : t("🟢买")} {h.outcome}
-                    </td>
-                    <td className="mono is-right">${fmtUsd(h.usd)}</td>
-                    <td className="mono is-right">
-                      {h.price != null ? fmtCents(h.price) : "—"}
-                    </td>
-                    <td className="mono is-right">
-                      {h.price1h != null ? fmtCents(h.price1h) : "—"} /{" "}
-                      {h.price24h != null ? fmtCents(h.price24h) : "—"}
-                    </td>
-                    <td className="is-right">
-                      {!h.resolved
-                        ? "…"
-                        : h.won == null
-                          ? "➖"
-                          : h.won
-                            ? "✅"
-                            : "❌"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
       </section>
-
-      {/* 🕰 复盘(2026-08-28 八件套):点击才拉曲线 —— 市场卡自身零上游的
-          纪律不被稀释;曲线不可变,服务端 10 分钟缓存按市场去重。 */}
-      <ReplaySection conditionId={conditionId} />
     </main>
+  );
+}
+
+// 卡内标题条 —— 段号（muted）+ 段名（14/600）+ 口径后缀（14/400 muted，带
+// 「·」前导）。五段共用一个,编号是设计稿「五段式信号卡」的骨架:读者数得清
+// 自己看到第几段。口径不并进段名:段名是这一段叫什么,口径是它按什么口径算,
+// 两件事在设计稿里就是 600 与 400 两个字重(层级不靠字号跳档)。
+// 段名不带 emoji —— emoji 只收在灰底名称标签 / KPI 图标位 / 12px 小标前缀
+// 三处(readme §1),14px 标题条不在其中;这五段的 emoji 在落地页的 KPI 图标位。
+function SectionBar({
+  n,
+  title,
+  note,
+}: {
+  n: string;
+  title: string;
+  note?: string;
+}) {
+  return (
+    <div className="card-bar" style={{ gap: "var(--s-2)" }}>
+      <span className="muted">{n}</span>
+      <span style={{ fontWeight: 600 }}>{title}</span>
+      {note ? <span className="muted">· {note}</span> : null}
+    </div>
   );
 }
 
@@ -627,11 +940,13 @@ type ReplayData = {
   error?: string;
 };
 
+// 标记点色 —— 四类信号的分类编码(不是状态)。取设计系统的点值,让这页
+// 不出现调色板外的颜色;色相映射与改皮前一致(灰/琥珀/红/绿)。
 const MARKER_COLOR: Record<string, string> = {
-  large: "#8a8a8a",
-  smart: "#d99a2b",
-  consensus: "#d0454c",
-  cohort: "#3f9d63",
+  large: "#6c757d",
+  smart: "#b47d00",
+  consensus: "#dc3545",
+  cohort: "#00a186",
 };
 
 function ReplaySection({ conditionId }: { conditionId: string }) {
@@ -667,49 +982,84 @@ function ReplaySection({ conditionId }: { conditionId: string }) {
 
   const d = state.data;
   return (
-    <section style={{ marginTop: "var(--s-5)" }}>
-      <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-        {t("🕰 复盘（价格曲线 × 本站告警 × 结算）")}
-      </div>
-      {!d && (
-        <div>
-          <button
-            className="ds-btn ds-btn--sm"
-            disabled={state.loading}
-            onClick={() => void load()}
+    <section style={{ marginBottom: "var(--s-4)" }}>
+      <div className="ds-card" style={{ overflow: "hidden" }}>
+        <SectionBar
+          n="01"
+          title={t("复盘")}
+          note={t("价格曲线 × 本站告警 × 结算")}
+        />
+        {!d && (
+          // 未加载态:灰底居中带 —— 一个主按钮 + 为什么要点它 + 点完能看到什么。
+          // 空态必须给内容和出路,不返回 null。
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "10px",
+              padding: "var(--s-5) var(--s-4)",
+              background: "var(--ww-surface-muted)",
+              textAlign: "center",
+            }}
           >
-            {state.loading ? t("加载中…") : t("加载复盘（拉一次价格曲线）")}
-          </button>
-          {state.error && (
-            <span
-              className="ds-hint"
-              style={{ marginLeft: "var(--s-3)", color: "var(--warn-700)" }}
+            <button
+              className="ds-btn ds-btn--primary"
+              disabled={state.loading}
+              onClick={() => void load()}
             >
-              {t("加载失败：{err}", { err: state.error })}
+              {state.loading ? t("加载中…") : t("拉一次价格曲线")}
+            </button>
+            <span className="ds-hint">
+              {t("点一下才拉曲线 —— 这页对上游仍是零请求")}
             </span>
-          )}
-        </div>
-      )}
-      {d && d.series.length > 0 && (
-        <>
-          <ReplayChart d={d} />
-          <div className="ds-hint muted" style={{ marginTop: "var(--s-2)" }}>
-            {t("曲线为 {o} 一侧的价格。", { o: d.outcome ?? "index 0" })}{" "}
-            {d.binary
-              ? t("另一侧的告警按 1−p 精确映射到同一坐标（标记带 ↔）。")
-              : t(
-                  "非二元市场：只显示第一结果一侧的告警，其余边无等价映射。",
-                )}{" "}
-            {d.closed && d.resolutionPrice != null ? t("虚线为结算价。") : ""}
-            {t("标记色：💰大单 🏆聪明钱 🔥共识 🐣同批新钱包。")}
+            <span
+              style={{
+                display: "flex",
+                gap: "var(--s-1)",
+                flexWrap: "wrap",
+                justifyContent: "center",
+                marginTop: "var(--s-1)",
+              }}
+            >
+              <Tag>{t("💰 大单")}</Tag>
+              <Tag>{t("🏆 聪明钱")}</Tag>
+              <Tag>{t("🔥 共识")}</Tag>
+              <Tag>{t("🐣 同批新钱包")}</Tag>
+            </span>
+            <span className="ds-label" style={{ textTransform: "none" }}>
+              {t("曲线为第一结果一侧 · 另一侧按 1−p 映射（标记带 ↔）")}
+            </span>
+            {state.error && (
+              <span className="ds-hint" style={{ color: "var(--ww-down)" }}>
+                {t("加载失败：{err}", { err: state.error })}
+              </span>
+            )}
           </div>
-        </>
-      )}
-      {d && d.series.length === 0 && (
-        <div className="ds-hint">
-          {t("该区间没有价格历史点（市场太新或曲线不可用）。")}
-        </div>
-      )}
+        )}
+        {d && d.series.length > 0 && (
+          <>
+            <div style={{ padding: "var(--s-4)" }}>
+              <ReplayChart d={d} />
+            </div>
+            <div className="note-strip">
+              {t("曲线为 {o} 一侧的价格。", { o: d.outcome ?? "index 0" })}{" "}
+              {d.binary
+                ? t("另一侧的告警按 1−p 精确映射到同一坐标（标记带 ↔）。")
+                : t(
+                    "非二元市场：只显示第一结果一侧的告警，其余边无等价映射。",
+                  )}{" "}
+              {d.closed && d.resolutionPrice != null ? t("虚线为结算价。") : ""}
+              {t("标记色：💰大单 🏆聪明钱 🔥共识 🐣同批新钱包。")}
+            </div>
+          </>
+        )}
+        {d && d.series.length === 0 && (
+          <div className="ds-empty" style={{ border: 0, borderRadius: 0 }}>
+            {t("该区间没有价格历史点（市场太新或曲线不可用）。")}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -741,7 +1091,15 @@ function ReplayChart({ d }: { d: ReplayData }) {
   };
   const ticks = [t0, t0 + (t1 - t0) / 3, t0 + (2 * (t1 - t0)) / 3, t1];
   return (
-    <div className="ds-table-wrap">
+    // 图表区:1px 边 + 圆角 8(§4),不再套一层卡 —— 外面已经是 01 段那张卡了
+    <div
+      style={{
+        overflowX: "auto",
+        border: "1px solid var(--ww-border)",
+        borderRadius: "var(--r-btn)",
+        background: "var(--ww-surface)",
+      }}
+    >
       <svg
         width="100%"
         viewBox={`0 0 ${W} ${H}`}

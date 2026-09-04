@@ -1,6 +1,7 @@
 "use client";
 
 import type { AdminSignalOverview } from "../../lib/adminOverview";
+import { Tag } from "../ui";
 import { Foldable } from "./bits";
 import { busTypeEnabled, type BusDefLike } from "./routing";
 
@@ -58,21 +59,21 @@ export function SignalLinesOverview({
     },
     {
       no: "👁",
-      name: "视图(非信号)",
+      name: "视图",
       what: "active[]/settled[](① 的折叠) · record30d · strategies 段",
       manage: "无 —— 折叠规则是固定常量,数据请求时现算",
       dest: "不适用:视图无管线,想被推送订阅 ① 或 ②",
-      status: "状态:回答「现在该看什么」",
+      status: "回答「现在该看什么」",
       jump: "views",
       isView: true,
     },
     {
       no: "🎯",
-      name: "按需查询(非信号)",
+      name: "按需查询",
       what: "市场深度卡:调用方点名一个市场,现算一份全景(/api/market-card)",
       manage: "上游预算 / 新鲜期 / 陈旧闸 / 工作集上限(在 🚚 下游管线)",
       dest: "不适用:无管线可推 —— 它是拉取,不是推送",
-      status: "状态:全站唯一**会打上游**的对外端点,故有预算与 429 背压",
+      status: "全站唯一会打上游的对外端点,故有预算与 429 背压",
       jump: "card",
       isView: true,
     },
@@ -80,14 +81,19 @@ export function SignalLinesOverview({
   return (
     <Foldable
       storageKey="manageGuideLines"
-      title="🧭 对外产出 = 信号（两条线）+ 视图 + 按需查询"
+      // 卡内标题条不放 emoji —— emoji 只住三个位置(灰底名称标签内 / KPI 图标位
+      // / 12px 小标前缀),而这条是 14/600 的标题条。分区语义的 🧭 已经由上方
+      // tab 承担,这里再写一次是重复。
+      title="对外产出 = 信号（两条线）+ 视图 + 按需查询"
       hint="信号=事件(触发后发出,管线只挂在事件上);视图=事件的折叠;按需查询=调用方点名、现算的答案 —— 后两者都非信号,无管线可挂。点行切换下方子 tab;接线管理在「下游管线」tab。"
-      summary={`① 原始事件(大额/共识/发现)　·　② 策略 ${
+      summary={`① 原始事件(大额/共识/发现) · ② 策略 ${
         pushed != null && total != null ? `推送中 ${pushed}/${total} 档` : "…"
-      }　·　👁 视图　·　🎯 按需查询`}
+      } · 👁 视图 · 🎯 按需查询`}
     >
-      <div className="ds-table-wrap">
-        <table className="ds-table ds-table--compact">
+      {/* 表格在导航卡内部,不再套 .ds-table-wrap 的边框+投影 —— 卡中卡会把
+          这张地图渲染成第二块内容,而它是同一张卡的一层。 */}
+      <div style={{ overflowX: "auto" }}>
+        <table className="ds-table">
           <thead>
             <tr>
               <th>产出</th>
@@ -103,31 +109,32 @@ export function SignalLinesOverview({
                 key={l.no}
                 role="button"
                 tabIndex={0}
-                style={{
-                  cursor: "pointer",
-                  background: active === l.jump ? "var(--brand-50)" : undefined,
-                }}
+                style={{ cursor: "pointer" }}
                 title="切换到该子模块"
                 onClick={() => onJump(l.jump)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") onJump(l.jump);
                 }}
               >
-                <td
-                  style={{
-                    whiteSpace: "nowrap",
-                    fontWeight: 500,
-                    opacity: l.isView ? 0.75 : undefined,
-                  }}
-                >
-                  {l.no} {l.name}
+                {/* 行级强调一律不要(没有整行染色、没有整行调暗、没有字号
+                    跳档)—— 轻重只靠徽章:蓝=当前打开的那一档,灰底名称标签
+                    =「非信号」这类分类事实。 */}
+                <td style={{ whiteSpace: "nowrap" }}>
+                  {l.no} {l.name} {l.isView && <Tag>非信号</Tag>}{" "}
+                  {active === l.jump && <Tag variant="brand">当前</Tag>}
                 </td>
-                <td style={{ opacity: l.isView ? 0.75 : undefined }}>
+                {/* data-label = 窄屏堆叠卡的行首标签(表头此时被隐藏)。
+                    首列不带 label,它在堆叠态是卡头。 */}
+                <td className="cell-wrap" data-label="是什么">
                   {l.what}
                 </td>
-                <td>{l.manage}</td>
-                <td className="ds-hint">{l.dest}</td>
-                <td className="ds-hint" style={{ whiteSpace: "nowrap" }}>
+                <td className="cell-wrap" data-label="在这页管什么">
+                  {l.manage}
+                </td>
+                <td className="cell-wrap" data-label="可达管线">
+                  {l.dest}
+                </td>
+                <td className="cell-wrap" data-label="状态">
                   {l.status}
                 </td>
               </tr>
@@ -135,11 +142,16 @@ export function SignalLinesOverview({
           </tbody>
         </table>
       </div>
-      <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-        判据一句话:<b>触发后发出的才是信号</b>。事件不可变、有稳定 id,
-        管线(TG/𝕏/webhook/API)只挂在事件上;视图是事件的折叠,同一共识组
-        升级时原地更新 —— 把每条升级事件当独立信号计数是唯一的坑,视图已
-        替你折叠好(事件做触发、视图做渲染)。
+      {/* 说明条里不用粗体做强调 —— 层级来自 1px 分格线与小标,不来自字重
+          跳档;要突出的那半句改用主文字色,与周围的 muted 分开。中文长句写成
+          字符串表达式:JSX 文本被折行时,换行会渲染成一个空格,在汉字中间夹
+          出一道缝(此前的「同一共识组 升级时」)。 */}
+      <div className="note-strip">
+        {"判据一句话:"}
+        <span style={{ color: "var(--ww-text)" }}>触发后发出的才是信号</span>
+        {
+          "。事件不可变、有稳定 id,管线(TG/𝕏/webhook/API)只挂在事件上;视图是事件的折叠,同一共识组升级时原地更新 —— 把每条升级事件当独立信号计数是唯一的坑,视图已替你折叠好(事件做触发、视图做渲染)。"
+        }
       </div>
     </Foldable>
   );
@@ -163,12 +175,15 @@ export function PipelinesOverview({
       carries:
         "① 告警频道(env) · ② 信号频道(付费实时 + 公开延迟) · 多目标(tg_targets,按类型分发)",
       manage: "bot+频道组合的增删改/暂停,按类型分发",
+      // 状态是徽章不是句子:绿=正常、红=停跳/连败、灰底=名称标签(不表状态)。
       status:
-        tgOk == null
-          ? "无发送记录"
-          : tgOk.failing
-            ? `连败 ${tgOk.consecutiveSendFailures}`
-            : "正常",
+        tgOk == null ? (
+          <Tag>无发送记录</Tag>
+        ) : tgOk.failing ? (
+          <Tag variant="down">连败 {tgOk.consecutiveSendFailures}</Tag>
+        ) : (
+          <Tag variant="up">正常</Tag>
+        ),
       jump: "tg",
     },
     {
@@ -193,7 +208,7 @@ export function PipelinesOverview({
   return (
     <Foldable
       storageKey="manageGuidePipes"
-      title="🚚 下游管线"
+      title="下游管线"
       hint="信号线(上一个 tab)产出后经这三条管线到达消费者。点行切换下方子 tab。「承载」列是当前真实接线的转述 —— 引擎改了接线,这里要跟着改。"
       summary={`🅐 Telegram ${
         tgOk == null
@@ -201,10 +216,10 @@ export function PipelinesOverview({
           : tgOk.failing
             ? `连败 ${tgOk.consecutiveSendFailures}`
             : "正常"
-      }　·　🅑 有效 key ${keys ?? "…"}　·　🅒 𝕏 播报`}
+      } · 🅑 有效 key ${keys ?? "…"} · 🅒 𝕏 播报`}
     >
-      <div className="ds-table-wrap">
-        <table className="ds-table ds-table--compact">
+      <div style={{ overflowX: "auto" }}>
+        <table className="ds-table">
           <thead>
             <tr>
               <th>管线</th>
@@ -219,22 +234,24 @@ export function PipelinesOverview({
                 key={p.no}
                 role="button"
                 tabIndex={0}
-                style={{
-                  cursor: "pointer",
-                  background: active === p.jump ? "var(--brand-50)" : undefined,
-                }}
+                style={{ cursor: "pointer" }}
                 title="切换到该子模块"
                 onClick={() => onJump(p.jump)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") onJump(p.jump);
                 }}
               >
-                <td style={{ whiteSpace: "nowrap", fontWeight: 500 }}>
-                  {p.no} {p.name}
+                <td style={{ whiteSpace: "nowrap" }}>
+                  {p.no} {p.name}{" "}
+                  {active === p.jump && <Tag variant="brand">当前</Tag>}
                 </td>
-                <td className="ds-hint">{p.carries}</td>
-                <td>{p.manage}</td>
-                <td className="ds-hint" style={{ whiteSpace: "nowrap" }}>
+                <td className="cell-wrap" data-label="承载哪些信号">
+                  {p.carries}
+                </td>
+                <td className="cell-wrap" data-label="在这页管什么">
+                  {p.manage}
+                </td>
+                <td className="cell-wrap" data-label="状态">
                   {p.status}
                 </td>
               </tr>
@@ -253,6 +270,12 @@ export interface RoutingState {
   tgTargetKinds: Record<string, number>;
   webhookTypes: Record<string, number>;
 }
+
+/**
+ * 矩阵的列头 —— 表头与每格的 data-label 同源,窄屏堆叠时行首标签就是这几个。
+ * 顺序即 rows[].cells 的顺序,改一处等于改两处。
+ */
+const MATRIX_COLS = ["🅐 Telegram", "🅑 API 拉取", "🅑 webhook", "🅒 𝕏"];
 
 /**
  * 路由矩阵:信号线 × 管线,每格显示当前状态并点击直达**属主开关**所在的
@@ -353,34 +376,39 @@ export function RoutingMatrix({
   return (
     <Foldable
       storageKey="manageGuideMatrix"
-      title="🗺 路由矩阵(事件类型 × 管线)"
+      title="路由矩阵(事件类型 × 管线)"
       hint="每格显示当前开关态,点击直达属主开关。矩阵不另存配置 —— 每个开关只有一个属主,这里只是拼图。"
       summary="信号线 × 管线的当前接线一览"
       // 它是状态仪表盘不是教学,默认展开;熟了的运营者可以自己收起来。
       defaultOpen
     >
-      <div className="ds-table-wrap">
-        <table className="ds-table ds-table--compact">
+      <div style={{ overflowX: "auto" }}>
+        <table className="ds-table">
           <thead>
             <tr>
               <th>信号线</th>
-              <th>🅐 Telegram</th>
-              <th>🅑 API 拉取</th>
-              <th>🅑 webhook</th>
-              <th>🅒 𝕏</th>
+              {MATRIX_COLS.map((h) => (
+                <th key={h}>{h}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.line}>
-                <td style={{ whiteSpace: "nowrap", fontWeight: 500 }}>
-                  {r.line}
-                </td>
+                <td style={{ whiteSpace: "nowrap" }}>{r.line}</td>
                 {r.cells.map((c, i) => (
-                  <td key={i} style={{ whiteSpace: "nowrap" }}>
+                  // 窄屏堆叠时表头被隐藏,每格靠 data-label 说清自己是哪条管线。
+                  <td
+                    key={i}
+                    data-label={MATRIX_COLS[i]}
+                    style={{ whiteSpace: "nowrap" }}
+                  >
                     {c.jump ? (
+                      // 可点即描边白底,不用灰底实心钮 —— 16 格灰底会把矩阵
+                      // 压成一片色块,而这些格子读的是开关态,不是操作区。
                       <button
-                        className="ds-btn ds-btn--subtle ds-btn--sm"
+                        type="button"
+                        className="ds-btn ds-btn--sm"
                         onClick={() => onJump(c.jump!)}
                         title="打开属主开关所在的子模块"
                       >
@@ -395,6 +423,11 @@ export function RoutingMatrix({
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="note-strip">
+        {
+          "矩阵不另存配置:每个开关只有一个属主(告警总开关在 alert-config、𝕏 在 x_broadcast_kinds、总线在信号定义、webhook 在端点勾选),这里只是把它们拼成一张可导航的图。「不接」是设计如此,不是没配。"
+        }
       </div>
     </Foldable>
   );

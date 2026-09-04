@@ -2,6 +2,11 @@
 // 导航标签(市场脉搏/市场校准)也在这里:两页同批出生,共享一个分片。
 export const DICT_PULSE: Record<string, string> = {
   市场脉搏: "Market Pulse",
+  // 页头（Etherscan 皮：12px 小标 + 24/600 标题 + 14px 描述）。此前小标与
+  // 描述是一句话,拆成 eyebrow + desc 后原键留着给别处引用。
+  "📊 每 UTC 日收盘后重建": "📊 Rebuilt after each UTC close",
+  "先看整体情绪落在哪个品类，再落到具体哪些市场在异动，最后看这些量能要打几折。":
+    "Start with which category the mood landed in, then drill into which markets moved abnormally, and finally how much of that volume to discount.",
   "每 UTC 日收盘后重建的市场级聚合：先看整体情绪落在哪个品类，再落到具体哪些市场在异动，最后看这些量能要打几折。":
     "Market-level aggregates rebuilt after each UTC close: start with which category the mood landed in, then drill into which markets moved abnormally, and finally how much of that volume to discount.",
   "数据到 {d}（UTC）· 底座已积累 {n} 天":
@@ -17,7 +22,9 @@ export const DICT_PULSE: Record<string, string> = {
   口径: "Definitions",
 
   // 概览 KPI 条(2026-08-31)。四张卡对应页面漏斗:宏观 → 微观 → 规模。
+  // Etherscan 皮把「分数 · 品类」并进 KPI 值,副行改说这个数是什么。
   最激辩品类: "Most contentious category",
+  确信指数最高: "Highest conviction index",
   确信指数暂不可用: "Conviction index unavailable",
   最异常市场: "Most anomalous market",
   该日无市场入榜: "No market charted that day",
@@ -48,9 +55,15 @@ export const DICT_PULSE: Record<string, string> = {
   洗量: "Wash",
   本站给该市场打的其他榜单标记: "Other boards this market also charts on",
 
+  // 榜卡标题条的一句话副标(Etherscan 皮:榜名 14/600 + 13px 灰说明,
+  // 一道 1px 线接表头)。五个榜各一条,与卡底说明条的公式不重复。
   异常市场日榜: "Daily anomaly board",
+  "量能 / 单边 / 鲸鱼 / 价移四项合成的市场级异动":
+    "Market-level anomaly composed of volume surge, one-sidedness, whale share and price move",
   "该日无达到材料性门槛（$10k 总量）的市场。":
     "No market cleared the materiality floor ($10k volume) that day.",
+  "底座每 UTC 日收盘后重建 —— 明天再来。":
+    "The base is rebuilt after each UTC close — come back tomorrow.",
   异常分: "Anomaly",
   构成: "Components",
   量能: "Volume",
@@ -61,10 +74,16 @@ export const DICT_PULSE: Record<string, string> = {
   "量能为其 {n} 日均值的 {r} 倍": "volume {r}× its {n}-day mean",
   "异常分 = 0.35·量能异动 + 0.25·单边度 + 0.20·鲸鱼占比 + 0.20·日内价移，各分量 0–1 可逐项核对；量能异动在同市场基线不足 3 天时退化为当日横截面分位。":
     "Anomaly = 0.35·volume surge + 0.25·one-sidedness + 0.20·whale share + 0.20·intraday move, each component 0–1 and individually inspectable; volume surge falls back to the day's cross-sectional percentile when a market has under 3 baseline days.",
+  // 两类标记的分色规则写进说明条 —— 页面上是两种颜色,读者得知道为什么。
+  "品类标签用电蓝（这是什么市场），榜单标记用琥珀（我们发现它怎么了）—— 两类事实，两种色。":
+    "Category tags are electric blue (what kind of market this is); board flags are amber (what we found about it) — two kinds of fact, two colors.",
 
   "小单 vs 鲸鱼 · 方向分歧": "Small orders vs whales · directional split",
+  两桶各自净买入的顶结果不同: "The two buckets' top net-bought outcomes differ",
   "该日无达到双边材料性门槛的方向分歧。":
     "No directional split cleared both materiality floors that day.",
+  "小单与鲸鱼在所有覆盖市场里同向，这本身是信息。":
+    "Small orders and whales pointed the same way in every covered market — that itself is information.",
   小单在买: "Small orders buying",
   鲸鱼在买: "Whales buying",
   分歧强度: "Split strength",
@@ -76,6 +95,8 @@ export const DICT_PULSE: Record<string, string> = {
 
   // 确信指数(第一梯队五件套,2026-08-28)
   "确信指数 · 品类激辩度": "Conviction index · category contention",
+  "今天整体情绪落在哪个品类 —— 漏斗的起点":
+    "Which category today's mood landed in — the top of the funnel",
   "高 = 激辩/恐慌（阵营对峙、小单与鲸鱼对立、价格动荡、量能异动），低 = 确信（一边倒、平静）。VIX 语义，逐品类按日合成。":
     "High = contention/fear (split camps, small-vs-whale opposition, price churn, volume surge); low = conviction (one-sided, calm). VIX semantics, composed per category per day.",
   品类: "Category",
@@ -93,11 +114,15 @@ export const DICT_PULSE: Record<string, string> = {
   // 无鲸异动 + 洗量榜(第二梯队八件套,2026-08-28)
   "无鲸异动 · 没人付大钱的剧烈价移":
     "Ghost moves · big swings nobody paid big for",
+  "价移 ≥10¢ 但当日无任何一笔 ≥$10k":
+    "Price moved ≥10¢ with no single fill ≥$10k that day",
   "价移 ≥10¢ 但当日没有任何一笔 ≥$10k —— 要么簿子薄到小单就能推，要么有人在蚂蚁搬家。":
     "Price moved ≥10¢ with no single fill ≥$10k all day — either the book is thin enough for small orders to push, or someone is accumulating ant-style.",
   "无鲸异动 = 价移 ≥10¢ 且当日单笔最大 <$10k（判定材料 2026-08-28 起采集，之前的日份不进榜）。":
     "Ghost move = ≥10¢ move with max single fill <$10k that day (the material is collected from 2026-08-28; earlier days never chart).",
   "洗量榜 · 同钱包当日往返": "Wash board · same-wallet round trips",
+  "是结构描述不是指控 —— 做市、调仓也长这样":
+    "A structural description, not an accusation — market making and rebalancing look the same",
   "同一钱包在同一市场当日既买又卖的配对量占比（双腿口径）。是结构描述不是指控——做市、调仓也长这样；把它当「这个市场的量能里有多少不是方向性意见」来读。":
     "Share of volume matched between buys and sells by the same wallet in the same market that day (both legs counted). A structural description, not an accusation — market making and rebalancing look the same; read it as “how much of this market's volume is not a directional opinion”.",
   // 「价移」沿用本分片既有 chip 键;「单笔最大」沿用 accumulation 分片
@@ -109,7 +134,9 @@ export const DICT_PULSE: Record<string, string> = {
   "洗量占比 = 同钱包当日买卖配对量 ×2 ÷ 总量，只统计单笔 ≥$2k 的抓取窗口；入榜需占比 ≥20% 且当日总量 ≥$10k。":
     "Wash share = same-wallet matched buy/sell volume ×2 ÷ total, within the ≥$2k fetch window; charting requires a share ≥20% and ≥$10k volume that day.",
 
-  // 页尾只留真正全页共用的两把尺;各榜自己的公式已下放到该榜的口径折叠。
-  "全页共用口径：小单 = 单笔 $2k–10k（抓取下限之下的真散户不可见，因此只说「小单」）；鲸鱼 = 单笔 ≥$50k，与 heavy 信号同一把尺。各榜自身的公式与门槛，见该榜标题下的「口径」折叠。":
-    "Shared across this page: small = $2k–10k per fill (true retail below the fetch floor is invisible, hence “small orders”, never “retail”); whale = ≥$50k per fill, the same yardstick as heavy signals. Each board's own formula and floors live in the “Definitions” toggle under its heading.",
+  // 页尾只留真正全页共用的两把尺;各榜自己的公式已下放到该榜卡底的说明条。
+  // (Etherscan 皮把口径从 details 折叠改成常驻说明条,指路措辞随之改口 ——
+  //  旧键指向的「口径折叠」在页面上已不存在,原地替换而不是两条并存。)
+  "全页共用口径：小单 = 单笔 $2k–10k（抓取下限之下的真散户不可见，因此只说「小单」）；鲸鱼 = 单笔 ≥$50k，与 heavy 信号同一把尺。各榜自身的公式与门槛见该榜卡底的说明条。":
+    "Shared across this page: small = $2k–10k per fill (true retail below the fetch floor is invisible, hence “small orders”, never “retail”); whale = ≥$50k per fill, the same yardstick as heavy signals. Each board's own formula and floors sit in the note strip at the foot of that board's card.",
 };

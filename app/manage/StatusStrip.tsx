@@ -2,12 +2,17 @@
 
 import type { AdminSignalOverview } from "../../lib/adminOverview";
 import { StatCard } from "../ui";
-import { Dot, type Tone } from "./bits";
 import type { HealthReport } from "./HealthSection";
 
-// 顶部状态摘要:标准 KPI strip(section.kpi + StatCard/kpi-value 词汇,与
-// 首页/共识页同一范式)。运营者第一眼的七个「现在有没有事」读数,整卡可点
-// 跳到对应分区。红点优先级:引擎停跳 > TG 连败 > 投递积压。
+// 顶部状态摘要:两张 KPI 分格卡(设计稿 19「令牌门 + 七读数」)。
+//
+//   第一排三格 = 现在有没有事(引擎 / TG 发送 / 投递积压);
+//   第二排四格 = 台账读数(24h 信号 / 推送档位 / 有效 key / 存证链)。
+//
+// 分排本身就是那句口径:上排出问题要立刻处理,下排只是「今天产了多少」。
+// 每格左侧是 20px emoji 图标位(承担语义),值 18px 常规字重、涨绿跌红只
+// 留给真状态,数字不加粗不放大 —— 层级来自 1px 分格线与 12px 大写小标。
+// 整格可点,跳到对应分区。
 
 const CH_LABEL: Record<string, string> = {
   tg_paid: "付费",
@@ -16,16 +21,19 @@ const CH_LABEL: Record<string, string> = {
 
 function KpiCard({
   label,
+  icon,
   value,
   sub,
-  tone,
+  valueColor,
   onClick,
   title,
 }: {
   label: string;
+  icon: string;
   value: React.ReactNode;
   sub?: React.ReactNode;
-  tone?: Tone;
+  /** 语义色:绿=正常 · 红=停跳 · 蓝=可点的关键读数。缺省为主文字色。 */
+  valueColor?: string;
   onClick?: () => void;
   title?: string;
 }) {
@@ -38,19 +46,15 @@ function KpiCard({
         if (onClick && (e.key === "Enter" || e.key === " ")) onClick();
       }}
       title={title}
-      style={onClick ? { cursor: "pointer" } : undefined}
+      // grid 让内部 .kpi-card 在两个方向都撑满这一格:否则内容短的格子
+      // 底下会露出 .kpi 容器的边框色,变成一条灰带。
+      style={{ display: "grid", cursor: onClick ? "pointer" : undefined }}
     >
-      <StatCard label={label}>
+      <StatCard label={label} icon={icon}>
         <div
           className="kpi-value"
-          style={{
-            fontSize: "var(--t-lg)",
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--s-2)",
-          }}
+          style={valueColor ? { color: valueColor } : undefined}
         >
-          {tone && <Dot tone={tone} />}
           {value}
         </div>
         {sub && <div className="kpi-sub">{sub}</div>}
@@ -80,121 +84,151 @@ export default function StatusStrip({
           (Math.floor(Date.now() / 1000) - ops.engineStartedAt) / 86_400,
         ).toFixed(1)
       : null;
-  const locked = <span className="muted">—</span>;
+  // 「—」是判不了(此处:没有管理令牌所以取不到读数),不是零 —— 用 faint,
+  // 与真实的 0 严格分家。
+  const locked = <span className="faint">—</span>;
+  const pendingText =
+    ops == null
+      ? null
+      : ops.channels.length === 0
+        ? "无通道"
+        : pendingTotal === 0
+          ? "0"
+          : ops.channels
+              .filter((c) => c.pendingEntries > 0)
+              .map((c) => `${CH_LABEL[c.key] ?? c.key} ${c.pendingEntries}`)
+              .join(" · ");
 
   return (
-    <section className="kpi" style={{ marginBottom: "var(--s-5)" }}>
-      <KpiCard
-        label="引擎"
-        tone={health == null ? "muted" : health.ok ? "up" : "down"}
-        value={health == null ? "…" : health.ok ? "正常" : "停跳"}
-        sub={
-          health == null
-            ? undefined
-            : health.ok
-              ? uptimeDays != null
-                ? `本次进程已运行 ${uptimeDays} 天`
-                : undefined
-              : (health.staleLoops?.join(" · ") ?? health.reason)
-        }
-        onClick={() => onJump("health")}
-      />
-      <KpiCard
-        label="Telegram 发送"
-        tone={
-          ops == null
-            ? "muted"
-            : ops.tg == null || !ops.tg.failing
-              ? "up"
-              : "down"
-        }
-        value={
-          ops == null
-            ? locked
-            : ops.tg?.failing
-              ? `连败 ${ops.tg.consecutiveSendFailures}`
-              : "正常"
-        }
-        sub={ops == null ? "需管理令牌" : undefined}
-        onClick={() => onJump("health")}
-      />
-      <KpiCard
-        label="投递积压"
-        tone={ops == null ? "muted" : pendingTotal > 0 ? "warn" : "up"}
-        value={
-          ops == null ? (
-            locked
-          ) : ops.channels.length === 0 ? (
-            <span className="muted">无通道</span>
-          ) : (
-            <span className="num">{pendingTotal}</span>
-          )
-        }
-        sub={
-          ops == null
-            ? "需管理令牌"
-            : pendingTotal > 0
-              ? ops.channels
-                  .filter((c) => c.pendingEntries > 0)
-                  .map((c) => `${CH_LABEL[c.key] ?? c.key} ${c.pendingEntries}`)
-                  .join(" · ")
-              : "已到点未投出的信号数"
-        }
-        title="持续 >0 说明投递循环停了或被健康冻结"
-        onClick={() => onJump("signals")}
-      />
-      <KpiCard
-        label="24h 信号"
-        value={
-          ops == null ? (
-            locked
-          ) : (
-            <span className="num">{ops.signalsLast24h}</span>
-          )
-        }
-        sub={ops == null ? "需管理令牌" : "全部档位台账"}
-        onClick={() => onJump("signals")}
-      />
-      <KpiCard
-        label="推送档位"
-        tone={overview == null ? "muted" : pushedCount > 0 ? "up" : "muted"}
-        value={
-          overview == null ? (
-            locked
-          ) : (
-            <span className="num">
-              {pushedCount}
-              <span className="muted"> / {overview.strategies.length}</span>
-            </span>
-          )
-        }
-        sub={overview != null && pushedCount === 0 ? "静默积累中" : undefined}
-        onClick={() => onJump("signals")}
-      />
-      <KpiCard
-        label="有效 key"
-        value={
-          ops == null ? locked : <span className="num">{ops.activeKeys}</span>
-        }
-        sub={ops == null ? "需管理令牌" : undefined}
-        onClick={() => onJump("keys")}
-      />
-      <KpiCard
-        label="存证链"
-        value={
-          ops == null ? (
-            locked
-          ) : ops.digest.day ? (
-            <span className="mono" style={{ fontSize: "var(--t-md)" }}>
-              {ops.digest.day}
-            </span>
-          ) : (
-            <span className="muted">未生成</span>
-          )
-        }
-        sub={ops == null ? "需管理令牌" : "每日 sha256 链"}
-        onClick={() => onJump("health")}
-      />
-    </section>
+    <>
+      <section className="kpi" style={{ marginBottom: "var(--s-3)" }}>
+        <KpiCard
+          label="引擎"
+          icon={health == null ? "🩺" : health.ok ? "✅" : "❌"}
+          value={health == null ? "…" : health.ok ? "正常" : "停跳"}
+          valueColor={
+            health == null
+              ? undefined
+              : health.ok
+                ? "var(--ww-up)"
+                : "var(--ww-down)"
+          }
+          sub={
+            health == null
+              ? "正在读取 /api/health"
+              : health.ok
+                ? uptimeDays != null
+                  ? `已运行 ${uptimeDays} 天`
+                  : undefined
+                : (health.staleLoops?.join(" · ") ?? health.reason)
+          }
+          onClick={() => onJump("health")}
+        />
+        <KpiCard
+          label="TG 发送"
+          icon="📣"
+          value={
+            ops == null
+              ? locked
+              : ops.tg?.failing
+                ? `连败 ${ops.tg.consecutiveSendFailures}`
+                : "正常"
+          }
+          valueColor={
+            ops == null
+              ? undefined
+              : ops.tg?.failing
+                ? "var(--ww-down)"
+                : "var(--ww-up)"
+          }
+          sub={ops == null ? "需管理令牌" : undefined}
+          onClick={() => onJump("health")}
+        />
+        <KpiCard
+          label="投递积压"
+          icon="🚚"
+          // 积压是成本类读数,不是亏损:短暂 >0 是正常排队,标红会把每一轮
+          // 投递都渲染成事故。真正该警觉的是「持续 >0」,那句写在 title 里。
+          value={ops == null ? locked : pendingText}
+          sub={ops == null ? "需管理令牌" : "已到点未投出的信号数"}
+          title="持续 >0 说明投递循环停了或被健康冻结"
+          onClick={() => onJump("signals")}
+        />
+      </section>
+
+      <section className="kpi">
+        <KpiCard
+          label="24h 信号"
+          icon="📜"
+          value={
+            ops == null ? locked : ops.signalsLast24h.toLocaleString("en-US")
+          }
+          valueColor={ops == null ? undefined : "var(--ww-link)"}
+          sub={ops == null ? "需管理令牌" : "全部档位台账"}
+          onClick={() => onJump("signals")}
+        />
+        <KpiCard
+          label="推送档位"
+          icon="📈"
+          value={
+            overview == null ? (
+              locked
+            ) : (
+              <>
+                {pushedCount}
+                <span className="muted"> / {overview.strategies.length}</span>
+              </>
+            )
+          }
+          sub={
+            overview == null
+              ? "需管理令牌"
+              : pushedCount === 0
+                ? "静默积累中"
+                : "其余静默积累"
+          }
+          onClick={() => onJump("signals")}
+        />
+        <KpiCard
+          label="有效 key"
+          icon="🔑"
+          value={ops == null ? locked : ops.activeKeys}
+          sub={ops == null ? "需管理令牌" : "已签发且未吊销"}
+          onClick={() => onJump("keys")}
+        />
+        <KpiCard
+          label="存证链"
+          icon="🔗"
+          value={
+            ops == null ? (
+              locked
+            ) : ops.digest.day ? (
+              ops.digest.day
+            ) : (
+              <span className="muted">未生成</span>
+            )
+          }
+          valueColor={
+            ops != null && ops.digest.day ? "var(--ww-link)" : undefined
+          }
+          sub={ops == null ? "需管理令牌" : "每日 sha256 链"}
+          onClick={() => onJump("health")}
+        />
+      </section>
+
+      <div
+        className="ds-hint"
+        style={{
+          display: "flex",
+          gap: "var(--s-6)",
+          flexWrap: "wrap",
+          margin: "10px 0 var(--s-5)",
+        }}
+      >
+        <span>上排三格 = 现在有没有事</span>
+        <span>下排四格 = 台账读数</span>
+        <span style={{ marginLeft: "auto" }}>整格可点,跳到对应分区</span>
+      </div>
+    </>
   );
 }

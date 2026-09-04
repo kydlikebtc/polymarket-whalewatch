@@ -52,19 +52,21 @@ function RecordCell({
   }
   if (record.settled < 5) {
     return (
-      <span className="num" title={line ?? undefined}>
-        {record.wins}/{record.settled} 中
-        <span className="muted">(样本不足)</span>
+      <span title={line ?? undefined}>
+        {record.wins}/{record.settled} 中{" "}
+        <Tag variant="warn">样本不足 · {record.settled} 仓</Tag>
       </span>
     );
   }
   const beyond = record.sd > 0 && Math.abs(record.excess) >= 2 * record.sd;
-  const excessCls = record.excess >= 0 ? "up" : "down";
+  // 超额只有越过 2×sd 才敢上色（那才是真方向）；运气范围内一律中性,
+  // 不给读者一个「已经赢了」的假信号。
+  const excessCls = !beyond ? "faint" : record.excess >= 0 ? "up" : "down";
   return (
-    <span className="num" title={line ?? undefined}>
+    <span title={line ?? undefined}>
       {record.wins}/{record.settled} 中
       <span className="muted"> · 预期 {record.implied.toFixed(1)} · </span>
-      <span className={excessCls} style={{ fontWeight: 600 }}>
+      <span className={excessCls}>
         {record.excess >= 0 ? "+" : "−"}
         {Math.abs(record.excess).toFixed(1)}
       </span>
@@ -128,13 +130,17 @@ export default function SignalsSection({
     <section
       id="signals"
       className="ds-card"
-      style={{ marginBottom: "var(--s-5)", scrollMarginTop: "var(--s-6)" }}
+      style={{
+        padding: "var(--s-5)",
+        marginBottom: "var(--s-5)",
+        scrollMarginTop: "var(--s-6)",
+      }}
     >
       <SectionHead
         title="② 策略信号（19 档 · 买入/结算事件）"
         aside={
           overview && (
-            <span className="ds-hint num">
+            <span className="ds-hint">
               推送中 {pushedCount} / {overview.strategies.length} 档
             </span>
           )
@@ -149,11 +155,27 @@ export default function SignalsSection({
           {error}
         </div>
       )}
-      {!overview && <div className="ds-empty">需要有效管理令牌后加载。</div>}
+      {!overview && (
+        <div className="ds-empty">
+          需要有效管理令牌后加载。
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            令牌在页头「🔑 令牌已验证」里更换；只想确认引擎是否在跑,去 /status。
+          </div>
+        </div>
+      )}
       {overview && (
         <>
+          {/* 口径先行：战绩列的读法写在表前面,不放脚注。 */}
+          <div
+            className="ds-callout ds-callout--warn"
+            style={{ marginBottom: "var(--s-4)" }}
+          >
+            30d 战绩是<b>全量纸面</b>口径（不管有没有对外推送都记）。已结算 &lt;
+            5 仓的档一律标「样本不足」；超额只有越过 2×sd 才上色,否则仍
+            <b>在运气范围内</b>,别按它调仓。
+          </div>
           <div className="ds-table-wrap" style={{ marginBottom: "var(--s-5)" }}>
-            <table className="ds-table ds-table--compact">
+            <table className="ds-table">
               <thead>
                 <tr>
                   <th>档位</th>
@@ -165,41 +187,33 @@ export default function SignalsSection({
                 </tr>
               </thead>
               <tbody>
+                {/* 行没有任何行级强调：不染整行、不调暗、不加左边线 ——
+                    「推送中」「策略停用」全靠徽章与开关钮的颜色说话。 */}
                 {overview.strategies.map((s) => {
                   const line = formatRecordLine(s.name, s.record);
                   return (
-                    <tr
-                      key={s.id}
-                      style={{
-                        // 推送中的行淡绿高亮(一眼找到「正在对外说话的档」);
-                        // 策略停用的行整体弱化。色值全部走 token。
-                        background: s.pushEnabled ? "var(--up-50)" : undefined,
-                        opacity: s.enabled ? 1 : 0.55,
-                      }}
-                    >
-                      <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
-                        {s.name}
-                        {!s.enabled && (
-                          <span className="ds-hint">(策略停用)</span>
-                        )}
+                    <tr key={s.id}>
+                      <td className="cell-wrap" data-label="档位">
+                        {s.name}{" "}
+                        {!s.enabled && <Tag variant="down">策略停用</Tag>}
                         {/* 订阅方按 code 认档,答疑时要能一眼看到它对应哪档。 */}
-                        {s.code && (
-                          <div
-                            className="ds-hint mono"
-                            style={{ fontWeight: 400 }}
-                          >
-                            {s.code}
-                          </div>
-                        )}
+                        {s.code && <div className="ds-hint">{s.code}</div>}
                       </td>
-                      <td>
+                      <td data-label="信号源">
                         <Tag>{SOURCE_LABEL[s.source] ?? s.source}</Tag>
                       </td>
-                      <td style={{ whiteSpace: "nowrap" }}>
+                      <td
+                        style={{ whiteSpace: "nowrap" }}
+                        data-label="30d 战绩"
+                      >
                         <RecordCell record={s.record} line={line} />
                       </td>
-                      <td className="is-right" style={{ whiteSpace: "nowrap" }}>
-                        <span className="num">
+                      <td
+                        className="is-right"
+                        style={{ whiteSpace: "nowrap" }}
+                        data-label="台账信号"
+                      >
+                        <span>
                           {s.signals.total}
                           <span className="muted"> · 24h </span>
                           {s.signals.last24h}
@@ -208,20 +222,24 @@ export default function SignalsSection({
                           最近 {agoText(s.signals.lastEmittedAt)}
                         </div>
                       </td>
-                      <td className="is-right" style={{ whiteSpace: "nowrap" }}>
-                        <span className="num">
+                      <td
+                        className="is-right"
+                        style={{ whiteSpace: "nowrap" }}
+                        data-label="已投递"
+                      >
+                        <span>
                           <span className="muted">付费 </span>
                           {s.deliveries.sentPaid}
                           <span className="muted"> · 公开 </span>
                           {s.deliveries.sentPublic}
                         </span>
                       </td>
-                      <td>
+                      <td data-label="推送">
                         <button
                           className={
                             s.pushEnabled
                               ? "ds-btn ds-btn--sm ds-btn--active"
-                              : "ds-btn ds-btn--sm ds-btn--subtle"
+                              : "ds-btn ds-btn--sm"
                           }
                           disabled={busyId === s.id}
                           aria-pressed={s.pushEnabled}
@@ -244,16 +262,27 @@ export default function SignalsSection({
                 })}
               </tbody>
             </table>
+            <div className="note-strip">
+              「推送中」是蓝描边的选中态（可点即关）；「已关」是描边白底。
+              档位停用与推送关闭是两件事 —— 停用的档连纸面开仓都不做,
+              关推送的档照常记台账,只是不对外说话。
+            </div>
           </div>
 
           <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
             最近 20 条台账信号 · 逐通道投递状态
           </div>
           {overview.recent.length === 0 ? (
-            <div className="ds-empty">台账暂无信号(followCycle 尚未触发)。</div>
+            <div className="ds-empty">
+              台账暂无信号（followCycle 尚未触发）。
+              <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+                引擎每轮跑完才会写台账；先去 /status 确认 follow
+                循环还在跳,再回来看。
+              </div>
+            </div>
           ) : (
             <div className="ds-table-wrap">
-              <table className="ds-table ds-table--compact">
+              <table className="ds-table">
                 <thead>
                   <tr>
                     <th>时间</th>
@@ -269,26 +298,30 @@ export default function SignalsSection({
                   {overview.recent.map((r) => (
                     <tr key={r.id}>
                       <td
-                        className="ds-hint mono"
+                        className="muted"
                         style={{ whiteSpace: "nowrap" }}
+                        data-label="时间"
                       >
                         {timeText(r.emittedAt)}
                       </td>
-                      <td style={{ whiteSpace: "nowrap" }}>{r.strategyName}</td>
+                      <td className="cell-wrap" data-label="档位">
+                        {r.strategyName}
+                      </td>
+                      {/* 市场名永不截断 —— 换行,最多两行,顶对齐。 */}
                       <td
-                        style={{
-                          maxWidth: 260,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                        title={r.title}
+                        className="cell-wrap"
+                        style={{ maxWidth: 280 }}
+                        data-label="市场"
                       >
                         {r.title}
                       </td>
-                      <td>{r.outcome}</td>
-                      <td className="is-right num">{cents(r.entryPrice)}</td>
-                      <td>
+                      <td className="cell-wrap" data-label="方向">
+                        {r.outcome}
+                      </td>
+                      <td className="is-right" data-label="进">
+                        {cents(r.entryPrice)}
+                      </td>
+                      <td data-label="结算">
                         {r.settled ? (
                           r.won === true ? (
                             <Tag variant="up">✅ 中</Tag>
@@ -301,7 +334,7 @@ export default function SignalsSection({
                           <span className="muted">持有中</span>
                         )}
                       </td>
-                      <td style={{ whiteSpace: "nowrap" }}>
+                      <td style={{ whiteSpace: "nowrap" }} data-label="投递">
                         {r.channels.length === 0 ? (
                           <span className="muted">未投递</span>
                         ) : (
@@ -326,6 +359,10 @@ export default function SignalsSection({
                   ))}
                 </tbody>
               </table>
+              <div className="note-strip">
+                「未投递」= 该档推送开关关着,或事件早于端点登记（不回灌）。
+                「进」是入场价,用 ¢ 表示。
+              </div>
             </div>
           )}
         </>

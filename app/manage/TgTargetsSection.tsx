@@ -135,13 +135,17 @@ export default function TgTargetsSection({ token }: { token: string }) {
     });
 
   return (
-    <section className="ds-card" style={{ padding: "var(--s-5)" }}>
+    <section
+      className="ds-card"
+      style={{ padding: "var(--s-5)", marginBottom: "var(--s-5)" }}
+    >
       <SectionHead
         title="🅐 Telegram · 推送目标"
         hint="一条 = 一个 bot 发到一个频道/群。可同时有多个目标，各自决定收哪些信号；改完引擎下一轮（≤60s）生效，无需重启。"
         aside={
           <button
-            className="ds-btn ds-btn--primary ds-btn--sm"
+            className={`ds-btn ds-btn--sm${adding ? " ds-btn--active" : ""}`}
+            aria-expanded={adding}
             disabled={busy || !token}
             onClick={() => setAdding((v) => !v)}
           >
@@ -168,10 +172,14 @@ export default function TgTargetsSection({ token }: { token: string }) {
           必须让运营者一眼看出「现在到底在往哪儿发」,而不是看到空列表
           误以为没在推。 */}
       {data && data.active.some((a) => a.source === "env") ? (
-        <div className="ds-callout" style={{ marginBottom: "var(--s-3)" }}>
-          当前仍在使用 <code>.env</code> 里的 TG 配置（下方尚无目标）：
+        <div
+          className="ds-callout ds-callout--warn"
+          style={{ marginBottom: "var(--s-3)" }}
+        >
+          当前仍在使用 <code className="doc-code">.env</code> 里的 TG
+          配置（下方尚无目标）：
           {data.active.map((a) => (
-            <div key={a.chatId} className="mono" style={{ marginTop: 4 }}>
+            <div key={a.chatId} style={{ marginTop: 4 }}>
               {a.chatId} · {a.delayMin > 0 ? `延迟 ${a.delayMin} 分钟` : "实时"}
             </div>
           ))}
@@ -195,22 +203,24 @@ export default function TgTargetsSection({ token }: { token: string }) {
             }}
           >
             <label>
-              <div className="muted" style={{ fontSize: "var(--t-sm)" }}>
+              <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
                 名称（自己看的）
               </div>
               <input
                 className="ds-input"
+                style={{ width: "100%" }}
                 value={form.label}
                 placeholder="公开频道 / VIP 群"
                 onChange={(e) => setForm({ ...form, label: e.target.value })}
               />
             </label>
             <label>
-              <div className="muted" style={{ fontSize: "var(--t-sm)" }}>
+              <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
                 Bot Token（@BotFather 获取，只进不出）
               </div>
               <input
-                className="ds-input mono"
+                className="ds-input ds-input--mono"
+                style={{ width: "100%" }}
                 type="password"
                 value={form.botToken}
                 placeholder="123456:ABC-DEF..."
@@ -218,22 +228,24 @@ export default function TgTargetsSection({ token }: { token: string }) {
               />
             </label>
             <label>
-              <div className="muted" style={{ fontSize: "var(--t-sm)" }}>
+              <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
                 Chat ID（@频道名 或 -100 开头的群 id）
               </div>
               <input
-                className="ds-input mono"
+                className="ds-input ds-input--mono"
+                style={{ width: "100%" }}
                 value={form.chatId}
                 placeholder="@mychannel"
                 onChange={(e) => setForm({ ...form, chatId: e.target.value })}
               />
             </label>
             <label>
-              <div className="muted" style={{ fontSize: "var(--t-sm)" }}>
+              <div className="ds-label" style={{ marginBottom: "var(--s-1)" }}>
                 策略信号延迟（分钟，0 = 实时）
               </div>
               <input
-                className="ds-input mono"
+                className="ds-input ds-input--mono"
+                style={{ width: "100%" }}
                 type="number"
                 min={0}
                 value={form.delayMin}
@@ -244,31 +256,33 @@ export default function TgTargetsSection({ token }: { token: string }) {
             </label>
           </div>
           <div
-            style={{
-              display: "flex",
-              gap: "var(--s-3)",
-              flexWrap: "wrap",
-              margin: "var(--s-3) 0",
-            }}
+            className="ds-label"
+            style={{ margin: "var(--s-4) 0 var(--s-2)" }}
           >
-            {KINDS.map((k) => (
-              <label
-                key={k.kind}
-                style={{ display: "flex", gap: 6, alignItems: "center" }}
-              >
-                <input
-                  type="checkbox"
-                  checked={form.kinds[k.kind]}
-                  onChange={(e) =>
+            收哪些信号（任选，可多选）
+          </div>
+          {/* 任选子集 —— 一排描边钮 + 选中态蓝描边，不用互斥控件。 */}
+          <div className="filter-bar">
+            {KINDS.map((k) => {
+              const on = form.kinds[k.kind];
+              return (
+                <button
+                  key={k.kind}
+                  type="button"
+                  aria-pressed={on}
+                  title={k.hint}
+                  className={`ds-btn ds-btn--sm${on ? " ds-btn--active" : ""}`}
+                  onClick={() =>
                     setForm({
                       ...form,
-                      kinds: { ...form.kinds, [k.kind]: e.target.checked },
+                      kinds: { ...form.kinds, [k.kind]: !on },
                     })
                   }
-                />
-                {k.label}
-              </label>
-            ))}
+                >
+                  {k.label}
+                </button>
+              );
+            })}
           </div>
           <button
             className="ds-btn ds-btn--primary ds-btn--sm"
@@ -286,153 +300,163 @@ export default function TgTargetsSection({ token }: { token: string }) {
           >
             添加
           </button>
-          <div
-            className="muted"
-            style={{ fontSize: "var(--t-sm)", marginTop: "var(--s-2)" }}
-          >
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
             bot 必须是该频道/群的管理员，否则发送会失败。添加后用「测试」验证。
           </div>
         </div>
       ) : null}
 
       {view.kind === "error" ? (
-        <div className="ds-empty">{view.message}</div>
+        <div className="ds-empty">
+          {view.message}
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            这是服务端的原话 —— 通常是管理令牌失效。换令牌后本区块自动重试。
+          </div>
+        </div>
       ) : view.kind === "loading" ? (
-        <div className="ds-empty">加载中…</div>
+        <div className="ds-empty">正在读取推送目标…</div>
       ) : data!.targets.length === 0 ? (
         <div className="ds-empty">
-          尚无目标 —— 点右上角「新增目标」。在此之前使用 .env 里的 TG 配置。
+          尚无目标。
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            点右上角「新增目标」登记第一个 bot + 频道；在此之前引擎用 .env 里的
+            TG 配置发送。
+          </div>
         </div>
       ) : (
-        <table className="ds-table ds-table--compact">
-          <thead>
-            <tr>
-              <th>目标</th>
-              <th>信号类型</th>
-              <th>延迟</th>
-              <th>状态</th>
-              <th className="is-right">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {view.data.targets.map((t) => (
-              <tr key={t.id} style={t.paused ? { opacity: 0.55 } : undefined}>
-                <td data-label="目标">
-                  <div>{t.label}</div>
-                  <div
-                    className="mono muted"
-                    style={{ fontSize: "var(--t-sm)" }}
-                  >
-                    {t.chatId} · bot {t.botHint}
-                  </div>
-                </td>
-                <td data-label="信号类型">
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {KINDS.map((k) => (
-                      <label
-                        key={k.kind}
-                        title={k.hint}
-                        style={{
-                          display: "flex",
-                          gap: 4,
-                          alignItems: "center",
-                          cursor: busy ? "default" : "pointer",
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={t.kinds[k.kind]}
-                          disabled={busy}
-                          onChange={() => toggleKind(t, k.kind)}
-                        />
-                        <span style={{ fontSize: "var(--t-sm)" }}>
-                          {k.label}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </td>
-                <td className="mono" data-label="延迟">
-                  {t.delayMin > 0 ? `${t.delayMin} 分钟` : "实时"}
-                </td>
-                <td data-label="状态">
-                  {t.paused ? (
-                    <Tag>⏸ 已暂停</Tag>
-                  ) : t.consecutiveFailures > 0 ? (
-                    <Tag variant="down">
-                      ⚠️ 连续失败 {t.consecutiveFailures}
-                    </Tag>
-                  ) : (
-                    <Tag variant="up">🟢 正常</Tag>
-                  )}
-                  <div
-                    className="mono muted"
-                    style={{ fontSize: "var(--t-sm)", marginTop: 2 }}
-                  >
-                    {t.lastOkAt
-                      ? `最近成功 ${agoText(t.lastOkAt)}`
-                      : "尚未发过"}
-                  </div>
-                  {/* 沉默是最贵的故障形态:最后一条错误必须看得见。 */}
-                  {t.lastError ? (
-                    <div
-                      className="mono"
-                      style={{
-                        fontSize: "var(--t-sm)",
-                        color: "var(--down)",
-                        marginTop: 2,
-                      }}
-                      title={`${timeText(t.lastErrorAt ?? 0)}\n${t.lastError}`}
-                    >
-                      {clipError(t.lastError)}
-                    </div>
-                  ) : null}
-                </td>
-                <td className="is-right" data-label="操作">
-                  <button
-                    className="ds-btn ds-btn--sm"
-                    disabled={busy || t.paused}
-                    onClick={() =>
-                      void post({ action: "test", id: t.id }, "测试消息已发出")
-                    }
-                  >
-                    测试
-                  </button>{" "}
-                  <button
-                    className="ds-btn ds-btn--sm"
-                    disabled={busy}
-                    onClick={() =>
-                      void post({
-                        action: "pause",
-                        id: t.id,
-                        paused: !t.paused,
-                      })
-                    }
-                  >
-                    {t.paused ? "恢复" : "暂停"}
-                  </button>{" "}
-                  <button
-                    className="ds-btn ds-btn--danger ds-btn--sm"
-                    disabled={busy}
-                    onClick={() => {
-                      // 删掉最后一个目标会回退到 .env（可能是完全不同的频道），
-                      // 与全站危险操作一致地二次确认。
-                      const last = view.data.targets.length === 1;
-                      const msg = last
-                        ? `这是最后一个目标，删除后将回退到 .env 里的 TG 配置（若未配置则完全停推）。确认删除「${t.label}」？`
-                        : `确认删除「${t.label}」（${t.chatId}）？`;
-                      if (window.confirm(msg)) {
-                        void post({ action: "delete", id: t.id });
-                      }
-                    }}
-                  >
-                    删除
-                  </button>
-                </td>
+        <div className="ds-table-wrap">
+          <table className="ds-table">
+            <thead>
+              <tr>
+                <th>目标</th>
+                <th>信号类型</th>
+                <th>延迟</th>
+                <th>状态</th>
+                <th className="is-right">操作</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {/* 行没有任何行级强调：暂停不调暗整行,只靠状态徽章分轻重。 */}
+              {view.data.targets.map((t) => (
+                <tr key={t.id}>
+                  <td data-label="目标" className="cell-wrap">
+                    <div>{t.label}</div>
+                    <div className="ds-hint">
+                      {t.chatId} · bot {t.botHint}
+                    </div>
+                  </td>
+                  <td data-label="信号类型">
+                    {/* 任选子集 —— 一排描边钮 + 选中态蓝描边。 */}
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "var(--s-1)",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {KINDS.map((k) => {
+                        const on = t.kinds[k.kind];
+                        return (
+                          <button
+                            key={k.kind}
+                            type="button"
+                            aria-pressed={on}
+                            title={k.hint}
+                            disabled={busy}
+                            className={`ds-btn ds-btn--sm${on ? " ds-btn--active" : ""}`}
+                            onClick={() => toggleKind(t, k.kind)}
+                          >
+                            {k.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </td>
+                  <td data-label="延迟">
+                    {t.delayMin > 0 ? `${t.delayMin} 分钟` : "实时"}
+                  </td>
+                  <td data-label="状态" className="cell-wrap">
+                    {t.paused ? (
+                      <Tag>⏸ 已暂停</Tag>
+                    ) : t.consecutiveFailures > 0 ? (
+                      <Tag variant="down">连续失败 {t.consecutiveFailures}</Tag>
+                    ) : (
+                      <Tag variant="up">✅ 正常</Tag>
+                    )}
+                    <div className="ds-hint" style={{ marginTop: 2 }}>
+                      {t.lastOkAt
+                        ? `最近成功 ${agoText(t.lastOkAt)}`
+                        : "尚未发过"}
+                    </div>
+                    {/* 沉默是最贵的故障形态:最后一条错误必须看得见。 */}
+                    {t.lastError ? (
+                      <div
+                        className="ds-hint"
+                        style={{ color: "var(--ww-down)", marginTop: 2 }}
+                        title={`${timeText(t.lastErrorAt ?? 0)}\n${t.lastError}`}
+                      >
+                        {clipError(t.lastError)}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td
+                    className="is-right"
+                    data-label="操作"
+                    style={{ whiteSpace: "nowrap" }}
+                  >
+                    <button
+                      className="ds-btn ds-btn--sm"
+                      disabled={busy || t.paused}
+                      onClick={() =>
+                        void post(
+                          { action: "test", id: t.id },
+                          "测试消息已发出",
+                        )
+                      }
+                    >
+                      测试
+                    </button>{" "}
+                    <button
+                      className="ds-btn ds-btn--sm"
+                      disabled={busy}
+                      onClick={() =>
+                        void post({
+                          action: "pause",
+                          id: t.id,
+                          paused: !t.paused,
+                        })
+                      }
+                    >
+                      {t.paused ? "恢复" : "暂停"}
+                    </button>{" "}
+                    <button
+                      className="ds-btn ds-btn--danger ds-btn--sm"
+                      disabled={busy}
+                      onClick={() => {
+                        // 删掉最后一个目标会回退到 .env（可能是完全不同的频道），
+                        // 与全站危险操作一致地二次确认。
+                        const last = view.data.targets.length === 1;
+                        const msg = last
+                          ? `这是最后一个目标，删除后将回退到 .env 里的 TG 配置（若未配置则完全停推）。确认删除「${t.label}」？`
+                          : `确认删除「${t.label}」（${t.chatId}）？`;
+                        if (window.confirm(msg)) {
+                          void post({ action: "delete", id: t.id });
+                        }
+                      }}
+                    >
+                      删除
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="note-strip">
+            「信号类型」是任选子集 —— 点亮即收，改完立刻写库，引擎下一轮（≤60s）
+            生效。「暂停」保留目标只停投，「删除」不可恢复；删掉最后一个目标会
+            回退到 .env 的配置。
+          </div>
+        </div>
       )}
     </section>
   );

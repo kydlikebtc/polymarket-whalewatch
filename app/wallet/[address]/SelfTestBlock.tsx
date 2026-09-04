@@ -33,14 +33,20 @@ export default function SelfTestBlock({ address }: { address: string }) {
   };
 
   return (
-    <section style={{ marginTop: "var(--s-5)" }}>
+    // 档案页最后一段 —— 设计稿末卡是一条「徽章 + 一句话 + 右侧动作」的横条。
+    // id 供页内分区导航锚点跳转。
+    <section id="wallet-selftest" style={{ marginTop: "var(--s-5)" }}>
       <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
-        {t("聪明钱自测判决")}
+        🏆 {t("聪明钱自测判决")}
       </div>
       {state === "done" && data ? (
         <>
+          {/* 口径条在数据前面:限流/上游故障是需留神的口径,走琥珀。 */}
           {data.degraded ? (
-            <div className="ds-callout" style={{ marginBottom: "var(--s-3)" }}>
+            <div
+              className="ds-callout ds-callout--warn"
+              style={{ marginBottom: "var(--s-3)" }}
+            >
               {data.degraded === "rate_limited"
                 ? t(
                     "⏳ 实时体检被限流（公共接口预算已满）——先展示本地留存判决。",
@@ -54,7 +60,7 @@ export default function SelfTestBlock({ address }: { address: string }) {
         <div
           className="ds-card"
           style={{
-            padding: "var(--s-4)",
+            padding: "14px var(--s-4)",
             display: "flex",
             gap: "var(--s-3)",
             alignItems: "center",
@@ -67,12 +73,13 @@ export default function SelfTestBlock({ address }: { address: string }) {
             )}
           </span>
           {state === "error" ? (
-            <span className="down" style={{ fontSize: "var(--t-sm)" }}>
+            <span className="down" style={{ fontSize: "var(--t-base)" }}>
               {t("加载失败")}: {error}
             </span>
           ) : null}
           <button
             className="ds-btn ds-btn--sm"
+            style={{ marginLeft: "auto" }}
             disabled={state === "loading"}
             onClick={() => void load()}
           >

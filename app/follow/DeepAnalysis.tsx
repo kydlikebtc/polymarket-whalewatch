@@ -74,7 +74,7 @@ function fmtWeekLabel(ts: number): string {
 }
 
 function pnlColor(n: number): string {
-  return n >= 0 ? "var(--up-500)" : "var(--down-500)";
+  return n >= 0 ? "var(--ww-up)" : "var(--ww-down)";
 }
 
 function pnlTextClass(n: number): string {
@@ -111,33 +111,71 @@ function fineLabelT(
 
 /* ------------------------------------------------------------ primitives */
 
-// 区块骨架:标题 + 一句"这块在回答什么" + 内容。六个维度共用同一节奏。
+// 有口径的读数/列头后面跟一个 (?) —— 口径写在它的 title 里(这套皮的标志性
+// 细节:每一个有口径的列头都带一个)。走 .tip-pop:触屏点一下同样能读到,
+// 不是鼠标专属功能。
+function HelpMark({ tip }: { tip: string }) {
+  return (
+    <span
+      className="tip-pop"
+      title={tip}
+      aria-label={tip}
+      // 与全站 tip-pop 同一契约(app/ui.tsx tipPopProps):-1 不进 Tab 序,
+      // 点一下聚焦弹出、失焦收起,不给读者凭空多出 8 个 tab 站点。
+      tabIndex={-1}
+      data-tip={tip}
+      style={{
+        flex: "0 0 auto",
+        fontSize: 11,
+        fontWeight: 400,
+        color: "var(--ww-text-faint)",
+      }}
+    >
+      (?)
+    </span>
+  );
+}
+
+// 区块骨架:一张白卡 —— 标题条(14/600)→ 口径说明条(13px muted,放在数据
+// 「前面」而不是脚注)→ 内容 → 可选的灰色说明条。六个维度共用同一节奏,
+// 层级只来自 1px 分格线,不来自字号跳档。
 function Block({
   label,
   hint,
+  note,
   children,
 }: {
   label: string;
   hint: string;
+  note?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <section
-      style={{
-        borderTop: "1px solid var(--n-150)",
-        paddingTop: "var(--s-4)",
-      }}
-    >
-      <div className="ds-label">{label}</div>
-      <div className="ds-hint" style={{ margin: "2px 0 var(--s-3)" }}>
+    <section className="ds-card" style={{ overflow: "hidden" }}>
+      {/* 卡内标题条:14 / 600(.card-bar 本身不带字重,与全站其它卡一样
+          由调用方给) */}
+      <div className="card-bar" style={{ fontWeight: 600 }}>
+        {label}
+      </div>
+      <div
+        className="ds-hint"
+        style={{
+          padding: "var(--s-3) var(--s-4)",
+          borderBottom: "1px solid var(--ww-border)",
+          lineHeight: "var(--lh-note)",
+        }}
+      >
         {hint}
       </div>
-      {children}
+      <div style={{ padding: "14px var(--s-4)" }}>{children}</div>
+      {note != null ? <div className="note-strip">{note}</div> : null}
     </section>
   );
 }
 
-// 顶部 KPI(与详情弹窗 StrategyFullMetrics 的 Metric 同构,本地重复声明)。
+// 顶部战绩读数格:扁平等权的 Metric(与详情弹窗「战绩全景」同构)——
+// 12px 大写小标 + (?) 口径 + 常规字重的值。这里没有主次,谁重要取决于
+// 读者在问什么,所以不给任何一格加粗或放大。
 function Kpi({
   label,
   value,
@@ -150,36 +188,22 @@ function Kpi({
   title?: string;
 }) {
   return (
-    <div title={title}>
-      <div className="ds-label">{label}</div>
-      <div style={{ marginTop: "var(--s-1)", fontSize: 16, fontWeight: 600 }}>
-        {value}
+    <div style={{ minWidth: 0 }}>
+      <div className="metric__label">
+        <span>{label}</span>
+        {title ? <HelpMark tip={title} /> : null}
       </div>
-      {sub != null ? <div className="kpi-sub mono">{sub}</div> : null}
+      <div className="metric__value">{value}</div>
+      {sub != null ? <div className="metric__sub">{sub}</div> : null}
     </div>
   );
 }
 
-// 水平比例条:胜率/占比类读数的可视化底座(宽度 = 数值 × 满宽)。
-function PctBar({
-  ratio,
-  color,
-  height = 10,
-}: {
-  ratio: number;
-  color: string;
-  height?: number;
-}) {
+// 水平比例条:胜率/占比类读数的可视化底座(宽度 = 数值 × 满宽)。走全站
+// 比例条的形状 —— 高 6、圆角 99、槽色 = 边框色(.split-bar)。
+function PctBar({ ratio, color }: { ratio: number; color: string }) {
   return (
-    <div
-      aria-hidden
-      style={{
-        background: "var(--n-100)",
-        borderRadius: 3,
-        height,
-        overflow: "hidden",
-      }}
-    >
+    <div aria-hidden className="split-bar">
       <div
         style={{
           width: `${Math.max(0, Math.min(1, ratio)) * 100}%`,
@@ -214,19 +238,11 @@ function StackBar({
       />
     ) : null;
   return (
-    <div
-      aria-hidden
-      style={{
-        background: "var(--n-100)",
-        borderRadius: 3,
-        height: 12,
-        overflow: "hidden",
-      }}
-    >
+    <div aria-hidden className="split-bar">
       <div style={{ width: `${width}%`, height: "100%", display: "flex" }}>
-        {seg(wins, "var(--up-500)", "w")}
-        {seg(losses, "var(--down-500)", "l")}
-        {seg(pushes, "var(--n-300)", "p")}
+        {seg(wins, "var(--ww-up)", "w")}
+        {seg(losses, "var(--ww-down)", "l")}
+        {seg(pushes, "var(--ww-border-dashed)", "p")}
       </div>
     </div>
   );
@@ -248,17 +264,29 @@ function OddsRow({ b }: { b: OddsBucket }) {
       "minmax(64px, 96px) 1fr minmax(52px, 76px) minmax(56px, 84px)",
     gap: "var(--s-2)",
     alignItems: "center",
-    opacity: b.n === 0 ? 0.45 : lowSample ? 0.6 : 1,
+    // 淡显 = 「这一格还判不了」,与矩阵格子同一个 0.42(样本不足的统一读法)。
+    opacity: b.n === 0 || lowSample ? 0.42 : 1,
   };
   return (
     <div style={rowStyle}>
       <div>
-        <div className="mono" style={{ fontSize: "var(--t-sm)" }}>
-          {b.label}
-        </div>
-        <div className="kpi-sub mono">
-          {t("{n} 仓", { n: b.n })}
-          {lowSample ? t(" · 样本不足") : ""}
+        <div style={{ fontSize: "var(--t-md)" }}>{b.label}</div>
+        <div
+          className="kpi-sub"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--s-2)",
+            flexWrap: "wrap",
+          }}
+        >
+          <span>{t("{n} 仓", { n: b.n })}</span>
+          {/* 样本不足是「需留神的口径」,走琥珀描边徽章而不是灰字后缀 */}
+          {lowSample ? (
+            <span className="ds-tag ds-tag--warn ds-tag--sm">
+              {t("样本不足")}
+            </span>
+          ) : null}
         </div>
       </div>
       {b.n === 0 ? (
@@ -275,10 +303,16 @@ function OddsRow({ b }: { b: OddsBucket }) {
           >
             <PctBar
               ratio={b.winRate ?? 0}
-              color={b.winRate == null ? "var(--n-200)" : "var(--brand-500)"}
+              color={
+                b.winRate == null ? "var(--ww-border-dashed)" : "var(--ww-link)"
+              }
             />
-            <span className="mono" style={{ fontSize: "var(--t-xs)" }}>
-              {b.winRate == null ? "—" : fmtPct0(b.winRate)}
+            <span style={{ fontSize: "var(--t-sm)" }}>
+              {b.winRate == null ? (
+                <span className="muted">—</span>
+              ) : (
+                fmtPct0(b.winRate)
+              )}
             </span>
           </div>
           <div
@@ -289,8 +323,8 @@ function OddsRow({ b }: { b: OddsBucket }) {
               alignItems: "center",
             }}
           >
-            <PctBar ratio={b.avgEntry ?? 0} color="var(--n-300)" />
-            <span className="muted mono" style={{ fontSize: "var(--t-xs)" }}>
+            <PctBar ratio={b.avgEntry ?? 0} color="var(--ww-border-dashed)" />
+            <span className="muted" style={{ fontSize: "var(--t-sm)" }}>
               {b.avgEntry == null ? "—" : fmtPct0(b.avgEntry)}
             </span>
           </div>
@@ -310,10 +344,7 @@ function OddsRow({ b }: { b: OddsBucket }) {
           </span>
         )}
       </div>
-      <div
-        className="mono"
-        style={{ fontSize: "var(--t-sm)", textAlign: "right" }}
-      >
+      <div style={{ fontSize: "var(--t-md)", textAlign: "right" }}>
         {b.n === 0 ? (
           <span className="muted">—</span>
         ) : (
@@ -389,9 +420,9 @@ function DotStrip({ rows }: { rows: DeepAnalysisRow[] }) {
             cx={x(v)}
             cy={cy}
             r={STRIP_DOT_R}
-            fill={v === 0 ? "var(--n-400)" : pnlColor(v)}
+            fill={v === 0 ? "var(--ww-text-faint)" : pnlColor(v)}
             fillOpacity={sel === r ? 1 : 0.85}
-            stroke={sel === r ? "var(--n-700)" : "none"}
+            stroke={sel === r ? "var(--ww-text)" : "none"}
             strokeWidth={sel === r ? 1.5 : 0}
           >
             <title>{(r.title ? `${r.title} · ` : "") + fmtSignedUsd(v)}</title>
@@ -431,11 +462,9 @@ function DotStrip({ rows }: { rows: DeepAnalysisRow[] }) {
                 <span className="muted"> · </span>
               </>
             ) : null}
-            <span className={`mono ${pnlTextClass(selPnl)}`}>
-              {fmtSignedUsd(selPnl)}
-            </span>
+            <span className={pnlTextClass(selPnl)}>{fmtSignedUsd(selPnl)}</span>
             <span className="muted">{t(" · 入场 ")}</span>
-            <span className="mono">{cents(sel.entry_price)}</span>
+            <span>{cents(sel.entry_price)}</span>
           </>
         ) : (
           <span className="muted">
@@ -456,33 +485,27 @@ function DotStrip({ rows }: { rows: DeepAnalysisRow[] }) {
           y1={baseY}
           x2={STRIP_W - padX}
           y2={baseY}
-          stroke="var(--n-200)"
+          stroke="var(--ww-border)"
         />
         <line
           x1={x(0)}
           y1={6}
           x2={x(0)}
           y2={baseY}
-          stroke="var(--n-300)"
+          stroke="var(--ww-border-dashed)"
           strokeDasharray="3 3"
         />
         {dots}
-        <text
-          x={padX}
-          y={h - 4}
-          fontSize={11}
-          fill="var(--n-500)"
-          fontFamily="var(--font-mono)"
-        >
+        {/* 轴标签与正文同字体(这套皮数字不用等宽);0 是刻度不是读数,弱一档 */}
+        <text x={padX} y={h - 4} fontSize={11} fill="var(--ww-text-muted)">
           {fmtSignedUsd(lo)}
         </text>
         <text
           x={x(0)}
           y={h - 4}
           fontSize={11}
-          fill="var(--n-500)"
+          fill="var(--ww-text-faint)"
           textAnchor="middle"
-          fontFamily="var(--font-mono)"
         >
           0
         </text>
@@ -490,9 +513,8 @@ function DotStrip({ rows }: { rows: DeepAnalysisRow[] }) {
           x={STRIP_W - padX}
           y={h - 4}
           fontSize={11}
-          fill="var(--n-500)"
+          fill="var(--ww-text-muted)"
           textAnchor="end"
-          fontFamily="var(--font-mono)"
         >
           {fmtSignedUsd(hi)}
         </text>
@@ -540,15 +562,13 @@ function WeeklyBars({ weekly }: { weekly: DeepAnalysis["weekly"] }) {
       >
         {sel ? (
           <>
-            <span className="mono">
-              {t("{d} 那周", { d: fmtWeekLabel(sel.weekStartTs) })}
-            </span>
+            <span>{t("{d} 那周", { d: fmtWeekLabel(sel.weekStartTs) })}</span>
             <span className="muted"> · </span>
-            <span className={`mono ${pnlTextClass(sel.realized)}`}>
+            <span className={pnlTextClass(sel.realized)}>
               {fmtSignedUsd(sel.realized)}
             </span>
             <span className="muted"> · </span>
-            <span className="mono">{t("{n} 仓结算", { n: sel.settled })}</span>
+            <span>{t("{n} 仓结算", { n: sel.settled })}</span>
           </>
         ) : (
           <span className="muted">
@@ -563,12 +583,25 @@ function WeeklyBars({ weekly }: { weekly: DeepAnalysis["weekly"] }) {
         aria-label={t("周度已实现盈亏柱状图")}
         style={{ display: "block" }}
       >
+        {/* 竖网格线:每根柱一条,走网格线色(比边框更淡,不与柱抢注意力)。 */}
+        {weekly.map((w, i) =>
+          i % labelStep === 0 ? (
+            <line
+              key={`g${w.weekStartTs}`}
+              x1={padL + slot * i + slot / 2}
+              y1={padT}
+              x2={padL + slot * i + slot / 2}
+              y2={WEEK_H - axisH}
+              stroke="var(--ww-gridline)"
+            />
+          ) : null,
+        )}
         <line
           x1={padL}
           y1={zeroY}
           x2={WEEK_W - padR}
           y2={zeroY}
-          stroke="var(--n-200)"
+          stroke="var(--ww-border)"
         />
         {weekly.map((w, i) => {
           const cx = padL + slot * i + slot / 2;
@@ -584,9 +617,13 @@ function WeeklyBars({ weekly }: { weekly: DeepAnalysis["weekly"] }) {
                 // 0 盈亏周画 2px 短桩:与"没有柱"区分(那是没数据,这是结了
                 // 但打平/空周),读者能看出时间轴在走。
                 height={Math.max(hBar, w.settled > 0 ? 2 : 1)}
-                fill={w.settled === 0 ? "var(--n-200)" : pnlColor(w.realized)}
+                fill={
+                  w.settled === 0
+                    ? "var(--ww-border-dashed)"
+                    : pnlColor(w.realized)
+                }
                 fillOpacity={w.settled === 0 ? 0.8 : selected ? 1 : 0.9}
-                stroke={selected ? "var(--n-700)" : "none"}
+                stroke={selected ? "var(--ww-text)" : "none"}
                 strokeWidth={selected ? 1.5 : 0}
               >
                 <title>
@@ -623,9 +660,8 @@ function WeeklyBars({ weekly }: { weekly: DeepAnalysis["weekly"] }) {
                   x={cx}
                   y={WEEK_H - 5}
                   fontSize={11}
-                  fill="var(--n-500)"
+                  fill="var(--ww-text-muted)"
                   textAnchor="middle"
-                  fontFamily="var(--font-mono)"
                 >
                   {fmtWeekLabel(w.weekStartTs)}
                 </text>
@@ -673,14 +709,18 @@ function CategoryRows({ c, maxN }: { c: CategoryGroup; maxN: number }) {
           gridTemplateColumns: "minmax(76px, 110px) 1fr minmax(150px, 250px)",
           gap: "var(--s-3)",
           alignItems: "center",
-          opacity: lowSample ? 0.6 : 1,
+          // 样本不足统一淡显到 0.42(与矩阵格子同一读法)。
+          opacity: lowSample ? 0.42 : 1,
         }}
       >
         <span
           style={{
-            fontSize: "var(--t-sm)",
+            fontSize: "var(--t-md)",
+            // 赛道名不截断:超长换行、行内容顶对齐(全站唯一那条截断规则)。
+            lineHeight: "var(--lh-snug)",
+            overflowWrap: "anywhere",
             paddingLeft: indent ? 14 : 0,
-            color: indent ? "var(--n-600)" : undefined,
+            color: indent ? "var(--ww-text-muted)" : undefined,
           }}
           title={label}
         >
@@ -688,11 +728,30 @@ function CategoryRows({ c, maxN }: { c: CategoryGroup; maxN: number }) {
           {label}
         </span>
         <StackBar n={s.n} maxN={maxN} wins={s.wins} losses={s.losses} />
-        <span className="mono" style={{ fontSize: "var(--t-xs)" }}>
-          {t("{n} 仓", { n: s.n })}
-          {lowSample ? t("(样本不足)") : ""} · {t("胜率")}{" "}
-          {s.winRate == null ? "—" : fmtPct0(s.winRate)} · {t("均入场")}{" "}
-          {s.avgEntry == null ? "—" : cents(s.avgEntry)} ·{" "}
+        <span
+          style={{
+            display: "flex",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "var(--s-1)",
+            fontSize: "var(--t-sm)",
+          }}
+        >
+          <span>{t("{n} 仓", { n: s.n })}</span>
+          {lowSample ? (
+            <span className="ds-tag ds-tag--warn ds-tag--sm">
+              {t("样本不足")}
+            </span>
+          ) : null}
+          <span className="muted">·</span>
+          <span>
+            {t("胜率")} {s.winRate == null ? "—" : fmtPct0(s.winRate)}
+          </span>
+          <span className="muted">·</span>
+          <span>
+            {t("均入场")} {s.avgEntry == null ? "—" : cents(s.avgEntry)}
+          </span>
+          <span className="muted">·</span>
           <span className={pnlTextClass(s.realized)}>
             {fmtSignedUsd(s.realized)}
           </span>
@@ -738,8 +797,9 @@ function matrixHeaderLabel(
  * 赛道 edge 矩阵表格(纯呈现,矩阵由调用方 buildEdgeMatrix 好传入)。两个
  * 消费方:策略中心页「优势矩阵」副 tab(全部+各策略 × 细赛道)与详情弹窗
  * 深度分析的「赛道 edge 对照」块(本策略 vs 全部两行)。格子 = edge±pt +
- * n 仓;n<阈值半透明、零仓「—」、全 push 段 edge 为 null 也「—」;
- * aggregateId 指定哪一行贴「聚合」标(跨档重复下注的那一行)。
+ * 胜率·仓数 + 落袋;n<阈值淡显到 0.42、零仓画零值占位「·」、全 push 段
+ * edge 为 null 画「—」(判不了,不是零 —— 两个符号严格分家);
+ * aggregateId 指定哪一行贴「聚合」名称标(跨档重复下注的那一行)。
  */
 export function EdgeMatrixTable({
   matrix,
@@ -749,7 +809,16 @@ export function EdgeMatrixTable({
   aggregateId?: number;
 }) {
   const { t } = useLang();
-  if (matrix.tracks.length === 0) return null;
+  // 空态给内容也给出路,不返回 null(副 tab 选中却空手而归会像坏了)。
+  if (matrix.tracks.length === 0) {
+    return (
+      <div className="ds-empty">
+        {t(
+          "暂无可透视的赛道 — 有仓位结算后这里会给出「哪类信号在哪个赛道有 edge」的矩阵",
+        )}
+      </div>
+    );
+  }
   return (
     <div className="ds-table-wrap">
       <table className="ds-table">
@@ -757,8 +826,25 @@ export function EdgeMatrixTable({
           <tr>
             <th>{t("策略")}</th>
             {matrix.tracks.map((tr) => (
-              <th key={tr.key} title={t("全体样本 {n} 仓", { n: tr.totalN })}>
+              <th
+                key={tr.key}
+                style={{ textAlign: "center" }}
+                title={t("全体样本 {n} 仓", { n: tr.totalN })}
+              >
                 {matrixHeaderLabel(t, tr, matrix.tracks)}
+                {/* 列头带全体样本数 —— 列序就是按它降序排的,写出来读者才
+                    知道这一列凭什么排在这。 */}
+                <span
+                  className="kpi-sub"
+                  style={{
+                    display: "block",
+                    marginTop: 2,
+                    fontSize: "var(--t-sm)",
+                    fontWeight: 400,
+                  }}
+                >
+                  {`n=${tr.totalN}`}
+                </span>
               </th>
             ))}
           </tr>
@@ -779,9 +865,16 @@ export function EdgeMatrixTable({
                 const track = matrix.tracks[i];
                 const label = matrixHeaderLabel(t, track, matrix.tracks);
                 if (!cell) {
+                  // 零仓 = 零值占位「·」(--ww-text-empty),与 edge 为 0
+                  // 严格分家,也与「判不了」的「—」分家。
                   return (
-                    <td key={track.key} data-label={label}>
-                      <span className="muted">—</span>
+                    <td
+                      key={track.key}
+                      data-label={label}
+                      style={{ textAlign: "center" }}
+                      title={t("该策略在该赛道零仓 —— 与 edge 为 0 严格分家")}
+                    >
+                      <span style={{ color: "var(--ww-text-empty)" }}>·</span>
                     </td>
                   );
                 }
@@ -806,12 +899,17 @@ export function EdgeMatrixTable({
                     key={track.key}
                     data-label={label}
                     title={tip}
-                    style={low ? { opacity: 0.55 } : undefined}
+                    style={{
+                      textAlign: "center",
+                      // <5 仓的格子淡显 —— 不是「没 edge」,是「这一格还
+                      // 判不了」。
+                      opacity: low ? 0.42 : undefined,
+                    }}
                   >
                     {cell.edge == null ? (
                       <span className="muted">—</span>
                     ) : (
-                      <span className={`mono ${pnlTextClass(cell.edge)}`}>
+                      <span className={pnlTextClass(cell.edge)}>
                         {fmtSignedPt(cell.edge)}
                       </span>
                     )}
@@ -819,11 +917,17 @@ export function EdgeMatrixTable({
                         落袋,单行拼串把列宽撑到横向滚动、用户反馈「挤在
                         一起」—— 改成 edge / 胜率·仓数 / 落袋 三行竖排,
                         列宽回落到表头文字量级,8 列赛道不再挤爆。 */}
-                    <div className="kpi-sub mono">
+                    <div
+                      className="kpi-sub"
+                      style={{ marginTop: 2, fontSize: "var(--t-sm)" }}
+                    >
                       {cell.winRate == null ? "—" : fmtPct0(cell.winRate)} ·{" "}
                       {t("{n} 仓", { n: cell.n })}
                     </div>
-                    <div className="kpi-sub mono">
+                    <div
+                      className="kpi-sub"
+                      style={{ marginTop: 2, fontSize: "var(--t-sm)" }}
+                    >
                       <span className={pnlTextClass(cell.realized)}>
                         {fmtSignedUsd(cell.realized)}
                       </span>
@@ -835,6 +939,14 @@ export function EdgeMatrixTable({
           ))}
         </tbody>
       </table>
+      {/* 降级态说明放在表下方的琥珀条里 —— 三个符号各有各的含义,不能
+          都读成 0。 */}
+      <div className="note-strip note-strip--warn">
+        {t(
+          "⚠️ 「·」= 该策略在该赛道零仓,与 edge 为 0 严格分家;「—」= 该格全是平局,没有实际胜率可比,是判不了不是零;淡显的格子(<{n} 仓)也不是「没 edge」,是这一格还判不了 —— 矩阵是用来选下一档做什么的,不是给现有档打分的。",
+          { n: BUCKET_LOW_SAMPLE_N },
+        )}
+      </div>
     </div>
   );
 }
@@ -846,7 +958,8 @@ export function EdgeMatrixTable({
  * 在弹窗宽度下必然横向滚动、三指标挤成一团 —— 单策略场景转置成
  * 「每赛道一行 × 5 窄列」:竖向扫读、横向对比,任何宽度都不挤。页面级
  * 多策略透视仍用 EdgeMatrixTable 的矩阵形态,两种场景两种形状)。
- * 行序沿用矩阵列序(全体样本降序);n<阈值整行弱化。
+ * 行序沿用矩阵列序(全体样本降序);样本不足由「样本不足」琥珀徽章标出
+ * —— 表格行不做任何行级强调(不调暗、不加边线),轻重只靠徽章颜色。
  */
 function TrackStatTable({ rows }: { rows: DeepAnalysisRow[] }) {
   const { t } = useLang();
@@ -861,57 +974,82 @@ function TrackStatTable({ rows }: { rows: DeepAnalysisRow[] }) {
         cell: NonNullable<(typeof matrix.rows)[0]["cells"][number]>;
       } => b.cell != null,
     );
-  if (items.length === 0) return null;
+  // 空态给内容,不返回 null。
+  if (items.length === 0) {
+    return (
+      <div className="ds-empty">
+        {t("暂无可统计的赛道 — 有仓位结算后这里会逐赛道给出 edge、胜率与落袋")}
+      </div>
+    );
+  }
   return (
-    <div className="ds-table-wrap">
+    // 这张表永远长在 Block 卡里 —— 去掉嵌套阴影(卡中卡两层深度太吵),
+    // 只留 1px 分格边。
+    <div className="ds-table-wrap" style={{ boxShadow: "none" }}>
       <table className="ds-table">
         <thead>
           <tr>
             <th>{t("赛道")}</th>
-            <th
-              title={t(
-                "实际胜率 − 隐含胜率(该赛道均入场价)。持续为正才是可复制的优势",
-              )}
-            >
+            <th className="is-right">
               edge
+              <HelpMark
+                tip={t(
+                  "实际胜率 − 隐含胜率(该赛道均入场价)。持续为正才是可复制的优势",
+                )}
+              />
             </th>
-            <th>{t("胜率")}</th>
-            <th title={t("该赛道已结算仓的累计已实现盈亏")}>{t("落袋")}</th>
-            <th>{t("仓数")}</th>
+            <th className="is-right">{t("胜率")}</th>
+            <th className="is-right">
+              {t("落袋")}
+              <HelpMark tip={t("该赛道已结算仓的累计已实现盈亏")} />
+            </th>
+            <th className="is-right">{t("仓数")}</th>
           </tr>
         </thead>
         <tbody>
           {items.map(({ tr, cell }) => {
             const low = cell.n < BUCKET_LOW_SAMPLE_N;
             return (
-              <tr
-                key={tr.key}
-                style={low ? { opacity: 0.6 } : undefined}
-                title={low ? t("样本不足,读数仅供方向参考") : undefined}
-              >
-                <td data-label={t("赛道")}>
+              <tr key={tr.key}>
+                {/* 赛道名不截断:换行,最多两行 */}
+                <td data-label={t("赛道")} className="cell-wrap">
                   {matrixHeaderLabel(t, tr, matrix.tracks)}
                 </td>
-                <td data-label="edge">
+                <td data-label="edge" className="is-right">
                   {cell.edge == null ? (
                     <span className="muted">—</span>
                   ) : (
-                    <span className={`mono ${pnlTextClass(cell.edge)}`}>
+                    <span className={pnlTextClass(cell.edge)}>
                       {fmtSignedPt(cell.edge)}
                     </span>
                   )}
                 </td>
-                <td data-label={t("胜率")} className="mono">
-                  {cell.winRate == null ? "—" : fmtPct0(cell.winRate)}
+                <td data-label={t("胜率")} className="is-right">
+                  {cell.winRate == null ? (
+                    <span className="muted">—</span>
+                  ) : (
+                    fmtPct0(cell.winRate)
+                  )}
                 </td>
-                <td data-label={t("落袋")}>
-                  <span className={`mono ${pnlTextClass(cell.realized)}`}>
+                <td data-label={t("落袋")} className="is-right">
+                  <span className={pnlTextClass(cell.realized)}>
                     {fmtSignedUsd(cell.realized)}
                   </span>
                 </td>
-                <td data-label={t("仓数")} className="mono">
+                <td data-label={t("仓数")} className="is-right">
                   {cell.n}
-                  {low ? <span className="muted">{t(" · 不足")}</span> : null}
+                  {/* 样本不足 = 需留神的口径 → 琥珀徽章,不再整行调暗 */}
+                  {low ? (
+                    <>
+                      {" "}
+                      <span
+                        className="ds-tag ds-tag--warn ds-tag--sm"
+                        title={t("样本不足,读数仅供方向参考")}
+                      >
+                        {t("样本不足")}
+                      </span>
+                    </>
+                  ) : null}
                 </td>
               </tr>
             );
@@ -981,7 +1119,7 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
     .sort((a, b) => b.cell.n - a.cell.n);
   if (bubbles.length === 0) {
     return (
-      <div className="ds-hint">
+      <div className="ds-empty">
         {t("暂无可上图的赛道(全为平局的赛道没有实际胜率,不硬造 0%)")}
       </div>
     );
@@ -1105,21 +1243,26 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
           <>
             {matrixHeaderLabel(t, sel.tr, matrix.tracks)}
             <span className="muted">:</span>
-            <span className="mono">
+            <span>
               {t("{n} 仓", { n: sel.cell.n })} · {t("实际")}{" "}
               {fmtPct0(sel.cell.winRate!)} vs {t("隐含")}{" "}
               {fmtPct0(sel.cell.avgEntry!)}
             </span>
             <span className="muted"> · edge </span>
-            <span className={`mono ${pnlTextClass(sel.cell.edge ?? 0)}`}>
+            <span className={pnlTextClass(sel.cell.edge ?? 0)}>
               {sel.cell.edge == null ? "—" : fmtSignedPt(sel.cell.edge)}
             </span>
             <span className="muted"> · </span>
-            <span className={`mono ${pnlTextClass(sel.cell.realized)}`}>
+            <span className={pnlTextClass(sel.cell.realized)}>
               {fmtSignedUsd(sel.cell.realized)}
             </span>
             {sel.cell.n < BUCKET_LOW_SAMPLE_N ? (
-              <span className="muted">{t("(样本不足)")}</span>
+              <>
+                {" "}
+                <span className="ds-tag ds-tag--warn ds-tag--sm">
+                  {t("样本不足")}
+                </span>
+              </>
             ) : null}
           </>
         ) : (
@@ -1139,18 +1282,19 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
         {abovePoly.length >= 3 ? (
           <polygon
             points={toScreen(abovePoly)}
-            fill="var(--up-50)"
+            fill="var(--ww-up-bg)"
             fillOpacity={0.55}
           />
         ) : null}
         {belowPoly.length >= 3 ? (
           <polygon
             points={toScreen(belowPoly)}
-            fill="var(--down-50)"
+            fill="var(--ww-down-bg)"
             fillOpacity={0.55}
           />
         ) : null}
-        {/* 网格 + 轴刻度 */}
+        {/* 网格 + 轴刻度:网格线走 --ww-gridline(比边框更淡),刻度文字与
+            正文同字体 —— 这套皮数字不用等宽。 */}
         {ticksOf(xd).map((t) => (
           <g key={`x${t}`}>
             <line
@@ -1158,16 +1302,15 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
               y1={padT - rMax}
               x2={x(t)}
               y2={BUBBLE_H - padB + rMax}
-              stroke="var(--n-150)"
+              stroke="var(--ww-gridline)"
               strokeDasharray="2 4"
             />
             <text
               x={x(t)}
               y={BUBBLE_H - 10}
               fontSize={11}
-              fill="var(--n-500)"
+              fill="var(--ww-text-muted)"
               textAnchor="middle"
-              fontFamily="var(--font-mono)"
             >
               {Math.round(t * 100)}¢
             </text>
@@ -1180,16 +1323,15 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
               y1={y(t)}
               x2={BUBBLE_W - padR + rMax}
               y2={y(t)}
-              stroke="var(--n-150)"
+              stroke="var(--ww-gridline)"
               strokeDasharray="2 4"
             />
             <text
               x={padL - 10}
               y={y(t) + 4}
               fontSize={11}
-              fill="var(--n-500)"
+              fill="var(--ww-text-muted)"
               textAnchor="end"
-              fontFamily="var(--font-mono)"
             >
               {Math.round(t * 100)}%
             </text>
@@ -1202,7 +1344,7 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
             y1={y(segLo)}
             x2={x(segHi)}
             y2={y(segHi)}
-            stroke="var(--n-400)"
+            stroke="var(--ww-border-dashed)"
             strokeDasharray="5 4"
             strokeWidth={1.5}
           />
@@ -1213,8 +1355,7 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
             x={padL + 8}
             y={padT - rMax + 14}
             fontSize={11}
-            fill="var(--up-700)"
-            fontFamily="var(--font-mono)"
+            fill="var(--ww-up)"
           >
             {t("▲ 跑赢隐含(edge>0)")}
           </text>
@@ -1224,9 +1365,8 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
             x={BUBBLE_W - padR - 4}
             y={BUBBLE_H - padB + rMax - 6}
             fontSize={11}
-            fill="var(--down-700)"
+            fill="var(--ww-down)"
             textAnchor="end"
-            fontFamily="var(--font-mono)"
           >
             {t("▼ 跑输隐含(edge<0)")}
           </text>
@@ -1246,8 +1386,11 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
           // 组合本身就是要暴露的形态;歧义由标签金额 + hint 说明 + 下表
           // 三指标(胜率/落袋/edge)并列消解,不再靠单一颜色扛两个语义。
           const bubbleColor = pnlColor(b.cell.realized);
+          // 选中一个气泡时其余降到 0.2(与图例高亮同一条规则:淡化必须
+          // 连描边一起,不然实心的圈会浮在淡掉的填色上)。
+          const dim = selKey != null && !selected;
           return (
-            <g key={b.tr.key}>
+            <g key={b.tr.key} opacity={dim ? 0.2 : 1}>
               <circle
                 cx={cx}
                 cy={cy}
@@ -1263,15 +1406,13 @@ function TrackBubbles({ rows }: { rows: DeepAnalysisRow[] }) {
                   x={pos.lx}
                   y={pos.ly}
                   fontSize={11}
-                  fill="var(--n-700)"
+                  fill="var(--ww-text)"
                   textAnchor="middle"
-                  fontWeight={selected ? 700 : 500}
+                  // 层级不靠加粗:选中项只回到 500,不跳 700。
+                  fontWeight={selected ? 500 : 400}
                 >
                   {label}
-                  <tspan
-                    fill={pnlColor(b.cell.realized)}
-                    fontFamily="var(--font-mono)"
-                  >
+                  <tspan fill={pnlColor(b.cell.realized)}>
                     {" "}
                     {fmtSignedUsd(b.cell.realized)}
                   </tspan>
@@ -1342,19 +1483,27 @@ function SegmentRow({
         flexWrap: "wrap",
       }}
     >
+      {/* 维度是名称标签,走灰底描边 —— 灰底不表示状态 */}
       <span className="ds-tag">{t(DIMENSION_LABEL[s.dimension])}</span>
-      <span style={{ fontSize: "var(--t-sm)", fontWeight: 600 }}>
+      {/* 段名不截断、不加粗:层级来自标签与分格线,不来自字重 */}
+      <span
+        style={{
+          fontSize: "var(--t-md)",
+          lineHeight: "var(--lh-snug)",
+          overflowWrap: "anywhere",
+        }}
+      >
         {segmentLabel(t, s)}
       </span>
-      <span className="mono muted" style={{ fontSize: "var(--t-xs)" }}>
+      <span className="muted" style={{ fontSize: "var(--t-sm)" }}>
         {t("{n} 仓", { n: s.n })} {fmtRecord(t, s.wins, s.losses, s.pushes)} ·{" "}
         {t("胜率")} {s.winRate == null ? "—" : fmtPct0(s.winRate)}
         {s.edge != null ? ` · edge ${fmtSignedPt(s.edge)}` : ""}
       </span>
-      <span className={`mono ${pnlTextClass(s.realized)}`}>
+      <span className={pnlTextClass(s.realized)}>
         {fmtSignedUsd(s.realized)}
       </span>
-      <span className="mono" style={{ fontSize: "var(--t-xs)" }}>
+      <span style={{ fontSize: "var(--t-sm)" }}>
         <span className="muted">{t("剔除后 → ")}</span>
         <span className={pnlTextClass(s.totalWithout)}>
           {fmtSignedUsd(s.totalWithout)}
@@ -1415,20 +1564,21 @@ export function DeepAnalysisPanel({
 
   return (
     <div
-      style={{ display: "flex", flexDirection: "column", gap: "var(--s-4)" }}
+      style={{ display: "flex", flexDirection: "column", gap: "var(--s-6)" }}
     >
-      <div className="ds-hint">
+      {/* 口径先行 —— 统计声明放在数据「前面」,不放脚注。灰框 = 口径 /
+          设计说明,琥珀框 = 读前必看。 */}
+      <div className="ds-callout">
         {t(
           "已结算纸面口径(不含浮盈,不含成本 — 成本见「成本分解」)· 平局 (push)不进胜率分母 · 持有中 {n} 仓不计入下方读数",
           { n: a.openCount },
         )}
-        {scopeNote ? (
-          <>
-            {" "}
-            · <span style={{ color: "var(--warn-700)" }}>{scopeNote}</span>
-          </>
-        ) : null}
       </div>
+
+      {/* 跨档重复下注是「需留神的口径」,单独一条琥珀框,不塞进灰条句尾 */}
+      {scopeNote ? (
+        <div className="ds-callout ds-callout--warn">⚠️ {scopeNote}</div>
+      ) : null}
 
       {q.settledCount < LOW_SAMPLE_THRESHOLD ? (
         <div className="ds-callout ds-callout--warn">
@@ -1439,126 +1589,117 @@ export function DeepAnalysisPanel({
         </div>
       ) : null}
 
-      {/* ① 下注质量体检 */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-          gap: "var(--s-3) var(--s-4)",
-        }}
-      >
-        <Kpi
-          label={t("期望 / 仓")}
-          title={t(
-            "全部已结算仓(含平局)单仓盈亏的算术平均。t 值 = 均值 ÷ 标准误:|t|≥2 约等于「均值显著异于 0」(95% 置信);胜率的 Wilson 区间管不了赔率不对称,期望的不确定性要看这里",
-          )}
-          value={
-            <span className={`mono ${pnlTextClass(q.expectancyUsd ?? 0)}`}>
-              {q.expectancyUsd == null ? "—" : fmtSignedUsd1(q.expectancyUsd)}
-            </span>
-          }
-          sub={
-            q.expectancyT == null
-              ? `t=— · n=${q.settledCount}`
-              : `t=${q.expectancyT.toFixed(1)} · n=${q.settledCount}`
-          }
-        />
-        <Kpi
-          label={t("胜率")}
-          title={t(
-            "赢仓 ÷(赢仓+输仓),平局不进分母;括号内为 Wilson 95% 区间 —— 小样本下区间比点估计诚实",
-          )}
-          value={
-            <span className="mono">
-              {q.winRate == null ? "—" : fmtPct0(q.winRate)}
-            </span>
-          }
-          sub={`CI ${fmtPct0(q.winRateCI.lo)}–${fmtPct0(q.winRateCI.hi)} · ${fmtRecord(t, q.wins, q.losses, q.pushes)}`}
-        />
-        <Kpi
-          label={t("利润因子")}
-          title={t(
-            "总盈利 ÷ 总亏损。>1 才在赚钱;1.5 以上通常才值得认真对待。无亏损仓时不给 ∞,显示 —",
-          )}
-          value={
-            <span className="mono">
-              {q.profitFactor == null ? "—" : q.profitFactor.toFixed(2)}
-            </span>
-          }
-          sub={
-            q.profitFactor == null && q.wins > 0
-              ? t("无亏损仓 · 总盈${a}", { a: fmtUsd0(q.grossProfit) })
-              : t("总盈${a} / 总亏${b}", {
-                  a: fmtUsd0(q.grossProfit),
-                  b: fmtUsd0(q.grossLoss),
-                })
-          }
-        />
-        <Kpi
-          label={t("盈亏比")}
-          title={t(
-            "均盈利仓 ÷ 均亏损仓。固定 $/仓下这主要由入场赔率结构决定:买冷门票赢一次抵几次亏,买热门票反过来 —— 与胜率合起来才是期望",
-          )}
-          value={
-            <span className="mono">
-              {q.payoffRatio == null ? "—" : q.payoffRatio.toFixed(2)}
-            </span>
-          }
-          sub={
-            q.avgWinUsd != null || q.avgLossUsd != null
-              ? t("均盈{a} / 均亏{b}", {
-                  a: q.avgWinUsd == null ? "—" : `$${fmtUsd0(q.avgWinUsd)}`,
-                  b: q.avgLossUsd == null ? "—" : `$${fmtUsd0(q.avgLossUsd)}`,
-                })
-              : undefined
-          }
-        />
-        <Kpi
-          label={t("最长连胜 · 连败")}
-          title={t(
-            "按结算时间排序的最长连续段(平局跳过不打断)。连败长度是实盘跟单的心理承受力与风控参考",
-          )}
-          value={
-            <span className="mono">
-              <span className="up">{a.streaks.maxWinStreak}</span>
-              <span className="muted"> · </span>
-              <span className="down">{a.streaks.maxLossStreak}</span>
-            </span>
-          }
-          sub={
-            a.streaks.current === 0
-              ? t("当前无连续段")
-              : a.streaks.current > 0
-                ? t("当前 {n} 连赢中", { n: a.streaks.current })
-                : t("当前 {n} 连输中", { n: -a.streaks.current })
-          }
-        />
-        <Kpi
-          label={t("Top3 盈利占比")}
-          title={t(
-            "最大三笔盈利仓占总盈利的比例,以及把这三笔去掉后的净盈亏 —— 检验「是不是几笔大的撑起来的」。占比越高、去掉后转负,说明战绩越依赖尾部运气",
-          )}
-          value={
-            <span className="mono">
-              {a.concentration.top3WinsShare == null
+      {/* ① 下注质量体检 —— 扁平等权的 Metric 网格:六个读数同字号,
+          谁重要取决于读者在问什么;每格的口径收在自己的 (?) 里。 */}
+      {/* 这张卡不裁 overflow:格内的 (?) 点开是绝对定位的弹出层,裁了就
+          只剩鼠标悬停能读到口径。卡内没有到边的色块,不裁也不露角。 */}
+      <section className="ds-card">
+        <div className="card-bar" style={{ fontWeight: 600 }}>
+          {t("下注质量体检")}
+          <span className="muted" style={{ fontWeight: 400 }}>
+            {t("· 六个读数 · 每项的口径在自己的 (?) 里")}
+          </span>
+        </div>
+        <div className="metric-grid">
+          <Kpi
+            label={t("期望 / 仓")}
+            title={t(
+              "全部已结算仓(含平局)单仓盈亏的算术平均。t 值 = 均值 ÷ 标准误:|t|≥2 约等于「均值显著异于 0」(95% 置信);胜率的 Wilson 区间管不了赔率不对称,期望的不确定性要看这里",
+            )}
+            value={
+              <span className={pnlTextClass(q.expectancyUsd ?? 0)}>
+                {q.expectancyUsd == null ? "—" : fmtSignedUsd1(q.expectancyUsd)}
+              </span>
+            }
+            sub={
+              q.expectancyT == null
+                ? `t=— · n=${q.settledCount}`
+                : `t=${q.expectancyT.toFixed(1)} · n=${q.settledCount}`
+            }
+          />
+          <Kpi
+            label={t("胜率")}
+            title={t(
+              "赢仓 ÷(赢仓+输仓),平局不进分母;括号内为 Wilson 95% 区间 —— 小样本下区间比点估计诚实",
+            )}
+            value={q.winRate == null ? "—" : fmtPct0(q.winRate)}
+            sub={`CI ${fmtPct0(q.winRateCI.lo)}–${fmtPct0(q.winRateCI.hi)} · ${fmtRecord(t, q.wins, q.losses, q.pushes)}`}
+          />
+          <Kpi
+            label={t("利润因子")}
+            title={t(
+              "总盈利 ÷ 总亏损。>1 才在赚钱;1.5 以上通常才值得认真对待。无亏损仓时不给 ∞,显示 —",
+            )}
+            value={q.profitFactor == null ? "—" : q.profitFactor.toFixed(2)}
+            sub={
+              q.profitFactor == null && q.wins > 0
+                ? t("无亏损仓 · 总盈${a}", { a: fmtUsd0(q.grossProfit) })
+                : t("总盈${a} / 总亏${b}", {
+                    a: fmtUsd0(q.grossProfit),
+                    b: fmtUsd0(q.grossLoss),
+                  })
+            }
+          />
+          <Kpi
+            label={t("盈亏比")}
+            title={t(
+              "均盈利仓 ÷ 均亏损仓。固定 $/仓下这主要由入场赔率结构决定:买冷门票赢一次抵几次亏,买热门票反过来 —— 与胜率合起来才是期望",
+            )}
+            value={q.payoffRatio == null ? "—" : q.payoffRatio.toFixed(2)}
+            sub={
+              q.avgWinUsd != null || q.avgLossUsd != null
+                ? t("均盈{a} / 均亏{b}", {
+                    a: q.avgWinUsd == null ? "—" : `$${fmtUsd0(q.avgWinUsd)}`,
+                    b: q.avgLossUsd == null ? "—" : `$${fmtUsd0(q.avgLossUsd)}`,
+                  })
+                : undefined
+            }
+          />
+          <Kpi
+            label={t("最长连胜 · 连败")}
+            title={t(
+              "按结算时间排序的最长连续段(平局跳过不打断)。连败长度是实盘跟单的心理承受力与风控参考",
+            )}
+            value={
+              <>
+                <span className="up">{a.streaks.maxWinStreak}</span>
+                <span className="muted"> · </span>
+                <span className="down">{a.streaks.maxLossStreak}</span>
+              </>
+            }
+            sub={
+              a.streaks.current === 0
+                ? t("当前无连续段")
+                : a.streaks.current > 0
+                  ? t("当前 {n} 连赢中", { n: a.streaks.current })
+                  : t("当前 {n} 连输中", { n: -a.streaks.current })
+            }
+          />
+          <Kpi
+            label={t("Top3 盈利占比")}
+            title={t(
+              "最大三笔盈利仓占总盈利的比例,以及把这三笔去掉后的净盈亏 —— 检验「是不是几笔大的撑起来的」。占比越高、去掉后转负,说明战绩越依赖尾部运气",
+            )}
+            value={
+              a.concentration.top3WinsShare == null
                 ? "—"
-                : fmtPct0(a.concentration.top3WinsShare)}
-            </span>
-          }
-          sub={
-            a.concentration.netWithoutTop3Wins == null
-              ? undefined
-              : t("去掉后 {a}", {
-                  a: fmtSignedUsd(a.concentration.netWithoutTop3Wins),
-                }) +
-                (a.concentration.top3LossesShare != null
-                  ? t(" · Top3 亏损占 {b}", {
-                      b: fmtPct0(a.concentration.top3LossesShare),
-                    })
-                  : "")
-          }
-        />
-      </div>
+                : fmtPct0(a.concentration.top3WinsShare)
+            }
+            sub={
+              a.concentration.netWithoutTop3Wins == null
+                ? undefined
+                : t("去掉后 {a}", {
+                    a: fmtSignedUsd(a.concentration.netWithoutTop3Wins),
+                  }) +
+                  (a.concentration.top3LossesShare != null
+                    ? t(" · Top3 亏损占 {b}", {
+                        b: fmtPct0(a.concentration.top3LossesShare),
+                      })
+                    : "")
+            }
+          />
+        </div>
+      </section>
 
       {/* ② 赔率带校准 */}
       <Block
@@ -1580,7 +1721,7 @@ export function DeepAnalysisPanel({
                   width: 10,
                   height: 10,
                   borderRadius: 2,
-                  background: "var(--brand-500)",
+                  background: "var(--ww-link)",
                   marginRight: 4,
                 }}
               />
@@ -1594,7 +1735,7 @@ export function DeepAnalysisPanel({
                   width: 10,
                   height: 10,
                   borderRadius: 2,
-                  background: "var(--n-300)",
+                  background: "var(--ww-border-dashed)",
                   marginRight: 4,
                 }}
               />
@@ -1616,7 +1757,7 @@ export function DeepAnalysisPanel({
         )}
       >
         <DotStrip rows={rows} />
-        <div className="kpi-sub mono" style={{ marginTop: "var(--s-1)" }}>
+        <div className="kpi-sub" style={{ marginTop: "var(--s-2)" }}>
           {t("最佳")} {q.bestPnl == null ? "—" : fmtSignedUsd(q.bestPnl)} ·{" "}
           {t("最差")} {q.worstPnl == null ? "—" : fmtSignedUsd(q.worstPnl)}
         </div>
@@ -1652,9 +1793,9 @@ export function DeepAnalysisPanel({
               <div
                 key={label}
                 style={{
-                  border: "1px solid var(--n-150)",
-                  borderRadius: 6,
-                  padding: "var(--s-3)",
+                  border: "1px solid var(--ww-border)",
+                  borderRadius: "var(--r-btn)",
+                  padding: "var(--s-3) var(--s-4)",
                 }}
               >
                 <div className="ds-label">
@@ -1672,14 +1813,16 @@ export function DeepAnalysisPanel({
                   <PctBar
                     ratio={h.winRate ?? 0}
                     color={
-                      h.winRate == null ? "var(--n-200)" : "var(--brand-500)"
+                      h.winRate == null
+                        ? "var(--ww-border-dashed)"
+                        : "var(--ww-link)"
                     }
                   />
-                  <span className="mono" style={{ fontSize: "var(--t-xs)" }}>
+                  <span style={{ fontSize: "var(--t-sm)" }}>
                     {h.winRate == null ? "—" : fmtPct0(h.winRate)}
                   </span>
                 </div>
-                <div className={`mono ${pnlTextClass(h.realized)}`}>
+                <div className={pnlTextClass(h.realized)}>
                   {fmtSignedUsd(h.realized)}
                 </div>
               </div>
@@ -1705,19 +1848,18 @@ export function DeepAnalysisPanel({
                   "minmax(72px, 92px) 1fr minmax(150px, 190px)",
                 gap: "var(--s-3)",
                 alignItems: "center",
-                opacity: b.n === 0 ? 0.45 : 1,
+                // 空桶淡显到与「样本不足」同一档,读法全站一致。
+                opacity: b.n === 0 ? 0.42 : 1,
               }}
             >
-              <span className="mono" style={{ fontSize: "var(--t-sm)" }}>
-                {t(b.label)}
-              </span>
+              <span style={{ fontSize: "var(--t-md)" }}>{t(b.label)}</span>
               <StackBar
                 n={b.n}
                 maxN={maxDurN}
                 wins={b.wins}
                 losses={b.losses}
               />
-              <span className="mono" style={{ fontSize: "var(--t-xs)" }}>
+              <span style={{ fontSize: "var(--t-sm)" }}>
                 {b.n === 0 ? (
                   <span className="muted">{t("{n} 仓", { n: 0 })}</span>
                 ) : (
@@ -1743,7 +1885,7 @@ export function DeepAnalysisPanel({
         )}
       >
         {a.categories.length === 0 ? (
-          <div className="ds-hint">{t("暂无赛道数据")}</div>
+          <div className="ds-empty">{t("暂无赛道数据")}</div>
         ) : (
           <div style={{ display: "grid", gap: "var(--s-2)" }}>
             {a.categories.map((c) => (
@@ -1780,7 +1922,7 @@ export function DeepAnalysisPanel({
         )}
       >
         {diag.weaknesses.length === 0 ? (
-          <div className="ds-hint">
+          <div className="ds-empty">
             {t(
               "未发现 ≥{n} 仓且累计亏损的特征段 — 样本继续积累中,或这一档暂无集中的亏损特征",
               { n: BUCKET_LOW_SAMPLE_N },
@@ -1800,9 +1942,9 @@ export function DeepAnalysisPanel({
         {diag.strongest ? (
           <div
             style={{
-              marginTop: "var(--s-3)",
-              paddingTop: "var(--s-3)",
-              borderTop: "1px dashed var(--n-150)",
+              marginTop: "var(--s-4)",
+              paddingTop: "var(--s-4)",
+              borderTop: "1px dashed var(--ww-border-dashed)",
             }}
           >
             <div className="ds-hint" style={{ marginBottom: "var(--s-1)" }}>
@@ -1822,6 +1964,14 @@ export function DeepAnalysisPanel({
         <Block
           label="反事实退出 — 如果带止盈/止损/限时会怎样"
           hint={`已回填 ${exitCounterfactual.covered}/${exitCounterfactual.settledTotal} 仓的价格路径(点数中位 ${exitCounterfactual.medianPoints ?? "—"},约 10 分钟一点)· 保守成交口径:按首个越线观测价成交,快盘中触发被系统性低估,Δ 是下界 · 纸面对纸面可比,推及实盘须另计退出侧成本`}
+          note={
+            <>
+              实际合计(基准)
+              {fmtSignedUsd(exitCounterfactual.rules[0]?.actualTotal ?? 0)} ·
+              Δ&gt;0 = 该规则本会多赚/少亏;「触发仓均Δ」回答触发的那些仓里
+              规则是救还是害。九规则互相独立,未触发的仓按实际结算入账。
+            </>
+          }
         >
           {exitCounterfactual.covered < exitCounterfactual.settledTotal ? (
             <div className="ds-hint" style={{ marginBottom: "var(--s-2)" }}>
@@ -1830,7 +1980,7 @@ export function DeepAnalysisPanel({
               仓路径回填中/不可回填,暂不计入本块。
             </div>
           ) : null}
-          <div className="ds-table-wrap">
+          <div className="ds-table-wrap" style={{ boxShadow: "none" }}>
             <table className="ds-table ds-table--compact">
               <thead>
                 <tr>
@@ -1854,7 +2004,6 @@ export function DeepAnalysisPanel({
                     <td className="is-right num">{fmtSignedUsd(r.simTotal)}</td>
                     <td
                       className={`is-right num ${r.delta > 0 ? "up" : r.delta < 0 ? "down" : "muted"}`}
-                      style={{ fontWeight: 600 }}
                     >
                       {fmtSignedUsd(r.delta)}
                     </td>
@@ -1869,12 +2018,6 @@ export function DeepAnalysisPanel({
                 ))}
               </tbody>
             </table>
-          </div>
-          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            实际合计(基准)
-            {fmtSignedUsd(exitCounterfactual.rules[0]?.actualTotal ?? 0)} ·
-            Δ&gt;0 = 该规则本会多赚/少亏;「触发仓均Δ」回答触发的那些仓里
-            规则是救还是害。九规则互相独立,未触发的仓按实际结算入账。
           </div>
         </Block>
       ) : null}

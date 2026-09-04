@@ -12,6 +12,55 @@ export const DICT_ALERTS: Record<string, string> = {
   "· 每 5 秒自动刷新（后台标签页暂停）":
     "· auto-refreshes every 5s (paused in background tabs)",
 
+  // Page head（Etherscan 风改版：12px 小标 + 24/600 标题 + 说明）
+  // 「实时告警」标题键在 common 分片（导航同名，共用一处译文）。
+  "📣 每 5 秒轮询 · 后台标签页暂停":
+    "📣 Polled every 5s · paused in background tabs",
+  "命中告警条件的大额成交逐条出现在下方，最新一条在最上面。条件（金额 / 方向 / 赔率 / 地址年龄 / 冷却 / 聪明钱）统一在运营页配置。":
+    "Large fills that match the alert conditions appear below one by one, newest first. The conditions (amount / side / odds / wallet age / cooldown / smart money) are configured on the ops page.",
+
+  // 口径条（琥珀，放在数据前面）—— 只放统计声明；降级态的读法在表下方的
+  // 琥珀说明条里（设计系统 §1.2：「—」的成因写在表下方）。
+  "口径 · 信号验证": "Basis · signal validation",
+  "验证列的 10m / 1h / 24h 是信号发出后的公开市场价变化，按方向着色（±0.5¢ 内记平推），不等于你的实际成交。同一市场的多条告警共享一次结算，因此 95% 区间与「样本不足」都按市场数计算，不按行数。":
+    "The 10m / 1h / 24h figures in the Validation column are public market-price moves after the signal, colored by direction (moves within ±0.5¢ count as a push); they are not your actual fills. Alerts on one market share its single settlement, so both the 95% interval and the small-sample flag are computed on the market count, not the row count.",
+
+  // 卡底琥珀说明条 —— 降级态的读法
+  "验证列「…」表示这一笔还在补算：新命中立即取，未取到的每分钟重试一批（一次最多 100 条）。「—」是「判不了」不是零 —— 结果列的「—」表示该笔没带结果名，钱包列的「—」表示没带钱包地址。":
+    "In the Validation column, an ellipsis means the row is still being computed: a fresh hit is fetched at once, and rows still missing their marks are retried once a minute (up to 100 per batch). A dash means not determinable, not zero — under Outcome it means the alert carried no outcome name, under Wallet no wallet address.",
+
+  // KPI 3 格
+  命中条数: "Alerts matched",
+  "轮询中 · 每 5 秒（列表上限 100 条）":
+    "Polling · every 5s (list caps at 100)",
+  "刷新失败: {err}": "Refresh failed: {err}",
+  最近命中: "Latest hit",
+  "最后刷新 {at}": "Last refresh {at}",
+  等待首次刷新: "Awaiting the first refresh",
+  等待首条命中: "Awaiting the first hit",
+  推送通道: "Push channel",
+  推送正常: "Push healthy",
+  "连续失败 {n} 次": "{n} consecutive failures",
+  "接口未提供推送计数（旧版本或冷库）":
+    "The API returned no push counters (older build or cold DB)",
+  "仅推送受影响，新告警仍正常入库":
+    "Only pushes are affected — new alerts still land in the DB",
+  "最近成功推送 {at}": "Last successful push {at}",
+  暂无成功推送记录: "No successful push on record yet",
+
+  // 命中流卡
+  命中流: "Hit stream",
+  "最近 {n} 条 · 最新在上": "Latest {n} · newest first",
+  等待下一条命中: "Waiting for the next hit",
+  "每 5 秒轮询一次；把运营页的金额门槛放宽（例如 ≥$5,000）可提高命中频率。":
+    "Polled every 5s; loosening the amount floor on the ops page (to ≥$5,000, say) raises the hit rate.",
+
+  // 行内信号类型名称标签（其余名称的译文在 glossary / market 分片）
+  同批新钱包: "New-wallet cohort",
+  // 结算判定徽章
+  命中: "Hit",
+  未中: "Miss",
+
   // Conditions panel
   告警条件: "Alert Conditions",
   启用: "Enabled",

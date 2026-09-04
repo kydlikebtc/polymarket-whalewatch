@@ -7,6 +7,7 @@ import {
   Segmented,
   SideTag,
   SoundToggle,
+  StatCard,
   WalletLink,
 } from "../ui";
 import { iconTip, termDetail, firstSentence } from "../glossary";
@@ -93,6 +94,16 @@ const TYPE_ICON: Record<string, string> = {
   cohort: "🐣",
 };
 
+// 信号类型的中文名 —— emoji 不裸放在正文里，收进行内灰底名称标签
+// （`💰 大额成交`）。名称沿用五级信号强度阶梯的措辞，与词表一致，
+// 译文由既有分片供给（大额成交/巨鲸单/聪明钱共识在 glossary·market 片）。
+const TYPE_NAME: Record<string, string> = {
+  large: "大额成交",
+  smart: "聪明钱",
+  consensus: "聪明钱共识",
+  cohort: "同批新钱包",
+};
+
 // Per-type labels for the validation strip's grouped breakdown.
 const TYPE_LABEL: Record<string, string> = {
   large: "💰大单",
@@ -137,9 +148,28 @@ function shortWallet(w: string): string {
   return w.length > 12 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w;
 }
 
+// 完整时间戳（年月日 + 时分秒）—— 推送通道的成功 / 失败时刻要能跨天核对，
+// 也是流里两个简写时间的 title 兜底。
 function fmtTime(sec: number): string {
   if (!sec) return "";
   return new Date(sec * 1000).toLocaleString("zh-CN", { hour12: false });
+}
+
+// 时钟式 `12:05:20` —— KPI「最近命中」说的是「刚刚」，日期收进 title。
+function fmtClock(sec: number): string {
+  if (!sec) return "";
+  return new Date(sec * 1000).toLocaleTimeString("zh-CN", { hour12: false });
+}
+
+// 流里的时间列 `09-04 12:05:20` —— 设计系统的日期时间写法（不带年份）。
+// 命中稀疏时列表会跨天，只留时分秒会让昨天的命中看着像刚发生。
+function fmtStamp(sec: number): string {
+  if (!sec) return "";
+  const d = new Date(sec * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(
+    d.getMinutes(),
+  )}:${p(d.getSeconds())}`;
 }
 
 // Direction-aware follow-through badge: for a BUY, price moving UP after the
@@ -161,11 +191,18 @@ function FollowBadge({
   if (later == null) return null;
   const cents = (later - entry) * 100;
   const v = directionVerdict(side, entry, later);
-  const cls = v === "push" ? "muted" : v === "hit" ? "up" : "down";
+  // ±0.5¢ 死区内记平推 —— 用 --ww-text-faint（.faint），不是灰正文：
+  // 「没走动」与「次要信息」是两件事。涨绿跌红只留给真正的价格方向。
+  const cls = v === "push" ? "faint" : v === "hit" ? "up" : "down";
   return (
-    <span className={`mono ${cls}`} style={{ whiteSpace: "nowrap" }}>
-      {label} {cents >= 0 ? "+" : ""}
-      {cents.toFixed(1)}¢
+    <span style={{ whiteSpace: "nowrap" }}>
+      <span className="muted" style={{ fontSize: "var(--t-sm)" }}>
+        {label}
+      </span>{" "}
+      <span className={cls}>
+        {cents >= 0 ? "+" : ""}
+        {cents.toFixed(1)}¢
+      </span>
     </span>
   );
 }
@@ -191,21 +228,31 @@ function StatLine({ label, stat }: { label: string; stat: OutcomeStat }) {
   const parts = Object.entries(stat.byType).map(
     ([type, v]) => `${t(TYPE_LABEL[type] ?? type)} ${v.hits}/${v.total}`,
   );
+  // 层级来自 12px 小标 + 徽章，不来自字号跳档或加粗：命中数与正文同字号
+  // 常规字重（数字不加粗、不放大），「样本不足」改成琥珀描边徽章 —— 它是
+  // 「需留神的口径」，比把整行调暗更明确。
   return (
-    <span className={small ? "muted" : undefined}>
-      {label}{" "}
-      <strong className="mono">
-        {stat.hits}/{stat.total}
-      </strong>{" "}
-      ({pct}%)
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: "var(--s-1)",
+      }}
+    >
+      <span
+        className="muted"
+        style={{ fontSize: "var(--t-sm)", letterSpacing: "0.02em" }}
+      >
+        {label}
+      </span>
+      <span>
+        {stat.hits}/{stat.total} ({pct}%)
+      </span>
       {small ? (
-        <span className="muted" style={{ fontSize: "var(--t-sm)" }}>
-          {" "}
-          {t("样本不足")}
-        </span>
+        <span className="ds-tag ds-tag--xs ds-tag--warn">{t("样本不足")}</span>
       ) : (
-        <span className="muted mono" style={{ fontSize: "var(--t-sm)" }}>
-          {" "}
+        <span className="muted" style={{ fontSize: "var(--t-sm)" }}>
           {t("95%区间 {lo}–{hi}%", {
             lo: Math.round(lo * 100),
             hi: Math.round(hi * 100),
@@ -214,17 +261,15 @@ function StatLine({ label, stat }: { label: string; stat: OutcomeStat }) {
       )}
       {clustered ? (
         <span
-          className="muted mono"
+          className="muted"
           style={{ fontSize: "var(--t-sm)" }}
           title={firstSentence(t(termDetail("有效样本量（市场聚类）")))}
         >
-          {" "}
           · {t("{n} 个市场", { n: stat.clusters })}
         </span>
       ) : null}
       {parts.length > 1 ? (
         <span className="muted" style={{ fontSize: "var(--t-sm)" }}>
-          {" "}
           · {parts.join(" · ")}
         </span>
       ) : null}
@@ -397,35 +442,30 @@ export default function Page() {
     if (hasNew && soundOn) playBubble();
   }, [data, soundOn]);
 
+  // 页头右侧动作钮之外的展示派生值（不改任何取数 / 状态 / 事件逻辑）：
+  // 最新一条命中的时间 —— /api/alerts 已按 created_at DESC 返回，取首行。
+  const latestAt = data.alerts[0]?.createdAt ?? 0;
+  const tg = data.telegramHealth ?? null;
+
   return (
     <main className="ds-main">
-      <header
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: "var(--s-4)",
-          marginBottom: "var(--s-5)",
-        }}
-      >
+      {/* 页头区 —— 12px 小标（emoji 前缀）+ 24/600 标题 + 14px 说明，
+          右侧动作钮。层级来自小标与底边线，不来自字号跳档。 */}
+      <header className="page-head">
         <div>
-          <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-            {t("🐋 Polymarket 大额成交监控")}
-          </h1>
-          <div className="ds-hint">
-            {t("共")} <span className="mono">{data.count}</span> {t("条告警")}
-            {lastRefreshed ? t(" · 最后刷新 {at}", { at: lastRefreshed }) : ""}
-            {error ? (
-              <span className="down">
-                {t(" · 刷新失败: {err}", { err: error })}
-              </span>
-            ) : null}
-            <span className="muted" style={{ marginLeft: "var(--s-2)" }}>
-              {t("· 每 5 秒自动刷新（后台标签页暂停）")}
-            </span>
+          <div className="page-head__eyebrow">
+            {t("📣 每 5 秒轮询 · 后台标签页暂停")}
           </div>
+          <h1 className="page-head__title">{t("实时告警")}</h1>
+          <p className="page-head__desc">
+            {t(
+              "命中告警条件的大额成交逐条出现在下方，最新一条在最上面。条件（金额 / 方向 / 赔率 / 地址年龄 / 冷却 / 聪明钱）统一在运营页配置。",
+            )}
+          </p>
         </div>
-        <SoundToggle on={soundOn} onToggle={toggle} />
+        <div className="page-head__actions">
+          <SoundToggle on={soundOn} onToggle={toggle} />
+        </div>
       </header>
 
       {/* Push-channel health callout — "no messages" must be tellable apart
@@ -434,13 +474,10 @@ export default function Page() {
       {data.telegramHealth?.failing ? (
         <div
           className="ds-callout ds-callout--error"
-          style={{ marginBottom: "var(--s-4)" }}
+          style={{ marginBottom: "var(--s-5)" }}
         >
           {t("⚠️ Telegram 推送通道异常：已连续")}{" "}
-          <strong className="mono">
-            {data.telegramHealth.consecutiveSendFailures}
-          </strong>{" "}
-          {t("次发送失败")}
+          {data.telegramHealth.consecutiveSendFailures} {t("次发送失败")}
           {data.telegramHealth.lastErrorAt
             ? t("（最近失败 {at}）", {
                 at: fmtTime(data.telegramHealth.lastErrorAt),
@@ -451,7 +488,7 @@ export default function Page() {
           )}
           {data.telegramHealth.lastErrorMessage ? (
             <div
-              className="muted mono"
+              className="muted"
               style={{ fontSize: "var(--t-sm)", marginTop: "var(--s-1)" }}
             >
               {data.telegramHealth.lastErrorMessage}
@@ -460,159 +497,350 @@ export default function Page() {
         </div>
       ) : null}
 
-      {/* Validation summary — the "was this signal any good" strip. */}
-      {hasStats ? (
+      {/* 口径条 —— 琥珀框紧跟页头，放在数据「前面」，不做脚注：这里只放
+          统计声明（口径怎么算、区间按什么算样本）。降级态（「…」/「—」怎么
+          读）属于表的读法，放在表下方的琥珀说明条里。 */}
+      <div
+        className="ds-callout ds-callout--warn"
+        style={{ marginBottom: "var(--s-5)" }}
+      >
+        <div className="ds-label">
+          <Icon s="📐" /> {t("口径 · 信号验证")}
+        </div>
+        <div style={{ marginTop: "var(--s-1)" }}>
+          {t(
+            "验证列的 10m / 1h / 24h 是信号发出后的公开市场价变化，按方向着色（±0.5¢ 内记平推），不等于你的实际成交。同一市场的多条告警共享一次结算，因此 95% 区间与「样本不足」都按市场数计算，不按行数。",
+          )}
+        </div>
+        {hasStats ? (
+          <div
+            style={{
+              marginTop: "var(--s-2)",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "var(--s-2) var(--s-5)",
+              alignItems: "center",
+            }}
+          >
+            <StatLine label={t("10m 方向命中")} stat={summary.dir10m} />
+            <StatLine label={t("1h 方向命中")} stat={summary.dir1h} />
+            <StatLine label={t("24h 方向命中")} stat={summary.dir24h} />
+            <StatLine label={t("已结算胜率")} stat={summary.settled} />
+          </div>
+        ) : null}
+      </div>
+
+      {/* KPI 3 格 —— 一张白卡内 3 等分，格间 1px 竖线；值 18px 常规字重，
+          与正文同字体（数字不用等宽、不加粗、不放大）。 */}
+      <section className="kpi" style={{ marginBottom: "var(--s-4)" }}>
+        <StatCard label={t("命中条数")} icon="💰">
+          <div
+            className="kpi-value"
+            style={{ display: "flex", alignItems: "center", gap: "var(--s-2)" }}
+          >
+            {data.count.toLocaleString("en-US")}
+            <span
+              className="ds-dot"
+              style={{ background: error ? "var(--ww-down)" : "var(--ww-up)" }}
+            />
+          </div>
+          <div className="kpi-sub">
+            {error ? (
+              <span className="down">
+                {t("刷新失败: {err}", { err: error })}
+              </span>
+            ) : (
+              t("轮询中 · 每 5 秒（列表上限 100 条）")
+            )}
+          </div>
+        </StatCard>
+
+        <StatCard label={t("最近命中")} icon="⏱️">
+          <div
+            className="kpi-value"
+            style={{
+              color: latestAt ? "var(--ww-link)" : "var(--ww-text-faint)",
+            }}
+            title={latestAt ? fmtTime(latestAt) : undefined}
+          >
+            {latestAt ? fmtClock(latestAt) : "—"}
+          </div>
+          <div className="kpi-sub">
+            {latestAt
+              ? lastRefreshed
+                ? t("最后刷新 {at}", { at: lastRefreshed })
+                : t("等待首次刷新")
+              : t("等待首条命中")}
+          </div>
+        </StatCard>
+
+        <StatCard label={t("推送通道")} icon="📣">
+          <div
+            className="kpi-value"
+            style={{
+              color: tg
+                ? tg.failing
+                  ? "var(--ww-down)"
+                  : "var(--ww-up)"
+                : "var(--ww-text-faint)",
+            }}
+          >
+            {tg
+              ? tg.failing
+                ? t("连续失败 {n} 次", { n: tg.consecutiveSendFailures })
+                : t("推送正常")
+              : "—"}
+          </div>
+          <div className="kpi-sub">
+            {!tg
+              ? t("接口未提供推送计数（旧版本或冷库）")
+              : tg.failing
+                ? t("仅推送受影响，新告警仍正常入库")
+                : tg.lastOkAt
+                  ? t("最近成功推送 {at}", { at: fmtTime(tg.lastOkAt) })
+                  : t("暂无成功推送记录")}
+          </div>
+        </StatCard>
+      </section>
+
+      {/* 主卡 —— 卡内：标题条 → 表头 → 行 → 灰底等待态。
+          等待态永远在场：没有命中时它就是空态（给内容也给出路），
+          有命中时它是流的尾巴，绝不返回 null。 */}
+      <section className="ds-card" style={{ overflow: "hidden" }}>
+        <div className="card-bar">
+          <span style={{ fontWeight: 600 }}>{t("命中流")}</span>
+          {data.count > 0 ? (
+            <span
+              className="muted"
+              style={{ marginLeft: "auto", fontSize: "var(--t-base)" }}
+            >
+              {t("最近 {n} 条 · 最新在上", { n: data.count })}
+            </span>
+          ) : null}
+        </div>
+
+        {data.count === 0 ? null : (
+          <div
+            className="ds-table-wrap"
+            style={{ border: 0, borderRadius: 0, boxShadow: "none" }}
+          >
+            <table className="ds-table">
+              <thead>
+                <tr>
+                  <th>{t("市场")}</th>
+                  <th>{t("结果")}</th>
+                  <th>{t("方向")}</th>
+                  <th className="is-right">{t("金额")}</th>
+                  <th className="is-right">{t("价格")}</th>
+                  <th>{t("钱包")}</th>
+                  <th
+                    title={t("信号后 1h/24h 价格变化（按方向着色）与结算结果")}
+                  >
+                    {t("验证")}
+                  </th>
+                  <th>{t("时间")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.alerts.map((a, i) => {
+                  const whale = a.usd >= 50000 && a.type === "large";
+                  const o = outcomes[a.id];
+                  // 结算判定（resolved 才有）：绿=命中 / 红=未中 /
+                  // ➖=判不了。提示文案与词表同源，逻辑原样保留。
+                  const settled = o?.resolved ? o : null;
+                  const verdictSymbol = settled
+                    ? settled.won == null
+                      ? "➖"
+                      : settled.won
+                        ? "✅"
+                        : "❌"
+                    : null;
+                  const verdictTip =
+                    settled && verdictSymbol
+                      ? `${t(iconTip(verdictSymbol))}${t(
+                          " · 结算价 {res} vs 成交价 {fill}",
+                          {
+                            res: String(settled.resolutionPrice),
+                            fill: a.price.toFixed(3),
+                          },
+                        )}`
+                      : "";
+                  return (
+                    <tr key={`${a.id}-${a.txHash}-${i}`}>
+                      {/* 市场名永不截断 —— 换行（.cell-wrap），顶对齐；
+                          信号类型的 emoji 收进灰底名称标签，不裸放在句中。 */}
+                      <td className="cell-wrap" style={{ maxWidth: 360 }}>
+                        {a.eventSlug ? (
+                          <a
+                            href={`https://polymarket.com/event/${a.eventSlug}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {a.title}
+                          </a>
+                        ) : (
+                          a.title
+                        )}
+                        <div style={{ marginTop: "var(--s-1)" }}>
+                          <span className="ds-tag ds-tag--sm">
+                            <Icon
+                              s={whale ? "🐳" : (TYPE_ICON[a.type] ?? "💰")}
+                            />
+                            {t(
+                              whale
+                                ? "巨鲸单"
+                                : (TYPE_NAME[a.type] ?? "大额成交"),
+                            )}
+                          </span>
+                        </div>
+                      </td>
+                      <td data-label={t("结果")}>
+                        {a.outcome ? (
+                          // 灰底名称标签（不表示状态）。结果名同样不截断：
+                          // 长名换行，标签随之长高。
+                          <span
+                            className="ds-tag"
+                            style={{
+                              height: "auto",
+                              minHeight: "var(--h-tag)",
+                              padding: "2px var(--s-2)",
+                              whiteSpace: "normal",
+                              lineHeight: "var(--lh-snug)",
+                              overflowWrap: "anywhere",
+                            }}
+                          >
+                            {a.outcome}
+                          </span>
+                        ) : (
+                          <span className="faint">—</span>
+                        )}
+                      </td>
+                      <td data-label={t("方向")}>
+                        <SideTag side={a.side} />
+                      </td>
+                      <td className="is-right" data-label={t("金额")}>
+                        ${fmtUsd(a.usd)}
+                      </td>
+                      <td className="is-right" data-label={t("价格")}>
+                        {a.price.toFixed(4)}
+                      </td>
+                      <td data-label={t("钱包")}>
+                        {a.wallet ? (
+                          <WalletLink
+                            address={a.wallet}
+                            title={t("{address} · 新标签打开钱包档案", {
+                              address: a.wallet,
+                            })}
+                          >
+                            {shortWallet(a.wallet)}
+                          </WalletLink>
+                        ) : (
+                          <span className="faint">—</span>
+                        )}
+                      </td>
+                      <td data-label={t("验证")}>
+                        {/* Consensus rows validate too: entry = the group's
+                            avgBuyPrice, timed at the last member fill. */}
+                        <span
+                          style={{
+                            display: "flex",
+                            gap: "var(--s-2)",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <FollowBadge
+                            label="10m"
+                            entry={a.price}
+                            later={o?.price10m ?? null}
+                            side={a.side}
+                          />
+                          <FollowBadge
+                            label="1h"
+                            entry={a.price}
+                            later={o?.price1h ?? null}
+                            side={a.side}
+                          />
+                          <FollowBadge
+                            label="24h"
+                            entry={a.price}
+                            later={o?.price24h ?? null}
+                            side={a.side}
+                          />
+                          {settled ? (
+                            settled.won == null ? (
+                              // 判不了用「—」而不是 ➖：emoji 只出现在名称
+                              // 标签 / KPI 图标位 / 12px 小标前缀三处，不进
+                              // 表体；提示文案仍与词表同源。
+                              <span className="faint">
+                                <Icon s="—" title={verdictTip} />
+                              </span>
+                            ) : (
+                              <span
+                                className={`ds-tag ds-tag--sm ds-tag--${
+                                  settled.won ? "up" : "down"
+                                }`}
+                              >
+                                <Icon
+                                  s={settled.won ? "✅" : "❌"}
+                                  title={verdictTip}
+                                />
+                                {settled.won ? t("命中") : t("未中")}
+                              </span>
+                            )
+                          ) : null}
+                          {!o ||
+                          (o.price1h == null &&
+                            o.price24h == null &&
+                            !o.resolved) ? (
+                            <span className="faint">…</span>
+                          ) : null}
+                        </span>
+                      </td>
+                      <td data-label={t("时间")} title={fmtTime(a.createdAt)}>
+                        {fmtStamp(a.createdAt)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* 灰底等待态 —— 流的尾巴 / 空态二合一，两行：说的是什么状态，
+            以及下一步能做什么。 */}
         <div
-          className="ds-callout"
+          className="ds-empty"
           style={{
-            marginBottom: "var(--s-4)",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "var(--s-4)",
-            alignItems: "center",
+            border: 0,
+            borderTop: data.count === 0 ? "0" : "1px solid var(--ww-border)",
+            borderRadius: 0,
           }}
         >
-          <span>
-            <Icon s="📐" /> {t("信号验证（当前列表）")}
-          </span>
-          <StatLine label={t("10m 方向命中")} stat={summary.dir10m} />
-          <StatLine label={t("1h 方向命中")} stat={summary.dir1h} />
-          <StatLine label={t("24h 方向命中")} stat={summary.dir24h} />
-          <StatLine label={t("已结算胜率")} stat={summary.settled} />
+          <div>
+            {data.count === 0
+              ? t("暂无告警 — worker 抓到大单后会出现在这里")
+              : t("等待下一条命中")}
+          </div>
+          <div style={{ marginTop: "var(--s-1)", fontSize: "var(--t-base)" }}>
+            {t(
+              "每 5 秒轮询一次；把运营页的金额门槛放宽（例如 ≥$5,000）可提高命中频率。",
+            )}
+          </div>
         </div>
-      ) : null}
 
-      {data.count === 0 ? (
-        <div className="ds-empty">
-          {t("暂无告警 — worker 抓到大单后会出现在这里")}
-        </div>
-      ) : (
-        <div className="ds-table-wrap">
-          <table className="ds-table">
-            <thead>
-              <tr>
-                <th>{t("市场")}</th>
-                <th>{t("结果")}</th>
-                <th>{t("方向")}</th>
-                <th className="is-right">{t("金额")}</th>
-                <th className="is-right">{t("价格")}</th>
-                <th>{t("钱包")}</th>
-                <th title={t("信号后 1h/24h 价格变化（按方向着色）与结算结果")}>
-                  {t("验证")}
-                </th>
-                <th>{t("时间")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.alerts.map((a, i) => {
-                const whale = a.usd >= 50000;
-                const o = outcomes[a.id];
-                return (
-                  <tr key={`${a.id}-${a.txHash}-${i}`}>
-                    <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
-                      <Icon
-                        s={
-                          whale && a.type === "large"
-                            ? "🐳"
-                            : (TYPE_ICON[a.type] ?? "💰")
-                        }
-                      />{" "}
-                      {a.eventSlug ? (
-                        <a
-                          href={`https://polymarket.com/event/${a.eventSlug}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {a.title}
-                        </a>
-                      ) : (
-                        a.title
-                      )}
-                    </td>
-                    <td data-label={t("结果")}>{a.outcome}</td>
-                    <td data-label={t("方向")}>
-                      <SideTag side={a.side} />
-                    </td>
-                    <td className="mono is-right" data-label={t("金额")}>
-                      ${fmtUsd(a.usd)}
-                    </td>
-                    <td className="mono is-right" data-label={t("价格")}>
-                      {a.price.toFixed(4)}
-                    </td>
-                    <td data-label={t("钱包")}>
-                      {a.wallet ? (
-                        <WalletLink
-                          address={a.wallet}
-                          title={t("{address} · 新标签打开钱包档案", {
-                            address: a.wallet,
-                          })}
-                        >
-                          {shortWallet(a.wallet)}
-                        </WalletLink>
-                      ) : (
-                        <span className="mono">—</span>
-                      )}
-                    </td>
-                    <td data-label={t("验证")}>
-                      {/* Consensus rows validate too: entry = the group's
-                          avgBuyPrice, timed at the last member fill. */}
-                      <span
-                        style={{
-                          display: "flex",
-                          gap: "var(--s-2)",
-                          alignItems: "center",
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <FollowBadge
-                          label="10m"
-                          entry={a.price}
-                          later={o?.price10m ?? null}
-                          side={a.side}
-                        />
-                        <FollowBadge
-                          label="1h"
-                          entry={a.price}
-                          later={o?.price1h ?? null}
-                          side={a.side}
-                        />
-                        <FollowBadge
-                          label="24h"
-                          entry={a.price}
-                          later={o?.price24h ?? null}
-                          side={a.side}
-                        />
-                        {o?.resolved ? (
-                          <Icon
-                            s={o.won == null ? "➖" : o.won ? "✅" : "❌"}
-                            title={`${t(
-                              iconTip(
-                                o.won == null ? "➖" : o.won ? "✅" : "❌",
-                              ),
-                            )}${t(" · 结算价 {res} vs 成交价 {fill}", {
-                              res: String(o.resolutionPrice),
-                              fill: a.price.toFixed(3),
-                            })}`}
-                          />
-                        ) : null}
-                        {!o ||
-                        (o.price1h == null &&
-                          o.price24h == null &&
-                          !o.resolved) ? (
-                          <span className="muted">…</span>
-                        ) : null}
-                      </span>
-                    </td>
-                    <td className="mono muted" data-label={t("时间")}>
-                      {fmtTime(a.createdAt)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+        {/* 卡底琥珀说明条 —— 降级态的读法。「—」是「判不了」不是零，
+            两种成因（结果名缺 / 钱包地址缺）与「…」补算中要能分开读，
+            所以写在表下方而不是混进页头的统计声明里。 */}
+        {data.count > 0 ? (
+          <div className="note-strip note-strip--warn">
+            {t(
+              "验证列「…」表示这一笔还在补算：新命中立即取，未取到的每分钟重试一批（一次最多 100 条）。「—」是「判不了」不是零 —— 结果列的「—」表示该笔没带结果名，钱包列的「—」表示没带钱包地址。",
+            )}
+          </div>
+        ) : null}
+      </section>
     </main>
   );
 }

@@ -43,8 +43,16 @@ export default function ViewsSection() {
         title="👁 视图（状态,非信号）"
         hint="视图 = 事件的折叠/汇总,回答「现在该看什么」,由 /api/signals 请求时现算。它没有稳定的逐事件 id,不承担触发语义,因此没有管线、也没有开关 —— 想被推送,订阅对应的事件(① 或 ②)。"
       />
+      {/* 口径先行：这张表全是固定常量,读之前先知道它不可配置。 */}
+      <div
+        className="ds-callout ds-callout--warn"
+        style={{ marginBottom: "var(--s-4)" }}
+      >
+        下表的折叠规则是<b>写死的常量</b>,本页没有对应开关 —— 这正是它对订阅方
+        可信的原因。要改只能改代码并重新部署。
+      </div>
       <div className="ds-table-wrap">
-        <table className="ds-table ds-table--compact">
+        <table className="ds-table">
           <thead>
             <tr>
               <th>视图</th>
@@ -56,21 +64,29 @@ export default function ViewsSection() {
           <tbody>
             {VIEWS.map((v) => (
               <tr key={v.name}>
-                <td className="mono" style={{ whiteSpace: "nowrap" }}>
+                <td data-label="视图" className="cell-wrap">
                   {v.name}
                 </td>
-                <td>{v.from}</td>
-                <td className="ds-hint">{v.rule}</td>
-                <td className="ds-hint">{v.use}</td>
+                <td data-label="由什么折叠而来" className="cell-wrap">
+                  {v.from}
+                </td>
+                <td data-label="规则" className="cell-wrap">
+                  {v.rule}
+                </td>
+                <td data-label="用途" className="cell-wrap">
+                  {v.use}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
-      <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-        推荐消费模式:<b>事件做触发,视图做渲染</b> —— webhook 收到事件后,拿
-        conditionId + outcome 去视图取当前折叠状态展示。把 ① 的每条共识
-        升级事件当独立信号计数是唯一的坑(一个组会被数成多个),视图已替你 折叠好。
+        {/* 卡底说明条 —— 灰底、与表同框,不是脚注也不是新的一块内容。 */}
+        <div className="note-strip">
+          推荐消费模式:<b>事件做触发,视图做渲染</b> —— webhook 收到事件后,拿
+          conditionId + outcome 去视图取当前折叠状态展示。把 ① 的每条共识
+          升级事件当独立信号计数是唯一的坑(一个组会被数成多个),视图已替你
+          折叠好。
+        </div>
       </div>
     </section>
   );
