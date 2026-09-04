@@ -37,7 +37,9 @@ vi.mock("../../../../lib/signalCatalog", async (importOriginal) => {
 });
 
 import { GET } from "./route";
-import { __resetCatalogCache } from "./route";
+// 重置钩子在 lib 里,不在 route.ts:App Router 只许路由文件导出白名单字段,
+// 多导一个就是 next build 失败(见 lib/signalCatalogCache.ts 顶部注释)。
+import { __resetCatalogCache } from "../../../../lib/signalCatalogCache";
 
 const saved = {
   dashDb: process.env.DASH_DB,
