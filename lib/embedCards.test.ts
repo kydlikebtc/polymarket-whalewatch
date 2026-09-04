@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  EMBED_PALETTE,
   escapeHtml,
   fmtRecordCell,
   parseTheme,
@@ -147,8 +148,11 @@ describe("renderRecordEmbed", () => {
       theme: "light",
       baseUrl: BASE,
     });
-    expect(dark).toContain("#14161e");
-    expect(light).not.toContain("#14161e");
+    // 断言意图而非某个色值:dark 换了 body 底色,light 用的是自己的底色。
+    // 直接比十六进制在 dark.bg === light.fg 时会假阴性(本套皮正是如此)。
+    expect(dark).toContain(`background:${EMBED_PALETTE.dark.bg}`);
+    expect(light).toContain(`background:${EMBED_PALETTE.light.bg}`);
+    expect(light).not.toContain(`background:${EMBED_PALETTE.dark.bg}`);
   });
 });
 
@@ -274,6 +278,6 @@ describe("renderSelfTestEmbed", () => {
       wstats({ winRate: 0.6, netPnl: 1200, roi: 0.02, settledCount: 12 }),
       { theme: "dark" },
     );
-    expect(html).toContain("#14161e");
+    expect(html).toContain(`background:${EMBED_PALETTE.dark.bg}`);
   });
 });

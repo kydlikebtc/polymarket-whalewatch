@@ -11,9 +11,16 @@ export const dynamic = "force-dynamic";
 // 只有 flexbox(无 grid),多子元素的 div 必须显式 display:flex。
 // worker 的 maybeWeeklyPost 周一自取本路由的 PNG 再传 X。
 
-const GREEN = "#3fb950";
-const RED = "#f85149";
-const DIM = "#8b949e";
+// 配色跟站点本体走 Etherscan 风(app/globals.css 的 --ww-* 点值)。这张图
+// 是白底 —— 全站唯一的深色面是代码面板,一张深底成绩单卡会在 X 时间线上
+// 与站内、与 embed 卡三处都对不上。设计稿没出这张图(readme §9),但「配色
+// 与站点同源」不需要出稿也能定。
+const INK = "#081d35";
+const GREEN = "#00a186";
+const RED = "#dc3545";
+const DIM = "#6c757d";
+const LINE = "#e9ecef";
+const WASH = "#f8f9fa";
 
 function pnlColor(n: number): string {
   return n >= 0 ? GREEN : RED;
@@ -34,10 +41,11 @@ export async function GET() {
         height: "100%",
         display: "flex",
         flexDirection: "column",
-        backgroundColor: "#0b1220",
-        color: "#e6edf3",
+        backgroundColor: "#fff",
+        color: INK,
         padding: 48,
         fontSize: 28,
+        fontFamily: '"Helvetica Neue", Helvetica, Arial, sans-serif',
       }}
     >
       <div
@@ -48,7 +56,7 @@ export async function GET() {
         }}
       >
         <div style={{ display: "flex", fontSize: 40, fontWeight: 700 }}>
-          🐳 WhaleWatch — Weekly Report
+          🐋 WhaleWatch — Weekly Report
         </div>
         <div style={{ display: "flex", color: DIM, fontSize: 30 }}>
           {r.weekLabel}
@@ -60,12 +68,12 @@ export async function GET() {
           {
             label: "Settled positions",
             value: String(r.settled),
-            color: "#e6edf3",
+            color: INK,
           },
           {
             label: "Win rate",
             value: r.winRatePct != null ? `${Math.round(r.winRatePct)}%` : "—",
-            color: "#e6edf3",
+            color: INK,
           },
           {
             label: "Paper PnL",
@@ -78,7 +86,8 @@ export async function GET() {
             style={{
               display: "flex",
               flexDirection: "column",
-              backgroundColor: "#161b26",
+              backgroundColor: WASH,
+              border: `1px solid ${LINE}`,
               borderRadius: 16,
               padding: "24px 36px",
               flexGrow: 1,
@@ -91,7 +100,7 @@ export async function GET() {
               style={{
                 display: "flex",
                 fontSize: 56,
-                fontWeight: 700,
+                fontWeight: 600,
                 color: s.color,
                 marginTop: 8,
               }}
@@ -118,7 +127,7 @@ export async function GET() {
               justifyContent: "space-between",
               alignItems: "center",
               padding: "12px 8px",
-              borderBottom: i < top.length - 1 ? `1px solid #21262d` : "none",
+              borderBottom: i < top.length - 1 ? `1px solid ${LINE}` : "none",
               fontSize: 30,
             }}
           >
