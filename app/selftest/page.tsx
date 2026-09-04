@@ -1,8 +1,10 @@
 "use client";
 
 // /selftest 聪明钱自测落地页(设计文档 2026-08-28-smart-money-selftest-
-// design.md):粘贴地址 → 按池准入口径领判决书。口径声明是本页可信度底线
-// (与 /calibration 的选择偏差声明同风格),砍谁不能砍它。
+// design.md):粘贴地址 → 按池准入口径领判决书。
+// 口径仍是本页的可信度底线,但只留一条:会改变读数的那两句(过闸 ≠ 入池、
+// 样本有上限且会截断)长在判决卡自己的琥珀条上 —— 那张卡也长在钱包档案页,
+// 口径跟着卡走才不会漏;方法论与免责在 /guide#selftest,页头留个入口。
 // ?address= 直达自动跑 —— 分享出去的链接可复现同一份判决。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLang } from "../i18n";
@@ -19,6 +21,11 @@ export default function SelfTestPage() {
   const [data, setData] = useState<SelfTestResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retryLeft, setRetryLeft] = useState<number | null>(null);
+  // 首帧闸:URL 里的 ?address= 要等挂载 effect 才读得到(SSR 首帧与服务端
+  // 一致的既有契约,见下方 effect 与 app/urlQuery.ts),在那之前 data /
+  // loading 全是初始值 —— 不挡住就会先画一帧空态再切「体检中…」,分享出去
+  // 的判决链接每次都闪一下。boot 期间空态不出,由挂载 effect 一次性落定。
+  const [boot, setBoot] = useState(true);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
@@ -69,8 +76,11 @@ export default function SelfTestPage() {
     const addr = new URLSearchParams(window.location.search).get("address");
     if (addr && ADDRESS_RE.test(addr.trim().toLowerCase())) {
       setInput(addr.trim());
+      // run 在第一个 await 之前同步 setLoading(true) —— 与下面的 setBoot
+      // 在同一次提交里合批,所以直达链接从「什么都不画」直接切到体检中。
       void run(addr);
     }
+    setBoot(false);
   }, [run]);
 
   // 降级倒计时 → 到点自动重试(限流窗口定长 1 分钟,重试最终会过)。
@@ -104,22 +114,14 @@ export default function SelfTestPage() {
           </p>
         </div>
         <div className="page-head__actions">
-          <a className="ds-btn" href="#selftest-basis">
+          {/* 完整口径(不是资质认证 / 不是投资建议 / 不是入池申请、截断规则、
+              与池准入同源)在说明书里,页头只留这个入口 —— 页面上留下的是
+              判决卡那条会改变读数的琥珀条。 */}
+          <a className="ds-btn" href="/guide#selftest">
             {t("口径声明")}
           </a>
         </div>
       </header>
-
-      {/* 口径条 —— 统计声明放在数据前面,不放脚注。本页可信度底线,砍谁不能砍它。 */}
-      <div
-        id="selftest-basis"
-        className="ds-callout ds-callout--warn"
-        style={{ marginBottom: "var(--s-5)" }}
-      >
-        {t(
-          "口径声明：这是按本站池准入口径的战绩体检，不是资质认证，也不是投资建议。样本 = Polymarket 公开接口可见的已结算持仓（最多约 1000 仓，超出即截断、判决降级「样本不可判」）；分位样本 = 本站当前池成员（按本站口径挑选，非全体交易者）。",
-        )}
-      </div>
 
       {/* 44px 自测输入 —— 地址框与提交钮同框(设计稿 SearchField md2 尺寸)。
           设计稿把输入做成页头下的一条独立带,底边 1px 与下方判决卡分家。 */}
@@ -231,19 +233,19 @@ export default function SelfTestPage() {
 
       {data && !error ? <SelfTestVerdictCard data={data} /> : null}
 
-      {/* 等待态与空态都给内容和出路 —— 这两块永不返回 null */}
+      {/* 等待态与空态都给内容和出路 —— 这两块永不返回 null。
+          等待态只留一句预期(新地址要拉全量持仓,别以为卡死了);缓存策略、
+          为什么慢这类机制说明在 /guide#selftest。 */}
       {loading && !data ? (
         <div className="ds-empty">
           <div>{t("体检中…")}</div>
           <div style={{ marginTop: "var(--s-2)", fontSize: "var(--t-base)" }}>
-            {t(
-              "新地址首次体检要拉取全部已结算持仓，约需几秒；重测走 24 小时判决缓存，即时返回。",
-            )}
+            {t("新地址首测约需几秒")}
           </div>
         </div>
       ) : null}
 
-      {!data && !loading && !error && !invalid ? (
+      {!boot && !data && !loading && !error && !invalid ? (
         <div className="ds-empty">
           <div>
             {t(

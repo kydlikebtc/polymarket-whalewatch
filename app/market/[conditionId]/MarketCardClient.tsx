@@ -44,7 +44,7 @@ function PulseTags({ pulse }: { pulse: NonNullable<Payload["pulse"]> }) {
       {pulse.boards.map((k) =>
         tip(
           k,
-          t("{d}（UTC）的市场脉搏日榜判定，不是此刻窗口", { d: pulse.day }),
+          t("{d}（UTC）日榜判定，不是此刻窗口", { d: pulse.day }),
           <Tag variant="warn">{boardLabel(k)}</Tag>,
         ),
       )}
@@ -216,9 +216,7 @@ export default function MarketCard() {
   if (!data) {
     return (
       <main className="ds-main">
-        <div className="ds-empty">
-          {t("聚合中…（拉取该市场 24h 成交并跑全部检测器）")}
-        </div>
+        <div className="ds-empty">{t("聚合中…")}</div>
       </main>
     );
   }
@@ -305,9 +303,7 @@ export default function MarketCard() {
                 原来只写在 tooltip 里,触屏读者看不到 —— 提到明面上。 */}
             {pulseBoardTagged && data.pulse && (
               <span>
-                {t("{d}（UTC）的市场脉搏日榜判定，不是此刻窗口", {
-                  d: data.pulse.day,
-                })}
+                {t("{d}（UTC）日榜判定，不是此刻窗口", { d: data.pulse.day })}
               </span>
             )}
             {identity && (
@@ -355,9 +351,7 @@ export default function MarketCard() {
           className="ds-callout ds-callout--warn"
           style={{ marginBottom: "var(--s-5)" }}
         >
-          {t(
-            "窗口触顶截断：该市场窗口内的成交超过分页上限，下方所有计数与金额都是下界。",
-          )}
+          {t("窗口触顶截断：成交超过分页上限，下方计数与金额都是下界。")}
         </div>
       )}
 
@@ -526,17 +520,10 @@ export default function MarketCard() {
       {/* 02 Smart-money retained exposure — 结算后标题与口径都改写为「台账」,
           因为「留存」在结算后不成立(见 lib/marketBrief 结算闸门)。 */}
       <section style={{ marginBottom: "var(--s-4)" }}>
-        {/* 口径条放数据前面(§5),不放脚注 */}
-        {brief.settled && (
-          <div
-            className="ds-callout ds-callout--warn"
-            style={{ marginBottom: "var(--s-3)" }}
-          >
-            {t(
-              "市场已结算——敞口一律归零。赎回（REDEEM）不走成交流水，无法从买卖推算，故不再声称任何仓位「仍持有」；下方净股数与买入均价仍是窗口内的成交事实。",
-            )}
-          </div>
-        )}
+        {/* 结算口径原来是一条整页宽的琥珀条,与上面「窗口触顶截断」那条并存时
+            一屏两条琥珀(全页至多一条)。会改变读数的那半句压成卡底一行(见下
+            方 note-strip),REDEEM 为什么推不出仓位则收进「窗口净股数」表头的
+            title —— 那是方法论,不占正文。 */}
         <div className="ds-card" style={{ overflow: "hidden" }}>
           <SectionBar
             n="02"
@@ -563,7 +550,16 @@ export default function MarketCard() {
                     <th>{t("钱包")}</th>
                     {/* 结算后这一列若还印 $0 就是一排废数字;换成净股数,
                         台账才留得住「谁押得最大」这个唯一还成立的事实。 */}
-                    <th className="is-right">
+                    <th
+                      className="is-right"
+                      title={
+                        brief.settled
+                          ? t(
+                              "赎回（REDEEM）不走成交流水，无法从买卖推算，故结算后不声称任何仓位「仍持有」。",
+                            )
+                          : undefined
+                      }
+                    >
                       {brief.settled ? t("窗口净股数") : t("敞口")}
                     </th>
                     <th className="is-right">{t("买入均价")}</th>
@@ -649,6 +645,14 @@ export default function MarketCard() {
                   )}
                 </tbody>
               </table>
+            </div>
+          )}
+          {brief.settled && brief.smartFlow.length > 0 && (
+            <div className="note-strip note-strip--warn">
+              ⚠️{" "}
+              {t(
+                "市场已结算：敞口归零，表中是窗口内的成交事实，不是当前持仓。",
+              )}
             </div>
           )}
         </div>
@@ -912,10 +916,10 @@ export default function MarketCard() {
                   </tbody>
                 </table>
               </div>
-              {/* 「—」是判不了，不是 0 —— 三种成因写在表下方的琥珀条里（§1.2） */}
+              {/* 「—」是判不了，不是 0 —— 成因按列列全，一行说完（§1.2） */}
               <div className="note-strip note-strip--warn">
                 {t(
-                  "「—」是判不了，不是 0：价格一栏为空表示该信号缺 asset、当时取不到价；1h / 24h 为空表示那个时点还没有价格历史（信号太新或曲线不可用）。",
+                  "「—」是判不了不是 0：价格 = 缺 asset 取不到价 · 1h/24h = 该时点无价格历史。",
                 )}
               </div>
             </>
@@ -975,23 +979,33 @@ type ReplayData = {
   error?: string;
 };
 
-// 标记点色 —— 四类信号的分类编码(不是状态)。一律走 --ww-* 令牌,不写死点值:
+// 标记点编码 —— 四类信号的分类编码(不是状态)。一律走 --ww-* 令牌,不写死点值:
 // 令牌一调,曲线上的点跟着走(全站其余 SVG 图表都是这么写的)。
-// ⚠️ 色相与「涨绿跌红」撞车这件事未决:共识用了红、同批新钱包用了绿,画在
-// 一条价格曲线上有被读成「跌/涨」的风险。设计系统 §9 明说「图内构造未确认」,
-// 四类分类编码在五类徽章语义里没有对应色,重新配色需要人裁决 —— 本轮先把
-// 「色→类型」的对照表画进卡底图例(原来只列 emoji,颜色根本无从解码)。
+// 绿/红这里一个都不用:同一屏内绿=买/涨、红=卖/跌(05 告警史的方向列就是),
+// 画在价格曲线上的绿点红点会被直接读成「这里涨了/跌了」。改成三色 + 半径:
+//   灰 = 大单(中性)· 琥珀 = 同批新钱包(需留神的口径,与表内 🆕 徽章同色)
+//   蓝 = 聪明钱系,共识是「多个聪明钱同向」→ 同色更大的点(半径承担第四类)
 const MARKER_COLOR: Record<string, string> = {
   large: "var(--ww-text-muted)",
-  smart: "var(--ww-warn)",
-  consensus: "var(--ww-down)",
-  cohort: "var(--ww-up)",
+  smart: "var(--ww-link)",
+  consensus: "var(--ww-link)",
+  cohort: "var(--ww-warn)",
+};
+// 半径是编码的一部分,图例的色点直径必须跟着走(2r),否则图上的大点在图例里
+// 找不到对应项 —— 那正是这次改色要修的「颜色无从解码」。
+const MARKER_RADIUS: Record<string, number> = {
+  large: 4,
+  smart: 4,
+  consensus: 5.5,
+  cohort: 4,
 };
 const MARKER_FALLBACK = "var(--ww-text-faint)";
+const MARKER_RADIUS_FALLBACK = 4;
 
 // 卡底图例的一枚:色点 + 类型名。名字不带 emoji —— 正文句子里不放 emoji
 // (readme §1),这里要的是「这个颜色是哪一类」,emoji 帮不上忙。
 function MarkerKey({ type, label }: { type: string; label: string }) {
+  const d = (MARKER_RADIUS[type] ?? MARKER_RADIUS_FALLBACK) * 2;
   return (
     <span
       style={{
@@ -1003,8 +1017,8 @@ function MarkerKey({ type, label }: { type: string; label: string }) {
       <span
         aria-hidden
         style={{
-          width: 8,
-          height: 8,
+          width: d,
+          height: d,
           borderRadius: 99,
           flex: "0 0 auto",
           background: MARKER_COLOR[type] ?? MARKER_FALLBACK,
@@ -1109,15 +1123,18 @@ function ReplaySection({ conditionId }: { conditionId: string }) {
               <ReplayChart d={d} />
             </div>
             <div className="note-strip">
+              {/* 坐标口径压成一行「·」串:不读会把另一侧的标记读错位置。
+                  未加载态那句 ds-label 说的是同一件事,两者互斥出现。 */}
               <div>
-                {t("曲线为 {o} 一侧的价格。", { o: d.outcome ?? "index 0" })}{" "}
                 {d.binary
-                  ? t("另一侧的告警按 1−p 精确映射到同一坐标（标记带 ↔）。")
-                  : t(
-                      "非二元市场：只显示第一结果一侧的告警，其余边无等价映射。",
-                    )}{" "}
+                  ? t("曲线为 {o} 一侧 · 另一侧按 1−p 映射（标记带 ↔）", {
+                      o: d.outcome ?? "index 0",
+                    })
+                  : t("曲线为 {o} 一侧 · 非二元，其余边不显示告警", {
+                      o: d.outcome ?? "index 0",
+                    })}
                 {d.closed && d.resolutionPrice != null
-                  ? t("虚线为结算价。")
+                  ? ` · ${t("虚线为结算价")}`
                   : ""}
               </div>
               {/* 图例 —— 原来是一句「标记色：💰大单 🏆聪明钱…」:emoji 摆在
@@ -1252,7 +1269,7 @@ function ReplayChart({ d }: { d: ReplayData }) {
             key={i}
             cx={x(Math.min(Math.max(m.ts, t0), t1))}
             cy={y(m.price)}
-            r={4}
+            r={MARKER_RADIUS[m.type] ?? MARKER_RADIUS_FALLBACK}
             fill={MARKER_COLOR[m.type] ?? MARKER_FALLBACK}
             stroke="var(--ww-surface)"
             strokeWidth={1}

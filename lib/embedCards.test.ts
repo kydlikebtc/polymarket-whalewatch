@@ -24,6 +24,10 @@ function strat(over: Partial<RecordFeedStrategy> = {}): RecordFeedStrategy {
     source: "whale",
     pushedCount: 12,
     record: { settled: 8, wins: 6, implied: 4.2, excess: 1.8, sd: 1.2 },
+    // 嵌入卡不印纸面盈亏(只有 tier / pushed / settled record 三列),这里
+    // 只是把 RecordFeedStrategy 的必填字段补齐 —— 字段是随 /record 第 4 格
+    // 改成「纸面盈亏」加的,见 lib/recordFeed。
+    realizedPnl: 1840,
     settledRecent: [],
     ...over,
   };

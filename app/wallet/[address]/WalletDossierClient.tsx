@@ -929,11 +929,6 @@ export default function WalletPage() {
                     ))}
                   </tbody>
                 </table>
-                <div className="note-strip">
-                  {t(
-                    "建仓均价与现价是成本口径，一律中性色；只有浮动盈亏用涨绿跌红。",
-                  )}
-                </div>
               </div>
             </section>
           ) : showHoldingsEmpty ? (
@@ -1112,10 +1107,7 @@ export default function WalletPage() {
                     </tbody>
                   </table>
                   <div className="note-strip note-strip--warn">
-                    ⚠️{" "}
-                    {t(
-                      "类别栏的「—」= 上游没有给出分类标注，不是「其他」这一档。",
-                    )}
+                    ⚠️ {t("「—」= 上游未给分类，不是「其他」这一档。")}
                   </div>
                 </div>
               </section>
@@ -1207,10 +1199,7 @@ export default function WalletPage() {
                     </tbody>
                   </table>
                   <div className="note-strip note-strip--warn">
-                    ⚠️{" "}
-                    {t(
-                      "价格栏的「—」= 当时的告警载荷没有记录成交价，不是成交价为 0。",
-                    )}
+                    ⚠️ {t("价格「—」= 当时告警载荷未记成交价，不是 0。")}
                   </div>
                 </>
               )}
@@ -1236,13 +1225,10 @@ export default function WalletPage() {
                   >
                     <Tag variant="warn">{t("样本不足")}</Tag>
                     <span className="ds-hint">
-                      {t(
-                        "样本不足：可测初动 {m} 条 · 覆盖 {k} 个市场（需 ≥8）",
-                        {
-                          m: impact.measured,
-                          k: impact.markets,
-                        },
-                      )}
+                      {t("可测初动 {m} 条 · 覆盖 {k} 个市场（需 ≥8）", {
+                        m: impact.measured,
+                        k: impact.markets,
+                      })}
                     </span>
                   </div>
                 ) : (
@@ -1270,7 +1256,17 @@ export default function WalletPage() {
                       )}
                     </div>
                     <div>
-                      <div className="metric__label">{t("初动留存率")}</div>
+                      {/* 指标的完整定义进 label 的 title(设计系统 §6 的表头
+                          `(?)` 同一处理)—— 正文只留「这是描述统计」那句会
+                          改变读数的声明,方法论不占版面。 */}
+                      <div
+                        className="metric__label"
+                        title={t(
+                          "初动 = 告警后 10 分钟的方向化价移（≥2¢ 才可测）；留住 = 24h 后保住初动一半以上；95% 区间按市场聚簇。",
+                        )}
+                      >
+                        {t("初动留存率")}
+                      </div>
                       <div className="metric__value">
                         {Math.round((impact.rate ?? 0) * 100)}%
                       </div>
@@ -1296,16 +1292,10 @@ export default function WalletPage() {
                     ) : null}
                   </div>
                 )}
-                {/* 口径条:免责那半句加粗独立成句（设计稿末句 600 字重），
-                    读者不会把「描述统计」当成「可以跟」。 */}
+                {/* 只留这一句 —— 它决定读者能不能拿这组数去下判断;
+                    「初动/留住」怎么算已进上面 label 的 title。 */}
                 <div className="note-strip note-strip--warn">
-                  ⚠️{" "}
-                  {t(
-                    "口径：初动 = 告警后 10 分钟的方向化价移（≥2¢ 才可测），留住 = 24h 后保住初动一半以上；区间按市场聚簇。",
-                  )}{" "}
-                  <strong style={{ fontWeight: 600 }}>
-                    {t("这是市场对他的反应的描述统计，不是任何跟随建议。")}
-                  </strong>
+                  ⚠️ {t("这是市场对他的反应的描述统计，不是任何跟随建议。")}
                 </div>
               </div>
             </section>
@@ -1335,19 +1325,8 @@ export default function WalletPage() {
                     </Tag>
                   ))}
                 </div>
-                {styleInfo.similar.length > 0 ? (
-                  <div className="note-strip">
-                    {t("风格最像的池内钱包：")}
-                    {styleInfo.similar.map((w, i) => (
-                      <span key={w}>
-                        {i > 0 && " · "}
-                        <WalletLink address={w}>
-                          {w.slice(0, 6)}…{w.slice(-4)}
-                        </WalletLink>
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
+                {/* 「风格最像的池内钱包」不在这里重复一遍 —— 同一批钱包
+                    已经是上面概览卡「更多信息」栏的一格(同一个渲染条件)。 */}
               </div>
             </section>
           ) : null}

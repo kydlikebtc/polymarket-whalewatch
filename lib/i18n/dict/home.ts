@@ -10,8 +10,8 @@ export const DICT_HOME: Record<string, string> = {
   "实时扫描 · 不落库 · 时间按本地时区":
     "Live scan · nothing stored · times in your local timezone",
   大额成交扫描器: "Whale Trade Scanner",
-  "按金额、方向、时间窗、赔率与地址年龄筛出单笔大额成交；每一行都能点进钱包档案与市场信号卡。":
-    "Filter single large fills by size, side, time window, odds and wallet age — every row opens the wallet dossier and the market signal card.",
+  "逐笔筛出 Polymarket 的大额成交，每行可点进钱包档案。":
+    "Large single fills on Polymarket, filtered — every row opens the wallet dossier.",
 
   // Filter controls
   金额: "Amount",
@@ -45,12 +45,10 @@ export const DICT_HOME: Record<string, string> = {
   "买 {amt}": "Buy {amt}",
   "卖 {amt}": "Sell {amt}",
   最大单: "Largest trade",
-  "成交太密集，API 回看深度已用满 — 时间窗尾部的部分成交未覆盖":
-    "Trades too dense — API lookback depth exhausted; part of the tail of the window is not covered",
+  "成交太密集，API 回看深度已用满 —— 窗口尾部未全覆盖":
+    "Trades too dense — API lookback depth exhausted; the tail of the window is not fully covered",
   符合筛选: "Matched",
   笔: "trades",
-  " · 地址年龄加载中，结果将随加载补全":
-    " · wallet ages still loading; results fill in as they resolve",
   // KPI 分格卡副行 / 卡内标题条（Etherscan 风改版）
   "显示前 {n} 条": "Showing the first {n}",
   已全部显示: "All rows shown",
@@ -62,29 +60,26 @@ export const DICT_HOME: Record<string, string> = {
   "买 / 卖 · 买方占 {pct}%": "Buy / sell · buy side {pct}%",
   "共 {n} 笔符合筛选": "{n} fills match the filters",
   "（显示前 {n} 条）": " (showing the first {n})",
-  "地址年龄加载中，结果将随加载补全":
-    "Wallet ages still loading; results fill in as they resolve",
+  "地址年龄加载中，结果会补全": "Wallet ages loading; results keep filling in",
   // 降级态说明条（表下方琥珀条）——「—」是判不了，不是零
-  "「…」= 地址年龄 / 战绩仍在后台补齐，结果会自己填上；「—」= 判不了，不是零 —— 战绩列的「—」表示该钱包没有可统计的已结算市场，不代表 0 胜率。":
-    "“…” = wallet age / record still being filled in the background; it resolves on its own. “—” = undecidable, not zero — a “—” in the Record column means the wallet has no settled markets to score, not a 0% win rate.",
+  "「…」= 后台补齐中 · 「—」= 判不了，不是零：战绩的「—」是无已结算市场，不是 0 胜率":
+    "“…” = still filling in · “—” = undecidable, not zero: a “—” under Record means no settled markets to score, not a 0% win rate",
 
   // Table area states
   "上游缓存预热中，自动重试…":
     "Upstream cache warming up — retrying automatically…",
-  "正在扫描 {hours}h 成交 — 深度拉取首次约 5-15 秒，请稍候…":
-    "Scanning {hours}h of trades — the first deep pull takes ~5-15s, please wait…",
+  "正在扫描 {hours}h 成交 —— 首次深拉约 5-15 秒…":
+    "Scanning {hours}h of trades — the first deep pull takes ~5-15s…",
   "该筛选条件下 {hours}h 内暂无成交":
     "No trades in the last {hours}h under these filters",
-  // 空态的「出路」—— 每个空态都给内容也给下一步
-  "首次深拉会把上游缓存烧热，重试通常就成了；也可以直接点「刷新」。":
-    "The first deep pull warms the upstream cache, so the retry usually goes through — or just hit Refresh.",
-  "嫌慢就把时间窗切到 1h：窗口越短，回看深度越浅。":
-    "Too slow? Switch the window to 1h — a shorter window needs less lookback.",
-  "试试降低金额门槛、把时间窗切到 24h，或清掉价格区间 / 类型 / 地址年龄这三项客户端筛选。":
-    "Try a lower amount floor, switch the window to 24h, or clear the price band / type / wallet-age client-side filters.",
+  // 空态的「出路」—— 只留下一步，机制解释不占正文
+  "也可以直接点「刷新」。": "Or just hit Refresh.",
+  "嫌慢就把时间窗切到 1h。": "Too slow? Switch the window to 1h.",
+  "试试降低金额门槛、拉长时间窗，或清掉价格 / 类型 / 地址年龄。":
+    "Try a lower amount floor, a longer window, or clear the price / type / wallet-age filters.",
   "正在准备扫描…": "Getting the scan ready…",
-  "如果这里一直停着，点筛选条右侧的「刷新」重新发起一次拉取。":
-    "If this sticks, hit Refresh on the right of the filter bar to fire a fresh pull.",
+  "一直停着就点筛选条右侧的「刷新」。":
+    "Stuck here? Hit Refresh on the right of the filter bar.",
 
   // Table header / row overflow
   点击按时间排序: "Click to sort by time",
@@ -97,8 +92,7 @@ export const DICT_HOME: Record<string, string> = {
     "Settled-market win rate · realized PnL (🏆 = smart-money whitelist)",
   战绩: "Record",
   "显示其余 {n} 行": "Show remaining {n} rows",
-  "统计卡与「符合筛选」计数已包含全部 {n} 笔":
-    "Stat cards and the “Matched” count already include all {n} trades",
+  "统计卡已包含全部 {n} 笔": "Stat cards already include all {n} trades",
 
   // Category labels (lib/categoryLabel.ts 产出的一级中文名;chips 与行内
   // 「一级·二级」合成标签共用。拉丁名(NBA/F1 等)透传,无需键)。

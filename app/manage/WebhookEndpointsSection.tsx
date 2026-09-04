@@ -190,10 +190,10 @@ export default function WebhookEndpointsSection({
 
   return (
     <>
-      <div className="ds-label">webhook 端点</div>
-      <div className="ds-hint" style={{ margin: "var(--s-1) 0 var(--s-3)" }}>
-        realtime key 专属,连续失败 10 次自动熔断；熔断后先「测试」确认端点修好,
-        再「恢复」。
+      {/* 「realtime 专属 + 连败 10 次熔断」原本在这儿说一遍、表底说明条又说
+          一遍 —— 只留表底那条(它就在「连败」列与三枚操作钮旁边)。 */}
+      <div className="ds-label" style={{ marginBottom: "var(--s-3)" }}>
+        webhook 端点
       </div>
       {notice && (
         <div className="ds-callout" style={{ marginBottom: "var(--s-3)" }}>
@@ -292,8 +292,10 @@ export default function WebhookEndpointsSection({
                   >
                     {o.label}
                   </button>
+                  {/* 「整类型 = 全部档」已在类型钮的 title 里,行内只留一个
+                      指向后面那排档位钮的引导词。 */}
                   {typeDefs.length > 0 && (
-                    <span className="ds-hint">整类型 = 全部档；或只选：</span>
+                    <span className="ds-hint">或只选：</span>
                   )}
                   {typeDefs.map((d) => {
                     const ref = `def:${d.id}`;
@@ -345,16 +347,14 @@ export default function WebhookEndpointsSection({
         <div className="ds-empty">
           还没读到端点清单。
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            与上方 key 表同一次请求 —— 令牌失效或 /api/admin/webhooks
-            拒绝时两张表一起空。页头「刷新」可重取。
+            {"与上方 key 表同一次请求,令牌失效时一起空;页头「刷新」可重取。"}
           </div>
         </div>
       ) : webhooks.length === 0 ? (
         <div className="ds-empty">
           尚无 webhook 端点。
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            端点只能挂在 realtime key 上 —— 上面选一把、填订户给的接收地址与
-            HMAC secret,再勾推送类型即可登记。
+            {"端点只能挂在 realtime key 上 —— 在上方登记。"}
           </div>
         </div>
       ) : (
@@ -472,9 +472,9 @@ export default function WebhookEndpointsSection({
             </tbody>
           </table>
           <div className="note-strip">
-            「连败」到 10 触发自动熔断（状态转「已停用」，不再投递）。恢复前先点
-            「测试」——「恢复」会把连败清零，端点没修好的话下一次失败会立刻二次
-            熔断。「停用」保留端点与投递史，「删除」连 HMAC secret 一并销毁。
+            {
+              "「连败」到 10 自动熔断(转「已停用」,不再投递),恢复前先点「测试」。「停用」保留端点与投递史,「删除」连 HMAC secret 一并销毁。"
+            }
           </div>
         </div>
       )}

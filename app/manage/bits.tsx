@@ -53,6 +53,7 @@ export function Foldable({
   hint,
   summary,
   defaultOpen = false,
+  flush = false,
   children,
 }: {
   storageKey: string;
@@ -66,6 +67,12 @@ export function Foldable({
    * 默认展开 —— 它不是教学,折它等于折掉一块读数,但仍给运营者收起的权利。
    */
   defaultOpen?: boolean;
+  /**
+   * 独占一张卡时置 true:不画自己那条收尾分格线 —— 卡片边框就在紧下方,
+   * 两条 1px 贴在一起会读成一条 2px 的粗线。默认 false(卡内多段并列时,
+   * 这条线正是段与段之间的层级来源)。
+   */
+  flush?: boolean;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -83,7 +90,11 @@ export function Foldable({
   };
 
   return (
-    <section style={{ borderBottom: "1px solid var(--ww-border)" }}>
+    <section
+      style={{
+        borderBottom: flush ? "none" : "1px solid var(--ww-border)",
+      }}
+    >
       {/* 整条标题条都是开关 —— 折叠态那行读数(summary)本来就是它的说明,
           让人去瞄准一枚 30px 小钮是没必要的精细活。 */}
       <button

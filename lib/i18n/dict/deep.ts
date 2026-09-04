@@ -74,13 +74,11 @@ export const DICT_DEEP: Record<string, string> = {
   "(当前持有中 {n} 仓)": "(currently holding {n} open)",
   "已结算纸面口径(不含浮盈,不含成本 — 成本见「成本分解」)· 平局 (push)不进胜率分母 · 持有中 {n} 仓不计入下方读数":
     "Settled paper basis (no unrealized PnL, no costs — see Cost breakdown) · pushes excluded from the win-rate denominator · {n} open positions not counted below",
-  "小样本:仅 {n} 仓已结算(阈值 {m})。下面的全部读数只够看方向,不够下结论 —— 胜率带 Wilson 区间、期望带 t 值,请一起读。":
-    "Small sample: only {n} settled (threshold {m}). Every read below is directional at best — take the win rate with its Wilson interval and the expectancy with its t-stat.",
+  "小样本:仅 {n} 仓已结算(阈值 {m}),读数只够看方向 —— 胜率看 Wilson 区间、期望看 t 值。":
+    "Small sample: only {n} settled (threshold {m}) — every read is directional at best; take the win rate with its Wilson interval and the expectancy with its t-stat.",
 
   // ----------------------------------------------- ① 下注质量体检(KPI)
   下注质量体检: "Bet quality check",
-  "· 六个读数 · 每项的口径在自己的 (?) 里":
-    "· six readings · each definition lives in its own (?)",
   "期望 / 仓": "Expectancy / pos",
   "全部已结算仓(含平局)单仓盈亏的算术平均。t 值 = 均值 ÷ 标准误:|t|≥2 约等于「均值显著异于 0」(95% 置信);胜率的 Wilson 区间管不了赔率不对称,期望的不确定性要看这里":
     "Arithmetic mean of per-position PnL across all settled positions (pushes included). t = mean ÷ standard error; |t|≥2 roughly reads as 'mean significantly different from 0' (95% confidence). The Wilson interval on win rate cannot capture odds asymmetry — expectancy uncertainty lives here",
@@ -116,11 +114,13 @@ export const DICT_DEEP: Record<string, string> = {
   "右列 = edge 与该档落袋": "right columns = edge and per-band realized PnL",
   "edge = 实际胜率 − 隐含胜率(该桶均入场价)。入场价本身就是市场定价的获胜概率,持续为正才是可复制的优势,而不是运气":
     "edge = actual win rate − implied win rate (the bucket's average entry price). The entry price is itself the market-priced probability of winning; a persistently positive edge is a repeatable advantage, not luck",
-  "「·」= 该档赔率带零仓,这个价位区间从没下过注,不是 edge 为 0;「—」= 该档有仓但全是平局,没有实际胜率可比,是判不了不是零;琥珀「样本不足」= 该档 <{n} 仓,读数只够看方向。":
-    "'·' = zero positions in that odds band — nothing was ever bet in that price range, which is not an edge of 0. '—' = the band has positions but they are all pushes, so there is no actual win rate to compare — undecidable, not zero. The amber 'low sample' tag = fewer than {n} positions in that band, directional read only.",
+  "「·」= 该档零仓(不是 edge 为 0)·「—」= 全是平局,判不了不是零 ·「样本不足」= <{n} 仓,只够看方向。":
+    "'·' = zero positions in that band (not an edge of 0) · '—' = all pushes, undecidable rather than zero · 'low sample' = fewer than {n} positions, directional read only.",
 
   // -------------------------------------------------- ③ 单仓盈亏分布
   单仓盈亏分布: "Per-position PnL distribution",
+  "· 一点一仓 · 绿赢红输灰平":
+    "· one dot per position · green win, red loss, grey push",
   "每个点是一笔已结算仓(绿=赢,红=输,灰=平;同值垂直堆叠)。分布形态直接可读:输的一侧是不是都贴着整仓亏光、赢的一侧靠不靠离群大单":
     "Each dot is one settled position (green=win, red=loss, grey=push; equal values stack vertically). The shape reads directly: whether losses cluster at full-stake wipeout, and whether wins lean on outlier big hits",
   "点选或用 Tab 聚焦任意点,查看该仓的市场、盈亏与入场价":
@@ -132,6 +132,7 @@ export const DICT_DEEP: Record<string, string> = {
 
   // -------------------------------------------------- ④ 时间走势
   "时间走势 — 优势在衰减吗": "Time trend — is the edge decaying",
+  "· 周度已实现盈亏(UTC 周)": "· weekly realized P&L (UTC weeks)",
   "周度已实现盈亏(UTC 周,绿盈红亏,灰短桩=空窗/打平周);下方把全部结算按时间对半切,前半 vs 后半的胜率与落袋对比是小样本下最诚实的衰减检测":
     "Weekly realized PnL (UTC weeks; green profit, red loss, grey stubs = empty/flat weeks). Below, all settlements are split in half by time — first-half vs second-half win rate and realized PnL is the most honest decay test on a small sample",
   "{d} 那周": "week of {d}",
@@ -148,17 +149,23 @@ export const DICT_DEEP: Record<string, string> = {
 
   // -------------------------------------------------- ⑤ 持有时长分布
   持有时长分布: "Holding-duration distribution",
+  "· 条长 ∝ 仓数 · 分段 = 胜 / 负 / 平":
+    "· bar length ∝ position count · segments = win / loss / push",
   "条长 ∝ 仓数,分段 = 胜(绿)/负(红)/平(灰)。回答钱是在小时级的快市场(in-play 体育)还是几天的慢市场赢的 —— 也是资金周转率的直观读数":
     "Bar length ∝ position count; segments = wins (green) / losses (red) / pushes (grey). Answers whether the money comes from hour-scale fast markets (in-play sports) or day-scale slow ones — also a direct read on capital turnover",
 
   // -------------------------------------------------- ⑥ 赛道细分
   赛道细分: "Track breakdown",
+  "· 缩进行 = 二级细分,不是一级的再分配":
+    "· indented rows are the sub-level split, not a re-allocation of the top row",
   "按事件赛道(gamma 事件标签)两级重切:一级行是该赛道全部仓,缩进子行按联盟/资产细分(体育里 NBA 与足球的胜率分布差异巨大,混在一个「体育」桶里没有解释力)。子行不是一级的再分配 —— 无二级标签的仓只进一级汇总":
     "A two-level recut by event track (gamma event tags): each top row is all positions on that track; indented sub-rows split by league/asset (within Sports, NBA and soccer win-rate profiles differ hugely — one 'Sports' bucket explains nothing). Sub-rows are not a re-allocation — positions without a sub-tag enter only the top-level row",
   暂无赛道数据: "No track data yet",
 
   // ------------------------------------- ⑥.5 赛道胜率分布(气泡象限 + 表)
   "赛道胜率分布 — 气泡象限": "Track win rates — bubble quadrant",
+  "· 位置讲 edge · 颜色讲钱 · 大小 = 仓数":
+    "· position speaks to edge · color to money · size = position count",
   "横轴 = 隐含胜率(该赛道均入场价,市场定价),纵轴 = 实际胜率;对角线为盈亏平衡 —— 气泡在上方 = 跑赢定价(edge>0)。气泡颜色 = 落袋盈亏(绿 = 赚、红 = 亏),大小 = 仓数,样本 <5 虚线描边。颜色可能与所在区域不同号 —— 位置讲 edge、颜色讲钱(如负 edge 的赛道靠低赔率大赔付仍小幅盈利);下表并列胜率/落袋/edge 三指标,方便逐赛道横比":
     "x = implied win rate (the track's average entry price, i.e. market pricing), y = actual win rate; the diagonal is break-even — a bubble above it beats the pricing (edge>0). Bubble color = realized PnL (green = profit, red = loss), size = position count, dashed outline = sample <5. Color can disagree with the region — position speaks to edge, color to money (a negative-edge track can still net a small profit via low-odds big payouts); the table below lists win rate / realized / edge side by side for cross-track comparison",
   "暂无可上图的赛道(全为平局的赛道没有实际胜率,不硬造 0%)":
@@ -179,14 +186,14 @@ export const DICT_DEEP: Record<string, string> = {
   "全体样本 {n} 仓": "{n} pos in full sample",
   "该策略在该赛道零仓 —— 与 edge 为 0 严格分家":
     "Zero positions for this strategy on this track — strictly distinct from an edge of 0",
-  "⚠️ 「·」= 该策略在该赛道零仓,与 edge 为 0 严格分家;「—」= 该格全是平局,没有实际胜率可比,是判不了不是零;淡显的格子(<{n} 仓)也不是「没 edge」,是这一格还判不了 —— 矩阵是用来选下一档做什么的,不是给现有档打分的。":
-    "⚠️ '·' = zero positions for that strategy on that track, strictly distinct from an edge of 0. '—' = the cell is all pushes, so there is no actual win rate to compare — undecidable, not zero. Dimmed cells (<{n} pos) are not 'no edge' either, just not decidable yet — the matrix is for picking what to build next, not for scoring the existing tiers.",
+  "⚠️「·」= 该赛道零仓(不是 edge 为 0)·「—」= 全是平局,判不了不是零 · 淡显格(<{n} 仓)= 还判不了。":
+    "⚠️ '·' = zero positions on that track (not an edge of 0) · '—' = all pushes, undecidable rather than zero · dimmed cells (<{n} pos) = not decidable yet.",
   "暂无可透视的赛道 — 有仓位结算后这里会给出「哪类信号在哪个赛道有 edge」的矩阵":
     "No tracks to pivot on yet — once positions settle, this becomes the 'which signal has edge on which track' matrix",
   "暂无可统计的赛道 — 有仓位结算后这里会逐赛道给出 edge、胜率与落袋":
     "No track stats yet — once positions settle, edge, win rate and realized PnL appear here track by track",
-  "⚠️ 「—」= 该赛道全是平局,没有实际胜率可比,edge 也就无从算起 —— 是判不了,不是零;标了「样本不足」的行(<{n} 仓)也不是「没 edge」,是这一行还判不了。":
-    "⚠️ '—' = the track is all pushes, so there is no actual win rate to compare and no edge to compute — undecidable, not zero. Rows tagged 'low sample' (<{n} pos) are not 'no edge' either, just not decidable yet.",
+  "⚠️「—」= 该赛道全是平局,判不了不是零 ·「样本不足」的行(<{n} 仓)= 还判不了。":
+    "⚠️ '—' = the track is all pushes, undecidable rather than zero · rows tagged 'low sample' (<{n} pos) = not decidable yet.",
   "{name} × {label}:{n} 仓 {rec},": "{name} × {label}: {n} pos {rec}, ",
   "胜率 {a}% vs 隐含 {b}%,": "win rate {a}% vs implied {b}%, ",
   "落袋 {pnl}": "realized {pnl}",
@@ -194,12 +201,16 @@ export const DICT_DEEP: Record<string, string> = {
 
   // -------------------------------------- ⑦ 缺陷诊断 + 反事实剔除
   "缺陷诊断 — 亏在哪类下注": "Weakness diagnosis — where the losses live",
+  "· 段内 ≥{n} 仓且累计亏损 · 最亏在前":
+    "· segments with ≥{n} positions and a cumulative loss · worst first",
+  "各段互有重叠(一仓可同属两段),「剔除后」数字不可相加。":
+    "Segments overlap (one position can belong to two), so the 'without it' figures must not be summed.",
   "把已结算仓按赛道/持有时长(快慢市场)/赔率带三个维度切段,列出「段内 ≥{n} 仓且累计亏损」的特征段(最亏在前,至多 5 段)—— 定向优化的靶点。各段互有重叠(一仓可同时属「足球」与「>7 天」),「剔除后」数字不可相加":
     "Settled positions are sliced along three dimensions — track / holding duration (fast vs slow markets) / odds band — listing segments with ≥{n} positions and a cumulative loss (worst first, max 5): the targets for directed optimization. Segments overlap (one position can be both 'Soccer' and '>7 d'), so the 'without it' numbers must not be summed",
   "未发现 ≥{n} 仓且累计亏损的特征段 — 样本继续积累中,或这一档暂无集中的亏损特征":
     "No segment with ≥{n} positions and a cumulative loss — the sample is still accruing, or this tier has no concentrated loss pattern yet",
-  "对照 · 最强特征(edge>0 且落袋为正 —— 优化是「砍最亏的、 保最强的」两面)":
-    "Contrast · strongest segment (edge>0 with positive realized PnL — optimization has two sides: cut the worst, protect the best)",
+  "对照 · 最强特征(edge>0 且落袋为正)":
+    "Contrast · strongest segment (edge>0 with positive realized PnL)",
   "剔除后 → ": "without it → ",
   "edge≥0 · 或为波动": "edge≥0 · likely variance",
   "该段实际胜率并不低于隐含胜率(edge≥0),亏损可能只是短期波动/赔率结构使然 —— 优化前先看样本是否继续恶化,不要对运气过度反应":

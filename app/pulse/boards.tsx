@@ -37,9 +37,14 @@ const cents = (p: number | null): string =>
 
 // 各榜的口径。此前全页五节的方法学挤在页尾一坨三大段,读第一张表想核对
 // 「异常分怎么算」得滚到页底再滚回来 —— 拆开就近可查。Etherscan 皮把它从
-// details 折叠改成常驻的卡底灰色说明条:口径是这套皮的一等公民,折起来等于
-// 让人先信数字再去找定义。只有真正全页共用的两把尺(小单/鲸鱼口径)仍留在
-// 页尾,不在各榜重复。
+// details 折叠改成常驻的卡底灰色说明条。只有真正全页共用的两把尺(小单/
+// 鲸鱼口径)仍留在页尾,不在各榜重复。
+//
+// 2026-09-04 再收一轮:常驻条只留「不读就会把数字读错」的那部分 —— 入榜
+// 门槛、样本不足时的退化、幸存者偏差。加权公式与「这个指标怎么定义」退到
+// 对应数值列的表头 title(每榜一条,鼠标停在列名上就能核对),分色理据与
+// VIX 类比这种「我们为什么这么设计」直接删。判据来自用户实测反馈:页面
+// 要克制,一条精准的口径胜过六条各说一半的。
 function Methodology({ children }: { children: ReactNode }) {
   return <div className="note-strip">{children}</div>;
 }
@@ -409,7 +414,17 @@ export function ConvictionBoard({
         <thead>
           <tr>
             <th>{t("品类")}</th>
-            <th className="is-right">{t("指数")}</th>
+            {/* 完整加权公式退到表头 title:它是「这个指标怎么定义」,不是
+                「不读会读错」。卡底只留会改变读数的两条(不给分门槛 / 基线
+                不足时的退化)。 */}
+            <th
+              className="is-right"
+              title={t(
+                "确信指数 = 0.30·阵营对峙（量能加权 1−单边度）+ 0.30·对立度（合格分歧市场量能占比，双边门槛与「方向分歧」标签页同尺）+ 0.20·价格动荡 + 0.20·量能异动",
+              )}
+            >
+              {t("指数")}
+            </th>
             <th>{t("构成")}</th>
             <th>{t("近 {n} 日", { n: data.days })}</th>
             <th className="is-right">{t("量能")}</th>
@@ -456,10 +471,7 @@ export function ConvictionBoard({
       />
       <Methodology>
         {t(
-          "确信指数 = 0.30·阵营对峙（量能加权 1−单边度）+ 0.30·对立度（合格分歧市场量能占比，双边门槛与「方向分歧」标签页同尺）+ 0.20·价格动荡 + 0.20·量能异动；品类日总量 <$10k 不给分；量能异动在品类自身基线不足 3 天时退化为当日横截面分位。",
-        )}{" "}
-        {t(
-          "高 = 激辩/恐慌（阵营对峙、小单与鲸鱼对立、价格动荡、量能异动），低 = 确信（一边倒、平静）。VIX 语义，逐品类按日合成。",
+          "高 = 激辩/恐慌，低 = 确信（一边倒、平静）；品类日总量 <$10k 不给分，自身基线不足 3 天时量能异动退化为当日横截面分位。",
         )}
       </Methodology>
     </section>
@@ -498,7 +510,15 @@ export function AnomalyBoard({
             <tr>
               <th>#</th>
               <th>{t("市场")}</th>
-              <th className="is-right">{t("异常分")}</th>
+              {/* 加权公式同确信指数:退到表头 title。 */}
+              <th
+                className="is-right"
+                title={t(
+                  "异常分 = 0.35·量能异动 + 0.25·单边度 + 0.20·鲸鱼占比 + 0.20·日内价移",
+                )}
+              >
+                {t("异常分")}
+              </th>
               <th>{t("构成")}</th>
               <th className="is-right">{t("量能")}</th>
               <th className="is-right">{t("顶结果首→末价")}</th>
@@ -565,12 +585,11 @@ export function AnomalyBoard({
         </BoardTable>
       )}
       <RowsToggle total={all.length} expanded={expanded} onToggle={onToggle} />
+      {/* 两色分工那句（电蓝 = 品类 / 琥珀 = 本站标记）删掉：它解释的是我们
+          为什么这么配色，不改变任何一个数怎么读，标签自身的文字已经自明。 */}
       <Methodology>
         {t(
-          "异常分 = 0.35·量能异动 + 0.25·单边度 + 0.20·鲸鱼占比 + 0.20·日内价移，各分量 0–1 可逐项核对；量能异动在同市场基线不足 3 天时退化为当日横截面分位。",
-        )}{" "}
-        {t(
-          "品类标签用电蓝（这是什么市场），榜单标记用琥珀（我们发现它怎么了）—— 两类事实，两种色。",
+          "各分量 0–1，可逐项核对；量能异动在同市场基线不足 3 天时退化为当日横截面分位。",
         )}
       </Methodology>
     </section>
@@ -610,7 +629,13 @@ export function DivergenceBoard({
               <th>{t("市场")}</th>
               <th>{t("小单在买")}</th>
               <th>{t("鲸鱼在买")}</th>
-              <th className="is-right">{t("分歧强度")}</th>
+              {/* 强度的定义退到表头 title，卡底只留入榜门槛。 */}
+              <th
+                className="is-right"
+                title={t("min(小单净额, 鲸鱼净额) —— 弱的那边定强度")}
+              >
+                {t("分歧强度")}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -650,9 +675,7 @@ export function DivergenceBoard({
       )}
       <RowsToggle total={all.length} expanded={expanded} onToggle={onToggle} />
       <Methodology>
-        {t(
-          "入榜需两桶各自净买入的顶结果不同，且小单净买入 ≥$5k、鲸鱼净买入 ≥$50k；分歧强度 = min(小单净额, 鲸鱼净额) —— 两边都得有真金白银才算真分歧，弱的那边定强度。",
-        )}
+        {t("入榜需两桶顶结果不同，且小单净买入 ≥$5k、鲸鱼净买入 ≥$50k。")}
       </Methodology>
     </section>
   );
@@ -681,7 +704,14 @@ export function GhostBoard({
         <thead>
           <tr>
             <th>{t("市场")}</th>
-            <th className="is-right">{t("价移")}</th>
+            {/* 「这行意味着什么」的解读退到表头 title —— 它是因果猜测，
+                不是读数规则，不该占正文一行。 */}
+            <th
+              className="is-right"
+              title={t("要么簿子薄到小单就能推，要么有人在蚂蚁搬家")}
+            >
+              {t("价移")}
+            </th>
             <th className="is-right">{t("首→末价")}</th>
             <th className="is-right">{t("量能")}</th>
             <th className="is-right">{t("单笔最大")}</th>
@@ -727,13 +757,10 @@ export function GhostBoard({
         </tbody>
       </BoardTable>
       <RowsToggle total={all.length} expanded={expanded} onToggle={onToggle} />
+      {/* 「价移 ≥10¢ 且单笔最大 <$10k」已在标题条副标里说过，卡底不重复；
+          只留幸存者偏差那条（早于采集日的日份根本进不了榜）。 */}
       <Methodology>
-        {t(
-          "无鲸异动 = 价移 ≥10¢ 且当日单笔最大 <$10k（判定材料 2026-08-28 起采集，之前的日份不进榜）。",
-        )}{" "}
-        {t(
-          "价移 ≥10¢ 但当日没有任何一笔 ≥$10k —— 要么簿子薄到小单就能推，要么有人在蚂蚁搬家。",
-        )}
+        {t("判定材料 2026-08-28 起采集，之前的日份不进榜。")}
       </Methodology>
     </section>
   );
@@ -762,7 +789,16 @@ export function WashBoard({
         <thead>
           <tr>
             <th>{t("市场")}</th>
-            <th className="is-right">{t("洗量占比")}</th>
+            {/* 公式与「该怎么读这个百分比」退到表头 title；「不是指控」那句
+                留在标题条副标里，那是唯一会造成误读的一条。 */}
+            <th
+              className="is-right"
+              title={t(
+                "同钱包当日买卖配对量 ×2 ÷ 总量（双腿口径）—— 读作「这个市场的量能里有多少不是方向性意见」",
+              )}
+            >
+              {t("洗量占比")}
+            </th>
             <th className="is-right">{t("配对量")}</th>
             <th className="is-right">{t("量能")}</th>
           </tr>
@@ -795,12 +831,7 @@ export function WashBoard({
       </BoardTable>
       <RowsToggle total={all.length} expanded={expanded} onToggle={onToggle} />
       <Methodology>
-        {t(
-          "洗量占比 = 同钱包当日买卖配对量 ×2 ÷ 总量，只统计单笔 ≥$2k 的抓取窗口；入榜需占比 ≥20% 且当日总量 ≥$10k。",
-        )}{" "}
-        {t(
-          "同一钱包在同一市场当日既买又卖的配对量占比（双腿口径）。是结构描述不是指控——做市、调仓也长这样；把它当「这个市场的量能里有多少不是方向性意见」来读。",
-        )}
+        {t("入榜需占比 ≥20% 且当日总量 ≥$10k；只统计单笔 ≥$2k 的抓取窗口。")}
       </Methodology>
     </section>
   );

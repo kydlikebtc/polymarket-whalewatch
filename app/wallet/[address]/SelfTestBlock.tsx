@@ -68,9 +68,9 @@ export default function SelfTestBlock({ address }: { address: string }) {
           }}
         >
           <span className="ds-hint" style={{ flex: "1 1 320px" }}>
-            {t(
-              "按池准入口径给这份战绩一个判决：过没过闸、池内百分位、可分享判决卡。点击加载。",
-            )}
+            {/* 「点击加载」不重复右边那颗钮;判决里有什么(百分位、判决卡)
+                点开就看见,不占这一行。 */}
+            {t("按池准入口径给这份战绩一个判决。")}
           </span>
           {state === "error" ? (
             <span className="down" style={{ fontSize: "var(--t-base)" }}>

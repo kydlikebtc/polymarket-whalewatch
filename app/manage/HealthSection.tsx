@@ -58,12 +58,10 @@ export default function HealthSection({
       <SectionHead
         title="🩺 健康度"
         hint={
-          // 中文长句写成字符串表达式:JSX 文本一旦被折行,换行会渲染成一个
-          // 空格,在汉字中间夹出一道缝。
+          // 「心跳/停跳阈值是什么」已写在下方两个列头的 title 里(设计系统的
+          // (?) 提示那套做法),这里只留读数来源与那条公开出口。
           <>
-            {
-              "引擎每轮给自己的循环写一次心跳;超过「停跳阈值」还没写,该循环判停跳。这份读数与公开状态页同源(同一次 /api/health),订阅方随时能自查 —— "
-            }
+            {"这份读数与订阅方看到的是同一份(同一次 /api/health) —— "}
             <Link href="/status">公开状态页 →</Link>
           </>
         }
@@ -96,7 +94,7 @@ export default function HealthSection({
         <div className="ds-empty">
           {"还没拿到 /api/health 的回应。"}
           <div style={{ marginTop: "var(--s-2)" }}>
-            {"用上方「刷新」再取一次;若持续空白,引擎进程可能没起来 —— "}
+            {"持续空白通常是引擎进程没起来 —— "}
             <Link href="/status">公开状态页 →</Link>
           </div>
         </div>
@@ -107,7 +105,7 @@ export default function HealthSection({
           {"这份回应里没有任何循环心跳。"}
           <div style={{ marginTop: "var(--s-2)" }}>
             {
-              "引擎每轮成功跑完才写心跳 —— 一条都没有,通常是引擎进程没起来,或它跑的不是这个库。上方「刷新」再取一次;订阅方看到的是同一份读数 —— "
+              "引擎每轮成功跑完才写心跳 —— 一条都没有,通常是进程没起来,或它跑的不是这个库。"
             }
             <Link href="/status">公开状态页 →</Link>
           </div>
@@ -218,9 +216,9 @@ export default function HealthSection({
                 >
                   —
                 </div>
-                <div className="kpi-sub">
-                  无已配置通道(TG 频道 env 未设且无活跃 webhook)
-                </div>
+                {/* 成因(env 未设频道且无活跃 webhook)写在下方那条琥珀条里,
+                    KPI 副行只报事实。 */}
+                <div className="kpi-sub">无已配置通道</div>
               </>
             ) : (
               <div style={{ marginTop: "var(--s-2)" }}>
@@ -318,7 +316,7 @@ export default function HealthSection({
         <div className="ds-empty">
           {"TG 发送 / 通道积压 / 存证 / 备份这四项来自运营概览,需要管理令牌。"}
           <div style={{ marginTop: "var(--s-2)" }}>
-            {"上方的循环心跳表不需要令牌,公开状态页也照常可看 —— "}
+            {"上方的循环心跳表不需要令牌 —— "}
             <Link href="/status">公开状态页 →</Link>
           </div>
         </div>
@@ -330,7 +328,7 @@ export default function HealthSection({
         style={{ marginTop: "var(--s-4)" }}
       >
         {
-          "「—」是判不了,不是零:无发送记录 = 这套 bot 还没发过任何一条;无已配置通道 = env 没设频道且没有活跃 webhook;尚未生成 = 生成条件还没满足。三者都不代表出了故障。"
+          "「—」是判不了不是零,三者都不是故障:无发送记录 = 这套 bot 还没发过;无已配置通道 = env 没设频道且无活跃 webhook;尚未生成 = 条件还没满足。"
         }
       </div>
     </section>

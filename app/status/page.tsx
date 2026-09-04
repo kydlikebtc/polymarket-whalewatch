@@ -259,7 +259,18 @@ export default function StatusPage() {
               <span className="faint">—</span>
             )}
           </div>
-          <div className="kpi-sub">
+          {/* 副行只说「还差几天」；起算日进 title —— 它不改变这个数怎么读，
+              而条带上第一格绿色就是它。 */}
+          <div
+            className="kpi-sub"
+            title={
+              cont != null && !cont.gateReached && cont.streakDays > 0
+                ? t("连续覆盖起算日 {d}（UTC）", {
+                    d: cont.streakStartDay ?? "—",
+                  })
+                : undefined
+            }
+          >
             {cont == null
               ? t("连续性数据未就绪")
               : cont.gateReached
@@ -267,8 +278,7 @@ export default function StatusPage() {
                     d: cont.streakStartDay ?? "—",
                   })
                 : cont.streakDays > 0
-                  ? t("起算日 {d}（UTC）· 距 30 天闸门还差 {n} 天", {
-                      d: cont.streakStartDay ?? "—",
+                  ? t("还差 {n} 天可重推阈值", {
                       n: cont.gateDays - cont.streakDays,
                     })
                   : t("连续覆盖尚未形成 —— 从下一个完整 UTC 日重新起算")}
@@ -326,11 +336,6 @@ export default function StatusPage() {
           <div style={{ padding: "18px var(--s-4)" }}>
             <div className="ds-empty">
               <div>{t("连续性数据尚未就绪")}</div>
-              <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
-                {t(
-                  "正在读取 /api/continuity —— 取不到时这里保留上一次成功的结果。",
-                )}
-              </div>
             </div>
           </div>
         ) : (
@@ -339,10 +344,9 @@ export default function StatusPage() {
               <div style={{ padding: "18px var(--s-4)" }}>
                 <div className="ds-empty">
                   <div>
-                    {t("尚无循环记录 —— 引擎从未在这个库上跑过共识循环。")}
-                  </div>
-                  <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
-                    {t("共识循环落下第一轮时间戳后，这里会出现第一格。")}
+                    {t(
+                      "尚无循环记录 —— 引擎从未在这个库上跑过共识循环；落下第一轮时间戳后这里会出现第一格。",
+                    )}
                   </div>
                 </div>
               </div>
@@ -420,14 +424,14 @@ export default function StatusPage() {
                   )}
                 </div>
 
+                {/* 卡底一行。断档判据（相邻两轮间隔 > tol）已在上方「今日
+                    断档」KPI 副行说过、「按 UTC 日历日」已在本卡标题条说过，
+                    这里只留读条带时缺不了的两条：起点在哪、跨午夜怎么算，
+                    外加 30 天闸门攒够之后会发生什么。 */}
                 <div className="note-strip">
                   {t(
-                    "判定：共识循环每 5 分钟落一轮实测时间戳，相邻两轮间隔超过 {t} 即记断档 —— 与下表判停跳同一把尺；跨午夜的断档两天都不计入；按 UTC 日历日。记录始于 {d}。",
-                    { t: durText(cont.tolSec), d: cont.recordStartDay },
-                  )}{" "}
-                  {t(
-                    "攒满 {n} 个不间断 UTC 日后重推所有策略阈值 —— 这是全站 edge 数字的前置闸门。",
-                    { n: cont.gateDays },
+                    "记录始于 {d}；跨午夜的断档两天都不计入。攒满 {n} 个不间断 UTC 日后重推所有策略阈值。",
+                    { d: cont.recordStartDay, n: cont.gateDays },
                   )}
                 </div>
               </>
@@ -464,20 +468,23 @@ export default function StatusPage() {
             {loops.length === 0 ? (
               <tr>
                 <td colSpan={5} style={{ padding: "var(--s-3) var(--s-4)" }}>
+                  {/* 加载态只说「加载中…」—— 副行再写一遍「正在读取
+                      /api/health」是同一句话说两遍。空态的副行留着，它给的是
+                      出路（等一个循环周期）而不是复述。 */}
                   <div className="ds-empty">
                     <div>
                       {health == null ? t("加载中…") : t("无循环心跳记录")}
                     </div>
-                    <div
-                      className="ds-hint"
-                      style={{ marginTop: "var(--s-1)" }}
-                    >
-                      {health == null
-                        ? t("正在读取 /api/health")
-                        : t(
-                            "引擎还没写过心跳 —— 若它刚重启，等一个循环周期再看。",
-                          )}
-                    </div>
+                    {health != null && (
+                      <div
+                        className="ds-hint"
+                        style={{ marginTop: "var(--s-1)" }}
+                      >
+                        {t(
+                          "引擎还没写过心跳 —— 若它刚重启，等一个循环周期再看。",
+                        )}
+                      </div>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -580,16 +587,15 @@ export default function StatusPage() {
           </tbody>
         </table>
 
-        {/* 卡底说明条 —— 灰底 13px/1.6。整条只有一处 600 字重：那句是本页
-            的立论（每个数字都有原始行背书），其余都是口径。 */}
+        {/* 卡底说明条 —— 灰底 13px/1.6，压到一行。三句都必须留：为什么
+            「今日轮次」每天归零、这些数是实测还是推测、表内的 — 怎么读。
+            整条只有一处 600 字重，那句是本页的立论。 */}
         <div className="note-strip">
-          {t(
-            "心跳表按循环只留存当日计数；跨日历史由共识循环逐轮落库的实测时间戳重建（上方连续性区）。",
-          )}{" "}
+          {t("心跳表只留当日计数，跨日历史由上方连续性区重建。")}{" "}
           <strong style={{ fontWeight: 600, color: "var(--ww-text)" }}>
             {t("每一格都有原始行背书，不做推测式 uptime。")}
           </strong>{" "}
-          {t("表内的 — 是「判不了」不是零：该循环当日没有可用计数。")}
+          {t("表内的 — 是「判不了」不是零：当日无可用计数。")}
         </div>
       </div>
     </main>

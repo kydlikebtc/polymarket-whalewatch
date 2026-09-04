@@ -162,16 +162,15 @@ export default function KeysSection({ token }: { token: string }) {
             </span>
           )
         }
+        // tier 的含义写在 Segmented 的选项标签里,「明文只显示一次」写在签发
+        // 后那条琥珀条里 —— 这里只留一条会改变操作的约束 + 给订户的文档。
         hint={
           <>
-            key 用于 /api/signals
-            拉取(realtime=实时全量,delayed=延迟视图);webhook 只可挂在 realtime
-            key 上。库中只存哈希,明文仅签发时显示一次。
-            {" 订阅方接入文档:"}
+            {"webhook 只可挂在 realtime key 上。订阅方接入文档 "}
             <a href="/api-docs" target="_blank" rel="noreferrer">
               /api-docs
             </a>
-            {"(把这个链接连同 key 一起发给对方)"}
+            {",连同 key 一起发给对方。"}
           </>
         }
       />
@@ -252,7 +251,13 @@ export default function KeysSection({ token }: { token: string }) {
           />
         </div>
         <div style={{ flexBasis: "100%" }}>
-          <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+          {/* 「过滤在服务端执行」这句解释的是机制,收进 title —— 标签本身
+              已经说清了勾与不勾的后果。 */}
+          <div
+            className="ds-label"
+            style={{ marginBottom: "var(--s-2)" }}
+            title="过滤在服务端执行:没订阅的类型,该 key 在 /api/signals 与 webhook 上都拿不到"
+          >
             订阅信号类型（不勾 = 不限，拿全部）
           </div>
           {/* 任选子集 —— 一排描边钮 + 选中态蓝描边（.ds-btn--active）。
@@ -279,10 +284,6 @@ export default function KeysSection({ token }: { token: string }) {
               );
             })}
           </div>
-          <div className="ds-hint">
-            过滤在服务端执行：没订阅的类型，该 key 在 /api/signals 与 webhook
-            上都拿不到，不需要订阅方自己筛。
-          </div>
         </div>
         {/* 描边白底 —— 每屏至多一枚主按钮,而页头的「刷新」在任何子 tab 上
             都同屏可见,那一枚就是全页唯一的蓝底钮。 */}
@@ -295,7 +296,7 @@ export default function KeysSection({ token }: { token: string }) {
         <div className="ds-empty">
           需要有效管理令牌后加载。
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            令牌在页头「🔑 令牌已验证」里更换；服务端认了才算认。
+            令牌在页头「🔑 令牌已验证」里更换。
           </div>
         </div>
       ) : keys.length === 0 ? (
@@ -387,10 +388,10 @@ export default function KeysSection({ token }: { token: string }) {
             </tbody>
           </table>
           <div className="note-strip">
-            「最近使用」的 <span className="faint">—</span> 是「从没被用过」,
-            不是零 —— 签发了但订户还没接;「操作」列的{" "}
-            <span className="faint">—</span> 是「已吊销,没有可执行的操作」。
-            已吊销的行留在表里做审计痕迹,不会被清理。
+            <span className="faint">—</span>
+            {
+              " 两种:最近使用 = 从没被用过(不是零),操作列 = 已吊销、无可执行操作。已吊销的行留作审计痕迹。"
+            }
           </div>
         </div>
       )}

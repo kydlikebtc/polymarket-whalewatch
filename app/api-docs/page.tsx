@@ -15,6 +15,7 @@ import {
 } from "../../lib/markdownDoc";
 import { siteBase } from "../../lib/seo";
 import { StatCard } from "../ui";
+import DocScrollSpy from "./DocScrollSpy";
 
 // 订阅者接入文档的站内入口 —— 运营者签发 key 后把这个 URL 一并发过去。
 //
@@ -229,11 +230,17 @@ function CardBar({ title, note }: { title: string; note: string }) {
  * 丢,降成每格的副行。
  */
 function LiveStatus({ status }: { status: ApiDocsStatus | null }) {
+  // 全页唯一一条琥珀口径条,只在这条降级路径上出现:不读它就会把「能力全集」
+  // 当成「已对外开放的东西」—— 那是会改变读数的误读,所以留;下面 §8.3 那张
+  // 对照表读不到时降级成中性空态,不再叠第二条琥珀。
   if (!status) {
     return (
-      <div className="ds-callout ds-callout--warn">
-        当前开放状态暂时读不到（数据库不可用）。本文其余部分描述的是系统能力的
-        全集，具体哪些已对外开放请联系运营者确认。
+      <div
+        className="ds-callout ds-callout--warn"
+        style={{ margin: "0 0 var(--s-4)" }}
+      >
+        当前开放状态读不到（数据库不可用）—— 下文是能力全集，此刻开着什么请
+        联系运营者。
       </div>
     );
   }
@@ -262,9 +269,9 @@ function LiveStatus({ status }: { status: ApiDocsStatus | null }) {
           <div className="kpi-value" style={{ color: "var(--ww-up)" }}>
             运行中
           </div>
-          <div className="kpi-sub">
-            active · settled · record30d —— 任何有效 key 都能拿到
-          </div>
+          {/* 「任何有效 key 都能拿到」是订阅范围的口径,不是这格的读数 ——
+              它在正文 §4 里,这里只列名字。 */}
+          <div className="kpi-sub">active · settled · record30d</div>
         </StatCard>
         <StatCard label="strategies" icon="📈">
           <div className="kpi-value">
@@ -275,7 +282,7 @@ function LiveStatus({ status }: { status: ApiDocsStatus | null }) {
           <div className="kpi-sub">
             {strategies.length > 0
               ? strategies.map((s) => s.name).join(" · ")
-              : "strategies 为空结构（形状仍完整，不必判空）"}
+              : "空结构 · 形状不变，不必判空"}
           </div>
         </StatCard>
         <StatCard label="bus[] sourceType" icon="🚚">
@@ -308,13 +315,14 @@ function LiveStatus({ status }: { status: ApiDocsStatus | null }) {
 
 /** 文档 §8.3 里 ```strategy_ids 围栏块的替身:本部署此刻真实的 id↔档名。 */
 function LiveStrategyIds({ status }: { status: ApiDocsStatus | null }) {
+  // 读不到时用中性空态而不是第二条琥珀条 —— 库不可用这件事上面
+  // LiveStatus 已经用琥珀说过一次,这里只给出路(去哪儿拿对照)。
   if (!status) {
     return (
-      <div className="ds-callout ds-callout--warn">
-        本部署的 id↔档名对照表暂时读不到（数据库不可用）。请改用{" "}
-        <code className="doc-code">name</code> 认档，或调一次{" "}
-        <code className="doc-code">/api/record</code>
-        （公开、无需 key）拿当下的对照。
+      <div className="ds-empty" style={{ margin: "0 0 var(--s-4)" }}>
+        对照表读不到（数据库不可用）—— 认档用{" "}
+        <code className="doc-code">code</code>，或调{" "}
+        <code className="doc-code">/api/record</code>（公开）拿当下对照。
       </div>
     );
   }
@@ -327,10 +335,8 @@ function LiveStrategyIds({ status }: { status: ApiDocsStatus | null }) {
       >
         <CardBar title="strategies[].id ↔ 档名" note="· 打开本页时查库生成" />
         <div className="ds-empty" style={{ border: 0, borderRadius: 0 }}>
-          当前没有任何档位对外发布，因此本部署暂无 id↔档名对照。
-          <br />
-          运营者放开推送后此表自动出现；在那之前 strategies 是空结构，
-          形状仍完整，不必判空。
+          当前没有档位对外发布，故无对照；strategies 是空结构，形状不变，
+          不必判空。
         </div>
       </div>
     );
@@ -377,11 +383,11 @@ function LiveStrategyIds({ status }: { status: ApiDocsStatus | null }) {
           </tbody>
         </table>
       </div>
+      {/* 一行:只留会改变读数的两条(表只含已发布档 / id 是本部署私有)。
+          「id 为什么会漂」那段推理没删,它就在下面 §8.3 的正文里。 */}
       <div className="note-strip note-strip--warn">
-        ⚠️ 只列已对外发布的档 —— 你收不到未发布档的信号。左列的 id{" "}
-        <strong>只对本部署有效</strong>
-        ，别写进代码或配置：它是自增行号，种子块重播时会打洞，同一个档名在
-        另一个库里就是另一个数字。要硬编码请用中间那列的 code。
+        ⚠️ 只列已对外发布的档；左列 id <strong>只对本部署有效</strong>
+        ，硬编码请用 code（为什么见 §8.3）。
       </div>
     </div>
   );
@@ -520,6 +526,16 @@ export default function ApiDocsPage() {
   const blocks = parseMarkdownDoc(md);
   const toc = tocOf(blocks);
   const endpoints = endpointRail(blocks);
+  // scroll-spy 观察的锚点 = 左栏两组之并集,**按文档顺序**给出(DocScrollSpy
+  // 的「带内最靠前 / 最后一个滚过的」判定依赖这个顺序)。§5/§10/§14 同时在
+  // 两组里,去重后只观察一次、两处一起亮。
+  const linked = new Set([
+    ...toc.map((t) => t.id),
+    ...endpoints.map((e) => e.id),
+  ]);
+  const spyIds = blocks
+    .flatMap((b) => (b.kind === "heading" && linked.has(b.id) ? [b.id] : []))
+    .filter((id, i, all) => all.indexOf(id) === i);
 
   // 实时开放状态。查库失败不该让整份文档打不开 —— 文档的主体(字段契约)
   // 与库无关,降级成一条「状态读不到」的提示即可。
@@ -544,10 +560,12 @@ export default function ApiDocsPage() {
             <span>API 参考手册 · 订阅方接入</span>
           </span>
           <h1 className="page-head__title">Signals API 接入文档</h1>
+          {/* 一句话说清「这页是什么、给谁看」。原来那两句讲的是「正文由
+              docs/api-access.md 渲染」「两处实时查库不是快照」—— 前者是维护者
+              视角(理由留在本文件头的注释里),后者已经写在那两张卡的标题条上,
+              页头不重复第三遍。 */}
           <p className="page-head__desc">
-            持有 API key 的订阅方请按本文接入。正文由仓库里的 docs/api-access.md
-            渲染，「当前开放状态」与「id ↔ 档名」两处在打开本页时查库生成，
-            不是手写快照。
+            持有 API key 的订阅方按本文接入：鉴权、tier、字段契约与失败语义。
           </p>
         </div>
         {/* 基址是这页最常被复制的一行,收进灰底名称标签(不是状态色)。 */}
@@ -570,8 +588,10 @@ export default function ApiDocsPage() {
           <ol>
             {toc.map((t) => (
               <li key={t.id}>
+                {/* 目录项走纯文本:标题原文带反引号(§3 的 `realtime`、§5 的
+                    `GET /api/signals`),裸着渲染就是一串 ` 字符。 */}
                 <a href={`#${t.id}`} style={{ padding: "6px 12px" }}>
-                  {t.text}
+                  {plainLabel(t.text) ?? t.text}
                 </a>
               </li>
             ))}
@@ -612,6 +632,8 @@ export default function ApiDocsPage() {
               </ol>
             </>
           ) : null}
+          {/* 当前小节高亮 —— 只挂 aria-current,不渲染任何节点(见组件注释)。 */}
+          <DocScrollSpy ids={spyIds} />
         </nav>
         <article className="ds-card doc-prose">
           {blocks.map((block, n) => (

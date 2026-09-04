@@ -319,7 +319,13 @@ export default function ManagePage() {
         marginTop: "var(--s-5)",
       }}
     >
-      <Link className="ds-btn" href="/status">
+      {/* 「引擎活没活不需要令牌」这句原本占着锁定态一整条琥珀口径条 ——
+          它不改变任何读数,收进这枚出口钮的 title 里。 */}
+      <Link
+        className="ds-btn"
+        href="/status"
+        title="引擎是否在跑是公开的,不需要管理令牌"
+      >
         系统状态页 →
       </Link>
       <Link className="ds-btn" href="/guide">
@@ -338,19 +344,12 @@ export default function ManagePage() {
             <div className="page-head__eyebrow">🔒 运营内部 · 不在导航栏</div>
             <h1 className="page-head__title">运营管理</h1>
             <p className="page-head__desc">
-              本页需要管理令牌。令牌只存本浏览器,与 /alerts 配置面板共用。
+              本页需要管理令牌;令牌只存本浏览器。
             </p>
           </div>
         </div>
-        {/* 口径先行:先说清「没有令牌也能看什么」,再放输入框。 */}
-        <div
-          className="ds-callout ds-callout--warn"
-          style={{ marginBottom: "var(--s-5)" }}
-        >
-          门后是运营结构本身(有哪些循环、几条投递通道、多少档策略、几把
-          key),所以未验证时整页不渲染。想确认引擎是否在正常运行不需要令牌 ——
-          走下面的公开状态页。
-        </div>
+        {/* 「门后是运营结构本身,所以未验证时整页不渲染」是设计理由,不是读数
+            告诫 —— 那条琥珀口径条已删,去处见下方出口钮的 title。 */}
         <div className="ds-card" style={{ padding: "var(--s-5)" }}>
           {tokenField}
         </div>
@@ -511,9 +510,7 @@ export default function ManagePage() {
         {/* 中文长句写成字符串表达式:JSX 折行会渲染成一个空格,在汉字中间
             夹出一道缝。 */}
         <div className="note-strip">
-          {
-            "每次只挂载一个子模块 —— 分区与子分区记在本浏览器,切换即卸载重拉,所以下方看到的永远是刚取回的数,不是打开这一页那一刻的数。"
-          }
+          {"每次只挂载一个子模块 · 分区记在本浏览器 · 切换即重新拉数。"}
         </div>
       </section>
 

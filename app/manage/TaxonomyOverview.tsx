@@ -85,7 +85,9 @@ export function SignalLinesOverview({
       // / 12px 小标前缀),而这条是 14/600 的标题条。分区语义的 🧭 已经由上方
       // tab 承担,这里再写一次是重复。
       title="对外产出 = 信号（两条线）+ 视图 + 按需查询"
-      hint="信号=事件(触发后发出,管线只挂在事件上);视图=事件的折叠;按需查询=调用方点名、现算的答案 —— 后两者都非信号,无管线可挂。点行切换下方子 tab;接线管理在「下游管线」tab。"
+      // 「信号=事件 / 视图=折叠 / 按需查询=现算」这三句定义与卡底说明条逐字
+      // 重复,只留导航句;判据留在说明条里说一次。
+      hint="点行切换下方子 tab;接线管理在「下游管线」tab。"
       summary={`① 原始事件(大额/共识/发现) · ② 策略 ${
         pushed != null && total != null ? `推送中 ${pushed}/${total} 档` : "…"
       } · 👁 视图 · 🎯 按需查询`}
@@ -147,10 +149,9 @@ export function SignalLinesOverview({
           字符串表达式:JSX 文本被折行时,换行会渲染成一个空格,在汉字中间夹
           出一道缝(此前的「同一共识组 升级时」)。 */}
       <div className="note-strip">
-        {"判据一句话:"}
         <span style={{ color: "var(--ww-text)" }}>触发后发出的才是信号</span>
         {
-          "。事件不可变、有稳定 id,管线(TG/𝕏/webhook/API)只挂在事件上;视图是事件的折叠,同一共识组升级时原地更新 —— 把每条升级事件当独立信号计数是唯一的坑,视图已替你折叠好(事件做触发、视图做渲染)。"
+          ";视图是事件的折叠 —— 把每条共识升级事件当独立信号计数是唯一的坑,视图已替你折叠好。"
         }
       </div>
     </Foldable>
@@ -211,7 +212,9 @@ export function PipelinesOverview({
     <Foldable
       storageKey="manageGuidePipes"
       title="下游管线"
-      hint="信号线(上一个 tab)产出后经这三条管线到达消费者。点行切换下方子 tab。「承载」列是当前真实接线的转述 —— 引擎改了接线,这里要跟着改。"
+      // 「引擎改了接线这里要跟着改」是给维护者的,已写在本文件头的注释里,
+      // 不占页面正文。
+      hint="点行切换下方子 tab;「承载」列是当前真实接线。"
       summary={`🅐 Telegram ${
         tgOk == null
           ? "无发送记录"
@@ -311,16 +314,14 @@ export function RoutingMatrix({
       <Foldable
         storageKey="manageGuideMatrix"
         title="路由矩阵(事件类型 × 管线)"
-        hint="每格显示当前开关态,点击直达属主开关。矩阵不另存配置 —— 每个开关只有一个属主,这里只是拼图。"
+        hint="每格显示当前开关态,点击直达属主开关。"
         summary="接线状态还没读到"
         defaultOpen
       >
         <div className="ds-empty">
           {"还没读到当前接线状态。"}
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            {
-              "矩阵读的是 /api/admin/signals 的 routing —— 用页头「刷新」再取一次;取不到也不影响改开关,每个开关的属主子模块(告警条件 / TG 目标 / 端点 / 𝕏)照常可用。"
-            }
+            {"用页头「刷新」再取一次;取不到也不影响改开关,属主子模块照常可用。"}
           </div>
         </div>
       </Foldable>
@@ -401,7 +402,7 @@ export function RoutingMatrix({
     <Foldable
       storageKey="manageGuideMatrix"
       title="路由矩阵(事件类型 × 管线)"
-      hint="每格显示当前开关态,点击直达属主开关。矩阵不另存配置 —— 每个开关只有一个属主,这里只是拼图。"
+      hint="每格显示当前开关态,点击直达属主开关。"
       summary="信号线 × 管线的当前接线一览"
       // 它是状态仪表盘不是教学,默认展开;熟了的运营者可以自己收起来。
       defaultOpen
@@ -450,7 +451,7 @@ export function RoutingMatrix({
       </div>
       <div className="note-strip">
         {
-          "矩阵不另存配置:每个开关只有一个属主(告警总开关在 alert-config、𝕏 在 x_broadcast_kinds、总线在信号定义、webhook 在端点勾选),这里只是把它们拼成一张可导航的图。「不接」是设计如此,不是没配。"
+          "「不接」是设计如此,不是没配。矩阵不另存配置 —— 每个开关只有一个属主,格子点开即到。"
         }
       </div>
     </Foldable>

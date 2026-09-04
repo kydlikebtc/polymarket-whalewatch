@@ -84,20 +84,29 @@
   /* 弹窗 */
   --ww-scrim: rgba(8, 29, 53, 0.45);
 
-  /* 字体 —— 对齐参考站 etherscan.io。
-     实测 etherscan.io 的 --bs-body-font-family 是 Roboto 打头的 Bootstrap 5 栈；
-     它自己不加载 webfont（@font-face 里只有 Font Awesome），靠系统装了 Roboto
-     才生效，所以在 macOS 上它实际回退到 system-ui。我们把 Roboto 显式加载
-     （见 app/layout.tsx），这样各平台都真的渲染成 Roboto —— 「和参考站一致」
-     指的是看起来一致，不是照抄一份在半数机器上不生效的声明。
-     栈的其余部分逐字照抄 etherscan，只多插一层 CJK 回退：Roboto 没有中文
-     字形，而本站界面是中文（etherscan 纯英文不需要这一层）。CJK 必须排在
-     通用 sans-serif 之前，否则中文会掉进系统默认字体。
+  /* 字体 —— 各平台的原生 UI 字体优先。
+     ── 为什么不强制加载 Roboto ──────────────────────────────────────
+     etherscan.io 的 --bs-body-font-family 确实以 Roboto 打头，但它**不加载**
+     webfont（@font-face 里只有 Font Awesome），靠机器上装没装 Roboto 决定；
+     绝大多数 macOS 访客看到的其实是栈里紧随其后的 system-ui，也就是 SF Pro。
+     我们一度显式加载 Roboto 以求「和声明一致」，结果反而把界面锁死在最普通
+     的那一档 —— 比 etherscan 在同一台 Mac 上的实际观感更廉价。
+
+     ── 廉价感的真正来源是混排 ──────────────────────────────────────
+     这个界面到处是中英交替（「笔数 441」「买 / 卖 · 买方占 74.9%」「0x9e83…2bea」）。
+     拉丁走 Roboto、中文走 PingFang SC 时，两家字体的笔画粗细与竖向节奏对不上，
+     同一行里就会出现轻重不匀 —— 读起来就是「没做好」。-apple-system 与
+     PingFang SC 同源设计、度量互相协调，混排才立得住。
+
+     所以顺序是：各平台原生 UI 字体（Apple → 通用 system-ui → Segoe → Roboto）
+     → 经典无衬线兜底 → CJK 兜底（给 system-ui 不含中文的平台，如 Windows 的
+     Segoe UI）→ 通用 sans-serif。CJK 必须排在通用 sans-serif 之前。
+
      数字不用等宽：KPI 值 / 表格 / 金额 / 时间与正文同字体同字号常规字重。
      JetBrains Mono 只出现在代码面板与行内 code。 */
   --ww-font:
-    Roboto, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", "Noto Sans",
-    "Liberation Sans", Arial, "PingFang SC", "Hiragino Sans GB",
+    -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei", "Noto Sans SC", sans-serif, "Apple Color Emoji",
     "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   --ww-font-mono:
@@ -265,8 +274,10 @@ body {
   font-family: var(--ww-font);
   font-size: 15px; /* 正文 15 —— 表格自己降到 14 */
   line-height: var(--lh-normal);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  /* 不开 -webkit-font-smoothing: antialiased —— 它在 macOS 上会削细笔画，
+     14px 的表格数字与中文一起变虚，正是「显得廉价」的一半来源。用系统默认
+     的次像素渲染，笔画有该有的分量。 */
+  text-rendering: optimizeLegibility;
 }
 
 a {

@@ -78,7 +78,6 @@ export const DICT_FOLLOW: Record<string, string> = {
   建议跟单额度: "Suggested copy size",
   "= 历史峰值占用 × 1.25(按单仓金额向上取整),即恰好接住全部历史信号的最小资金 + ~25% 冗余;历史窗口口径,未来峰值可能更高。推导细节与五档精确回放见「查看详情 → 账户推演」":
     "= historical peak capital in use × 1.25 (rounded up to a whole position) — the smallest bankroll that catches every historical signal, plus ~25% headroom. Historical-window basis; future peaks may run higher. Derivation and the five-step replay live under View details → Account sizing",
-  "⚠ 已结算仅 {n} 仓": "⚠ only {n} settled",
   "已结算 {n} 仓": "{n} settled",
   "持有 {n}": "{n} open",
   "运行 {n} 天": "{n} days running",
@@ -119,8 +118,8 @@ export const DICT_FOLLOW: Record<string, string> = {
   "平均持有 {d} 天": "avg hold {d} d",
 
   // ------------------------------------------------------ 成本四段分解
-  "只看已结算仓(持有中仓位尚未产生已实现盈亏)。四项口径不同,不是同口径数字的简单相加——链尾净盈亏目前只把追价成本、协议费两项计入净额,延迟成本/执行滑点是归因诊断读数,悬停各项查看具体口径。":
-    "Settled positions only (open ones have produced no realized PnL yet). The four items use different bases and are not a simple sum — the net PnL at the end of the chain nets out chase cost and protocol fee only, while latency cost and execution slippage are attribution diagnostics. Hover each item for its exact basis.",
+  "只看已结算仓。链尾净盈亏只计入追价成本与协议费,延迟成本 / 执行滑点是归因诊断读数,不重复计入。":
+    "Settled positions only. The net P&L at the end of the chain counts chase cost and protocol fee alone — latency cost and execution slippage are attribution diagnostics and are not counted twice.",
   追价成本: "Chase cost",
   "已结算仓的追价成本合计:份额 ×(自己入场价 − 聪明钱建仓均价)之和(美元)。链的起点——我们比聪明钱买贵了多少,含拿不到的信息租金。口径与战绩全景「累计追价成本」相同但只算已结算仓,为了能与下面的协议费、净盈亏在同一批仓上相减。中性色:是成本不是盈亏":
     "Total chase cost across settled positions: sum of shares × (our entry price − smart money's average entry), in USD. The start of the chain — how much more we paid than smart money, information rent we can never capture included. Same basis as Cumulative chase cost in the record snapshot, but restricted to settled positions so it can be netted against the protocol fee and net PnL below over the same set. Neutral color: this is a cost, not PnL",
@@ -149,15 +148,8 @@ export const DICT_FOLLOW: Record<string, string> = {
   "暂无已结算仓位 — 有仓位结算后这里会画出净值走势":
     "No settled positions yet — the equity curve is drawn here once positions settle",
   战绩全景: "Record snapshot",
-  "深度分析 — 这一档的钱从哪赢来的":
-    "Deep analysis — where this tier's money is won",
-  成本四段分解: "Four-stage cost breakdown",
-  "追价成本 → 延迟成本 → 执行滑点 → 协议费,回答「纸面盈亏和实盘差在哪」":
-    "Chase cost → latency cost → execution slippage → protocol fee: where paper PnL and live PnL part ways",
   "该档暂无账户推演数据(尚无仓位,或建议额度不可用)":
     "No account-sizing data for this tier yet (no positions, or no suggested size available)",
-  "该策略的纸面仓位——与首页「仓位明细」区同一套表格,已按这一档筛好,不用退回首页再按策略筛一遍":
-    "This strategy's paper positions — the same table as the Position detail area on the main page, pre-filtered to this tier so you don't have to go back and filter by strategy again",
   该策略尚无已结算的纸面仓位:
     "This strategy has no settled paper positions yet",
   该策略当前没有持仓中的纸面仓位:
@@ -170,12 +162,9 @@ export const DICT_FOLLOW: Record<string, string> = {
   不显示浮盈: "Unrealized PnL not shown",
 
   // ------------------------------------------------------- 账户推演
-  "建议跟单额度(账户备付现金 · Polymarket 无杠杆)":
-    "Suggested copy size (cash held in the account · Polymarket has no leverage)",
   按此额度年化: "Annualized at this size",
-  " · 使用效率 {pct}": " · utilization {pct}",
-  "= 历史峰值占用 ${v}(恰好接住全部历史信号的最小资金)+ ~25% 冗余,按单仓金额向上取整。历史窗口口径,未来峰值可能更高。":
-    "= historical peak capital in use ${v} (the smallest bankroll that catches every historical signal) + ~25% headroom, rounded up to a whole position. Historical-window basis; future peaks may run higher.",
+  "= 历史峰值占用 ${v} + ~25% 冗余(历史窗口口径,未来峰值可能更高)":
+    "= historical peak capital in use ${v} + ~25% headroom (historical-window basis; future peaks may run higher)",
   "账户推演 · 该备多少钱": "Account sizing · how much to fund",
   "平均占用 ${v}": "avg in use ${v}",
   " · 峰值额度下使用效率 {pct}": " · utilization at the peak size {pct}",
@@ -195,16 +184,14 @@ export const DICT_FOLLOW: Record<string, string> = {
   效率: "Utilization",
   建议: "Suggested",
   恰接住: "Exact fit",
-  "回放口径:把历史仓位按开仓顺序重演——账户资金不够就错过该信号、市场结算即释放资金。每仓固定 $/信号且互相独立,因此错过哪几仓、少赚/少亏多少是精确值而非估计。效率 = 时间加权平均占用 ÷ 账户额(含零仓闲置期)。":
-    "Replay basis: historical positions are re-run in entry order — if the account is short of cash the signal is missed, and settlement releases capital. Every position is a fixed $/signal and independent of the others, so which ones are missed and how much profit or loss that costs are exact figures, not estimates. Utilization = time-weighted average capital in use ÷ account size (idle zero-position stretches included).",
+  "回放是精确值不是估计:每仓固定 $/信号且互相独立,资金不够即错过、结算即释放。":
+    "The replay is exact, not an estimate: every position is a fixed $/signal and independent of the others — a short account misses the signal, settlement releases the capital.",
 
   // ------------------------------------------------------- 操作历史
-  "{a} 次买入 · {b} 次兑现 · 倒序(最新在前)· 纸面模拟,无真实成交;仅记录已执行动作,被护栏/新鲜度闸门拦下的信号不在此列":
-    "{a} buys · {b} exits · newest first · paper simulation, no real fills; only executed actions are logged — signals stopped by the guardrails or the freshness gate are not listed",
+  "{a} 次买入 · {b} 次兑现 · 仅记录已执行动作,被护栏 / 新鲜度闸门拦下的信号不在此列":
+    "{a} buys · {b} exits · only executed actions are logged — signals stopped by the guardrails or the freshness gate are not listed",
   "动作发生时刻(本地时区),悬停看完整时间":
     "When the action happened (local time zone); hover for the full timestamp",
-  "买入 = 信号触发后现价开仓;兑现 = 市场结算平仓(赢绿/输红/平灰)":
-    "Buy = opened at the live price after the signal fired; Exit = closed at market settlement (green win / red loss / grey push)",
   动作: "Action",
   "买入行 = 进场价,下附信号形成时间与检测延迟;兑现行 = 结算价,下附持有时长":
     "Buy rows show the entry price with the signal formation time and detection lag beneath; exit rows show the settlement price with the holding time beneath",
@@ -219,8 +206,6 @@ export const DICT_FOLLOW: Record<string, string> = {
   暂无启用中的跟单策略: "No active copy strategies",
   "结算净值 ÷ 峰值占用资金 × 365 ÷ 运行天数。短窗口/小样本外推极不可靠,仅供横向对比":
     "Settled equity ÷ peak capital in use × 365 ÷ days running. Extrapolating a short window or a small sample is highly unreliable — use it for cross-tier comparison only",
-  "盈利仓 ÷(盈利+亏损)仓,括号内为已结算样本数(<10 仓前面加 ⚠,与卡片同一个警示阈值)。Wilson 95% 置信区间不在这张表里——留在「详情」,表格容不下那么长的区间文本":
-    "Winning ÷ (winning + losing) positions; the settled sample size is in brackets (prefixed with ⚠ under 10 positions — the same warning threshold as the cards). The Wilson 95% interval is not in this table; it lives under Details, since the column cannot hold that much text",
   "= 历史峰值占用 × 1.25(按单仓金额向上取整);推导细节与五档精确回放见「详情 → 账户推演」":
     "= historical peak capital in use × 1.25 (rounded up to a whole position); derivation and the five-step replay live under Details → Account sizing",
   建议额度: "Suggested size",
@@ -228,8 +213,6 @@ export const DICT_FOLLOW: Record<string, string> = {
     "Open positions awaiting settlement / days the strategy has been running",
   "持有 / 运行": "Open / Running",
   领先: "Leading",
-  等待结算: "Awaiting settlement",
-  等待命中: "Awaiting a hit",
   操作: "Actions",
   详情: "Details",
 
@@ -248,10 +231,10 @@ export const DICT_FOLLOW: Record<string, string> = {
   形成后2h: "2h markout",
   持有期: "Held",
   已实现: "Realized",
-  // 卡底琥珀条:同一张表里四处成因不同的「—」+ 一个非「—」的降级态,
-  // 一条列全(表下说明,不是脚注)。
-  "⚠️ 表里的「—」是「判不了」,不是 0,四处成因各不相同:「延迟成本」与「形成后2h」的「—」= 老仓没有形成价(上线前的仓位不回填);「执行滑点」的「—」= 盘口无历史(仅新开仓有值);「进价→结算价」右侧的「—」= 该仓没有结算价读数。另有一个非「—」的降级态:「薄」= 盘口深度吃不满本仓名义金额,均价按已成交部分计(悬停给出实际成交额)。成本三列(追价 / 延迟 / 执行滑点)一律中性色,只有 |¢差| > 10¢ 转琥珀;「形成后2h」是价格方向,涨绿跌红、±0.5¢ 死区记平推 —— 与成本类是两套语义,别混着读。":
-    "⚠️ A「—」in this table means 「cannot be judged」, not 0, and the four causes differ: 「—」under Latency cost and 2h markout = the position predates launch and has no formation price (older positions are not backfilled); 「—」under Execution slippage = the order book has no history (only newly opened positions carry a value); 「—」on the right of Entry→Settle = this position has no settlement price reading. One degraded state is not a 「—」: 「thin」 = the book was too shallow to fill this position's notional, so the average price covers the filled portion only (hover for the amount actually filled). The three cost columns (chase / latency / execution slippage) are always neutral in color and turn amber only above |¢ gap| > 10¢; 2h markout is a price direction — green up, red down, with a ±0.5¢ dead zone counted as flat — a different semantic from the cost columns, do not read them as one.",
+  // 卡底琥珀条:降级态用最短句式列全(触屏读不到列头 title);配色语义留在
+  // 各列头的 (?) 里,不在表下重复。
+  "⚠️「—」= 判不了,不是 0:延迟成本 / 形成后2h = 老仓无形成价 · 执行滑点 = 盘口无历史 · 结算价 = 无读数;「薄」= 盘口吃不满本仓,均价按已成交部分计。":
+    "⚠️「—」means undecidable, not 0: latency cost / 2h markout = an old position with no formation price · execution slippage = the book has no history · settlement price = no reading. 「thin」 = the book could not fill this position's notional, so the average price covers the filled portion only.",
   "取价失败,或该市场暂无可用的近期行情数据":
     "Price fetch failed, or this market has no recent quote data available",
 
@@ -264,15 +247,15 @@ export const DICT_FOLLOW: Record<string, string> = {
   当前价: "Now",
   已持有: "Held",
   待结算: "Awaiting settlement",
-  // 卡底琥珀条(持仓中表):三处「—」+ 一个「…」中间态。
-  "⚠️ 表里的「—」是「判不了」,不是 0,三处成因各不相同:「当前价」的「—」= 缺 asset 或取价失败,不可取价(不是加载中 —— 还在取价时显示「…」);「延迟成本」的「—」= 老仓没有形成价(上线前的仓位不回填);「执行滑点」的「—」= 盘口无历史(仅新开仓有值),其「薄」= 盘口深度吃不满本仓名义金额,均价按已成交部分计。当前价只在挂载这张表时惰性取一次,仅供参考:持有中仓位没有已实现盈亏,不进胜率/ROI/年化,本页所有战绩都是结算口径。":
-    "⚠️ A「—」in this table means 「cannot be judged」, not 0, and the three causes differ: 「—」under Now = the asset id is missing or the fetch failed, so no price can be quoted (this is not a loading state — while the fetch is in flight the cell shows 「…」); 「—」under Latency cost = the position predates launch and has no formation price; 「—」under Execution slippage = the order book has no history (only newly opened positions carry a value), and its 「thin」 marker means the book was too shallow to fill this position's notional, so the average price covers the filled portion only. The current price is fetched lazily, once, when this table mounts, and is reference only: open positions have no realized P&L and feed no win rate, ROI or annualized return — every record figure on this page is on a settlement basis.",
+  // 卡底琥珀条(持仓中表):三处「—」+ 一个「…」中间态 + 一句「不进战绩」。
+  "⚠️「—」= 判不了,不是 0:当前价 = 缺 asset 或取价失败(取价中显示「…」)· 延迟成本 = 老仓无形成价 · 执行滑点 = 盘口无历史;「薄」= 盘口吃不满本仓,均价按已成交部分计。当前价仅供参考,不进任何战绩口径。":
+    "⚠️「—」means undecidable, not 0: Now = the asset id is missing or the fetch failed (a fetch in flight shows 「…」) · latency cost = an old position with no formation price · execution slippage = the book has no history. 「thin」 = the book could not fill this position's notional, so the average price covers the filled portion only. The current price is reference only and feeds no record metric.",
 
   // ------------------------------------------ 赛道 × 策略优势矩阵(副 tab)
   "暂无已结算仓位 — 有仓位结算后这里会给出「哪类信号在哪个赛道有 edge」的透视矩阵":
     "No settled positions yet — once positions settle, this becomes a pivot of which signal type holds an edge on which track",
-  "格子 = edge(实际胜率 − 该格均入场价的隐含胜率,已结算口径)与仓数;绿正红负,样本 <{n} 仓的格子淡显 · 列按全体样本数降序 —— 新档位设计的选题池。「全部」行为跨档聚合,多档会跟进同一信号,样本含重复下注":
-    "Each cell holds the edge (actual win rate − the implied win rate of that cell's average entry price, settled basis) and the position count; green positive, red negative, and cells with fewer than {n} positions are dimmed. Columns run in descending order of full-sample size — the idea pool for designing new tiers. The 'All' row is a cross-tier aggregate: several tiers follow the same signal, so the sample contains duplicate bets",
+  "格子 = edge(实际胜率 − 隐含胜率)· 胜率 · 仓数 · 落袋;「全部」行跨档聚合,样本含重复下注。":
+    "Each cell holds the edge (actual win rate − implied win rate) · win rate · position count · realized P&L. The 「All」 row is a cross-tier aggregate, so its sample contains duplicate bets.",
 
   // -------------------------------------------------- 页头 / 加载 / 空态
   "最后刷新 {time}": "Last refreshed {time}",
@@ -282,8 +265,6 @@ export const DICT_FOLLOW: Record<string, string> = {
   "🧪 模拟策略": "🧪 Simulated strategy",
   "策略本身不动真金:按报价快照纸面成交,不产生真实订单,用来检验「跟着信号买」这套策略有没有 alpha":
     "The strategy itself risks no real money: paper fills against the quote snapshot, no real orders placed. It exists to test whether 'buy what the signal says' carries any alpha",
-  "现价进场 · 跟随共识/异常大额/分歧/钱包画像四类信号,新鲜度窗口因档而异(默认 15 分钟,详见各档详情) · 带「反向对照」标的档位对同一信号买对面,与正向档成对读战绩 · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)· 按报价快照纸面成交,不含盘口执行成本(价差/深度),盈亏偏乐观;「执行滑点」列为该成本的实测估计":
-    "Live-price entry · follows four signal types — consensus, outsized fills, splits and wallet profiles — with a freshness window that varies by tier (15 minutes by default; see each tier's details) · tiers tagged Inverse control buy the opposite side of the same signal, so read them paired with their forward tier · held to settlement · fixed $ per signal · realized PnL only (no unrealized) · paper fills against the quote snapshot, excluding order-book execution cost (spread and depth), so PnL runs optimistic; the Execution slippage column is the measured estimate of that cost",
   "加载失败: {msg}": "Load failed: {msg}",
   "正在加载策略中心战绩…": "Loading the Strategy Center record…",
   "暂无启用中的跟单策略 — 引擎播种聪明钱白名单并跑通一轮跟单后,这里会按信号族出现各档的纸面战绩":
@@ -293,8 +274,8 @@ export const DICT_FOLLOW: Record<string, string> = {
   展示方式: "Display mode",
   卡片: "Cards",
   列表: "List",
-  "⚠️ 各档持仓有重叠,战绩不可跨档相加":
-    "⚠️ Tiers hold overlapping positions — records cannot be summed across tiers",
+  "各档持仓重叠,战绩不可跨档相加":
+    "tiers hold overlapping positions — records cannot be summed across tiers",
   数据区切换: "Data view",
   结算净值曲线: "Settled equity curve",
   "赛道 × 策略优势矩阵": "Track × strategy edge matrix",
@@ -375,15 +356,14 @@ export const DICT_FOLLOW: Record<string, string> = {
   // 换皮那一轮新增的文案(页头小标 / 卡内标题条的口径半句 / 卡底说明条 /
   // 徽章与空态)。键=中文原文,与 app/follow/page.tsx 的 t() 字面量逐字一致。
   "📈 模拟策略 · 不动真金": "📈 Simulated strategies · no real money",
-  "现价进场 · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)。按信号族分组,族序 = 信息强度递减:共识 → 异常大额 → 分歧 → 钱包画像;带「反向对照」标的档位对同一信号买对面,与正向档成对读战绩。各档持仓有重叠,战绩不可跨档相加。":
-    "Enters at market · holds to settlement · fixed $/signal · settled P&L only (no unrealized). Grouped by signal family, ordered by decreasing information strength: consensus → outsized fills → disagreement → wallet profile; tiers tagged 「inverse control」 buy the opposite side of the same signal and should be read paired with their forward tier. Tiers overlap — records cannot be summed across tiers.",
-  "⚠️ 按报价快照纸面成交,不含盘口执行成本(价差 / 深度),盈亏偏乐观 —— 实测估计见「执行滑点」列与单档详情的成本分解。新鲜度窗口因档而异,默认 15 分钟,详见各档详情。":
-    "⚠️ Fills are paper fills against a quote snapshot; book execution costs (spread / depth) are excluded, so P&L reads optimistic — see the 「Execution slippage」 column and each tier's cost breakdown for the measured estimate. The freshness window varies by tier (15 minutes by default); see each tier's detail.",
-  "四族默认全开,可任选子集叠画":
-    "All four families on by default — overlay any subset",
+  "各档纸面策略的战绩:现价进场 · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)。":
+    "Every tier's paper record: enters at market · holds to settlement · fixed $/signal · settled P&L only (no unrealized).",
+  "⚠️ 纸面成交不含盘口执行成本(价差 / 深度),盈亏偏乐观 —— 实测见「执行滑点」列。":
+    "⚠️ Paper fills exclude book execution cost (spread / depth), so P&L reads optimistic — the measured estimate is in the 「Execution slippage」 column.",
+  "族序 = 信息强度递减 · 可多选叠画":
+    "Families run in decreasing information strength · multi-select to overlay",
   按策略筛选: "Filter by strategy",
   "{n} 档": "{n} tiers",
-  "策略 · 门槛": "Strategy · thresholds",
   "胜率 · Wilson 95%CI": "Win rate · Wilson 95% CI",
   "盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间与已结算样本量。50% / 8 仓 和 58% / 24 仓不该长得一样重,区间宽度就是这份轻重;平局不计入分母":
     "Winning positions ÷ (winning + losing) positions · Wilson 95% confidence interval plus the settled sample size. 50% over 8 positions and 58% over 24 should not carry the same weight — the interval width is that weight; pushes are excluded from the denominator",
@@ -399,13 +379,13 @@ export const DICT_FOLLOW: Record<string, string> = {
     "Sequentially monitors whether this tier is decaying: settled positions fold into market-level observation points, the earlier stretch forms the baseline, and a one-sided CUSUM watches the rest for downward drift. The sentinel only raises flags — it never auto-disables a tier",
   "push 不进分母": "pushes excluded from the denominator",
   平均年化的分母: "the denominator of Avg annualized",
-  "全部读数同一网格、同一字号 —— 这里没有主次,谁重要取决于读者在问什么。成本类三项(追价 / 协议费 / 容量)一律中性色:追价成本为负不标绿(那通常意味着行情已反向、接了飞刀,不是捡便宜),为正也不标红(是成本,不是亏损);只有均延迟成本在 |¢差| > 10¢ 时转琥珀,与开仓侧默认偏离护栏同一分界。带 n= 的三项必须连样本量一起读。":
-    "Every reading shares one grid and one type size — there is no ranking here; what matters depends on what the reader is asking. The three cost readings (chase / protocol fee / capacity) are always neutral in color: a negative chase cost is not green (it usually means the market already turned and we caught a falling knife, not a bargain), and a positive one is not red (it is a cost, not a loss); only avg delay cost turns amber above |¢diff| > 10¢, the same boundary as the default entry-deviation guardrail. The three readings carrying n= must always be read together with their sample size.",
+  "成本三项(追价 / 协议费 / 容量)是成本不是盈亏,一律中性色;带 n= 的读数须连样本量一起读。":
+    "The three cost readings (chase / protocol fee / capacity) are costs, not P&L, and are always neutral in color; readings carrying n= must be read together with their sample size.",
   "链的起点 · 已结算仓口径": "Start of the chain · settled-positions basis",
   "n={n} · 检测 + 执行延迟": "n={n} · detection + execution latency",
   "n={n} · 跨价差 + 吃深度": "n={n} · crossing the spread + eating depth",
-  "⚠️ 口径范围:三项都只在协议费已知的那批已结算仓上计算,而不是拿部分覆盖的费用去减全量盈亏 —— 那会得到一个介于两档之间、无法解释的数。协议费自 2026-08 起才采集、老仓不回填,所以这一档目前只覆盖一个子集,随着老仓陆续结算完毕会自然收敛到全量。":
-    "⚠️ Scope: all three are computed only over the settled positions whose protocol fee is known, rather than subtracting partially covered fees from full P&L — that would produce a number sitting between two bases and explaining nothing. Protocol fees have only been collected since 2026-08 and old positions are not backfilled, so this basis currently covers a subset; it converges to the full set as the old positions settle out.",
+  "⚠️ 三项只在协议费已知的那批已结算仓上计算(覆盖率见 n=),不是拿部分费用去减全量盈亏。":
+    "⚠️ All three are computed only over the settled positions whose protocol fee is known (coverage is the n=), not by subtracting partially covered fees from full P&L.",
   "错过 {n}": "{n} missed",
   错过的钱: "Money missed",
   "资金不够而错过的那些信号,事后按已结算口径合计的盈亏 —— 中性色:是「没接住」,不是亏损":
@@ -414,20 +394,14 @@ export const DICT_FOLLOW: Record<string, string> = {
     "No action history for this tier yet — once a signal hits and the first position opens, buys and settlements are logged here newest-first",
   "买入 = 信号触发后现价开仓(绿);兑现 = 市场结算平仓(蓝)。输赢由右侧「金额 / 盈亏」的颜色回答,不由动作徽章回答":
     "Buy = opened at market after the signal fired (green); Settle = closed at market resolution (blue). Win or loss is answered by the color of 「Amount / P&L」 on the right, not by the action badge",
-  "「金额 / 盈亏」一列两义:买入行是金额、兑现行是盈亏 —— 保留一列但给动作徽章上色,靠色块区分而不是靠读者猜。仅记录已执行动作,被护栏 / 新鲜度闸门拦下的信号不在此列。":
-    "「Amount / P&L」 carries two meanings: buy rows show the amount, settle rows show P&L — one column, but the action badge is colored so the split is visible rather than guessed. Only executed actions are logged; signals stopped by the guardrail or the freshness gate never appear here.",
   "· 累计已实现盈亏 · 不含持仓浮盈":
     "· cumulative realized P&L · excludes unrealized",
-  "结算点本身才是真实数据,曲线只是连接方式 —— 口径是「只在结算这一刻发生变化」。平滑曲线看着更像连续过程,所以标记点比线更醒目;这里一次只画一条线、画布接近全宽,标记半径固定不随点数收缩。":
-    "The settlement points are the real data; the curve is only how they are joined — the basis is 「the value changes only at the moment of settlement」. A smooth curve reads like a continuous process, so the markers are drawn more prominently than the line; this chart draws one line at near-full width, and the marker radius stays fixed no matter how many points there are.",
-  "· 每项的口径在自己的 (?) 里": "· each reading's basis lives in its own (?)",
-  "· 这一档的钱从哪赢来的": "· where this tier's money came from",
+  "结算点才是真实数据,曲线只是连接方式 —— 净值只在结算这一刻变化。":
+    "The settlement points are the real data; the curve is only how they are joined — equity changes only at the moment of settlement.",
   "· 四项口径不同,不是同口径数字的简单相加":
     "· the four use different bases — they are not a like-for-like sum",
   "· 建议 ${v} · Polymarket 无杠杆":
     "· suggested ${v} · Polymarket has no leverage",
   "· 倒序 · 纸面模拟,无真实成交":
     "· newest first · paper simulation, no real fills",
-  "· 复用首页同一套表 + 二级切换":
-    "· the same tables as the home page, with a second-level toggle",
 };

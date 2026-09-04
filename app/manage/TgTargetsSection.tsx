@@ -141,7 +141,8 @@ export default function TgTargetsSection({ token }: { token: string }) {
     >
       <SectionHead
         title="🅐 Telegram · 推送目标"
-        hint="一条 = 一个 bot 发到一个频道/群。可同时有多个目标，各自决定收哪些信号；改完引擎下一轮（≤60s）生效，无需重启。"
+        // 「改完 ≤60s 生效」挪进表底说明条(它就在那排类型钮旁边),不说两遍。
+        hint="一条 = 一个 bot 发到一个频道/群,各自决定收哪些信号。"
         aside={
           <button
             className={`ds-btn ds-btn--sm${adding ? " ds-btn--active" : ""}`}
@@ -184,8 +185,7 @@ export default function TgTargetsSection({ token }: { token: string }) {
             </div>
           ))}
           <div style={{ marginTop: 6 }}>
-            在这里新增任意一个目标后，<b>.env 的配置将完全让位</b>
-            （不叠加，避免同一条消息推两遍）。
+            新增任意目标后 <b>.env 配置完全让位</b>（不叠加）。
           </div>
         </div>
       ) : null}
@@ -302,7 +302,7 @@ export default function TgTargetsSection({ token }: { token: string }) {
             添加
           </button>
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            bot 必须是该频道/群的管理员，否则发送会失败。添加后用「测试」验证。
+            bot 必须是该频道/群的管理员，否则发送失败。
           </div>
         </div>
       ) : null}
@@ -311,7 +311,7 @@ export default function TgTargetsSection({ token }: { token: string }) {
         <div className="ds-empty">
           {view.message}
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            这是服务端的原话 —— 通常是管理令牌失效。换令牌后本区块自动重试。
+            通常是管理令牌失效;换令牌后自动重试。
           </div>
         </div>
       ) : view.kind === "loading" ? (
@@ -320,8 +320,7 @@ export default function TgTargetsSection({ token }: { token: string }) {
         <div className="ds-empty">
           尚无目标。
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            点右上角「新增目标」登记第一个 bot + 频道；在此之前引擎用 .env 里的
-            TG 配置发送。
+            {"点右上角「新增目标」;在此之前引擎用 .env 里的 TG 配置发送。"}
           </div>
         </div>
       ) : (
@@ -454,10 +453,11 @@ export default function TgTargetsSection({ token }: { token: string }) {
               ))}
             </tbody>
           </table>
+          {/* 「删掉最后一个会回退到 .env」已在删除确认框里逐字说过。 */}
           <div className="note-strip">
-            「信号类型」是任选子集 —— 点亮即收，改完立刻写库，引擎下一轮（≤60s）
-            生效。「暂停」保留目标只停投，「删除」不可恢复；删掉最后一个目标会
-            回退到 .env 的配置。
+            {
+              "「信号类型」点亮即收,改完立刻写库,引擎下一轮(≤60s)生效。「暂停」只停投,「删除」不可恢复。"
+            }
           </div>
         </div>
       )}

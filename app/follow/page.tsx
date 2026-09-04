@@ -23,7 +23,8 @@ import { DeepAnalysisPanel, EdgeMatrixTable } from "./DeepAnalysis";
 import type { DecayVerdict } from "../../lib/decaySentinel";
 import type { ExitCounterfactualSummary } from "../../lib/exitCounterfactual";
 import { buildEdgeMatrix } from "../../lib/followInsights";
-import { BUCKET_LOW_SAMPLE_N } from "../../lib/followAnalysis";
+// BUCKET_LOW_SAMPLE_N 不再在本页出现:优势矩阵的「淡显格 = <N 仓」读法只由
+// EdgeMatrixTable 表下那一条琥珀说明,矩阵上方的图例行不再重复一遍阈值。
 import { useCurrentPrices } from "../useCurrentPrices";
 import {
   classifyCardState,
@@ -1016,10 +1017,11 @@ function FamilyToggles({
           </button>
         );
       })}
-      {/* 「任选子集」这层语义必须写出来:一排独立按钮长得像单选,不说明的话
-          读者不会想到可以同时开两族。 */}
+      {/* 「可多选」这层语义必须写出来:一排独立按钮长得像单选,不说明的话
+          读者不会想到可以同时开两族。族序的由来(信息强度递减)顺带落在这
+          一行 —— 它原本占着页头描述的一整句。 */}
       <span className="filter-row__label">
-        {t("四族默认全开,可任选子集叠画")}
+        {t("族序 = 信息强度递减 · 可多选叠画")}
       </span>
     </div>
   );
@@ -2199,11 +2201,12 @@ function StrategyFullMetrics({
           sub={fund ? t("平均年化的分母") : undefined}
         />
       </div>
-      {/* 卡底说明条:成本类三项为什么一律中性色 —— 这是全站最容易被读错的
-          一处配色约定,写在读数下面而不是藏进某一格的 (?) 里。 */}
+      {/* 卡底说明条压到一行:只留会改变读数的两句(成本类是成本不是盈亏、
+          带 n= 的要连样本量读)。「为负不标绿/为正不标红」的完整论证与
+          「均延迟成本 >10¢ 转琥珀」的分界仍在对应格自己的 (?) 里。 */}
       <div className="note-strip">
         {t(
-          "全部读数同一网格、同一字号 —— 这里没有主次,谁重要取决于读者在问什么。成本类三项(追价 / 协议费 / 容量)一律中性色:追价成本为负不标绿(那通常意味着行情已反向、接了飞刀,不是捡便宜),为正也不标红(是成本,不是亏损);只有均延迟成本在 |¢差| > 10¢ 时转琥珀,与开仓侧默认偏离护栏同一分界。带 n= 的三项必须连样本量一起读。",
+          "成本三项(追价 / 协议费 / 容量)是成本不是盈亏,一律中性色;带 n= 的读数须连样本量一起读。",
         )}
         {m.avgHoldingDays != null ? (
           <> {t("平均持有 {d} 天", { d: m.avgHoldingDays.toFixed(1) })}</>
@@ -2260,7 +2263,7 @@ function CostChain({
         }}
       >
         {t(
-          "只看已结算仓(持有中仓位尚未产生已实现盈亏)。四项口径不同,不是同口径数字的简单相加——链尾净盈亏目前只把追价成本、协议费两项计入净额,延迟成本/执行滑点是归因诊断读数,悬停各项查看具体口径。",
+          "只看已结算仓。链尾净盈亏只计入追价成本与协议费,延迟成本 / 执行滑点是归因诊断读数,不重复计入。",
         )}
       </div>
       <div
@@ -2378,10 +2381,11 @@ function CostChain({
           }
         />
       </div>
-      {/* 覆盖率口径是这一区最容易被误读的地方,单独用琥珀说明条讲清楚。 */}
+      {/* 覆盖率口径是这一区最容易被误读的地方,一句琥珀讲清楚;「为什么只
+          覆盖一个子集」的来龙去脉在链尾那格的 (?) 里。 */}
       <div className="note-strip note-strip--warn">
         {t(
-          "⚠️ 口径范围:三项都只在协议费已知的那批已结算仓上计算,而不是拿部分覆盖的费用去减全量盈亏 —— 那会得到一个介于两档之间、无法解释的数。协议费自 2026-08 起才采集、老仓不回填,所以这一档目前只覆盖一个子集,随着老仓陆续结算完毕会自然收敛到全量。",
+          "⚠️ 三项只在协议费已知的那批已结算仓上计算(覆盖率见 n=),不是拿部分费用去减全量盈亏。",
         )}
       </div>
     </>
@@ -2451,8 +2455,9 @@ function AccountPlanDialog({ acct }: { acct: AccountPlan }) {
     acct.rows.find((r) => r.accountUsd === acct.suggestedUsd) ?? null;
   return (
     <>
-      {/* 推导先行:建议额度是怎么来的、平均占用多少、无杠杆 —— 读表之前
-          就该知道的三件事,放在表上方的说明条里。 */}
+      {/* 推导先行:建议额度怎么来的、平均占用多少 —— 读表之前就该知道的两
+          件事。完整推导(恰好接住全部信号的最小资金、按单仓金额向上取整)在
+          卡片「建议跟单额度」那格的 (?) 里,这里只留会改变读数的口径。 */}
       <div
         style={{
           padding: "var(--s-3) var(--s-4)",
@@ -2462,10 +2467,10 @@ function AccountPlanDialog({ acct }: { acct: AccountPlan }) {
           color: "var(--ww-text-muted)",
         }}
       >
-        {t(
-          "= 历史峰值占用 ${v}(恰好接住全部历史信号的最小资金)+ ~25% 冗余,按单仓金额向上取整。历史窗口口径,未来峰值可能更高。",
-          { v: fmtUsd0(acct.recommendedUsd ?? 0) },
-        )}{" "}
+        {t("= 历史峰值占用 ${v} + ~25% 冗余(历史窗口口径,未来峰值可能更高)", {
+          v: fmtUsd0(acct.recommendedUsd ?? 0),
+        })}
+        {" · "}
         {t("平均占用 ${v}", { v: fmtUsd0(acct.avgOccupiedUsd) })}
         {acct.utilization != null
           ? t(" · 峰值额度下使用效率 {pct}", {
@@ -2617,9 +2622,11 @@ function AccountPlanDialog({ acct }: { acct: AccountPlan }) {
           </tbody>
         </table>
       </div>
+      {/* 只留会改变读数的那句:这几列是精确回放不是估计。回放规则与「效率」
+          的定义各自留在对应列头的 title 里。 */}
       <div className="note-strip">
         {t(
-          "回放口径:把历史仓位按开仓顺序重演——账户资金不够就错过该信号、市场结算即释放资金。每仓固定 $/信号且互相独立,因此错过哪几仓、少赚/少亏多少是精确值而非估计。效率 = 时间加权平均占用 ÷ 账户额(含零仓闲置期)。",
+          "回放是精确值不是估计:每仓固定 $/信号且互相独立,资金不够即错过、结算即释放。",
         )}
       </div>
     </>
@@ -2679,8 +2686,10 @@ function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
           color: "var(--ww-text-muted)",
         }}
       >
+        {/* 「倒序 · 纸面模拟」已在区块标题条的口径半句里,这里不重复;留下
+            的是会改变读数的那句:这张表不是全部信号,只是已执行的动作。 */}
         {t(
-          "{a} 次买入 · {b} 次兑现 · 倒序(最新在前)· 纸面模拟,无真实成交;仅记录已执行动作,被护栏/新鲜度闸门拦下的信号不在此列",
+          "{a} 次买入 · {b} 次兑现 · 仅记录已执行动作,被护栏 / 新鲜度闸门拦下的信号不在此列",
           { a: buys, b: events.length - buys },
         )}
       </div>
@@ -2797,11 +2806,9 @@ function HistoryDialog({ positions }: { positions: FollowPositionRow[] }) {
           </tbody>
         </table>
       </div>
-      <div className="note-strip">
-        {t(
-          "「金额 / 盈亏」一列两义:买入行是金额、兑现行是盈亏 —— 保留一列但给动作徽章上色,靠色块区分而不是靠读者猜。仅记录已执行动作,被护栏 / 新鲜度闸门拦下的信号不在此列。",
-        )}
-      </div>
+      {/* 卡底说明条删掉:「金额 / 盈亏」一列两义已写在该列表头的 title 里
+          (买入行=本金、兑现行=已实现盈亏),「只记已执行动作」已在表上方那
+          条说明里 —— 两句都有去处,不必在表下再讲一遍。 */}
     </>
   );
 }
@@ -2850,15 +2857,25 @@ function DetailSection({
   children,
   note,
   noteWarn,
+  flush,
 }: {
   title: string;
   meta?: string;
   children: ReactNode;
   note?: string;
   noteWarn?: boolean;
+  /**
+   * 纯呈现开关(不改内容/顺序):子内容自带卡壳(仓位表、深度分析块)时置
+   * true —— 子组件用自己的 flush 把内层框归零,这里同时不裁 overflow:
+   * 那些块里的 (?) 点开是绝对定位的弹出层,一裁触屏读者就再也读不到口径。
+   */
+  flush?: boolean;
 }) {
   return (
-    <section className="ds-card" style={{ overflow: "hidden" }}>
+    <section
+      className="ds-card"
+      style={flush ? undefined : { overflow: "hidden" }}
+    >
       <div className="card-bar">
         <span style={{ fontWeight: 600 }}>{title}</span>
         {meta ? (
@@ -3050,8 +3067,10 @@ function StrategyDetailDialog({
             <DetailSection
               title={t("净值走势")}
               meta={t("· 累计已实现盈亏 · 不含持仓浮盈")}
+              /* 只留会改变读数的那句;「标记点为什么画得比线醒目」是画法说明,
+                 不占页面(推演留在 Sparkline 顶部的代码注释里)。 */
               note={t(
-                "结算点本身才是真实数据,曲线只是连接方式 —— 口径是「只在结算这一刻发生变化」。平滑曲线看着更像连续过程,所以标记点比线更醒目;这里一次只画一条线、画布接近全宽,标记半径固定不随点数收缩。",
+                "结算点才是真实数据,曲线只是连接方式 —— 净值只在结算这一刻变化。",
               )}
             >
               <div style={{ padding: "14px var(--s-4)" }}>
@@ -3069,38 +3088,24 @@ function StrategyDetailDialog({
               </div>
             </DetailSection>
 
-            <DetailSection
-              title={t("战绩全景")}
-              meta={t("· 每项的口径在自己的 (?) 里")}
-            >
+            <DetailSection title={t("战绩全景")}>
               <StrategyFullMetrics s={s} delayExec={delayExec} />
             </DetailSection>
           </>
         ) : tab === "analysis" ? (
-          // 不套 DetailSection:面板自身就是一叠白卡(DeepAnalysis.tsx 的
-          // Block / ①下注质量体检卡),再包一层白卡就是卡中卡 —— 双描边 +
-          // 双阴影,而这套皮的层级只该来自 1px 分格线。外层卡的
-          // overflow:hidden 还会把格内 (?) 点开的绝对定位弹出层裁掉
-          // (globals.css .tip-pop:focus::after),触屏读者就再也读不到口径。
-          // 与首页「结算净值曲线」同一处理:区块标题降级成一行 hint(tab
-          // 标签已经承担了"这是什么"),内容直接铺开。
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "var(--s-3)",
-            }}
-          >
-            <div className="ds-hint">
-              {t("深度分析")} {t("· 这一档的钱从哪赢来的")}
-            </div>
+          // 每个 tab = 一张 section 卡,内容直接铺在卡里。面板自身是一叠白卡,
+          // 所以走 flush:面板把每一块的卡壳归零(只留 1px 分格线),外层
+          // DetailSection 也不裁 overflow —— 块内 (?) 点开是绝对定位的弹出层
+          // (globals.css .tip-pop:focus::after),裁掉触屏就读不到口径。
+          <DetailSection title={t("深度分析")} flush>
             {/* rows 直接喂 open+settled:open 仓只进面板头部「不计入」说明,
                 所有指标只看 settled(口径见 DeepAnalysisPanel 顶部注释)。 */}
             <DeepAnalysisPanel
               rows={allPos}
               exitCounterfactual={s.exitCounterfactual}
+              flush
             />
-          </div>
+          </DetailSection>
         ) : tab === "cost" ? (
           <DetailSection
             title={t("成本分解")}
@@ -3137,23 +3142,18 @@ function StrategyDetailDialog({
             <HistoryDialog positions={allPos} />
           </DetailSection>
         ) : (
-          // 同「深度分析」tab:两张表各自就是一张白卡(表 + 表下降级态说明
-          // 条,见 SettledTable/OpenTable),不再外套 DetailSection —— 套了
-          // 就是卡中卡。原区块标题由 tab 标签承担,那句"这是首页同一套表"的
-          // 口径降级为表前一行 hint:口径先行,仍然在数据前面被读到。
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "var(--s-3)",
-            }}
-          >
-            <div className="ds-hint">
-              {t(
-                "该策略的纸面仓位——与首页「仓位明细」区同一套表格,已按这一档筛好,不用退回首页再按策略筛一遍",
-              )}
-            </div>
-            <div className="filter-row">
+          // 同「深度分析」tab:一张 section 卡,二级切换 + 表直接铺在卡里,
+          // 表用 flush 把自己的卡壳归零(不然就是卡中卡)。原来那句"这是
+          // 首页同一套表、已按这一档筛好"删掉 —— 弹窗标题已写明是哪一档,
+          // 表长什么样一眼就看得见,不需要先解释一遍。
+          <DetailSection title={t("仓位明细")} flush>
+            <div
+              className="filter-row"
+              style={{
+                padding: "10px var(--s-4)",
+                borderBottom: "1px solid var(--ww-border)",
+              }}
+            >
               <Segmented<PosTab>
                 ariaLabel={t("仓位状态")}
                 options={[
@@ -3182,14 +3182,16 @@ function StrategyDetailDialog({
               <SettledTable
                 rows={settledRows}
                 emptyText={t("该策略尚无已结算的纸面仓位")}
+                flush
               />
             ) : (
               <OpenTable
                 rows={openRows}
                 emptyText={t("该策略当前没有持仓中的纸面仓位")}
+                flush
               />
             )}
-          </div>
+          </DetailSection>
         )}
       </div>
     </Modal>
@@ -3235,7 +3237,7 @@ function StrategyListView({
           <tr>
             {/* emoji + 名字 + 族标签 + 状态徽章 + 门槛说明全部收进一格:
                       门槛说明是这张表里唯一需要换行的文本,给它整整一列的宽度。 */}
-            <th>{t("策略 · 门槛")}</th>
+            <th>{t("策略")}</th>
             <th
               className="is-right"
               title={t("已结算仓位累计已实现盈亏(不含持仓浮盈)")}
@@ -3332,7 +3334,14 @@ function StrategyListRow({
   const empty = state === "empty";
   return (
     <tr>
-      <td data-label={t("策略")} className="cell-wrap">
+      {/* 行内只放「图标 + 名字 + 标签」—— 一眼认出是哪一档就够了。门槛说明
+          不再占一行正文:它是参数不是身份,读者真要核对门槛时会点「详情」
+          (弹窗里有全量 paramsHint)。这里保留在 title 里,悬停即可读,不占版面。 */}
+      <td
+        data-label={t("策略")}
+        className="cell-wrap"
+        title={cardParamsHint(s.params, t)}
+      >
         <span
           style={{
             display: "flex",
@@ -3367,20 +3376,6 @@ function StrategyListRow({
           ) : s.decay?.state === "watch" ? (
             <Tag variant="warn">{t("衰变观察")}</Tag>
           ) : null}
-        </span>
-        {/* 门槛说明永不截断:超长换行,顶对齐(.ds-table td 已 vertical-align:
-            top)。 */}
-        <span
-          style={{
-            display: "block",
-            marginTop: 3,
-            fontSize: "var(--t-sm)",
-            lineHeight: 1.45,
-            color: "var(--ww-text-muted)",
-            overflowWrap: "anywhere",
-          }}
-        >
-          {cardParamsHint(s.params, t)}
         </span>
       </td>
       {empty ? (
@@ -3566,15 +3561,22 @@ function MarketCell({ p }: { p: FollowPositionRow }) {
 function SettledTable({
   rows,
   emptyText,
+  flush,
 }: {
   rows: LabeledRow[];
   emptyText?: string;
+  /**
+   * 纯呈现开关(不改列、不改内容):外层已经有一张卡时(详情弹窗「仓位明细」
+   * tab 的 DetailSection)把自己的卡壳归零,避免卡中卡的双描边 + 双阴影。
+   */
+  flush?: boolean;
 }) {
   const { t } = useLang();
   if (rows.length === 0) {
-    return (
+    const empty = (
       <div className="ds-empty">{emptyText ?? t("尚无已结算的纸面仓位")}</div>
     );
+    return flush ? <div style={{ padding: "var(--s-4)" }}>{empty}</div> : empty;
   }
   const now = Math.floor(Date.now() / 1000);
   return (
@@ -3582,7 +3584,10 @@ function SettledTable({
     // 时横向滚动),但描边/圆角/阴影交给外层卡,不然滚动区自己一层框、卡再
     // 一层框,就成了卡中卡;说明条作为卡的直接子级放在滚动区外 —— 放进去
     // 的话向右滚表时它会跟着移出视区。
-    <div className="ds-card" style={{ overflow: "hidden" }}>
+    <div
+      className={flush ? undefined : "ds-card"}
+      style={flush ? undefined : { overflow: "hidden" }}
+    >
       <div
         className="ds-table-wrap"
         style={{
@@ -3717,12 +3722,11 @@ function SettledTable({
           </tbody>
         </table>
       </div>
-      {/* 卡底琥珀条:表里的「—」有四处成因、还有一个非「—」的降级态,
-          它们的含义此前只藏在列头 title 的悬停里,触屏永远读不到。琥珀 =
-          需留神的口径,一条列全,不穷举一半。 */}
+      {/* 卡底琥珀条:降级态必须列全(触屏读不到列头 title),但用最短句式 ——
+          成本列的配色语义已在各自列头的 (?) 里,不在这里再讲一遍。 */}
       <div className="note-strip note-strip--warn">
         {t(
-          "⚠️ 表里的「—」是「判不了」,不是 0,四处成因各不相同:「延迟成本」与「形成后2h」的「—」= 老仓没有形成价(上线前的仓位不回填);「执行滑点」的「—」= 盘口无历史(仅新开仓有值);「进价→结算价」右侧的「—」= 该仓没有结算价读数。另有一个非「—」的降级态:「薄」= 盘口深度吃不满本仓名义金额,均价按已成交部分计(悬停给出实际成交额)。成本三列(追价 / 延迟 / 执行滑点)一律中性色,只有 |¢差| > 10¢ 转琥珀;「形成后2h」是价格方向,涨绿跌红、±0.5¢ 死区记平推 —— 与成本类是两套语义,别混着读。",
+          "⚠️「—」= 判不了,不是 0:延迟成本 / 形成后2h = 老仓无形成价 · 执行滑点 = 盘口无历史 · 结算价 = 无读数;「薄」= 盘口吃不满本仓,均价按已成交部分计。",
         )}
       </div>
     </div>
@@ -3781,9 +3785,12 @@ function CurrentPriceCell({
 function OpenTable({
   rows,
   emptyText,
+  flush,
 }: {
   rows: LabeledRow[];
   emptyText?: string;
+  /** 见 SettledTable 同名 prop:外层已有卡时把自己的卡壳归零(纯呈现)。 */
+  flush?: boolean;
 }) {
   // 当前价惰性加载:无条件放在任何 early return 之前(Hooks 规则,与本文件
   // EquityCurve/Sparkline 的既有约定同一原则)。空表时 rows.map 是 [],
@@ -3793,16 +3800,20 @@ function OpenTable({
   const { prices } = useCurrentPrices(rows.map((p) => p.asset));
   const { t } = useLang();
   if (rows.length === 0) {
-    return (
+    const empty = (
       <div className="ds-empty">
         {emptyText ?? t("当前没有持仓中的纸面仓位")}
       </div>
     );
+    return flush ? <div style={{ padding: "var(--s-4)" }}>{empty}</div> : empty;
   }
   const now = Math.floor(Date.now() / 1000);
   return (
     // 与已结算表同一外壳:白卡 = 表(滚动区不再自带描边)+ 卡底说明条。
-    <div className="ds-card" style={{ overflow: "hidden" }}>
+    <div
+      className={flush ? undefined : "ds-card"}
+      style={flush ? undefined : { overflow: "hidden" }}
+    >
       <div
         className="ds-table-wrap"
         style={{
@@ -3919,12 +3930,12 @@ function OpenTable({
           </tbody>
         </table>
       </div>
-      {/* 卡底琥珀条:持有中表里同样有三处成因不同的「—」,外加一个"还在
-          取价"的中间态(…)—— 这些含义此前只在列头 title 的悬停里,触屏
-          读不到。 */}
+      {/* 卡底琥珀条:三处成因不同的「—」+ 中间态「…」必须列全(触屏读不到
+          列头 title),再加一句"当前价不进战绩"—— 不写这句会有人拿浮盈当
+          业绩读。惰性取价等实现细节不占版面,留在列头的 (?) 里。 */}
       <div className="note-strip note-strip--warn">
         {t(
-          "⚠️ 表里的「—」是「判不了」,不是 0,三处成因各不相同:「当前价」的「—」= 缺 asset 或取价失败,不可取价(不是加载中 —— 还在取价时显示「…」);「延迟成本」的「—」= 老仓没有形成价(上线前的仓位不回填);「执行滑点」的「—」= 盘口无历史(仅新开仓有值),其「薄」= 盘口深度吃不满本仓名义金额,均价按已成交部分计。当前价只在挂载这张表时惰性取一次,仅供参考:持有中仓位没有已实现盈亏,不进胜率/ROI/年化,本页所有战绩都是结算口径。",
+          "⚠️「—」= 判不了,不是 0:当前价 = 缺 asset 或取价失败(取价中显示「…」)· 延迟成本 = 老仓无形成价 · 执行滑点 = 盘口无历史;「薄」= 盘口吃不满本仓,均价按已成交部分计。当前价仅供参考,不进任何战绩口径。",
         )}
       </div>
     </div>
@@ -3980,10 +3991,11 @@ function EdgeMatrixBody({ shown }: { shown: FollowStrategyView[] }) {
   }
   return (
     <>
+      {/* 一行图例 + 一句会改变读数的口径(聚合行含重复下注)。淡显格/「·」/
+          「—」的读法在表下那条琥珀里,列序的由来在列头 title 里,不重复。 */}
       <div className="ds-hint" style={{ marginBottom: "var(--s-2)" }}>
         {t(
-          "格子 = edge(实际胜率 − 该格均入场价的隐含胜率,已结算口径)与仓数;绿正红负,样本 <{n} 仓的格子淡显 · 列按全体样本数降序 —— 新档位设计的选题池。「全部」行为跨档聚合,多档会跟进同一信号,样本含重复下注",
-          { n: BUCKET_LOW_SAMPLE_N },
+          "格子 = edge(实际胜率 − 隐含胜率)· 胜率 · 仓数 · 落袋;「全部」行跨档聚合,样本含重复下注。",
         )}
       </div>
       <EdgeMatrixTable matrix={matrix} aggregateId={FILTER_ALL} />
@@ -4168,9 +4180,12 @@ export default function FollowPage() {
             {t("📈 模拟策略 · 不动真金")}
           </div>
           <h1 className="page-head__title">{t("策略中心")}</h1>
+          {/* 一句话说清「这页是什么」。族序/反向对照/跨档相加三段口径不在这里
+              重复:族说明收在卡片视图族名的 (?) 与族开关按钮的悬停里,反向档
+              的读法在同一份族说明里,跨档相加的告诫在下方那条唯一的琥珀条上。 */}
           <p className="page-head__desc">
             {t(
-              "现价进场 · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)。按信号族分组,族序 = 信息强度递减:共识 → 异常大额 → 分歧 → 钱包画像;带「反向对照」标的档位对同一信号买对面,与正向档成对读战绩。各档持仓有重叠,战绩不可跨档相加。",
+              "各档纸面策略的战绩:现价进场 · 持有到结算 · 固定 $/信号 · 仅结算盈亏(不做浮盈)。",
             )}
           </p>
           <div
@@ -4239,15 +4254,26 @@ export default function FollowPage() {
         </div>
       </header>
 
-      {/* 口径条 —— 统计声明放在数据「前面」,不放脚注。执行成本这件事决定
-          了整页数字该怎么读,不能等读者滚到表尾才告诉他。 */}
+      {/* 全页唯一一条琥珀口径条 —— 统计声明放在数据「前面」,不放脚注。只留
+          「不读就会把数字读错」的两句:盈亏偏乐观、不可跨档相加(后者的完整
+          论证收在它自己的悬停里,原来常驻在筛选条右端的那份已并进这里)。
+          新鲜度窗口是参数不是读数口径,已在各档门槛提示/详情里,不占这条。 */}
       <div
         className="ds-callout ds-callout--warn"
         style={{ marginBottom: "var(--s-4)" }}
       >
         {t(
-          "⚠️ 按报价快照纸面成交,不含盘口执行成本(价差 / 深度),盈亏偏乐观 —— 实测估计见「执行滑点」列与单档详情的成本分解。新鲜度窗口因档而异,默认 15 分钟,详见各档详情。",
+          "⚠️ 纸面成交不含盘口执行成本(价差 / 深度),盈亏偏乐观 —— 实测见「执行滑点」列。",
         )}
+        {shown.length >= 2 ? (
+          <>
+            {" "}
+            <Icon
+              s={t("各档持仓重叠,战绩不可跨档相加")}
+              title={t(CROSS_TIER_CAVEAT)}
+            />
+          </>
+        ) : null}
       </div>
 
       {data?.error ? (
@@ -4277,9 +4303,8 @@ export default function FollowPage() {
               不是同一种控件。默认列表,选择记进 localStorage(见
               changeViewMode)。
 
-              口径声明放在这一行右端:两种视图消费同一份 shown/groups,声明
-              对两边同样适用,不用为列表再放一条。仅在 ≥2 档时渲染 —— 只有
-              一档时不存在"跨档相加"这回事。 */}
+              「不可跨档相加」的声明原本挂在这一行右端,现已并进页头那条唯一的
+              琥珀口径条 —— 两种视图消费同一份 shown/groups,声明只需要一处。 */}
           <div className="filter-bar">
             <Segmented<ViewMode>
               ariaLabel={t("展示方式")}
@@ -4290,26 +4315,14 @@ export default function FollowPage() {
               value={viewMode}
               onChange={changeViewMode}
             />
-            {shown.length >= 2 ? (
-              <span
-                className="filter-bar__right"
-                style={{
-                  fontSize: "var(--t-base)",
-                  color: "var(--ww-warn)",
-                }}
-              >
-                <Icon
-                  s={t("⚠️ 各档持仓有重叠,战绩不可跨档相加")}
-                  title={t(CROSS_TIER_CAVEAT)}
-                />
-              </span>
-            ) : null}
           </div>
 
           {viewMode === "card" ? (
             // 策略卡:按信号族分组(共识 → 异常大额 → 分歧 → 钱包画像,按
-            // 信息强度递减排列,也是 FAMILY_ORDER 的实现顺序),每组一个小
-            // 标题 + 一句"这一族在回答什么"。
+            // 信息强度递减排列,也是 FAMILY_ORDER 的实现顺序)。族标题行只留
+            // 「族名 + 档数 + (?)」——"这一族在回答什么"那几句(含反向对照档
+            // 怎么成对读)收进 (?) 的悬停,不占正文;与族开关按钮的 title 是
+            // 同一份 blurb,不写第二套。
             groups.map((g) => (
               <section key={g.key} style={{ marginBottom: "var(--s-5)" }}>
                 <div
@@ -4327,8 +4340,11 @@ export default function FollowPage() {
                   <span className="ds-hint">
                     {t("{n} 档", { n: g.items.length })}
                   </span>
-                  <span className="ds-hint" style={{ minWidth: 0 }}>
-                    {t(g.meta.blurb)}
+                  <span
+                    className="ds-hint"
+                    style={{ color: "var(--ww-text-faint)" }}
+                  >
+                    <Icon s="(?)" title={t(g.meta.blurb)} />
                   </span>
                 </div>
                 {/* 卡宽固定 320px、左对齐平铺(见 StrategyCard 顶部注释):

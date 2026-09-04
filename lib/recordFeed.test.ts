@@ -100,6 +100,63 @@ describe("buildRecordFeed", () => {
     expect(s.record.settled).toBe(2);
     expect(s.record.wins).toBe(1);
     expect(s.record.implied).toBeCloseTo(1.26, 6);
+    // 纸面盈亏只加 record 分母里的那两行:w3 未投递、w4 未结算都不进。
+    expect(s.realizedPnl).toBeCloseTo(293.7 - 500, 6);
+    db.close();
+  });
+
+  it("纸面盈亏与 record 咬同一批行:无入场价的行不可评级,也不进合计", () => {
+    const db = openDb(":memory:");
+    seed(db, {
+      strategy: "巨鲸",
+      cid: "w1",
+      emittedAt: NOW - 86_400,
+      settled: { ts: NOW - 3600, exit: 1, pnl: 100 },
+    });
+    const noPrice = seed(db, {
+      strategy: "巨鲸",
+      cid: "w2",
+      emittedAt: NOW - 86_400,
+      settled: { ts: NOW - 3600, exit: 1, pnl: 900 },
+    });
+    db.prepare(
+      "UPDATE strategy_signals SET entry_price = NULL WHERE id = ?",
+    ).run(noPrice);
+    const s = buildRecordFeed(db, { nowSec: NOW }).strategies[0];
+    expect(s.record.settled).toBe(1);
+    expect(s.realizedPnl).toBe(100);
+    db.close();
+  });
+
+  it("任一可评级行缺 realized_pnl → 合计给 null(缺一行的和是错的和,不是部分的和)", () => {
+    const db = openDb(":memory:");
+    seed(db, {
+      strategy: "巨鲸",
+      cid: "w1",
+      emittedAt: NOW - 86_400,
+      settled: { ts: NOW - 3600, exit: 1, pnl: 100 },
+    });
+    const blank = seed(db, {
+      strategy: "巨鲸",
+      cid: "w2",
+      emittedAt: NOW - 86_400,
+      settled: { ts: NOW - 3600, exit: 1, pnl: 50 },
+    });
+    db.prepare(
+      "UPDATE strategy_signals SET realized_pnl = NULL WHERE id = ?",
+    ).run(blank);
+    expect(
+      buildRecordFeed(db, { nowSec: NOW }).strategies[0].realizedPnl,
+    ).toBeNull();
+    db.close();
+  });
+
+  it("尚无可评级行 → 合计给 null,不是 0(「—」是判不了)", () => {
+    const db = openDb(":memory:");
+    seed(db, { strategy: "巨鲸", cid: "w1" });
+    const s = buildRecordFeed(db, { nowSec: NOW }).strategies[0];
+    expect(s.record.settled).toBe(0);
+    expect(s.realizedPnl).toBeNull();
     db.close();
   });
 

@@ -656,10 +656,10 @@ export default function AccumulationPage() {
         <div style={{ minWidth: 0 }}>
           <div className="page-head__eyebrow">{t("🧩 绕过单笔监控的建仓")}</div>
           <h1 className="page-head__title">{t("拆单累计")}</h1>
+          {/* 描述只说「这页是什么」。原句后半「单笔监控看不到的建仓方式」
+              与上面的小标同义，删掉不丢信息。 */}
           <p className="page-head__desc">
-            {t(
-              "同一钱包在同一市场的多笔小额买入合并成一条 —— 单笔监控看不到的建仓方式。",
-            )}
+            {t("同一钱包在同一市场的多笔小额买入，合并成一条。")}
           </p>
         </div>
         <div className="page-head__actions">
@@ -667,40 +667,31 @@ export default function AccumulationPage() {
         </div>
       </header>
 
-      {/* 口径条 —— 统计声明放在数据「前面」，不放脚注（设计稿 §5.3）。
-          「净买入为上界」是读数前必须先知道的事，不是表尾小字。 */}
+      {/* 口径条 —— 全页只留这一条琥珀，且只留「不读就会把数字读错」的那句：
+          净买入是上界。原句里的 floor / ≥3 笔 / 每笔 <$10k 三项参数已经由
+          「统计口径」KPI 格与筛选条逐字报出，不在这里再念一遍。
+          覆盖被截断是同一类「读数会偏」的告诫，并进同一条，不另起一框。 */}
       <div
         className="ds-callout ds-callout--warn"
         style={{ marginBottom: "var(--s-4)" }}
       >
-        {t("精度 floor")} ${fmtUsd(floor)}
-        {t(
-          " · 每笔 < $10k 才算拆单 · ≥3 笔买入 · 低于 floor 的卖出不可见，净买入为上界",
-        )}
+        {t("低于精度 floor 的卖出不可见 —— 净买入是上界")}
+        {data?.truncated ? (
+          <>
+            {" · "}
+            {data.oldestTs
+              ? t("API 回看深度已用满，实际覆盖 {span}（自 {time} 起）", {
+                  span: fmtWindowSpan(
+                    data.oldestTs,
+                    Math.floor(Date.now() / 1000),
+                    t,
+                  ),
+                  time: fmtTime(data.oldestTs),
+                })
+              : t("API 回看深度已用满，窗口尾部未全覆盖")}
+          </>
+        ) : null}
       </div>
-
-      {/* 覆盖被截断同样是「需留神的口径」，跟在口径条后、数据之前。 */}
-      {data?.truncated ? (
-        <div
-          className="ds-callout ds-callout--warn"
-          style={{ marginBottom: "var(--s-4)" }}
-        >
-          {t("成交太密集，API 回看深度已用满 — 以下为完整覆盖时段")}
-          {data.oldestTs ? (
-            <>
-              {" · "}
-              {t("实际覆盖 {span}（自 {time} 起）", {
-                span: fmtWindowSpan(
-                  data.oldestTs,
-                  Math.floor(Date.now() / 1000),
-                  t,
-                ),
-                time: fmtTime(data.oldestTs),
-              })}
-            </>
-          ) : null}
-        </div>
-      ) : null}
 
       {/* While the one-shot auto retry is pending, the transient error is
           being handled — show the warm-up notice (below) instead of a scary
@@ -771,7 +762,14 @@ export default function AccumulationPage() {
         </div>
 
         <div className="filter-row">
-          <span className="filter-row__label">{t("精度")}</span>
+          {/* floor 的取舍（越低抓得越细、覆盖越短）是调参说明，不是读数告诫
+              —— 收进这个标签的 title，不占正文。 */}
+          <span
+            className="filter-row__label"
+            title={t("floor 越低越能抓到小额拆单，但时间窗越短")}
+          >
+            {t("精度")}
+          </span>
           <Segmented<Floor>
             ariaLabel={t("精度")}
             value={floor}
@@ -882,19 +880,16 @@ export default function AccumulationPage() {
         // First fetch, nothing to show yet — the deep double-sided window pull
         // can take 5-15s and a blank area reads as "the tool is broken".
         <div className="ds-empty">
-          {t(
-            "正在聚合 {hours}h 内的拆单买入 — 深度拉取首次约 5-15 秒，请稍候…",
-            {
-              hours,
-            },
-          )}
+          {t("正在聚合 {hours}h 内的拆单买入 —— 首次深拉约 5-15 秒…", {
+            hours,
+          })}
         </div>
       ) : view === "empty" ? (
         // 空态给内容也给出路 —— 空的表格框比一句话更糟。
         <div className="ds-empty">
           <div>{t("该条件下暂无拆单累计")}</div>
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            {t("放宽净买入门槛、降低精度 floor 或拉长时间窗，再看一次。")}
+            {t("放宽净买入门槛、降低 floor 或拉长时间窗。")}
           </div>
         </div>
       ) : view === "rows" ? (
@@ -949,10 +944,15 @@ export default function AccumulationPage() {
                     {t("赔率")}
                   </th>
                   <th className="is-right">{t("时间")}</th>
+                  {/* 「净买入 = 成本敞口」的定义原先躺在卡底说明条里；口径归
+                      列头的 (?) title，正文不背定义（单元格 title 另有本行的
+                      实际股数 × 均价）。 */}
                   <th
                     className="is-sortable is-right"
                     onClick={() => toggleSort("net")}
-                    title={t("点击按净买入排序")}
+                    title={t(
+                      "成本敞口 = 留存净股数 × 买入均价 · 点击按净买入排序",
+                    )}
                   >
                     {t("净买入")}
                     {sortArrow("net")}
@@ -1034,14 +1034,10 @@ export default function AccumulationPage() {
               </span>
             </div>
           ) : null}
-          {/* 卡底说明条 —— 灰 = 口径说明（琥珀留给读前必看的那条）。 */}
-          <div className="note-strip">
-            {t("floor 越低越能抓到小额拆单，但时间窗越短")}
-            {" · "}
-            {t(
-              "净买入取成本敞口口径（留存净股数 × 买入均价）；带「对冲?」「做市?」标记的组默认沉底，不与干净的定向建仓争排名。",
-            )}
-          </div>
+          {/* 卡底说明条已撤：它说的两件事都另有去处 —— floor 取舍进了筛选条
+              「精度」标签的 title，成本敞口口径进了「净买入」列头的 title，
+              「对冲?/做市? 默认沉底」进了这两个标记自己的 title 与
+              「市场 · 结果」列头。正文不重复讲一遍。 */}
         </div>
       ) : null}
     </main>

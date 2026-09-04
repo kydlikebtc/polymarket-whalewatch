@@ -10,7 +10,6 @@ export const DICT_STATUS: Record<string, string> = {
   全部系统正常运行: "All Systems Operational",
   "{n} 个组件异常": "{n} component(s) degraded",
   引擎未在运行: "Engine is not running",
-  "本次进程已连续运行 {d} 天": "Current process up for {d} days",
   "无法获取状态（{err}）—— 下方为最后一次成功读取的结果。":
     "Could not fetch status ({err}) — showing the last successful read below.",
   "停跳组件：{list}": "Stalled components: {list}",
@@ -27,8 +26,10 @@ export const DICT_STATUS: Record<string, string> = {
   已出现断档: "Interrupted",
   "相邻两轮间隔超过 {t} 即记断档":
     "A gap over {t} between consecutive cycles counts as an interruption",
+  // 副行只说「还差几天」;起算日退到同一格的 title 里。
+  "还差 {n} 天可重推阈值": "{n} more day(s) before thresholds are re-derived",
+  "连续覆盖起算日 {d}（UTC）": "Unbroken run started {d} (UTC)",
 
-  组件: "Component",
   循环: "Loop",
   状态: "Status",
   最近心跳: "Last heartbeat",
@@ -41,44 +42,29 @@ export const DICT_STATUS: Record<string, string> = {
   从未启动: "Never started",
   "加载中…": "Loading…",
   无循环心跳记录: "No loop heartbeats recorded",
-  "正在读取 /api/health": "Reading /api/health",
   "引擎还没写过心跳 —— 若它刚重启，等一个循环周期再看。":
     "The engine has never written a heartbeat — if it just restarted, check back after one cycle.",
-  "表内的 — 是「判不了」不是零：该循环当日没有可用计数。":
-    'A "—" in this table means "cannot tell", not zero: the loop has no counter for today.',
+  "表内的 — 是「判不了」不是零：当日无可用计数。":
+    'A "—" in this table means "cannot tell", not zero: no counter for that loop today.',
 
   更新于: "Updated at",
   "每 30 秒自动刷新": "auto-refreshes every 30s",
-  "心跳表按循环只留存当日计数；跨日历史由共识循环逐轮落库的实测时间戳重建（上方连续性区）——每一格都有原始行背书，不做推测式 uptime。":
-    "Heartbeats keep same-day counters only; cross-day history is rebuilt from the consensus loop's per-cycle measured timestamps (the continuity section above) — every cell is backed by raw rows, never inferred uptime.",
-  // 上面那条整句拆成两半:后半句在说明条里是本页唯一一处 600 字重。
-  "心跳表按循环只留存当日计数；跨日历史由共识循环逐轮落库的实测时间戳重建（上方连续性区）。":
-    "Heartbeats keep same-day counters only; cross-day history is rebuilt from the consensus loop's per-cycle measured timestamps (the continuity section above).",
+  // 卡底说明条拆成三段:第二段是本页唯一一处 600 字重。
+  "心跳表只留当日计数，跨日历史由上方连续性区重建。":
+    "Heartbeats keep same-day counters only; cross-day history is rebuilt in the continuity section above.",
   "每一格都有原始行背书，不做推测式 uptime。":
     "Every cell is backed by raw rows — never inferred uptime.",
 
   // 数据连续性(30 天起算时钟)
-  "数据连续性 · 30 天起算时钟": "Data continuity · the 30-day clock",
   "30 天起算时钟 · 按 UTC 日历日": "The 30-day clock · UTC calendar days",
-  "共识循环落下第一轮时间戳后，这里会出现第一格。":
-    "The first cell appears once the consensus loop writes its first timestamp.",
   连续性数据尚未就绪: "Continuity data not ready yet",
-  "正在读取 /api/continuity —— 取不到时这里保留上一次成功的结果。":
-    "Reading /api/continuity — if it fails, the last successful read stays on screen.",
-  "攒满 {n} 个不间断 UTC 日后重推所有策略阈值 —— 这是全站 edge 数字的前置闸门。":
-    "After {n} uninterrupted UTC days every strategy threshold gets re-derived — the gate in front of every edge figure on this site.",
   天: "days",
-  "尚无循环记录 —— 引擎从未在这个库上跑过共识循环。":
-    "No cycle records yet — the engine has never run its consensus loop against this database.",
+  "尚无循环记录 —— 引擎从未在这个库上跑过共识循环；落下第一轮时间戳后这里会出现第一格。":
+    "No cycle records yet — the engine has never run its consensus loop against this database; the first cell appears once it writes its first timestamp.",
   "已达标 · 自 {d} 起连续覆盖":
     "Gate reached · covered without interruption since {d}",
-  "起算日 {d}（UTC）· 距 30 天闸门还差 {n} 天":
-    "Clock started {d} (UTC) · {n} day(s) to the 30-day gate",
   "连续覆盖尚未形成 —— 从下一个完整 UTC 日重新起算":
     "No unbroken run yet — the clock restarts with the next full UTC day",
-  "今天进行中 · 暂无断档": "Today in progress · no interruption so far",
-  "今天进行中 · 已出现断档，今天将不计入":
-    "Today in progress · already interrupted; today will not count",
   "{d} · 覆盖 · {n} 轮": "{d} · covered · {n} cycles",
   "{d} · 断档 · 最长停顿 {t}": "{d} · interrupted · longest stall {t}",
   "{d} · 记录起点日（从中途开始，不计入）":
@@ -90,8 +76,8 @@ export const DICT_STATUS: Record<string, string> = {
   起点日: "First day",
   无记录: "No records",
   今天: "Today",
-  "判定：共识循环每 5 分钟落一轮实测时间戳，相邻两轮间隔超过 {t} 即记断档 —— 与下表判停跳同一把尺；跨午夜的断档两天都不计入；按 UTC 日历日。记录始于 {d}。":
-    "Verdict rule: the consensus loop writes one measured timestamp every 5 minutes; any inter-cycle gap over {t} counts as an interruption — the same yardstick the table below uses for stalls. A gap crossing midnight disqualifies both days; days are UTC calendar days. Records begin {d}.",
+  "记录始于 {d}；跨午夜的断档两天都不计入。攒满 {n} 个不间断 UTC 日后重推所有策略阈值。":
+    "Records begin {d}; a gap crossing midnight disqualifies both days. After {n} uninterrupted UTC days every strategy threshold gets re-derived.",
   嵌入此徽章: "Embed this badge",
   "嵌入卡 60 秒缓存、无脚本、自带署名回链；加 ?theme=dark 得深色版。":
     "The embed is cached for 60s, script-free, and carries an attribution backlink; append ?theme=dark for the dark variant.",

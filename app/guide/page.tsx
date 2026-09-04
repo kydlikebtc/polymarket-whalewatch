@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import { GUIDE_SECTIONS } from "../guide";
 import { useLang } from "../i18n";
 
@@ -11,9 +12,13 @@ import { useLang } from "../i18n";
 // 页面公开但不进 NAV/sitemap:入口先只挂 /manage(复刻 /status 先例)。
 //
 // 版式(设计稿 16「功能说明书 · 17 节」):页头 → 口径条 → 左侧锚点目录粘顶
-// + 右侧一节一张白卡;卡内三行「01 这是什么 / 02 怎么使用 / 03 怎么解读」,
-// 12px 大写小标在左 120px 槽,内容在右。层级只来自 1px 分格线与小标,
-// 不来自字号跳档。
+// (当前项由 scroll-spy 点亮) + 右侧一节一张白卡;卡内三行「01 这是什么 /
+// 02 怎么使用 / 03 怎么解读」,12px 大写小标在左 120px 槽,内容在右。
+// 层级只来自 1px 分格线与小标,不来自字号跳档。
+//
+// 页面正文不解释自己:原先末尾那句「页面保留纵向长页…左侧目录粘顶」描述的
+// 是读者眼前就能看见的版式,删掉不丢信息。留下的说明只剩两处 —— 页头一句
+// 「这页是什么」,和唯一那条会改变读法的琥珀口径条。
 
 // 卡内一行:左 12px 编号小标 + 右内容列表。三块同权,「怎么解读」不再
 // 单独套琥珀框 —— 口径框全页只出现一次(页头下那条),不逐节重复。
@@ -60,6 +65,38 @@ function GuideBlock({
 
 export default function GuidePage() {
   const { t } = useLang();
+
+  // 目录当前项(scroll-spy)—— 样式在 globals.css 的 .doc-toc a[aria-current]
+  // (蓝字 + 白底 + 左侧 2px 蓝轨)。用 IntersectionObserver 而不是 :target:
+  // 后者只在点击后生效,滚动进入某节时不亮。
+  const [activeId, setActiveId] = useState<string>(GUIDE_SECTIONS[0]?.id ?? "");
+  const visibleIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const els = GUIDE_SECTIONS.map((s) => document.getElementById(s.id)).filter(
+      (el): el is HTMLElement => el != null,
+    );
+    if (els.length === 0) return;
+    const seen = visibleIds.current;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) seen.add(e.target.id);
+          else seen.delete(e.target.id);
+        }
+        // 取文档序最靠前的可见节 —— 一屏能装下两三张卡时,当前项应该是
+        // 顶上那张,而不是最后一个触发回调的那张。
+        const first = GUIDE_SECTIONS.find((s) => seen.has(s.id));
+        if (first) setActiveId(first.id);
+      },
+      // 上 -72px 与卡片的 scrollMarginTop 对齐(粘顶栏高度);下 -55% 把判定
+      // 带收到视口上半,否则长页里五六节同时可见,当前项会来回跳。
+      { rootMargin: "-72px 0px -55% 0px" },
+    );
+    for (const el of els) io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
   return (
     <main className="ds-main">
       <header className="page-head">
@@ -70,9 +107,7 @@ export default function GuidePage() {
           </div>
           <h1 className="page-head__title">{t("功能说明书")}</h1>
           <p className="page-head__desc">
-            {t(
-              "每个板块三件事：这是什么、怎么使用、怎么解读。解读块写清口径、样本与「别这么读」。",
-            )}
+            {t("每个板块三件事：这是什么、怎么使用、怎么解读。")}
           </p>
         </div>
         <div className="page-head__actions">
@@ -85,14 +120,13 @@ export default function GuidePage() {
         </div>
       </header>
 
-      {/* 口径条 —— 琥珀框紧跟页头，放在正文之前(不做脚注) */}
+      {/* 口径条 —— 全页唯一一条琥珀框，紧跟页头放在正文之前(不做脚注)。
+          留它是因为它会改变读法:本页是摘要，不是权威口径本身。 */}
       <div
         className="ds-callout ds-callout--warn"
         style={{ marginBottom: "var(--s-5)" }}
       >
-        {t(
-          "口径的完整论证散在设计文档与 CHANGELOG（GitHub 仓库 docs/），本页是它们的板块级摘要——两处冲突时以代码与测试为准。",
-        )}
+        {t("本页是各板块口径的摘要；与代码 / 测试冲突时以后者为准。")}
       </div>
 
       <div className="doc-layout">
@@ -118,6 +152,9 @@ export default function GuidePage() {
               <li key={s.id}>
                 <a
                   href={`#${s.id}`}
+                  // 点击立刻点亮 —— 平滑滚动期间 observer 还没回调。
+                  aria-current={activeId === s.id ? "true" : undefined}
+                  onClick={() => setActiveId(s.id)}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -195,11 +232,6 @@ export default function GuidePage() {
               <GuideBlock no="03" label={t("怎么解读")} lines={s.read} />
             </section>
           ))}
-
-          {/* 版式说明脚注(设计稿 16 末行)—— 13px muted，不成卡不加框 */}
-          <p className="ds-hint" style={{ margin: 0 }}>
-            {t("页面保留纵向长页，可从头读到尾；左侧锚点目录粘顶。")}
-          </p>
         </div>
       </div>
     </main>

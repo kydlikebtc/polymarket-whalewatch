@@ -34,6 +34,17 @@ export interface RecordFeedStrategy {
   pushedCount: number;
   /** 已发布且已结算信号的 30d 价格调整战绩(gradeRows 唯一实现)。 */
   record: SignalRecord;
+  /**
+   * 上面那批行(且只有那批行)的纸面盈亏合计,美元。
+   *
+   * 与 `record` 咬同一个行集合是硬要求 —— 页面把它和超额并排印在同一格里,
+   * 两个数出自不同分母就成了两本账。gradeRows 会丢掉无入场价的行(没有基准
+   * 就没法评级),所以这里先按同一条谓词过滤。
+   *
+   * `null` = 判不了,不是 0:行集合为空,或其中任一行缺 realized_pnl ——
+   * 少一行的和是**错的和**,不是「部分的和」,宁可不给。
+   */
+  realizedPnl: number | null;
   settledRecent: RecordSettledRow[];
 }
 
@@ -75,16 +86,30 @@ export function buildRecordFeed(
         )
         .get(st.id) as { n: number }
     ).n;
+    // 一条查询同时喂 record 与纸面盈亏 —— 两个数必须出自同一批行,分成两条
+    // SQL 迟早会被改歪一条(窗口/投递谓词各改各的),那时页面上并排的两个数
+    // 就分了家。
     const graded = db
       .prepare(
-        `SELECT s.entry_price AS price, s.won FROM strategy_signals s
+        `SELECT s.entry_price AS price, s.won, s.realized_pnl AS pnl
+         FROM strategy_signals s
          WHERE s.strategy_id = ? AND s.settled = 1 AND s.won IS NOT NULL
            AND s.emitted_at >= ? AND ${PUSHED_EXISTS}`,
       )
       .all(st.id, nowSec - RECORD_DAYS * 86_400) as {
       price: number | null;
       won: number;
+      pnl: number | null;
     }[];
+    // gradeRows 的入场谓词(见 lib/signalRecord 的 record()):无价=无基准=
+    // 不可评级,该行两边账都不进。这里照抄,不复述阈值。
+    const priced = graded.filter(
+      (g) => typeof g.price === "number" && Number.isFinite(g.price),
+    );
+    const realizedPnl =
+      priced.length > 0 && priced.every((g) => g.pnl != null)
+        ? priced.reduce((sum, g) => sum + (g.pnl as number), 0)
+        : null;
     const settledRecent = (
       db
         .prepare(
@@ -125,6 +150,7 @@ export function buildRecordFeed(
       record: gradeRows(
         graded.map((g) => ({ won: g.won, price: g.price, side: "BUY" })),
       ),
+      realizedPnl,
       settledRecent,
     };
   });

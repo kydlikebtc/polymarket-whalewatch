@@ -147,11 +147,13 @@ export default function AlertRulesSection({ token }: { token: string }) {
     >
       <SectionHead
         title="TG 告警频道 · 触发条件（alerts 进料闸）"
+        // 只留会改变操作的两件事:改这里同时改了 ① 的进料(不止 TG),以及
+        // 保存要不要令牌。「同时是信号线 ① 与总线 large 的共同进料闸」的
+        // 来龙去脉由 ① 区块的 hint 承担。
         hint={
           <>
-            这套条件决定「哪些成交进 alerts 台账并推 TG 告警」—— 它同时是 信号线
-            ① 与总线 large 的共同进料闸(总开关/冷却只影响 TG 推送,
-            不影响入库)。与 /alerts 页配置面板同一份规则;保存
+            这套条件同时决定「进 alerts 台账」与「推 TG 告警」;总开关与冷却只
+            管推送,不管入库。保存
             {readonly ? "需要上方管理令牌" : "(本地部署免令牌)"}。
           </>
         }
@@ -170,10 +172,11 @@ export default function AlertRulesSection({ token }: { token: string }) {
           )}
           <div className="ds-empty">
             {msg ? "读不到当前触发条件。" : "正在读取当前触发条件…"}
-            <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-              读不到通常是管理令牌失效 —— 这套规则与 /alerts
-              配置面板是同一份,那边也能改。
-            </div>
+            {msg && (
+              <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+                {"通常是管理令牌失效;这套规则在 /alerts 配置面板也能改。"}
+              </div>
+            )}
           </div>
         </>
       ) : (
@@ -233,8 +236,9 @@ export default function AlertRulesSection({ token }: { token: string }) {
             </button>
             {msg && <span className="ds-hint">{msg}</span>}
           </div>
+          {/* 四个字段的标签里已各写了「空=不限」,这里只补那半句会被读错的。 */}
           <div className="ds-hint" style={{ marginTop: "var(--s-3)" }}>
-            空 = 不限,不是 0 —— 留空的价格/年龄/距结算三项完全不参与筛选。
+            空 = 不限,不是 0。
           </div>
         </>
       )}

@@ -132,39 +132,55 @@ function HelpMark({ tip }: { tip: string }) {
   );
 }
 
-// 区块骨架:一张白卡 —— 标题条(14/600)→ 口径说明条(13px muted,放在数据
-// 「前面」而不是脚注)→ 内容 → 可选的灰色说明条。六个维度共用同一节奏,
-// 层级只来自 1px 分格线,不来自字号跳档。
+// 区块骨架:一张白卡 —— 标题条(14/600 区块名 + (?) 口径 + 可选的一句图例)
+// → 内容 → 可选的灰色说明条。六个维度共用同一节奏,层级只来自 1px 分格线,
+// 不来自字号跳档。
+//
+// 克制表达那一轮(用户实测「尽量减少解释说明,保持页面的简单」)把原来独占
+// 一行的 hint 说明条收进了标题条的 (?):hint 讲的是「这张图怎么算的、为什么
+// 这么设计」——完整定义与方法论,不是不读就会把数字读错的东西,一字不删地
+// 移进悬停即可。真正会改变读数的话(降级态成因、样本重叠)留在 note 里,
+// 仍然与数据同屏可见。读图必需的半句图例走 meta,跟在标题后面。
 function Block({
   label,
   hint,
+  meta,
   note,
   children,
+  flush,
 }: {
   label: string;
+  /** 口径 / 方法论全文 —— 收进标题条的 (?),不占正文。 */
   hint: string;
+  /** 读图必需的那半句图例(轴、颜色、条长的含义),跟在标题后面,一行。 */
+  meta?: string;
   note?: ReactNode;
   children: ReactNode;
+  /**
+   * 纯呈现开关(不改内容/顺序):面板整体被塞进外层的一张卡时(详情弹窗
+   * 「深度分析」tab 的 DetailSection),把自己的卡壳归零、只留 1px 上分格线,
+   * 避免卡中卡的双描边 + 双阴影。
+   */
+  flush?: boolean;
 }) {
   return (
     // 不裁 overflow(与 ① 卡同一处理):格内的 (?) 点开是绝对定位的弹出层,
     // 卡一裁就只剩鼠标悬停能读到口径。卡底说明条自带圆角补上被 overflow
     // 顺带做掉的那件事 —— 它是唯一有底色、会压到圆角上的子元素。
-    <section className="ds-card">
+    <section
+      className={flush ? undefined : "ds-card"}
+      style={flush ? { borderTop: "1px solid var(--ww-border)" } : undefined}
+    >
       {/* 卡内标题条:14 / 600(.card-bar 本身不带字重,与全站其它卡一样
           由调用方给) */}
       <div className="card-bar" style={{ fontWeight: 600 }}>
         {label}
-      </div>
-      <div
-        className="ds-hint"
-        style={{
-          padding: "var(--s-3) var(--s-4)",
-          borderBottom: "1px solid var(--ww-border)",
-          lineHeight: "var(--lh-note)",
-        }}
-      >
-        {hint}
+        <HelpMark tip={hint} />
+        {meta ? (
+          <span className="muted" style={{ fontWeight: 400, minWidth: 0 }}>
+            {meta}
+          </span>
+        ) : null}
       </div>
       <div style={{ padding: "14px var(--s-4)" }}>{children}</div>
       {note != null ? (
@@ -960,7 +976,7 @@ export function EdgeMatrixTable({
         style={{ position: "sticky", left: 0 }}
       >
         {t(
-          "⚠️ 「·」= 该策略在该赛道零仓,与 edge 为 0 严格分家;「—」= 该格全是平局,没有实际胜率可比,是判不了不是零;淡显的格子(<{n} 仓)也不是「没 edge」,是这一格还判不了 —— 矩阵是用来选下一档做什么的,不是给现有档打分的。",
+          "⚠️「·」= 该赛道零仓(不是 edge 为 0)·「—」= 全是平局,判不了不是零 · 淡显格(<{n} 仓)= 还判不了。",
           { n: BUCKET_LOW_SAMPLE_N },
         )}
       </div>
@@ -1081,7 +1097,7 @@ function TrackStatTable({ rows }: { rows: DeepAnalysisRow[] }) {
         style={{ position: "sticky", left: 0 }}
       >
         {t(
-          "⚠️ 「—」= 该赛道全是平局,没有实际胜率可比,edge 也就无从算起 —— 是判不了,不是零;标了「样本不足」的行(<{n} 仓)也不是「没 edge」,是这一行还判不了。",
+          "⚠️「—」= 该赛道全是平局,判不了不是零 ·「样本不足」的行(<{n} 仓)= 还判不了。",
           { n: BUCKET_LOW_SAMPLE_N },
         )}
       </div>
@@ -1563,6 +1579,7 @@ export function DeepAnalysisPanel({
   rows,
   scopeNote,
   exitCounterfactual,
+  flush,
 }: {
   rows: DeepAnalysisRow[];
   scopeNote?: string;
@@ -1571,6 +1588,13 @@ export function DeepAnalysisPanel({
    * 缺失/null = 路径回填中或不可回填,第⑧块整块省略 —— 不硬画空表。
    */
   exitCounterfactual?: ExitCounterfactualSummary | null;
+  /**
+   * 纯呈现开关(不改内容/顺序/口径):面板被塞进外层的一张 section 卡时置
+   * true —— 每一块的卡壳归零、块间不再留 24px 空档,口径条改成卡内的一圈
+   * 内边距。两个消费方里只有详情弹窗「深度分析」tab 需要它,页面级弹窗
+   * (直接长在 Modal 里、外面没有卡)保持 false。
+   */
+  flush?: boolean;
 }) {
   const { t } = useLang();
   const a = analyzeBets(rows);
@@ -1578,7 +1602,7 @@ export function DeepAnalysisPanel({
   const q = a.quality;
 
   if (q.settledCount === 0) {
-    return (
+    const empty = (
       <div className="ds-empty">
         {t(
           "暂无已结算仓位 — 深度分析基于落袋结果,有仓位结算后这里会给出 赔率校准/盈亏分布/时间走势/缺陷诊断/反事实退出等八个维度",
@@ -1586,48 +1610,68 @@ export function DeepAnalysisPanel({
         {a.openCount > 0 ? t("(当前持有中 {n} 仓)", { n: a.openCount }) : ""}
       </div>
     );
+    // flush = 外层已经有一张卡:空态不再贴着卡边,缩进一圈内边距。
+    return flush ? <div style={{ padding: "var(--s-4)" }}>{empty}</div> : empty;
   }
 
   const maxDurN = Math.max(...a.durationBuckets.map((b) => b.n));
   const maxCatN = Math.max(...a.categories.map((c) => c.n), 1);
 
+  // 需留神的口径合并成一条琥珀(跨档重复下注 / 小样本)—— 两句都是「不读
+  // 就会把数字读错」,但一页至多一条琥珀条,两条并存时用 · 接成一句。
+  const warnParts = [
+    scopeNote,
+    q.settledCount < LOW_SAMPLE_THRESHOLD
+      ? t(
+          "小样本:仅 {n} 仓已结算(阈值 {m}),读数只够看方向 —— 胜率看 Wilson 区间、期望看 t 值。",
+          { n: q.settledCount, m: LOW_SAMPLE_THRESHOLD },
+        )
+      : null,
+  ].filter((s): s is string => !!s);
+
   return (
     <div
-      style={{ display: "flex", flexDirection: "column", gap: "var(--s-6)" }}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: flush ? 0 : "var(--s-6)",
+      }}
     >
       {/* 口径先行 —— 统计声明放在数据「前面」,不放脚注。灰框 = 口径 /
-          设计说明,琥珀框 = 读前必看。 */}
-      <div className="ds-callout">
-        {t(
-          "已结算纸面口径(不含浮盈,不含成本 — 成本见「成本分解」)· 平局 (push)不进胜率分母 · 持有中 {n} 仓不计入下方读数",
-          { n: a.openCount },
-        )}
-      </div>
-
-      {/* 跨档重复下注是「需留神的口径」,单独一条琥珀框,不塞进灰条句尾 */}
-      {scopeNote ? (
-        <div className="ds-callout ds-callout--warn">⚠️ {scopeNote}</div>
-      ) : null}
-
-      {q.settledCount < LOW_SAMPLE_THRESHOLD ? (
-        <div className="ds-callout ds-callout--warn">
+          设计说明,琥珀框 = 读前必看。flush(外层已有卡壳)时这一组口径条
+          缩进卡内一圈内边距;否则透明地参与外层的 gap。 */}
+      <div
+        style={
+          flush
+            ? { padding: "var(--s-4)", display: "grid", gap: "var(--s-3)" }
+            : { display: "contents" }
+        }
+      >
+        <div className="ds-callout">
           {t(
-            "小样本:仅 {n} 仓已结算(阈值 {m})。下面的全部读数只够看方向,不够下结论 —— 胜率带 Wilson 区间、期望带 t 值,请一起读。",
-            { n: q.settledCount, m: LOW_SAMPLE_THRESHOLD },
+            "已结算纸面口径(不含浮盈,不含成本 — 成本见「成本分解」)· 平局 (push)不进胜率分母 · 持有中 {n} 仓不计入下方读数",
+            { n: a.openCount },
           )}
         </div>
-      ) : null}
+        {warnParts.length > 0 ? (
+          <div className="ds-callout ds-callout--warn">
+            ⚠️ {warnParts.join(" · ")}
+          </div>
+        ) : null}
+      </div>
 
       {/* ① 下注质量体检 —— 扁平等权的 Metric 网格:六个读数同字号,
           谁重要取决于读者在问什么;每格的口径收在自己的 (?) 里。 */}
       {/* 这张卡不裁 overflow:格内的 (?) 点开是绝对定位的弹出层,裁了就
           只剩鼠标悬停能读到口径。卡内没有到边的色块,不裁也不露角。 */}
-      <section className="ds-card">
+      <section
+        className={flush ? undefined : "ds-card"}
+        style={flush ? { borderTop: "1px solid var(--ww-border)" } : undefined}
+      >
+        {/* 标题条只留区块名:「六个读数 · 口径在 (?) 里」是在教读者怎么用
+            页面,(?) 圈本身就摆在每一格上,不必再写一句。 */}
         <div className="card-bar" style={{ fontWeight: 600 }}>
           {t("下注质量体检")}
-          <span className="muted" style={{ fontWeight: 400 }}>
-            {t("· 六个读数 · 每项的口径在自己的 (?) 里")}
-          </span>
         </div>
         <div className="metric-grid">
           <Kpi
@@ -1732,14 +1776,15 @@ export function DeepAnalysisPanel({
 
       {/* ② 赔率带校准 */}
       <Block
+        flush={flush}
         label={t("赔率带校准 — 运气还是本事")}
         hint={t(
           "入场价本身就是市场定价的获胜概率(隐含胜率)。每档赔率带对比「实际胜率(蓝)vs 隐含胜率(灰)」:实际持续高于隐含(edge>0)才是可复制的优势;只在某一档赔率带赚钱,也说明策略的钱从哪来",
         )}
         // 降级态读法写全:这张卡里「·」「—」「样本不足」三种成因各不相同,
-        // 少列一种读者就会把某一种当成 0(灰条 = 口径说明,与帧 24 同处理)。
+        // 少列一种读者就会把某一种当成 0。用最短句式列全,不写成一段。
         note={t(
-          "「·」= 该档赔率带零仓,这个价位区间从没下过注,不是 edge 为 0;「—」= 该档有仓但全是平局,没有实际胜率可比,是判不了不是零;琥珀「样本不足」= 该档 <{n} 仓,读数只够看方向。",
+          "「·」= 该档零仓(不是 edge 为 0)·「—」= 全是平局,判不了不是零 ·「样本不足」= <{n} 仓,只够看方向。",
           { n: BUCKET_LOW_SAMPLE_N },
         )}
       >
@@ -1786,7 +1831,9 @@ export function DeepAnalysisPanel({
 
       {/* ③ 单仓盈亏分布 */}
       <Block
+        flush={flush}
         label={t("单仓盈亏分布")}
+        meta={t("· 一点一仓 · 绿赢红输灰平")}
         hint={t(
           "每个点是一笔已结算仓(绿=赢,红=输,灰=平;同值垂直堆叠)。分布形态直接可读:输的一侧是不是都贴着整仓亏光、赢的一侧靠不靠离群大单",
         )}
@@ -1800,7 +1847,9 @@ export function DeepAnalysisPanel({
 
       {/* ④ 时间走势 */}
       <Block
+        flush={flush}
         label={t("时间走势 — 优势在衰减吗")}
+        meta={t("· 周度已实现盈亏(UTC 周)")}
         hint={t(
           "周度已实现盈亏(UTC 周,绿盈红亏,灰短桩=空窗/打平周);下方把全部结算按时间对半切,前半 vs 后半的胜率与落袋对比是小样本下最诚实的衰减检测",
         )}
@@ -1868,7 +1917,9 @@ export function DeepAnalysisPanel({
 
       {/* ⑤ 持有时长分布 */}
       <Block
+        flush={flush}
         label={t("持有时长分布")}
+        meta={t("· 条长 ∝ 仓数 · 分段 = 胜 / 负 / 平")}
         hint={t(
           "条长 ∝ 仓数,分段 = 胜(绿)/负(红)/平(灰)。回答钱是在小时级的快市场(in-play 体育)还是几天的慢市场赢的 —— 也是资金周转率的直观读数",
         )}
@@ -1914,7 +1965,9 @@ export function DeepAnalysisPanel({
 
       {/* ⑥ 赛道细分(两级:一级汇总行 + 缩进的二级子行) */}
       <Block
+        flush={flush}
         label={t("赛道细分")}
+        meta={t("· 缩进行 = 二级细分,不是一级的再分配")}
         hint={t(
           "按事件赛道(gamma 事件标签)两级重切:一级行是该赛道全部仓,缩进子行按联盟/资产细分(体育里 NBA 与足球的胜率分布差异巨大,混在一个「体育」桶里没有解释力)。子行不是一级的再分配 —— 无二级标签的仓只进一级汇总",
         )}
@@ -1935,7 +1988,11 @@ export function DeepAnalysisPanel({
           象限给形状直觉(谁在盈亏平衡线上方),表格给精确数字,同一份
           矩阵数据的两种读法。 */}
       <Block
+        flush={flush}
         label={t("赛道胜率分布 — 气泡象限")}
+        // 「位置讲 edge、颜色讲钱」是这张图唯一会被读错的地方(绿气泡可以
+        // 落在红区),留在标题行;完整口径在 (?) 里。
+        meta={t("· 位置讲 edge · 颜色讲钱 · 大小 = 仓数")}
         hint={t(
           "横轴 = 隐含胜率(该赛道均入场价,市场定价),纵轴 = 实际胜率;对角线为盈亏平衡 —— 气泡在上方 = 跑赢定价(edge>0)。气泡颜色 = 落袋盈亏(绿 = 赚、红 = 亏),大小 = 仓数,样本 <5 虚线描边。颜色可能与所在区域不同号 —— 位置讲 edge、颜色讲钱(如负 edge 的赛道靠低赔率大赔付仍小幅盈利);下表并列胜率/落袋/edge 三指标,方便逐赛道横比",
         )}
@@ -1950,11 +2007,17 @@ export function DeepAnalysisPanel({
 
       {/* ⑦ 缺陷诊断 */}
       <Block
+        flush={flush}
         label={t("缺陷诊断 — 亏在哪类下注")}
+        meta={t("· 段内 ≥{n} 仓且累计亏损 · 最亏在前", {
+          n: BUCKET_LOW_SAMPLE_N,
+        })}
         hint={t(
           "把已结算仓按赛道/持有时长(快慢市场)/赔率带三个维度切段,列出「段内 ≥{n} 仓且累计亏损」的特征段(最亏在前,至多 5 段)—— 定向优化的靶点。各段互有重叠(一仓可同时属「足球」与「>7 天」),「剔除后」数字不可相加",
           { n: BUCKET_LOW_SAMPLE_N },
         )}
+        // 会改变读数的那句留在正文:各段重叠,「剔除后」不能逐段相加。
+        note={t("各段互有重叠(一仓可同属两段),「剔除后」数字不可相加。")}
       >
         {diag.weaknesses.length === 0 ? (
           <div className="ds-empty">
@@ -1983,9 +2046,7 @@ export function DeepAnalysisPanel({
             }}
           >
             <div className="ds-hint" style={{ marginBottom: "var(--s-1)" }}>
-              {t(
-                "对照 · 最强特征(edge>0 且落袋为正 —— 优化是「砍最亏的、 保最强的」两面)",
-              )}
+              {t("对照 · 最强特征(edge>0 且落袋为正)")}
             </div>
             <SegmentRow s={diag.strongest} kind="strong" />
           </div>
@@ -1997,14 +2058,17 @@ export function DeepAnalysisPanel({
           限时会怎样」而不必先造活体机制(该方案已否决,见设计文档 §0)。 */}
       {exitCounterfactual && exitCounterfactual.covered > 0 ? (
         <Block
+          flush={flush}
           label="反事实退出 — 如果带止盈/止损/限时会怎样"
+          meta={`· 已回填 ${exitCounterfactual.covered}/${exitCounterfactual.settledTotal} 仓 · Δ 是下界`}
           hint={`已回填 ${exitCounterfactual.covered}/${exitCounterfactual.settledTotal} 仓的价格路径(点数中位 ${exitCounterfactual.medianPoints ?? "—"},约 10 分钟一点)· 保守成交口径:按首个越线观测价成交,快盘中触发被系统性低估,Δ 是下界 · 纸面对纸面可比,推及实盘须另计退出侧成本`}
+          // 留下会改变读数的两句:基准是多少、九规则各自独立(不能横向相加)。
           note={
             <>
               实际合计(基准)
               {fmtSignedUsd(exitCounterfactual.rules[0]?.actualTotal ?? 0)} ·
-              Δ&gt;0 = 该规则本会多赚/少亏;「触发仓均Δ」回答触发的那些仓里
-              规则是救还是害。九规则互相独立,未触发的仓按实际结算入账。
+              Δ&gt;0 = 该规则本会多赚/少亏;九规则互相独立,未触发的仓按实际
+              结算入账。
             </>
           }
         >

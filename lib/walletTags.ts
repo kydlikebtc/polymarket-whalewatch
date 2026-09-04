@@ -20,12 +20,18 @@ export interface WalletTag {
   count?: number;
 }
 
+// 渠道证据标签的权威符号表 —— /glossary 的词条、/discovery 的漏斗、
+// 钱包档案的 chips 全从这里派生。
+// 「一符两义」纪律(2026-09-04 裁决):同一屏内一个 emoji 只能有一个含义。
+// 早期赢家用 🥇 而不是 🎯 —— 🎯 已经是「冷门猎手」风格标签与「市场信号卡」
+// 跳转钮的符号,三者会同屏出现。echo 保持 🔁 不改成 🔥:🔥 是五级信号阶梯
+// 最高级「聪明钱共识」的专用符号。
 export const CHANNEL_TAG_META: Record<string, { icon: string; name: string }> =
   {
     echo: { icon: "🔁", name: "共识同行" },
     splitter: { icon: "🧩", name: "拆单建仓" },
     insider: { icon: "🕵️", name: "内幕签名" },
-    early_winner: { icon: "🎯", name: "早期赢家" },
+    early_winner: { icon: "🥇", name: "早期赢家" },
   };
 
 export function sourceTag(source: string): WalletTag {

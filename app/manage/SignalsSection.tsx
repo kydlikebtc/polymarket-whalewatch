@@ -145,7 +145,9 @@ export default function SignalsSection({
             </span>
           )
         }
-        hint="推送开关默认全关(先静默积累台账,按战绩放开)。开关只影响对外投递,不影响策略本身的纸面开仓。"
+        // 「开关只影响对外投递」那句挪进表底说明条(它就在推送列旁边),这里
+        // 不说两遍。
+        hint="推送开关默认全关,按战绩逐档放开。"
       />
       {error && (
         <div
@@ -159,7 +161,7 @@ export default function SignalsSection({
         <div className="ds-empty">
           需要有效管理令牌后加载。
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            令牌在页头「🔑 令牌已验证」里更换；只想确认引擎是否在跑,去 /status。
+            令牌在页头「🔑 令牌已验证」里更换。
           </div>
         </div>
       )}
@@ -170,9 +172,8 @@ export default function SignalsSection({
             className="ds-callout ds-callout--warn"
             style={{ marginBottom: "var(--s-4)" }}
           >
-            30d 战绩是<b>全量纸面</b>口径（不管有没有对外推送都记）。已结算 &lt;
-            5 仓的档一律标「样本不足」；超额只有越过 2×sd 才上色,否则仍
-            <b>在运气范围内</b>,别按它调仓。
+            30d 战绩是<b>全量纸面</b>口径(不推送也记)。已结算 &lt; 5
+            仓标「样本不足」;超额越过 2×sd 才上色,否则仍<b>在运气范围内</b>。
           </div>
           <div className="ds-table-wrap" style={{ marginBottom: "var(--s-5)" }}>
             <table className="ds-table">
@@ -262,10 +263,12 @@ export default function SignalsSection({
                 })}
               </tbody>
             </table>
+            {/* 「蓝描边=选中态」是自我描述的界面语法,删;两个开关的语义差别
+                才是读数告诫,留。 */}
             <div className="note-strip">
-              「推送中」是蓝描边的选中态（可点即关）；「已关」是描边白底。
-              档位停用与推送关闭是两件事 —— 停用的档连纸面开仓都不做,
-              关推送的档照常记台账,只是不对外说话。
+              {
+                "档位停用与推送关闭是两件事:停用的档连纸面开仓都不做,关推送的档照常记台账,只是不对外说话。"
+              }
             </div>
           </div>
 
@@ -276,8 +279,7 @@ export default function SignalsSection({
             <div className="ds-empty">
               台账暂无信号（followCycle 尚未触发）。
               <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-                引擎每轮跑完才会写台账；先去 /status 确认 follow
-                循环还在跳,再回来看。
+                {"引擎每轮跑完才写台账 —— 去 /status 看 follow 循环在不在跳。"}
               </div>
             </div>
           ) : (
@@ -289,7 +291,10 @@ export default function SignalsSection({
                     <th>档位</th>
                     <th>市场</th>
                     <th>方向</th>
-                    <th className="is-right">进</th>
+                    {/* 有口径的列头把口径写进 title —— 不占列宽。 */}
+                    <th className="is-right" title="入场价,用 ¢ 表示">
+                      进
+                    </th>
                     <th>结算</th>
                     <th>投递</th>
                   </tr>
@@ -360,8 +365,7 @@ export default function SignalsSection({
                 </tbody>
               </table>
               <div className="note-strip">
-                「未投递」= 该档推送开关关着,或事件早于端点登记（不回灌）。
-                「进」是入场价,用 ¢ 表示。
+                {"「未投递」= 该档推送开关关着,或事件早于端点登记(不回灌)。"}
               </div>
             </div>
           )}

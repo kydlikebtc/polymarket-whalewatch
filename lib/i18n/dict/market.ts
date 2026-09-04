@@ -16,8 +16,7 @@ export const DICT_MARKET: Record<string, string> = {
 
   // -------- 卡片页:加载/头部
   "加载失败：": "Failed to load: ",
-  "聚合中…（拉取该市场 24h 成交并跑全部检测器）":
-    "Aggregating… (fetching this market's 24h trades and running every detector)",
+  "聚合中…": "Aggregating…",
   "窗口近 {h}h · {n} 笔 ≥$500 成交": "window: last {h}h · {n} trades ≥$500",
   "（窗口触顶截断，指标为下界）": " (window capped — figures are lower bounds)",
   已结算: "Settled",
@@ -45,8 +44,11 @@ export const DICT_MARKET: Record<string, string> = {
   窗口内无白名单钱包留仓: "No whitelist wallet holding in window",
   "🏆 聪明钱窗口台账（近 {h}h · 市场已结算）":
     "🏆 Smart-money window ledger (last {h}h · market settled)",
-  "市场已结算——敞口一律归零。赎回（REDEEM）不走成交流水，无法从买卖推算，故不再声称任何仓位「仍持有」；下方净股数与买入均价仍是窗口内的成交事实。":
-    "Market settled — exposure is zeroed. Redemptions (REDEEM) never appear in the trade feed and cannot be inferred from buys/sells, so nothing here is claimed to be STILL held; net shares and avg buy price below remain the window's trade facts.",
+  // 结算口径:会改变读数的那句留在卡底一行,REDEEM 的推理限制进表头 title
+  "市场已结算：敞口归零，表中是窗口内的成交事实，不是当前持仓。":
+    "Market settled: exposure zeroed — the table shows the window's trade facts, not current holdings.",
+  "赎回（REDEEM）不走成交流水，无法从买卖推算，故结算后不声称任何仓位「仍持有」。":
+    "Redemptions (REDEEM) never appear in the trade feed and cannot be inferred from buys/sells, so nothing is claimed to be STILL held after settlement.",
   结果: "Outcome",
   钱包: "Wallet",
   敞口: "Exposure",
@@ -97,12 +99,12 @@ export const DICT_MARKET: Record<string, string> = {
   "🕰 复盘（价格曲线 × 本站告警 × 结算）":
     "🕰 Replay (price curve × this site's alerts × settlement)",
   "加载复盘（拉一次价格曲线）": "Load replay (fetches the price curve once)",
-  "曲线为 {o} 一侧的价格。": "Curve shows the {o} side. ",
-  "另一侧的告警按 1−p 精确映射到同一坐标（标记带 ↔）。":
-    "Alerts on the other side map exactly via 1−p onto the same axis (markers carry ↔). ",
-  "非二元市场：只显示第一结果一侧的告警，其余边无等价映射。":
-    "Non-binary market: only first-outcome alerts are shown — other sides have no exact mapping. ",
-  "虚线为结算价。": "Dashed line = settlement price. ",
+  // 图下的坐标口径压成一行「·」串(旧的四句版已废)
+  "曲线为 {o} 一侧 · 另一侧按 1−p 映射（标记带 ↔）":
+    "Curve = the {o} side · the other side maps via 1−p (markers carry ↔)",
+  "曲线为 {o} 一侧 · 非二元，其余边不显示告警":
+    "Curve = the {o} side · non-binary, other sides show no alerts",
+  虚线为结算价: "Dashed line = settlement price",
   "标记色：💰大单 🏆聪明钱 🔥共识 🐣同批新钱包。":
     "Marker colors: 💰 large · 🏆 smart · 🔥 consensus · 🐣 cohort.",
   "该区间没有价格历史点（市场太新或曲线不可用）。":
@@ -111,8 +113,8 @@ export const DICT_MARKET: Record<string, string> = {
   // -------- 市场脉搏标签条(2026-08-31)。标签文字本身(异常/分歧/无鲸/洗量、
   // 品类名)复用 pulse 分片与 categoryLabel,此处只放本页独有的时间口径提示 ——
   // 卡片其余字段是此刻的窗口,榜单标记是已收盘那个 UTC 日的判定,不写明会被混读。
-  "{d}（UTC）的市场脉搏日榜判定，不是此刻窗口":
-    "From the {d} (UTC) market-pulse daily boards, not the live window",
+  "{d}（UTC）日榜判定，不是此刻窗口":
+    "From the {d} (UTC) daily boards, not the live window",
   "{d}（UTC）异常分 {s}/100": "Anomaly score {s}/100 on {d} (UTC)",
   "异常分 {s}": "Anomaly {s}",
 
@@ -140,8 +142,8 @@ export const DICT_MARKET: Record<string, string> = {
   "90 天内 · 含验证结果": "90 days · with verification",
 
   // -------- 卡片页:口径条与 KPI(设计稿 12)
-  "窗口触顶截断：该市场窗口内的成交超过分页上限，下方所有计数与金额都是下界。":
-    "Window capped: this market's trades in the window exceeded the pagination limit — every count and amount below is a lower bound.",
+  "窗口触顶截断：成交超过分页上限，下方计数与金额都是下界。":
+    "Window capped: trades exceeded the pagination limit — every count and amount below is a lower bound.",
   "24h 量": "24h volume",
   聪明钱这一侧: "Smart money is on this side",
   窗口留存敞口: "Retained exposure in window",
@@ -176,8 +178,8 @@ export const DICT_MARKET: Record<string, string> = {
   "✅ 命中": "✅ Hit",
   "❌ 反向": "❌ Wrong side",
   "➖ 平": "➖ Push",
-  "「—」是判不了，不是 0：价格一栏为空表示该信号缺 asset、当时取不到价；1h / 24h 为空表示那个时点还没有价格历史（信号太新或曲线不可用）。":
-    "A dash means undecidable, not zero: an empty price means the signal had no asset and no price could be read at the time; an empty 1h / 24h means no price history existed at that moment (signal too new, or the curve was unavailable).",
+  "「—」是判不了不是 0：价格 = 缺 asset 取不到价 · 1h/24h = 该时点无价格历史。":
+    "A dash means undecidable, not zero: price = no asset, no price readable · 1h/24h = no price history at that moment.",
 
   // -------- 01 复盘未加载态
   拉一次价格曲线: "Fetch the price curve once",

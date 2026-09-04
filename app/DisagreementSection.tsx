@@ -274,11 +274,10 @@ export function DisagreementSection({
     return (
       <div className="ds-empty">
         {t("窗口内暂无聪明钱分歧 — 白名单钱包没有在同一市场对立建仓")}
-        {/* 空态给内容也给出路:先说清为什么少,再说下一步动哪个旋钮。 */}
+        {/* 空态只留出路:「为什么少」主句已经说了(没有对立建仓),再解释一遍
+            门槛构造是重复。 */}
         <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-          {t(
-            "分歧本来就比共识稀少：白名单要在同一市场的对立结果上各自达到门槛才会出现在这里。把最少钱包降到 ≥2 个、时间窗放宽到 12h 再看一次，或切回上面的「共识」。",
-          )}
+          {t("把最少钱包降到 ≥2 个、时间窗放宽到 12h 再看一次。")}
         </div>
       </div>
     );
@@ -286,12 +285,11 @@ export function DisagreementSection({
 
   return (
     <div className="ds-card" style={{ overflow: "hidden" }}>
+      {/* 标题条只留计数 —— 「对立结果都有聪明钱、与共识互斥」页头已说过,
+          「按质量加权称」是列头自己的名字与 title。 */}
       <div className="card-bar">
         <span style={{ fontWeight: 600 }}>
           {t("共 {n} 个分歧市场", { n: markets.length })}
-        </span>
-        <span className="ds-hint">
-          {t("同一市场对立结果都有聪明钱 · 按质量加权称天平（与共识互斥）")}
         </span>
       </div>
       <div
@@ -305,8 +303,23 @@ export function DisagreementSection({
                   · 最新 90。表头永远 nowrap(全局 .ds-table th 已给)。 */}
               <th style={{ width: 28, padding: "var(--s-2) var(--s-1)" }} />
               <th>{t("市场")}</th>
-              <th style={{ width: 280 }}>{t("质量加权天平")}</th>
-              <th style={{ width: 110 }}>{t("倾斜")}</th>
+              {/* 加权口径与「两边押剔除」规则写在列头 title 里,不占卡底。 */}
+              <th
+                style={{ width: 280 }}
+                title={t(
+                  "净买入 × 钱包评分权重，不是原始金额；同时在两边都净买入的钱包按对冲 / 做市从两侧一起剔除。",
+                )}
+              >
+                {t("质量加权天平")}
+              </th>
+              <th
+                style={{ width: 110 }}
+                title={t(
+                  "质量加权后领先侧的占比；两侧接近时转琥珀（天平不倾斜，读不出方向）。已结算的市场不谈倾斜，只标胜出的结果。",
+                )}
+              >
+                {t("倾斜")}
+              </th>
               <th className="is-right" style={{ width: 120 }}>
                 {t("合计加权")}
               </th>
@@ -475,12 +488,12 @@ export function DisagreementSection({
           </tbody>
         </table>
       </div>
-      {/* 口径写在数据旁边,不写脚注:天平称的是加权额,不是原始金额。
-          「—」的成因要列全,不能穷举一半:评分/胜率的 — 与「当前持仓」的 —
-          (ui.tsx HoldingCell 无仓位时也渲染 —)含义不同。 */}
+      {/* 卡底只留「—」的成因(判不了 ≠ 零),而且要列全、不能穷举一半:评分 /
+          胜率的 — 与「当前持仓」的 —(ui.tsx HoldingCell 无仓位时也渲染 —)
+          含义不同。天平的加权口径已进「质量加权天平」列头 title。 */}
       <div className="note-strip note-strip--warn">
         {t(
-          "天平称的是质量加权额（净买入 × 钱包评分权重），不是原始金额；同时在两边都净买入的钱包按对冲/做市从两侧一起剔除。展开明细里有两种 —：评分与胜率栏的 — 是该钱包还没有已结算样本、判不了，当前持仓栏的 — 是它此刻在该结果已无持仓（窗口内买过但已清仓或转向）。都不是 0。",
+          "— 两种成因，都不是 0：评分 / 胜率栏＝该钱包无已结算样本 · 当前持仓栏＝此刻在该结果已无持仓。",
         )}
       </div>
     </div>

@@ -101,11 +101,14 @@ export default async function Page({ params }: Props) {
   return (
     <>
       <script type="application/ld+json">{breadcrumb}</script>
+      <MarketCardClient />
       {s.hasData ? (
-        // 服务端快照 —— 给爬虫的本地只读摘要,渲染在客户端卡片之上。
-        // 视觉上刻意收成一条灰色说明条:它与下面的页头讲同一个市场,做成
-        // 白卡就会有两个同等分量的标题在打架(层级来自分格线,不来自字号)。
-        <section className="ds-main" style={{ paddingBottom: 0 }}>
+        // 服务端快照 —— 给爬虫的本地只读摘要,渲染在客户端卡片**之后**
+        // (与 /wallet/[address] 同一处理):页壳的第一件事是页头,页头之上
+        // 不能先冒出一张卡。视觉上刻意收成一条灰色说明条:它与上面的页头讲
+        // 同一个市场,做成白卡就会有两个同等分量的标题在打架(层级来自分格
+        // 线,不来自字号)。
+        <section className="ds-main" style={{ paddingTop: 0 }}>
           <div className="ds-callout" style={{ display: "grid", gap: 4 }}>
             <div className="ds-label">市场快照 · market snapshot (local)</div>
             <div style={{ color: "var(--ww-text)", overflowWrap: "anywhere" }}>
@@ -115,7 +118,6 @@ export default async function Page({ params }: Props) {
           </div>
         </section>
       ) : null}
-      <MarketCardClient />
     </>
   );
 }

@@ -4,8 +4,8 @@ export const DICT_ACCUMULATION: Record<string, string> = {
   // 标题键「拆单累计」与刷新时间「最后刷新 {time}」分别由 common / follow
   // 分片供给,同键同值不在此重复。
   "🧩 绕过单笔监控的建仓": "🧩 Position-building that slips past fill alerts",
-  "同一钱包在同一市场的多笔小额买入合并成一条 —— 单笔监控看不到的建仓方式。":
-    "Many small buys by one wallet in one market, folded into a single row — the way of building a position that single-fill monitoring never sees.",
+  "同一钱包在同一市场的多笔小额买入，合并成一条。":
+    "Many small buys by one wallet in one market, folded into a single row.",
   "拆单 / 累计买入榜": "Split-Buy / Accumulation Board",
   "按 (钱包·市场·结果) 聚合多笔小额买入，揪出绕过单笔监控的累积建仓":
     "Aggregates small buys by (wallet · market · outcome) to catch accumulation built to slip past single-trade monitoring",
@@ -15,6 +15,7 @@ export const DICT_ACCUMULATION: Record<string, string> = {
   // Controls
   时间窗: "Window",
   精度: "Precision",
+  // 调参说明,现在挂在筛选条「精度」标签的 title 上（不再是卡底说明条）
   "floor 越低越能抓到小额拆单，但时间窗越短":
     "A lower floor catches smaller split-buys but covers a shorter window",
   净买入: "Net buy",
@@ -22,9 +23,9 @@ export const DICT_ACCUMULATION: Record<string, string> = {
   "当前净买入 ≥": "Current net buy-in ≥",
   刷新: "Refresh",
   "自动刷新 30s": "Auto-refresh 30s",
-  "精度 floor": "Precision floor",
-  " · 每笔 < $10k 才算拆单 · ≥3 笔买入 · 低于 floor 的卖出不可见，净买入为上界":
-    " · only sub-$10k fills count as split-buys · ≥3 buys · sells below the floor are invisible, so net buy-in is an upper bound",
+  // 全页唯一的琥珀口径条 —— 只留会改变读数的那句
+  "低于精度 floor 的卖出不可见 —— 净买入是上界":
+    "Sells below the precision floor are invisible — net buy-in is an upper bound",
 
   // Error / stats / coverage callouts
   "扫描失败: {err}": "Scan failed: {err}",
@@ -38,9 +39,11 @@ export const DICT_ACCUMULATION: Record<string, string> = {
   "{h}H · floor ${f}": "{h}H · floor ${f}",
   "≥3 笔 · 每笔 <$10k": "≥3 fills · each <$10k",
   " · 覆盖自 {time}": " · covered since {time}",
-  "成交太密集，API 回看深度已用满 — 以下为完整覆盖时段":
-    "Trade flow too dense — API look-back depth exhausted; the span below is fully covered",
-  "实际覆盖 {span}（自 {time} 起）": "Actual coverage {span} (since {time})",
+  // 截断告诫并进唯一那条琥珀口径条,不再自带一框
+  "API 回看深度已用满，实际覆盖 {span}（自 {time} 起）":
+    "API look-back depth exhausted; actual coverage {span} (since {time})",
+  "API 回看深度已用满，窗口尾部未全覆盖":
+    "API look-back depth exhausted; the tail of the window is not fully covered",
   "~{m} 分钟": "~{m} min",
   "~{h} 小时": "~{h}h",
   "~{h} 小时 {m} 分": "~{h}h {m}m",
@@ -48,17 +51,15 @@ export const DICT_ACCUMULATION: Record<string, string> = {
   // Table states
   "上游缓存预热中，自动重试…":
     "Upstream cache warming up — retrying automatically…",
-  "正在聚合 {hours}h 内的拆单买入 — 深度拉取首次约 5-15 秒，请稍候…":
-    "Aggregating split-buys from the last {hours}h — the first deep pull takes ~5-15s, please wait…",
+  "正在聚合 {hours}h 内的拆单买入 —— 首次深拉约 5-15 秒…":
+    "Aggregating split-buys from the last {hours}h — the first deep pull takes ~5-15s…",
   该条件下暂无拆单累计: "No split-buy accumulation under these filters",
-  "放宽净买入门槛、降低精度 floor 或拉长时间窗，再看一次。":
-    "Loosen the net-buy floor, lower the precision floor, or widen the window, then look again.",
+  "放宽净买入门槛、降低 floor 或拉长时间窗。":
+    "Loosen the net-buy floor, lower the precision floor, or widen the window.",
 
-  // 主表卡：标题条 + 卡底说明条
+  // 主表卡：标题条（卡底说明条已撤，其口径进了各列头 / 标记的 title）
   拆单累计榜: "Accumulation board",
   "· 共 {n} 组": "· {n} groups",
-  "净买入取成本敞口口径（留存净股数 × 买入均价）；带「对冲?」「做市?」标记的组默认沉底，不与干净的定向建仓争排名。":
-    "Net buy-in uses the cost-basis exposure definition (retained net shares × average buy price); groups flagged “Hedge?” or “MM?” sink to the bottom by default instead of competing with clean directional accumulation.",
 
   // Table headers (+ mobile data-labels)
   钱包: "Wallet",
@@ -75,7 +76,8 @@ export const DICT_ACCUMULATION: Record<string, string> = {
   // 表头缩短版：口径收进 (?) 的 title，列名不背长口径
   赔率: "Odds",
   时间: "Time",
-  点击按净买入排序: "Click to sort by net buy-in",
+  "成本敞口 = 留存净股数 × 买入均价 · 点击按净买入排序":
+    "Cost-basis exposure = retained net shares × avg buy price · click to sort by net buy-in",
   点击按笔数排序: "Click to sort by fill count",
   点击按单笔最大排序: "Click to sort by max single buy",
   点击按毛买入排序: "Click to sort by gross buy",

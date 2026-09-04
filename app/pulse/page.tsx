@@ -188,9 +188,7 @@ export default function PulsePage() {
               className="ds-callout ds-callout--warn"
               style={{ marginBottom: "var(--s-4)" }}
             >
-              {t(
-                "该日窗口在分页上限处被截断，覆盖不完整 —— 以下数字是下界，不是全量。",
-              )}
+              {t("该日窗口在分页上限处被截断 —— 以下数字是下界，不是全量。")}
             </div>
           )}
 
@@ -294,14 +292,17 @@ export default function PulsePage() {
             </div>
           </div>
 
-          {/* 全页共用的两把尺 —— 卡内灰色说明条，各榜自己的公式在各榜卡底。 */}
+          {/* 全页共用的两把尺 —— 一行。两个门槛值必须留（不知道「小单」是
+              $2k–10k 就读不了分歧榜），括号里那句也必须留（「小单」不等于
+              散户，抓取下限以下看不见）。「与 heavy 信号同一把尺」「各榜公式
+              见该榜卡底」是导航与理据，页面自明，删。 */}
           <div
             className="ds-card"
             style={{ overflow: "hidden", marginTop: "var(--s-5)" }}
           >
             <div className="note-strip" style={{ borderTop: 0 }}>
               {t(
-                "全页共用口径：小单 = 单笔 $2k–10k（抓取下限之下的真散户不可见，因此只说「小单」）；鲸鱼 = 单笔 ≥$50k，与 heavy 信号同一把尺。各榜自身的公式与门槛见该榜卡底的说明条。",
+                "全页共用口径：小单 = 单笔 $2k–10k（抓取下限以下的散户不可见）；鲸鱼 = 单笔 ≥$50k。",
               )}
             </div>
           </div>

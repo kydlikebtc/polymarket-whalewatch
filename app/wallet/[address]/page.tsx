@@ -97,10 +97,14 @@ export default async function Page({ params }: Props) {
   return (
     <>
       <script type="application/ld+json">{breadcrumb}</script>
+      <WalletDossierClient />
       {s.hasData ? (
         // 已结算快照(服务端本地数据)—— 卡内：标题条 → 内容 → 灰色说明条，
         // 与档案页其余卡片同一语法。
-        <section className="ds-main" style={{ paddingBottom: 0 }}>
+        // 位置在客户端档案**之后**:页壳的第一件事必须是页头(设计稿 13 是
+        // 顶栏 → 页头 → 概览卡),页头之上不能先冒出一张卡。爬虫照读 —— 这段
+        // 仍在 DOM 里,只是排在主内容后面,即「附加摘要」的常规位置。
+        <section className="ds-main" style={{ paddingTop: 0 }}>
           <div className="ds-card" style={{ overflow: "hidden" }}>
             <div className="card-bar">
               📌 已结算快照 · settled snapshot (local)
@@ -131,12 +135,11 @@ export default async function Page({ params }: Props) {
               {s.realizedPnlUsd != null
                 ? `, ${signedUsd(s.realizedPnlUsd)} realized PnL`
                 : ""}
-              . Live dossier below.
+              . Live dossier above.
             </div>
           </div>
         </section>
       ) : null}
-      <WalletDossierClient />
     </>
   );
 }

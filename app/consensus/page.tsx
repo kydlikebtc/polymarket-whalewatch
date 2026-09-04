@@ -100,9 +100,10 @@ type View = "consensus" | "disagreement" | "exits";
 // Page defaults — doubling as the "omit from URL" baseline so the default
 // view serializes to a bare pathname.
 const DEFAULTS = { hours: 6 as Hours, minWallets: 2, minPerWalletUsd: 5000 };
-// "Still followable": current price within 5¢ of the smart-money entry.
-// 这个 5¢ 只管措辞(「仍可跟」/「已跑」),口径写在 app/glossary.ts「跟单空间」
-// 词条里 —— 它不管颜色。
+// "Still followable": current price within 5¢ of the smart-money entry —
+// 双边判据 |gap| ≤ 5¢。这个 5¢ 只管措辞,三档:< −5¢「已反向」(共识形成后
+// 行情已反向,进场即接飞刀)· |gap| ≤ 5¢「仍可跟」· > +5¢「已跑」。口径写在
+// app/glossary.ts「跟单空间」词条里 —— 它不管颜色。
 const FOLLOWABLE_GAP = 0.05;
 // 跟单空间就是追价成本(现价 − 聪明钱建仓均价)那个 ¢ 差,按 readme §2.1
 // 「成本类数字一律中性色」上色:负空间不标绿(那通常意味着共识形成后行情
@@ -393,11 +394,11 @@ export default function ConsensusPage() {
             {t("🔥 白名单同向与对立建仓")}
           </div>
           <h1 className="page-head__title">{t("共识 / 分歧")}</h1>
-          {/* 说明句照设计稿收成一句:同一市场里白名单站同一侧还是分站两侧,
-              天平两端各是谁的钱、谁更有战绩。 */}
+          {/* 说明句只说「这页是什么」:两种形态怎么分、互斥。天平怎么称、
+              各列口径一律不在这里说 —— 分别进列头 title 与卡底口径条。 */}
           <p className="page-head__desc">
             {t(
-              "同一市场里白名单钱包站同一侧 = 共识，分站两侧 = 分歧（两者互斥）：天平两端各是谁的钱、谁更有战绩。",
+              "同一市场里白名单钱包站同一侧 = 共识，分站两侧 = 分歧，两者互斥。",
             )}
           </p>
         </div>
@@ -424,6 +425,9 @@ export default function ConsensusPage() {
         </div>
       ) : null}
 
+      {/* 琥珀口径条全页至多一条 —— 两条都是「不读会误判」,但白名单为空时
+          整页本就无信号,窗口覆盖不足的读数没有意义,所以取 else-if 而不是
+          并列渲染。 */}
       {data && data.smartCount === 0 ? (
         <div
           className="ds-callout ds-callout--warn"
@@ -433,20 +437,18 @@ export default function ConsensusPage() {
             "聪明钱白名单为空 — 引擎启动后每日自动从官方盈利榜播种（首次约 1 分钟内完成）",
           )}
         </div>
-      ) : null}
-
-      {data?.truncated && data.effectiveSinceSec ? (
+      ) : data?.truncated && data.effectiveSinceSec ? (
         <div
           className="ds-callout ds-callout--warn"
           style={{ marginBottom: "var(--s-4)" }}
         >
-          {t("⏱️ 成交太密集，API 回看深度已用满 — 本页基于")}{" "}
-          {t("完整覆盖的 {span}", {
-            span: fmtWindowSpan(data.effectiveSinceSec, t),
-          })}
-          {t("（自 {time} 起，买卖双侧均完整）检测", {
-            time: fmtTime(data.effectiveSinceSec),
-          })}
+          {t(
+            "⏱️ API 回看深度已用满 — 本页只覆盖 {time} 起的 {span}（买卖双侧均完整）",
+            {
+              time: fmtTime(data.effectiveSinceSec),
+              span: fmtWindowSpan(data.effectiveSinceSec, t),
+            },
+          )}
         </div>
       ) : null}
 
@@ -623,14 +625,11 @@ export default function ConsensusPage() {
           </div>
         ) : groups.length > 0 ? (
           <div className="ds-card" style={{ overflow: "hidden" }}>
+            {/* 标题条只留计数 —— 门槛「≥N 个白名单同向」已经由筛选条与 KPI
+                副行各说过一次,第三次说是噪声。 */}
             <div className="card-bar">
               <span style={{ fontWeight: 600 }}>
                 {t("共 {n} 组共识", { n: groups.length })}
-              </span>
-              <span className="ds-hint">
-                {t("一边倒 · ≥{n} 个白名单钱包同向买入同一结果", {
-                  n: minWallets,
-                })}
               </span>
             </div>
             <div
@@ -655,7 +654,15 @@ export default function ConsensusPage() {
                     <th className="is-right" title={t("Gamma 最新赔率")}>
                       {t("现价")}
                     </th>
-                    <th>{t("跟单空间")}</th>
+                    {/* 口径写在列头 title 里,不占正文:成本口径、颜色分界、
+                        三档措辞的分界、已结算的例外全在这一条。 */}
+                    <th
+                      title={t(
+                        "现价 − 建仓均价的 ¢ 差，是成本不是盈亏：|差| ≤ 5¢ 仍可跟，> 5¢ 已跑，< −5¢ 已反向（进场即接飞刀）。一律中性色，|差| 超 10¢ 转琥珀；已结算的市场不谈跟单空间，只标命中 / 落空。",
+                      )}
+                    >
+                      {t("跟单空间")}
+                    </th>
                     <th className="is-right">{t("最新时间")}</th>
                   </tr>
                 </thead>
@@ -761,15 +768,23 @@ export default function ConsensusPage() {
                             ) : settled ? (
                               // Settled market: following is moot — show
                               // whether the smart-money consensus was RIGHT.
-                              g.currentPrice != null && g.currentPrice > 0.5 ? (
-                                <Tag variant="up">{t("已结算 ✓ 命中")}</Tag>
-                              ) : (
-                                <Tag variant="down">{t("已结算 ✗ 落空")}</Tag>
-                              )
+                              // 已结算是中性的历史状态,不是「通过 / 反向」的
+                              // 强信号 —— 走纯文字,与分歧表的「🏁 已结算 · X
+                              // 胜」同一层级(绿/红徽章在这里过重)。
+                              <span style={{ whiteSpace: "nowrap" }}>
+                                🏁 {t("已结算")}
+                                {g.currentPrice != null && g.currentPrice > 0.5
+                                  ? t(" · 命中")
+                                  : t(" · 落空")}
+                              </span>
                             ) : (
                               // 未结算:这一格是成本类 ¢ 差,不是盈亏 ——
                               // 结论文字而非徽章(蓝/绿/红都不该在这里表态),
                               // 中性色打底,只在 |¢差| > 10¢ 时转琥珀。
+                              // 措辞与颜色同为双边判据:|gap| ≤ 5¢ 才说「仍可
+                              // 跟」,负空间越线说「已反向」(进场即接飞刀),
+                              // 不再出现「仍可跟 −12.0¢」这种文字说能跟、颜色
+                              // 在示警的打架读数。
                               <span
                                 style={{
                                   whiteSpace: "nowrap",
@@ -779,13 +794,17 @@ export default function ConsensusPage() {
                                       : undefined,
                                 }}
                               >
-                                {gap <= FOLLOWABLE_GAP
-                                  ? t("仍可跟 {gap}¢", {
-                                      gap: `${gap >= 0 ? "+" : ""}${(gap * 100).toFixed(1)}`,
-                                    })
-                                  : t("已跑 +{gap}¢", {
+                                {gap < -FOLLOWABLE_GAP
+                                  ? t("已反向 {gap}¢", {
                                       gap: (gap * 100).toFixed(1),
-                                    })}
+                                    })
+                                  : gap <= FOLLOWABLE_GAP
+                                    ? t("仍可跟 {gap}¢", {
+                                        gap: `${gap >= 0 ? "+" : ""}${(gap * 100).toFixed(1)}`,
+                                      })
+                                    : t("已跑 +{gap}¢", {
+                                        gap: (gap * 100).toFixed(1),
+                                      })}
                               </span>
                             )}
                           </td>
@@ -815,12 +834,13 @@ export default function ConsensusPage() {
                 </tbody>
               </table>
             </div>
-            {/* 「—」是判不了,不是零 —— 每一处成因都要列全,不能穷举一半:
-                主表的现价 / 跟单空间是一种,展开明细里的评分与「当前持仓」
-                (ui.tsx HoldingCell 无仓位时也渲染 —)各是一种。 */}
+            {/* 「—」是判不了,不是零 —— 成因必须列全(不能穷举一半),但用最短
+                句式:主表现价一种,展开明细里的评分与「当前持仓」(ui.tsx
+                HoldingCell 无仓位时也渲染 —)各一种。建仓均价的加权口径、跟单
+                空间的成本/颜色口径都已进各自列头 title,不在这里重说。 */}
             <div className="note-strip note-strip--warn">
               {t(
-                "现价栏的 — 表示该结果缺 asset、取不到价（不是加载中），跟单空间也随之判不了；展开明细里有两种 —：评分栏的 — 是该钱包还没有已结算样本、评分算不出来，当前持仓栏的 — 是它此刻在该结果已无持仓（窗口内买过但已清仓或转向）。三种都不等于 0。建仓均价按金额加权；跟单空间是成本类 ¢ 差、一律中性色，只有 |¢差| 超过 10¢ 才转琥珀；已结算的市场不再谈跟单空间，只标命中或落空。",
+                "— 三种成因，都不是 0：现价栏＝缺 asset 不可取价（跟单空间随之判不了）· 评分栏＝无已结算样本 · 当前持仓栏＝此刻已无持仓。",
               )}
             </div>
           </div>
@@ -845,12 +865,10 @@ export default function ConsensusPage() {
           </div>
         ) : (data?.exits?.length ?? 0) > 0 ? (
           <div className="ds-card" style={{ overflow: "hidden" }}>
+            {/* 标题条只留计数;门槛口径下移到「离场钱包」列头 title。 */}
             <div className="card-bar">
               <span style={{ fontWeight: 600 }}>
                 {t("共 {n} 组离场", { n: data?.exits?.length ?? 0 })}
-              </span>
-              <span className="ds-hint">
-                {t("≥{n} 个池内钱包在同一结果上净卖出", { n: minWallets })}
               </span>
             </div>
             <div
@@ -861,9 +879,18 @@ export default function ConsensusPage() {
                 <thead>
                   <tr>
                     <th>{t("市场 / 结果")}</th>
-                    <th className="is-right">{t("离场钱包")}</th>
+                    <th
+                      className="is-right"
+                      title={t(
+                        "在同一结果上净卖出的池内钱包数（与共识同一把最少钱包 / 每钱包金额尺）",
+                      )}
+                    >
+                      {t("离场钱包")}
+                    </th>
                     <th className="is-right">{t("合计卖出")}</th>
-                    <th className="is-right">{t("卖出均价")}</th>
+                    <th className="is-right" title={t("按金额加权的卖出均价")}>
+                      {t("卖出均价")}
+                    </th>
                     <th>{t("钱包")}</th>
                   </tr>
                 </thead>
@@ -923,9 +950,11 @@ export default function ConsensusPage() {
                 </tbody>
               </table>
             </div>
+            {/* 留下的是会改变读数的那句:窗内只见卖不见建仓,所以这张表读不出
+                是获利了结还是止损。加权口径已进「卖出均价」列头 title。 */}
             <div className="note-strip note-strip--warn">
               {t(
-                "只统计窗口内的卖单：窗内看不到这些仓位此前是怎么建的，所以获利了结与止损在这里长得一模一样。卖出均价按金额加权。",
+                "只统计窗口内的卖单 —— 看不到此前怎么建的仓，获利了结与止损在这里长得一模一样。",
               )}
             </div>
           </div>

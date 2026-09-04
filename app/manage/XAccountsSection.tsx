@@ -80,42 +80,47 @@ interface Payload {
 
 // 各类内容的展示元数据(与 lib/xSettings.X_KINDS 同源语义;这里是客户端
 // 组件,不能 import 那个碰 DB 的模块,故就近镜像一份最小集)。
-// hint 不再写死数字 —— 由生效参数动态生成(kindHint),页面永不说旧话。
-const KINDS: { kind: string; label: string }[] = [
-  { kind: "whale", label: "🐳 巨鲸大单" },
-  { kind: "consensus", label: "🔥 聪明钱共识" },
-  { kind: "pregame", label: "⏰ 赛前聚合" },
-  { kind: "weekly", label: "📊 周报成绩单" },
-  { kind: "settled", label: "✅ 结算战报" },
-  { kind: "scorecard", label: "📋 每日战报榜" },
-  { kind: "pulse", label: "📈 异常市场日榜" },
-  { kind: "divergence", label: "⚔️ 小单vs鲸鱼分歧" },
+//
+// hint 是一句话的身份说明,不再复述数字:日上限 / 金额阈值 / 窗口 / 发帖时刻
+// 全都以输入框的形式就在同一张卡里(PARAM_FIELDS),在句子里再写一遍等于同一
+// 个数出现两处。「默认关」也删了 —— 开关自己就在左边,出厂值不是读数。
+// 只有 divergence 的发帖时刻没有自己的输入框(与日榜共用),故那句留在 hint。
+const KINDS: { kind: string; label: string; hint: string }[] = [
+  {
+    kind: "whale",
+    label: "🐳 巨鲸大单",
+    // emoji 不进正文句子(它只住灰底标签 / KPI 图标位 / 12px 小标前缀)——
+    // 下方那枚输入框的标签「🚨 级 ≥ $」才是它的位置。
+    hint: "单笔达阈值即发,超警报级金额时抬头升级;量最大,最容易吃满日配额",
+  },
+  { kind: "consensus", label: "🔥 聪明钱共识", hint: "稀有且独家,优先级最高" },
+  { kind: "pregame", label: "⏰ 赛前聚合", hint: "结算前窗口内的热门市场汇总" },
+  {
+    kind: "weekly",
+    label: "📊 周报成绩单",
+    hint: "每周一发图卡 + 链接,唯一的 $0.20 帖",
+  },
+  {
+    kind: "settled",
+    label: "✅ 结算战报",
+    hint: "回复自己发过的信号帖补结果(赢输都发);自回复没有独立分发,曝光靠「每日战报榜」",
+  },
+  {
+    kind: "scorecard",
+    label: "📋 每日战报榜",
+    hint: "昨日全部结算聚成一条主帖(有输单必带),每天至多 1 条,0 结算的日子静默",
+  },
+  {
+    kind: "pulse",
+    label: "📈 异常市场日榜",
+    hint: "昨日最异常市场(与 /pulse 页同源),每天至多 1 条",
+  },
+  {
+    kind: "divergence",
+    label: "⚔️ 小单vs鲸鱼分歧",
+    hint: "昨日「小单与鲸鱼对立」的市场,每天至多 1 条,无分歧的日子静默;发帖时刻与日榜共用",
+  },
 ];
-
-function kindHint(kind: string, p: XParams): string {
-  switch (kind) {
-    case "whale":
-      return `单笔 ≥ $${p.whaleMinTradeUsd.toLocaleString("en-US")} 即发,≥ $${p.whaleSirenUsd.toLocaleString("en-US")} 升 🚨 警报抬头。量最大,最容易吃满日配额(上限 ${p.whaleDailyCap} 条/天)`;
-    case "consensus":
-      return p.consensusDailyCap == null
-        ? "稀有且独家,优先级最高,不设日上限"
-        : `稀有且独家,优先级最高,至多 ${p.consensusDailyCap} 条/天`;
-    case "pregame":
-      return `结算前 ${p.pregameMinH}-${p.pregameMaxH}h 热门市场汇总,至多 ${p.pregameDailyCap} 条/天`;
-    case "weekly":
-      return `每周一 ${String(p.weeklyUtcHour).padStart(2, "0")}:00 UTC 后图卡 + 链接,唯一的 $0.20 帖`;
-    case "settled":
-      return `回复自己发过的信号帖,补上结果(赢输都发),至多 ${p.settledDailyCap} 条/天。自回复没有独立分发 —— 它是可核验的凭证层,曝光靠「每日战报榜」。默认关`;
-    case "scorecard":
-      return `每日 ${String(p.scorecardUtcHour).padStart(2, "0")}:00 UTC 后把昨日全部结算聚成一条主帖(几战几胜 + 代表行,有输单必带),每天至多 1 条,0 结算的日子静默。默认关`;
-    case "pulse":
-      return `每日 ${String(p.pulseUtcHour).padStart(2, "0")}:00 UTC 后发昨日最异常市场(异常分四分量拆解,与 /pulse 页同源),每天至多 1 条。默认关`;
-    case "divergence":
-      return `每日 ${String(p.pulseUtcHour).padStart(2, "0")}:00 UTC 后发昨日「小单与鲸鱼对立」的市场(双边材料性达标才有),每天至多 1 条,无分歧的日子静默。默认关`;
-    default:
-      return "";
-  }
-}
 
 // 每张卡片下渲染的参数输入。suffix 是输入框后的单位字;width 给长数字留位。
 const PARAM_FIELDS: Record<
@@ -202,11 +207,13 @@ function toTplForm(t: Record<string, string | null>): TplForm {
   return out;
 }
 
+// skipped 刻意不在表里:灰底描边是**名称标签**,不表状态,而按运营现状(日
+// 上限 22 条/天)跳过是常态 —— 整列徽章会把每一轮正常限流渲染成事故。它在
+// 表格里走 muted 纯文字,见下方状态格。也不能改琥珀:琥珀是「需留神的口径」。
 const STATUS_TONE: Record<string, "up" | "down" | "warn" | "default"> = {
   posted: "up",
   failed: "down",
   claimed: "warn",
-  skipped: "default",
 };
 
 const STATUS_TEXT: Record<string, string> = {
@@ -384,7 +391,8 @@ export default function XAccountsSection({ token }: { token: string }) {
     >
       <SectionHead
         title="🅒 𝕏 播报账号"
-        hint="同时只有一个账号「使用中」，其余待命。切换后引擎下一轮（≤60s）自动改用新账号，无需重启。"
+        // 「一个使用中、其余待命」原本在这儿与表底说明条逐字重复 —— 只留表底
+        // 那条(它就在状态列旁边)。
         aside={
           // 描边白底 —— 页头的「刷新」是全页唯一的蓝底主按钮,任何子 tab 上
           // 都同屏可见。
@@ -425,8 +433,7 @@ export default function XAccountsSection({ token }: { token: string }) {
         >
           未配置 X App 凭据：请在服务器 <code className="doc-code">.env</code>{" "}
           设置 <code className="doc-code">X_API_KEY</code> 与{" "}
-          <code className="doc-code">X_API_SECRET</code> 后重启。这两项属于
-          App（不属于账号），永远只从 .env 读、不进库。
+          <code className="doc-code">X_API_SECRET</code> 后重启。
         </div>
       ) : null}
 
@@ -438,8 +445,7 @@ export default function XAccountsSection({ token }: { token: string }) {
           </code>
           {data.envFallback && data.accounts.length === 0 ? (
             <div style={{ marginTop: 6 }}>
-              当前使用 .env 里的单账号 token 发帖（向后兼容）。授权任意账号后，
-              库中账号优先。
+              当前用 .env 的单账号 token 发帖；授权后库中账号优先。
             </div>
           ) : null}
         </div>
@@ -449,7 +455,7 @@ export default function XAccountsSection({ token }: { token: string }) {
         <div className="ds-empty">
           {view.message}
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            这是服务端的原话 —— 通常是管理令牌失效。换令牌后本区块自动重试。
+            通常是管理令牌失效;换令牌后自动重试。
           </div>
         </div>
       ) : view.kind === "loading" ? (
@@ -458,8 +464,7 @@ export default function XAccountsSection({ token }: { token: string }) {
         <div className="ds-empty">
           尚无授权账号。
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            点右上角「授权新账号」，用要发帖的那个 X 账号登录并同意；在此之前
-            引擎用 .env 里的单账号 token 发帖（向后兼容）。
+            {"点右上角「授权新账号」;在此之前引擎用 .env 的单账号 token 发帖。"}
           </div>
         </div>
       ) : (
@@ -540,9 +545,9 @@ export default function XAccountsSection({ token }: { token: string }) {
             </tbody>
           </table>
           <div className="note-strip">
-            同时只有一个账号「使用中」，其余待命 —— 封号 / 换品牌 /
-            测试号转正式号时点「设为使用中」即可，引擎下一轮（≤60s）自动改用，
-            无需重启。access token 存在库里，本页永不显示。
+            {
+              "同时只有一个账号「使用中」,点「设为使用中」即换号,引擎下一轮(≤60s)自动改用。access token 存在库里,本页永不显示。"
+            }
           </div>
         </div>
       )}
@@ -553,7 +558,7 @@ export default function XAccountsSection({ token }: { token: string }) {
           <div style={{ marginTop: "var(--s-6)" }}>
             <SectionHead
               title="播报内容类型"
-              hint="关掉的类型不再发帖也不占预算；数字参数（日上限/阈值/窗口/预算）改完点「保存参数」。开关与参数都在引擎下一轮（≤60s）生效，无需重启。重新开启不会补发关闭期间的旧内容。"
+              hint="关掉的类型不再发帖也不占预算，重新开启不补发。改完点「保存参数」，引擎下一轮（≤60s）生效。"
               aside={
                 /* 描边白底 —— 全页唯一的蓝底主按钮是页头的「刷新」。 */
                 <button
@@ -613,9 +618,10 @@ export default function XAccountsSection({ token }: { token: string }) {
                     }
                   />
                 </div>
+                {/* 「月上限必填、默认来自 .env」已写在那个输入框的 title 里;
+                    这里只留会被读错的那半句。 */}
                 <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
-                  月上限是硬熔断（必填，默认来自 .env，保存后以后台值为准）； 日
-                  / 周留空 = <b>不限</b>，不是 0。
+                  日 / 周留空 = <b>不限</b>，不是 0；月上限是硬熔断。
                 </div>
               </>
             ) : null}
@@ -678,9 +684,7 @@ export default function XAccountsSection({ token }: { token: string }) {
                           {k.label}{" "}
                           {!on ? <Tag variant="warn">已关闭</Tag> : null}
                         </span>
-                        <span className="ds-hint">
-                          {kindHint(k.kind, data.params)}
-                        </span>
+                        <span className="ds-hint">{k.hint}</span>
                       </span>
                     </button>
                     {form ? (
@@ -739,7 +743,10 @@ export default function XAccountsSection({ token }: { token: string }) {
           <div style={{ marginTop: "var(--s-6)" }}>
             <SectionHead
               title="✍️ 文案模板"
-              hint="留空 = 内置英文文案。{占位符} 替换为实时数据，数据缺失的段渲染为空并自动收行。保存时校验：未知占位符/缺 {title}/夹带链接/固定部分超长都会被拒；运行时超 280 加权字符自动截标题，模板不可用则回退内置 —— 怎么都不会发出折叠帖或带链接帖。"
+              // 运行时的兜底(超 280 截标题、模板不可用回退内置)是「怎么都不会
+              // 出事」的安抚,不改变任何操作 —— 删。保存会被拒的四种情形留着,
+              // 那是写模板时必须知道的。
+              hint="留空 = 内置英文文案。{占位符} 替换为实时数据；保存时校验：未知占位符 / 缺 {title} / 夹带链接 / 固定部分超长都会被拒。"
               aside={
                 /* 描边白底 —— 全页唯一的蓝底主按钮是页头的「刷新」。 */
                 <button
@@ -805,7 +812,7 @@ export default function XAccountsSection({ token }: { token: string }) {
           <div style={{ marginTop: "var(--s-6)" }}>
             <SectionHead
               title="播报历史"
-              hint="最近 50 条。「已跳过」= 被类型开关/金额阈值/预算熔断拦下，未发出也不计费。"
+              hint="最近 50 条。「已跳过」= 被开关 / 阈值 / 预算拦下，未发出也不计费。"
               aside={
                 <span className="ds-hint">
                   本月已花费 ${data.history.spentThisMonthUsd.toFixed(3)} / $
@@ -829,9 +836,10 @@ export default function XAccountsSection({ token }: { token: string }) {
                 >
                   时间分布 · 近 14 天 × UTC 小时
                 </div>
+                {/* 「悬停格子看类型明细」是可发现的交互,删;`·` 的口径留。 */}
                 <div className="ds-hint" style={{ marginBottom: "var(--s-2)" }}>
-                  仅统计已发布。<span className="faint">·</span> 是零，不是
-                  「判不了」；悬停格子看类型明细。
+                  仅统计已发布。<span className="faint">·</span>{" "}
+                  是零，不是「判不了」。
                 </div>
                 <div
                   className="ds-table-wrap"
@@ -927,8 +935,7 @@ export default function XAccountsSection({ token }: { token: string }) {
               <div className="ds-empty">
                 还没有播报记录。
                 <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-                  授权账号并等待信号触发后，这里会出现每条帖子（含被拦下的
-                  「已跳过」）。
+                  {"授权账号并等信号触发后,这里会出现每条帖子(含「已跳过」)。"}
                 </div>
               </div>
             ) : (
@@ -954,10 +961,21 @@ export default function XAccountsSection({ token }: { token: string }) {
                           {KINDS.find((k) => k.kind === pst.kind)?.label ??
                             pst.kind}
                         </td>
+                        {/* 「已跳过」是常态不是状态:走 muted 纯文字,让绿/红
+                            徽章留给真正发生过的事(发布成功 / 失败)。 */}
                         <td data-label="状态">
-                          <Tag variant={STATUS_TONE[pst.status] ?? "default"}>
-                            {STATUS_TEXT[pst.status] ?? pst.status}
-                          </Tag>
+                          {pst.status === "skipped" ? (
+                            <span
+                              className="muted"
+                              title="被类型开关 / 金额阈值 / 预算熔断拦下,未发出也不计费"
+                            >
+                              {STATUS_TEXT.skipped}
+                            </span>
+                          ) : (
+                            <Tag variant={STATUS_TONE[pst.status] ?? "default"}>
+                              {STATUS_TEXT[pst.status] ?? pst.status}
+                            </Tag>
+                          )}
                         </td>
                         {/* 帖子正文永不截断 —— 换行。 */}
                         <td
@@ -993,11 +1011,10 @@ export default function XAccountsSection({ token }: { token: string }) {
                   </tbody>
                 </table>
                 <div className="note-strip">
-                  「成本」的 <span className="faint">—</span>
-                  是「没花钱」——「已跳过」在发出前就被拦下，不计费；只有 $0.20
-                  的周报图卡帖是唯一有成本的类型。「链接」的{" "}
-                  <span className="faint">—</span>{" "}
-                  表示这条没有产生真实帖子（跳过 / 失败 / 还在发送中）。
+                  <span className="faint">—</span>
+                  {
+                    " 两种:成本 = 没花钱(只有 $0.20 的周报图卡帖有成本),链接 = 没有产生真实帖子(跳过 / 失败 / 发送中)。"
+                  }
                 </div>
               </div>
             )}

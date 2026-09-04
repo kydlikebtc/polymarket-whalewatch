@@ -205,7 +205,9 @@ export default function EventsSection({ token }: { token: string }) {
     >
       <SectionHead
         title="① 原始事件信号（大额 / 共识 / 发现）"
-        hint="信号=事件:触发后发出、不可变、有稳定 id。每类型两道闸:进料闸(大额/共识进 alerts 台账的条件,在 🅐 告警条件)与总线阈值(本区,决定进入可推送台账)。active[]/settled[] 是这些事件的折叠视图,不是信号 —— 见「视图」子 tab。"
+        // 只留「改了这里还有另一道闸」这句 —— 不知道它就会在本区反复调阈值
+        // 却看不到事件变化。「信号=事件」的定义与视图归属由总览表说。
+        hint="每类型两道闸:进料闸(大额/共识进 alerts 台账)在 🅐 告警条件,总线阈值在本区。"
       />
 
       {error ? (
@@ -221,7 +223,7 @@ export default function EventsSection({ token }: { token: string }) {
         <div className="ds-empty">
           {typesView.message}
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            这是服务端的原话 —— 通常是管理令牌失效。换令牌后本区块自动重试。
+            通常是管理令牌失效;换令牌后自动重试。
           </div>
         </div>
       ) : typesView.kind === "loading" ? (
@@ -486,24 +488,19 @@ export default function EventsSection({ token }: { token: string }) {
         className="ds-callout ds-callout--warn"
         style={{ margin: "var(--s-2) 0 var(--s-4)" }}
       >
-        大额/共识源自 alerts，发现源自总线。<b>TG 先发后记，没有逐行记录</b> ——
-        这张表看不到它，配置见 🅐；𝕏 与总线 → webhook 才有逐行记录。
+        「去向」列<b>不含 TG</b> —— TG 先发后记,没有逐行记录(配置见 🅐);𝕏 与总线
+        → webhook 才有。
       </div>
       {ledgerView.kind === "error" ? (
-        <div className="ds-empty">
-          {ledgerView.message}
-          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            这是服务端的原话 —— 通常是管理令牌失效。换令牌后本区块自动重试。
-          </div>
-        </div>
+        // 报错的原话上方已有一条红色 callout,这里不再重复「换令牌」那句。
+        <div className="ds-empty">{ledgerView.message}</div>
       ) : ledgerView.kind === "loading" ? (
         <div className="ds-empty">正在读取事件台账…</div>
       ) : ledgerView.data.length === 0 ? (
         <div className="ds-empty">
           台账暂无事件。
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-            要么进料条件一条都没命中，要么引擎还没跑起来 —— 去 /status
-            看循环有没有在跳。
+            {"进料条件一条都没命中,或引擎没跑 —— 去 /status 看循环在不在跳。"}
           </div>
         </div>
       ) : (
@@ -605,12 +602,13 @@ export default function EventsSection({ token }: { token: string }) {
               ))}
             </tbody>
           </table>
+          {/* 「未入总线」「入总线 · 未投递」两种成因已各自写在那两格的 title
+              里,说明条只留 `—` 的两种成因(降级态必须能在同一张表里区分)。 */}
           <div className="note-strip">
-            <span className="faint">—</span> 是「判不了」不是零：𝕏
-            列的它表示这条根本没进发帖流程（开关关 / 配额吃满 /
-            未命中阈值），市场与方向列的它表示这类事件本来就不带该字段。
-            「未入总线」= 类型未开启或事件早于开启时刻；「入总线 · 未投递」=
-            没有端点勾选该类型，或事件早于端点登记（不回灌）。
+            <span className="faint">—</span>
+            {
+              " 是「判不了」不是零:𝕏 列 = 没进发帖流程(开关关 / 配额吃满 / 未达阈值),市场与方向列 = 这类事件本来就不带该字段。"
+            }
           </div>
         </div>
       )}

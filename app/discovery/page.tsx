@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   CopyButton,
   fmtSignedUsdCompact,
+  Icon,
   MarketSlugActions,
   Modal,
   Segmented,
@@ -156,12 +157,34 @@ interface DailyDensity {
 
 // ------------------------------------------------------------- formatting
 
+// 一屏之内一个 emoji 只能有一个含义:早期赢家原本用 🎯,但同一张表的
+// styleLabel 里 🎯 已经是「冷门猎手」——早期赢家改用 🥇(冠军奖牌),🎯 留给
+// 冷门猎手。echo 保持 🔁:🔥 是五级信号阶梯最高级「聪明钱共识」的专用符号,
+// 拿来做发现渠道会制造新的一符两义。
 const CHANNEL_META: Record<string, { icon: string; label: string }> = {
   echo: { icon: "🔁", label: "共识同行" },
   splitter: { icon: "🧩", label: "拆单建仓" },
   insider: { icon: "🕵️", label: "内幕签名" },
-  early_winner: { icon: "🎯", label: "早期赢家" },
+  early_winner: { icon: "🥇", label: "早期赢家" },
 };
+
+// 表头 (?) —— 有口径的列头把口径收进提示里,不占页面正文(readme §6)。
+// 与 follow/DeepAnalysis 的 HelpMark 同形(第三处复制,见 needsShared):
+// 触屏可达不自己实现,复用 ui.tsx 的 Icon —— 它自带 tipPopProps。
+function HelpMark({ tip }: { tip: string }) {
+  return (
+    <span
+      style={{
+        marginLeft: 4,
+        fontSize: 11,
+        fontWeight: 400,
+        color: "var(--ww-text-faint)",
+      }}
+    >
+      <Icon s="(?)" title={tip} />
+    </span>
+  );
+}
 
 // useLang().t 的签名 —— 下面几个模块级辅助函数在组件树之外,由调用方把
 // 当前语言的 t 穿进来(中文键在 zh 下原样返回,逻辑零变化)。
@@ -388,13 +411,27 @@ function ScorecardTable({
         <thead>
           <tr>
             <th>{t("渠道")}</th>
-            <th className="is-right">{t("告警行")}</th>
+            <th className="is-right">
+              {t("告警行")}
+              <HelpMark
+                tip={t(
+                  "smart / 共识告警只对在池钱包触发，每条已结算告警都是该钱包在池期间的一次前向实验；按首发渠道(source)归组。",
+                )}
+              />
+            </th>
             <th className="is-right">{t("钱包")}</th>
             <th className="is-right">{t("市场")}</th>
             <th className="is-right">{t("胜率")}</th>
             <th className="is-right">{t("隐含")}</th>
             <th className="is-right">{t("费用")}</th>
-            <th className="is-right">{t("净 edge ±95%(聚类)")}</th>
+            <th className="is-right">
+              {t("净 edge ±95%(聚类)")}
+              <HelpMark
+                tip={t(
+                  "逐行贡献 = 结算胜负 − 入场隐含 − 协议费(概率点/行)；区间为市场聚类稳健口径。",
+                )}
+              />
+            </th>
             <th className="is-right">{t("判定")}</th>
           </tr>
         </thead>
@@ -464,20 +501,15 @@ function ScorecardSection({
   const d = sc.disclosures;
   return (
     <div>
-      {/* 口径先行 —— 统计声明放在数据「前面」,不放脚注(readme §1)。
-          灰框 = 口径定义;琥珀框 = 读前必看的统计警告。 */}
-      <div className="ds-callout" style={{ marginBottom: "var(--s-3)" }}>
-        {t(
-          "每渠道的向前战绩:smart/共识告警只对在池钱包触发,每条已结算告警天然是该钱包在池期间的一次前向实验;按首发渠道(source)归组。逐行贡献 = 结算胜负 − 入场隐含 − 协议费(概率点/行),区间为市场聚类稳健口径。",
-        )}
-      </div>
+      {/* 口径先行 —— 唯一保留的琥珀条:不读它会把「显著」当成结论。渠道口径
+          与逐行贡献公式改挂对应列头的 (?),不占正文(readme §1/§6)。 */}
       <div
         className="ds-callout ds-callout--warn"
         style={{ marginBottom: "var(--s-4)" }}
       >
         ⚠️{" "}
         {t(
-          "多重比较提醒:本表共 {g} 个分组,α=0.05 下期望假阳性 ≈ {e} 个 —— 单组「显著」在独立时间段复现之前只是候选假设;判定不接任何自动清退,动手走既有准入/重审路径。",
+          "本表 {g} 个分组，α=0.05 下期望假阳性 ≈ {e} 个 —— 单组「显著」在独立时间段复现前只是候选假设。",
           { g: sc.groupCount, e: (sc.groupCount * 0.05).toFixed(1) },
         )}
       </div>
@@ -488,14 +520,17 @@ function ScorecardSection({
             className="ds-label"
             style={{ margin: "var(--s-5) 0 var(--s-2)" }}
           >
-            {t("全局榜 × 做市商横切(官方榜不区分做市商,该不该留由数据说话)")}
+            {t("全局榜 × 做市商横切")}
+            <HelpMark tip={t("官方榜不区分做市商，该不该留由数据说话。")} />
           </div>
           <ScorecardTable groups={sc.mmSplit} t={t} />
         </>
       )}
+      {/* 卡底说明条压到一行:四个数字都是读数(剔除行绝不当 0、离池桶就是
+          幸存者盲区的大小),留;背后的机制说明进 /guide。 */}
       <div className="ds-callout" style={{ marginTop: "var(--s-4)" }}>
         {t(
-          "已打分告警 {a} 条 → 展开 {r} 行;费用不可定价剔除 {f} 行(绝不当 0);「已离池」桶 {o} 行 —— 30 天老化与清退会删除钱包行,来源失联的历史告警不丢弃、单独成桶,桶的大小本身就是幸存者盲区的读数。",
+          "已打分告警 {a} 条 → {r} 行；费用不可定价剔除 {f} 行（绝不当 0）；已离池 {o} 行 = 幸存者盲区读数。",
           {
             a: d.gradedAlerts,
             r: d.rows,
@@ -535,11 +570,23 @@ function LeagueSection({
       <table className="ds-table">
         <thead>
           <tr>
-            <th>{t("代号 / 钱包")}</th>
+            <th>
+              {t("代号 / 钱包")}
+              <HelpMark
+                tip={t("代号是确定性哈希的纯趣味展示，地址才是身份。")}
+              />
+            </th>
             <th>{t("渠道")}</th>
             <th className="is-right">{t("样本 n（市场）")}</th>
             <th className="is-right">{t("胜率")}</th>
-            <th className="is-right">{t("净 edge（点/仓）")}</th>
+            <th className="is-right">
+              {t("净 edge（点/仓）")}
+              <HelpMark
+                tip={t(
+                  "逐行贡献 = 结算(0/1) − 入场隐含 − 每股协议费；区间按市场聚簇（CRVE）。",
+                )}
+              />
+            </th>
             <th>{t("最佳 / 最惨一战")}</th>
           </tr>
         </thead>
@@ -609,14 +656,15 @@ function LeagueSection({
   );
   return (
     <section style={{ marginBottom: "var(--s-5)" }}>
-      {/* 统计声明放在数据「前面」,不放脚注(readme §1)。 */}
+      {/* 统计声明放在数据「前面」,不放脚注(readme §1)。只留会改变读数的
+          那一句:未校正的多重比较;公式与代号说明改挂列头 (?)。 */}
       <div
         className="ds-callout ds-callout--warn"
         style={{ marginBottom: "var(--s-4)" }}
       >
         ⚠️{" "}
         {t(
-          "口径：逐行贡献 = 结算(0/1) − 入场隐含 − 每股协议费；区间按市场聚簇（CRVE）；代号是确定性哈希的纯趣味展示，地址才是身份。多重比较：本页共检验 {w} 个 ≥10 市场的钱包，区间未做 Bonferroni 校正——两张名单是研究线索，不是交易结论。",
+          "共检验 {w} 个 ≥10 市场的钱包，区间未做 Bonferroni 校正 —— 两张名单是研究线索，不是交易结论。",
           { w: lg.testedWallets },
         )}
       </div>
@@ -806,15 +854,15 @@ export default function DiscoveryPage() {
             🔭 {t("白名单之外的候选漏斗")}
           </div>
           <h1 className="page-head__title">{t("聪明钱发现")}</h1>
+          {/* 一句话说清「这页是什么」。「点击行展开明细」是操作提示，已经在
+              每一行的 title 上，不占页头。 */}
           <p className="page-head__desc">
-            {t(
-              "候选须 30 天内证据广度 ≥3 且通过战绩审查才入池。点击行展开证据明细。",
-            )}
+            {t("候选须 30 天内证据广度 ≥3 且通过战绩审查才入池。")}
           </p>
         </div>
-        {/* 页头右侧动作钮（页头标准形的第四件）—— 页内琥珀条只写得下漏斗
-            口径的摘要，全文在说明书的「聪明钱发现」一节。站内跳转用 →，
-            ↗ 全站留给站外链接。 */}
+        {/* 页头右侧动作钮（页头标准形的第四件）—— 漏斗口径全文在说明书的
+            「聪明钱发现」一节，页内不再复述（KPI 01–04 已给出四段形状）。
+            站内跳转用 →，↗ 全站留给站外链接。 */}
         <div className="page-head__actions">
           <Link className="ds-btn" href="/guide#discovery">
             {t("漏斗规则全文")} →
@@ -831,16 +879,10 @@ export default function DiscoveryPage() {
         </div>
       )}
 
-      {/* 口径条 —— 琥珀框紧跟页头，放在数据「前面」，不放脚注。 */}
-      <div
-        className="ds-callout ds-callout--warn"
-        style={{ marginBottom: "var(--s-5)" }}
-      >
-        ⚠️{" "}
-        {t(
-          "入池口径：成交流涌现（共识同行 / 拆单建仓 / 内幕签名）+ 已结算市场早期赢家 + 分类榜专家 → 复发广度 ≥3 → 战绩审查（胜率 ≥55% 且 ≥10 结算，或盈利且 ROI ≥5% 且 ≥5 结算）→ 做市机器人硬拒。分类榜旁路：六类 × 周/月榜前 25 免复发直接进闸门，只过战绩审查；在池成员每日按战绩重新认证，30 天不再合格自动出池——行为再现即可重新成为候选。",
-        )}
-      </div>
+      {/* 入池口径的全文原本占一整条琥珀框（约 200 字），已收进页头右侧的
+          「漏斗规则全文 →」（/guide#discovery）；四段形状由下面的 KPI 01–04
+          承担，「30 天不再合格自动出池」挂在白名单池表「最近确认」列头的
+          (?) 上。琥珀条留给真正会改变读数的告诫。 */}
 
       {/* KPI 分格卡 —— 漏斗四段按 01–04 编号，一张白卡内 1px 竖线分格。
           箭头没了：编号本身就是顺序，分格线负责层级(readme §4/§5)。
@@ -1090,14 +1132,13 @@ export default function DiscoveryPage() {
               <tr>
                 <th style={{ width: 150 }}>{t("钱包")}</th>
                 <th>{t("标签")}</th>
-                <th
-                  className="is-right"
-                  style={{ width: 90 }}
-                  title={t(
-                    "各渠道去重市场数之和（同一市场被两个渠道命中计两次——两种独立行为签名强于一种）",
-                  )}
-                >
+                <th className="is-right" style={{ width: 90 }}>
                   {t("复发广度")}
+                  <HelpMark
+                    tip={t(
+                      "各渠道去重市场数之和（同一市场被两个渠道命中计两次——两种独立行为签名强于一种）",
+                    )}
+                  />
                 </th>
                 <th>{t("最近证据")}</th>
                 <th className="is-right" style={{ width: 170 }}>
@@ -1210,14 +1251,13 @@ export default function DiscoveryPage() {
                 <th className="is-right" style={{ width: 110 }}>
                   {t("净盈亏")}
                 </th>
-                <th
-                  className="is-right"
-                  style={{ width: 110 }}
-                  title={t(
-                    "最近一次通过播种/重认证确认资格的时间；30 天不再合格自动出池",
-                  )}
-                >
+                <th className="is-right" style={{ width: 110 }}>
                   {t("最近确认")}
+                  <HelpMark
+                    tip={t(
+                      "最近一次通过播种/重认证确认资格的时间；30 天不再合格自动出池",
+                    )}
+                  />
                 </th>
               </tr>
             </thead>
@@ -1331,11 +1371,12 @@ export default function DiscoveryPage() {
               )}
             </tbody>
           </table>
-          {/* 卡底琥珀条 —— `—` 的三种成因写在数据旁边，不写在脚注里。 */}
+          {/* 卡底琥珀条 —— `—` 的成因写在数据旁边（不读会把它当成零），
+              压到一行:两种成因用最短句式列全。 */}
           <div className="note-strip note-strip--warn">
             ⚠️{" "}
             {t(
-              "评分 / 胜率 / 净盈亏 的 — 是「判不了」，不是零：该钱包还没有回填战绩快照（榜单播种的成员在首次重认证后补齐）。最近确认 的 — 表示来源未记录确认时间。",
+              "— 是「判不了」不是零：评分 / 胜率 / 净盈亏 = 尚无战绩快照；最近确认 = 来源未记录时间。",
             )}
           </div>
         </div>
@@ -1354,35 +1395,40 @@ export default function DiscoveryPage() {
           <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
             📈 {t("信号密度（14 天） · 共识推送 ÷ 平均窗口量 + 发现渠道日产出")}
           </div>
-          {/* 口径先行：原本只挂在小标的 title 上，触屏读不到 —— 提成常驻灰框。 */}
-          <div className="ds-callout" style={{ marginBottom: "var(--s-3)" }}>
-            {t(
-              "左侧列 = 共识信号引擎（每日推送 ÷ 当日平均 6h 窗口成交量，$1M 归一——窗口滚动重叠不能求和，平均窗口量是热度的无偏代理）；「新证据」列 = 发现渠道当日首次入账的候选证据行。密度随热度同跌 = 市场降温；热度稳定密度独跌 = 阈值需重校",
-            )}
-          </div>
+          {/* 口径改挂各列表头的 (?)：Icon 自带 tipPopProps，触屏点得开，
+              不再需要一整条常驻灰框复述三列的定义。 */}
           <div className="ds-table-wrap">
             <table className="ds-table">
               <thead>
                 <tr>
                   <th>{t("日期")}</th>
                   <th className="is-right">{t("共识轮")}</th>
-                  <th className="is-right">{t("平均窗口量")}</th>
+                  <th className="is-right">
+                    {t("平均窗口量")}
+                    <HelpMark
+                      tip={t(
+                        "当日平均 6h 窗口成交量 —— 窗口滚动重叠不能求和，平均窗口量是热度的无偏代理",
+                      )}
+                    />
+                  </th>
                   <th className="is-right">{t("原始组")}</th>
                   <th className="is-right">{t("分歧剔除")}</th>
                   <th className="is-right">{t("推送")}</th>
-                  <th
-                    className="is-right"
-                    title={t("推送 ÷ 平均窗口量（条/$1M）")}
-                  >
+                  <th className="is-right">
                     {t("密度")}
+                    <HelpMark
+                      tip={t(
+                        "推送 ÷ 平均窗口量（条/$1M）；随热度同跌 = 市场降温，热度稳定而密度独跌 = 阈值需重校",
+                      )}
+                    />
                   </th>
-                  <th
-                    className="is-right"
-                    title={t(
-                      "发现渠道（共识同行/拆单建仓/内幕签名/早期赢家）当日首次入账的证据行数",
-                    )}
-                  >
+                  <th className="is-right">
                     {t("新证据")}
+                    <HelpMark
+                      tip={t(
+                        "发现渠道（共识同行/拆单建仓/内幕签名/早期赢家）当日首次入账的证据行数",
+                      )}
+                    />
                   </th>
                 </tr>
               </thead>
@@ -1440,13 +1486,8 @@ export default function DiscoveryPage() {
         }
         width={720}
       >
-        {/* 说明文字里原来写着「点击下方标签可直接按其筛选当前列表」，
-            但这张表从来不可点 —— 改成实际成立的一句。 */}
-        <div className="ds-callout" style={{ marginBottom: "var(--s-4)" }}>
-          {t(
-            "与「说明」页同一数据源；列表与筛选条里的任意标签，悬停都能看到同一句提示。",
-          )}
-        </div>
+        {/* 「与说明页同一数据源」这句已经在打开本弹窗那颗按钮的 title 上，
+            弹窗里不再复述 —— 读者要的是下面那张定义表本身。 */}
         {/* 弹窗里不套第二层卡（readme §5：弹窗只有标题条 + 内容区两层）——
             与白名单弹窗同一处理，只留横向滚动兜底。 */}
         <div style={{ overflowX: "auto" }}>

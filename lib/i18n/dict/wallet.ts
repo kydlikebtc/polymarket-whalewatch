@@ -83,8 +83,6 @@ export const DICT_WALLET: Record<string, string> = {
   现价: "Now",
   市值: "Value",
   浮动盈亏: "Unrealized P/L",
-  "建仓均价与现价是成本口径，一律中性色；只有浮动盈亏用涨绿跌红。":
-    "Entry price and current price are cost figures — always neutral in color; only unrealized P/L uses green-up / red-down.",
 
   // -------- 专攻类别 + 类别词元(catLabel/subLabel 译回英文原名;
   // 「体育·NBA」等合成串不进字典,组件按词元 t() 后合成)
@@ -130,8 +128,8 @@ export const DICT_WALLET: Record<string, string> = {
   卖出: "Sells",
   净买入: "Net buy",
   笔数: "Fills",
-  "类别栏的「—」= 上游没有给出分类标注，不是「其他」这一档。":
-    "A “—” in the Category column means upstream gave no category label — it is not the “Other” bucket.",
+  "「—」= 上游未给分类，不是「其他」这一档。":
+    "“—” = upstream gave no category, not the “Other” bucket.",
 
   // -------- 本工具历史命中 / 最近成交
   "本工具历史命中 · 近 {d} 天 {n} 条":
@@ -146,13 +144,13 @@ export const DICT_WALLET: Record<string, string> = {
   时间: "Time",
   "💰 大单": "💰 Large trade",
   "🔥 共识": "🔥 Consensus",
-  "价格栏的「—」= 当时的告警载荷没有记录成交价，不是成交价为 0。":
-    "A “—” in the Price column means the alert payload recorded no fill price at the time — it does not mean the fill price was 0.",
+  "价格「—」= 当时告警载荷未记成交价，不是 0。":
+    "Price “—” = the alert payload recorded no fill price then, not a price of 0.",
   "最近成交 · 近 {n} 笔": "Recent trades · last {n}",
   // 价格影响持久性(第二梯队八件套,2026-08-28)
   "价格影响 · 告警后市场反应": "Price impact · market reaction after alerts",
-  "样本不足：可测初动 {m} 条 · 覆盖 {k} 个市场（需 ≥8）":
-    "Insufficient sample: {m} measurable moves across {k} markets (needs ≥8)",
+  "可测初动 {m} 条 · 覆盖 {k} 个市场（需 ≥8）":
+    "{m} measurable moves across {k} markets (needs ≥8)",
   被市场跟随: "Followed by the market",
   被市场回吐: "Faded by the market",
   反应不一: "Mixed reaction",
@@ -160,15 +158,14 @@ export const DICT_WALLET: Record<string, string> = {
     "Initial-move retention {r}% (95% CI {lo}–{hi}%, {k} markets)",
   "中位初动 +{a}¢ → 24h {b}¢": "Median initial move +{a}¢ → 24h {b}¢",
   "中位初动 → 24h": "Median initial move → 24h",
-  // 口径条与免责句分家:后者在界面上加粗独立成句
-  "口径：初动 = 告警后 10 分钟的方向化价移（≥2¢ 才可测），留住 = 24h 后保住初动一半以上；区间按市场聚簇。":
-    "Definitions: initial move = direction-signed price change 10 minutes after the alert (≥2¢ to count), retained = 24h later at least half the move survives; CI clustered by market.",
+  // 指标定义收进「初动留存率」label 的 title(正文只留下面那句声明)
+  "初动 = 告警后 10 分钟的方向化价移（≥2¢ 才可测）；留住 = 24h 后保住初动一半以上；95% 区间按市场聚簇。":
+    "Initial move = direction-signed price change 10 minutes after the alert (≥2¢ to count); retained = at least half the move survives 24h later; 95% CI clustered by market.",
   "这是市场对他的反应的描述统计，不是任何跟随建议。":
     "Descriptive statistics of how the market reacted — never a suggestion to follow anyone.",
   // 交易风格(第二梯队八件套,2026-08-28;词表与 discovery 页共用)
   "交易风格 · 池内 · 近 90 天告警样本 {n} 条":
     "Trading style · pool member · {n} alert samples in 90d",
-  "风格最像的池内钱包：": "Most similar pool wallets: ",
   "🎯 冷门猎手": "🎯 Longshot hunter",
   "⚖️ 中盘": "⚖️ Midrange",
   "🛡️ 热门守卫": "🛡️ Favorite guard",
@@ -177,4 +174,9 @@ export const DICT_WALLET: Record<string, string> = {
   "🗓️ 长线": "🗓️ Long-haul",
   "🔨 重锤": "🔨 Hammer",
   "↔️ 双向": "↔️ Two-way",
+
+  // -------- 自测判决块的未加载态(组件在 app/wallet/[address] 下,故归本片;
+  // selftest 分片里那条长版文案随本轮改写作废)
+  "按池准入口径给这份战绩一个判决。":
+    "Judge this track record against the pool's admission bar.",
 };

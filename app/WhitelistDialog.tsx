@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CopyButton, Modal, Tag, WalletLink, fmtSignedUsdCompact } from "./ui";
+import {
+  CopyButton,
+  Modal,
+  Segmented,
+  Tag,
+  WalletLink,
+  fmtSignedUsdCompact,
+} from "./ui";
 import { useLang } from "./i18n";
 
 type Row = {
@@ -19,6 +26,11 @@ function shortWallet(w: string): string {
   return w.length > 12 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w;
 }
 
+// 池的三档视图。互斥（用 Segmented，不是一排 FilterButton），口径由算术
+// 闭合：全部 = 有投票权 + 机器人，因为「有投票权」就是 !isMarketMaker。
+// 不引入新判据、不调新接口 —— 复用行上已有的 isMarketMaker 字段。
+type Scope = "all" | "voting" | "mm";
+
 // Clickable smart-money whitelist: searchable list of addresses (each links to
 // the wallet dossier) with score / win-rate / realized PnL. Fetched once on
 // first open and kept for the session.
@@ -32,6 +44,7 @@ export function WhitelistDialog({
   const { t } = useLang();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [q, setQ] = useState("");
+  const [scope, setScope] = useState<Scope>("all");
 
   useEffect(() => {
     if (!open || rows) return;
@@ -49,14 +62,26 @@ export function WhitelistDialog({
     };
   }, [open, rows]);
 
+  // 档位与搜索串联（搜索 AND 档位），顺序不影响结果。
   const filtered = useMemo(() => {
     const list = rows ?? [];
+    const inScope =
+      scope === "all"
+        ? list
+        : scope === "voting"
+          ? list.filter((r) => !r.isMarketMaker)
+          : list.filter((r) => r.isMarketMaker);
     const s = q.trim().toLowerCase();
-    return s ? list.filter((r) => r.address.includes(s)) : list;
-  }, [rows, q]);
+    return s ? inScope.filter((r) => r.address.includes(s)) : inScope;
+  }, [rows, q, scope]);
 
-  // 标题条副行的读数 —— 纯展示派生量，不改任何取数逻辑。
+  // 标题条副行与档位钮上的读数 —— 纯展示派生量，不改任何取数逻辑。
+  const total = rows?.length ?? 0;
   const mmCount = (rows ?? []).filter((r) => r.isMarketMaker).length;
+  const votingCount = total - mmCount;
+  // 匹配读数的分母跟着当前档位走，否则「2/330」会把档位筛掉的行也算进去。
+  const scopeTotal =
+    scope === "all" ? total : scope === "voting" ? votingCount : mmCount;
 
   return (
     <Modal
@@ -87,7 +112,9 @@ export function WhitelistDialog({
         </>
       }
     >
-      {/* 工具条：240px 搜索框 + 右对齐的匹配读数。 */}
+      {/* 工具条（帧 14）：240px 搜索框 + 右对齐的三档互斥筛选。计数写在
+          档位钮上 —— 「全部 = 有投票权 + 机器人」在钮上自己闭合，不需要
+          一句说明。档位在 rows 到位后才出现，免得先闪一排 0。 */}
       <div className="filter-bar" style={{ marginBottom: "var(--s-4)" }}>
         <input
           className="ds-input"
@@ -99,25 +126,49 @@ export function WhitelistDialog({
           style={{ width: 240, maxWidth: "100%" }}
         />
         {rows != null && q.trim() !== "" && (
-          <span className="filter-bar__right ds-hint">
+          <span className="ds-hint">
             {t("{shown}/{total} 条匹配", {
               shown: filtered.length,
-              total: rows.length,
+              total: scopeTotal,
             })}
+          </span>
+        )}
+        {rows != null && (
+          <span className="filter-bar__right">
+            <Segmented<Scope>
+              ariaLabel={t("白名单范围")}
+              value={scope}
+              onChange={setScope}
+              options={[
+                { value: "all", label: t("全部 {n}", { n: total }) },
+                {
+                  value: "voting",
+                  label: t("有投票权 {n}", { n: votingCount }),
+                },
+                { value: "mm", label: t("机器人 {n}", { n: mmCount }) },
+              ]}
+            />
           </span>
         )}
       </div>
       {rows == null ? (
         <div className="ds-empty">{t("加载中…")}</div>
       ) : filtered.length === 0 ? (
-        // 空态给内容也给出路：搜不到时给一个回到全量的按钮。
+        // 空态给内容也给出路：搜不到（或档位筛空）时给一个回到全量的按钮，
+        // 两个条件都要复位 —— 只清搜索会把人留在一个仍然空的档位里。
         <div className="ds-empty">
           {rows.length === 0
             ? t("白名单为空（引擎首次播种约需 1 分钟）")
             : t("无匹配地址")}
-          {q.trim() !== "" && (
+          {(q.trim() !== "" || scope !== "all") && (
             <div style={{ marginTop: "var(--s-3)" }}>
-              <button className="ds-btn ds-btn--sm" onClick={() => setQ("")}>
+              <button
+                className="ds-btn ds-btn--sm"
+                onClick={() => {
+                  setQ("");
+                  setScope("all");
+                }}
+              >
                 {t("清除")}
               </button>
             </div>
@@ -148,7 +199,8 @@ export function WhitelistDialog({
               {filtered.map((r) => (
                 <tr key={r.address}>
                   {/* 地址是唯一做首尾省略的东西；来源与投票权是常驻徽章，
-                      不再是只有桌面 hover 才读得到的 title。 */}
+                      不再是只有桌面 hover 才读得到的 title —— 徽章说「是什么」，
+                      title 只补「怎么判出来的」那个阈值。 */}
                   <td data-label={t("地址")}>
                     <span
                       style={{
@@ -179,7 +231,14 @@ export function WhitelistDialog({
                           「永不过期」是它与其余池成员的实际区别。 */}
                       {r.isWhitelist ? <Tag>{t("手动 · 永不过期")}</Tag> : null}
                       {r.isMarketMaker ? (
-                        <Tag variant="warn">🤖 {t("无投票权")}</Tag>
+                        // 判定阈值收进 title —— 它解释「怎么判出来的」，
+                        // 不改变任何读数，不占卡底说明条的那一行。
+                        <span
+                          style={{ display: "inline-flex" }}
+                          title={t("做市机器人判定：成交市场数 ≥ 1000")}
+                        >
+                          <Tag variant="warn">🤖 {t("无投票权")}</Tag>
+                        </span>
                       ) : null}
                     </span>
                   </td>
@@ -222,13 +281,14 @@ export function WhitelistDialog({
               ))}
             </tbody>
           </table>
-          {/* 卡底琥珀条 —— 投票权口径与 `—` 的含义，触屏也读得到。
-              emoji 留在徽章上，正文里只引用文字名（readme §1）；`—` 的成因
-              把本表出现过的三列写全（评分 / 胜率 / 净盈亏），不穷举一半。 */}
+          {/* 卡底说明条 —— 本弹窗唯一一条，压到一行。留下的两句都会改变
+              读数：不读第一句就会把池子大小当成投票人数，不读第二句就会
+              把「—」读成 0。做市机器人的判定阈值与「保留池籍以积累战绩」
+              的设计理由是方法论，不占正文。 */}
           <div className="note-strip note-strip--warn">
             ⚠️{" "}
             {t(
-              "「无投票权」= 做市机器人（成交市场数 ≥1000）：保留池成员资格以积累战绩数据，但做市流是库存再平衡、不是方向性观点，因此不计入共识 / 分歧投票。评分 / 胜率 / 净盈亏的 — 是「判不了」，不是零。",
+              "「无投票权」= 做市机器人：库存再平衡不是方向性观点，不计入共识 / 分歧投票。评分 / 胜率 / 净盈亏的「—」是判不了、不是 0。",
             )}
           </div>
         </div>

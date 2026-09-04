@@ -513,10 +513,10 @@ export default function Page() {
             💰 {t("实时扫描 · 不落库 · 时间按本地时区")}
           </div>
           <h1 className="page-head__title">{t("大额成交扫描器")}</h1>
+          {/* 描述压到一句话：说清「这页是什么」即可。筛选维度由下面的筛选条
+              自己报名，不在描述里重念一遍。 */}
           <p className="page-head__desc">
-            {t(
-              "按金额、方向、时间窗、赔率与地址年龄筛出单笔大额成交；每一行都能点进钱包档案与市场信号卡。",
-            )}
+            {t("逐笔筛出 Polymarket 的大额成交，每行可点进钱包档案。")}
           </p>
         </div>
         <div className="page-head__actions">
@@ -542,7 +542,7 @@ export default function Page() {
           className="ds-callout ds-callout--warn"
           style={{ marginBottom: "var(--s-5)" }}
         >
-          {t("成交太密集，API 回看深度已用满 — 时间窗尾部的部分成交未覆盖")}
+          {t("成交太密集，API 回看深度已用满 —— 窗口尾部未全覆盖")}
         </div>
       ) : null}
 
@@ -768,12 +768,15 @@ export default function Page() {
           >
             {t("价格")}
           </span>
+          {/* 单位口径（赔率 0–1，不是 ¢）收进两个输入框的 title —— 占位符
+              已经写着 0 / 1，行内再挂一条 hint 是同一句话说两遍。 */}
           <input
             type="number"
             step={0.01}
             min={0}
             max={1}
             placeholder="0"
+            title={t("赔率 0–1")}
             value={minPrice}
             onChange={(e) => setMinPrice(e.target.value)}
             className="ds-input"
@@ -786,6 +789,7 @@ export default function Page() {
             min={0}
             max={1}
             placeholder="1"
+            title={t("赔率 0–1")}
             value={maxPrice}
             onChange={(e) => setMaxPrice(e.target.value)}
             className="ds-input"
@@ -802,7 +806,6 @@ export default function Page() {
               {t("清除")}
             </button>
           ) : null}
-          <span className="ds-hint">{t("赔率 0–1")}</span>
         </div>
 
         {/* Market category — from the event's gamma tags, server-enriched. */}
@@ -866,12 +869,11 @@ export default function Page() {
       {autoRetrying ? (
         // The pull failed on a cold upstream cache and a one-shot retry is
         // scheduled — show progress instead of an error + empty table.
+        // 空态的第二行只留「下一步」，机制解释（为什么重试会成）删掉。
         <div className="ds-empty">
           <div>{t("上游缓存预热中，自动重试…")}</div>
           <div style={{ marginTop: "var(--s-2)" }}>
-            {t(
-              "首次深拉会把上游缓存烧热，重试通常就成了；也可以直接点「刷新」。",
-            )}
+            {t("也可以直接点「刷新」。")}
           </div>
         </div>
       ) : view === "loading" ? (
@@ -879,21 +881,19 @@ export default function Page() {
         // and a blank area reads as "the tool is broken".
         <div className="ds-empty">
           <div>
-            {t("正在扫描 {hours}h 成交 — 深度拉取首次约 5-15 秒，请稍候…", {
+            {t("正在扫描 {hours}h 成交 —— 首次深拉约 5-15 秒…", {
               hours,
             })}
           </div>
           <div style={{ marginTop: "var(--s-2)" }}>
-            {t("嫌慢就把时间窗切到 1h：窗口越短，回看深度越浅。")}
+            {t("嫌慢就把时间窗切到 1h。")}
           </div>
         </div>
       ) : view === "empty" ? (
         <div className="ds-empty">
           <div>{t("该筛选条件下 {hours}h 内暂无成交", { hours })}</div>
           <div style={{ marginTop: "var(--s-2)" }}>
-            {t(
-              "试试降低金额门槛、把时间窗切到 24h，或清掉价格区间 / 类型 / 地址年龄这三项客户端筛选。",
-            )}
+            {t("试试降低金额门槛、拉长时间窗，或清掉价格 / 类型 / 地址年龄。")}
           </div>
         </div>
       ) : view === "rows" ? (
@@ -909,9 +909,7 @@ export default function Page() {
               ) : null}
             </span>
             {agesStillLoading ? (
-              <span className="muted">
-                {t("地址年龄加载中，结果将随加载补全")}
-              </span>
+              <span className="muted">{t("地址年龄加载中，结果会补全")}</span>
             ) : null}
           </div>
           <table className="ds-table">
@@ -982,16 +980,17 @@ export default function Page() {
                 {t("显示其余 {n} 行", { n: fmtUsd(hiddenCount) })}
               </button>
               <span>
-                {t("统计卡与「符合筛选」计数已包含全部 {n} 笔", {
+                {t("统计卡已包含全部 {n} 笔", {
                   n: fmtUsd(displayedTrades.length),
                 })}
               </span>
             </div>
           ) : null}
-          {/* 降级态说明 —— 「—」是「判不了」，不是零 */}
+          {/* 降级态说明 —— 「—」是「判不了」，不是零（readme §1.2 要求这条
+              留在表下的琥珀条里）。两种降级态用最短句式列全，不写成段落。 */}
           <div className="note-strip note-strip--warn">
             {t(
-              "「…」= 地址年龄 / 战绩仍在后台补齐，结果会自己填上；「—」= 判不了，不是零 —— 战绩列的「—」表示该钱包没有可统计的已结算市场，不代表 0 胜率。",
+              "「…」= 后台补齐中 · 「—」= 判不了，不是零：战绩的「—」是无已结算市场，不是 0 胜率",
             )}
           </div>
         </div>
@@ -1001,7 +1000,7 @@ export default function Page() {
         <div className="ds-empty">
           <div>{t("正在准备扫描…")}</div>
           <div style={{ marginTop: "var(--s-2)" }}>
-            {t("如果这里一直停着，点筛选条右侧的「刷新」重新发起一次拉取。")}
+            {t("一直停着就点筛选条右侧的「刷新」。")}
           </div>
         </div>
       )}
