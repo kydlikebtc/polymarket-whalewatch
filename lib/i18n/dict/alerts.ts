@@ -12,6 +12,61 @@ export const DICT_ALERTS: Record<string, string> = {
   "· 每 5 秒自动刷新（后台标签页暂停）":
     "· auto-refreshes every 5s (paused in background tabs)",
 
+  // Page head（Etherscan 风改版：12px 小标 + 24/600 标题 + 说明）
+  // 「实时告警」标题键在 common 分片（导航同名，共用一处译文）。
+  // 描述压到一句「这页是什么」；口径的去处见下面的 timeTip 与流尾提示。
+  "📣 每 5 秒轮询 · 后台标签页暂停":
+    "📣 Polled every 5s · paused in background tabs",
+  "命中告警条件的大额成交逐条出现在下方，最新一条在最上面。":
+    "Large fills matching the alert conditions appear below, newest first.",
+  // 时区声明（设计系统 §1：注明一次）—— 从页头描述迁到「时间」列的 (?)。
+  显示为浏览器本地时区: "Shown in your local timezone",
+
+  // 口径条（琥珀，全页唯一一条，放在数据前面）—— 只留会改变读数的统计
+  // 声明。列的定义与平推死区进「验证」列的 (?)，降级态的读法在表下方。
+  "口径 · 信号验证": "Basis · signal validation",
+  "验证列是公开市价变化，不等于你的实际成交；95% 区间与「样本不足」按市场数计算，不按行数。":
+    "The Validation column shows public market-price moves, not your actual fills; the 95% interval and the small-sample flag are computed on the market count, not the row count.",
+
+  // 卡底说明条 —— 一行内把三处「—」列全（设计系统 §1.2：穷举一半会让
+  // 读者以为只有两种成因）。平局的判定式与补算节奏进 (?)。
+  "⚠️「—」是判不了、不是 0：结果列 = 没带结果名 · 钱包列 = 没带地址 · 验证列 = 已结算但平局（不计入胜率）。验证列的「…」= 仍在补算。":
+    "⚠️ A dash means undecidable, not 0: Outcome = no outcome name · Wallet = no address · Validation = settled as a push (left out of the win rate). An ellipsis under Validation = still being computed.",
+
+  // KPI 3 格
+  命中条数: "Alerts matched",
+  "轮询中 · 每 5 秒（列表上限 100 条）":
+    "Polling · every 5s (list caps at 100)",
+  "刷新失败: {err}": "Refresh failed: {err}",
+  最近命中: "Latest hit",
+  "最后刷新 {at}": "Last refresh {at}",
+  等待首次刷新: "Awaiting the first refresh",
+  等待首条命中: "Awaiting the first hit",
+  推送通道: "Push channel",
+  推送正常: "Push healthy",
+  "连续失败 {n} 次": "{n} consecutive failures",
+  "接口未提供推送计数（旧版本或冷库）":
+    "The API returned no push counters (older build or cold DB)",
+  "仅推送受影响，新告警仍正常入库":
+    "Only pushes are affected — new alerts still land in the DB",
+  "最近成功推送 {at}": "Last successful push {at}",
+  暂无成功推送记录: "No successful push on record yet",
+
+  // 命中流卡
+  命中流: "Hit stream",
+  "最近 {n} 条 · 最新在上": "Latest {n} · newest first",
+  等待下一条命中: "Waiting for the next hit",
+  // 流尾的第二行 —— 兼作「条件在哪配置」的去处（原在页头描述里）。
+  // 轮询周期不再复述：页头小标与 KPI 副行已各说一次。
+  "条件在运营页配置；放宽金额门槛（如 ≥$5,000）可提高命中频率。":
+    "Conditions are set on the ops page; loosening the amount floor (to ≥$5,000, say) raises the hit rate.",
+
+  // 行内信号类型名称标签（其余名称的译文在 glossary / market 分片）
+  同批新钱包: "New-wallet cohort",
+  // 结算判定徽章
+  命中: "Hit",
+  未中: "Miss",
+
   // Conditions panel
   告警条件: "Alert Conditions",
   启用: "Enabled",
@@ -54,8 +109,10 @@ export const DICT_ALERTS: Record<string, string> = {
   "⚠️ Telegram 推送通道异常：已连续": "⚠️ Telegram push channel failing —",
   次发送失败: "consecutive send failures",
   "（最近失败 {at}）": " (last failure {at})",
-  "。新告警仍正常入库并显示在下方列表，仅推送受影响 — 请检查 bot token / 频道权限 / 限流。":
-    ". New alerts still land in the DB and the list below; only pushes are affected — check the bot token / channel permissions / rate limits.",
+  // 「仍正常入库」是会改变读数的那一句（空流不是这条故障造成的），留下；
+  // 「并显示在下方列表」与下方 KPI 副行重复，删。
+  "。新告警仍正常入库，仅推送受影响 — 检查 bot token / 频道权限 / 限流。":
+    ". New alerts still land in the DB; only pushes are affected — check the bot token / channel permissions / rate limits.",
 
   // Validation strip
   "信号验证（当前列表）": "Signal validation (current list)",
@@ -82,7 +139,22 @@ export const DICT_ALERTS: Record<string, string> = {
   钱包: "Wallet",
   验证: "Validation",
   时间: "Time",
-  "信号后 1h/24h 价格变化（按方向着色）与结算结果":
-    "1h/24h price move after the signal (colored by direction) and the resolution result",
+  // 表头 (?) 的口径 —— 这一列的完整定义都在这里：三个 horizon、±0.5¢ 平推
+  // 死区、「…」的补算节奏。页面正文只留会改变读数的那一句。
+  "信号后 10m / 1h / 24h 的公开市价变化，按方向着色，±0.5¢ 内记平推；已结算的给命中 / 未中判定。「…」= 仍在补算，每分钟重试一批（一次最多 100 条）。":
+    "Public market-price move 10m / 1h / 24h after the signal, colored by direction; moves within ±0.5¢ count as a push. Settled rows get a hit / miss verdict. An ellipsis means the row is still being computed — retried once a minute (up to 100 per batch).",
   " · 结算价 {res} vs 成交价 {fill}": " · resolved {res} vs fill {fill}",
+
+  // --- WhitelistDialog（聪明钱白名单弹窗）--------------------------------
+  // 其余键在 discovery 分片（该弹窗的原属主页）；这批是本轮新增的三档
+  // 筛选与迁进 title 的口径，放在这里以免跨单改动 discovery.ts。
+  // （「全部」裸键已在上面的 Conditions panel 段落里，不重复声明。）
+  "全部 {n}": "All {n}",
+  "有投票权 {n}": "Voting {n}",
+  "机器人 {n}": "Bots {n}",
+  白名单范围: "Whitelist scope",
+  "做市机器人判定：成交市场数 ≥ 1000":
+    "Market-maker rule: traded in ≥ 1,000 markets",
+  "「无投票权」= 做市机器人：库存再平衡不是方向性观点，不计入共识 / 分歧投票。评分 / 胜率 / 净盈亏的「—」是判不了、不是 0。":
+    '"No vote" = a market maker: inventory rebalancing is not a directional view, so it does not count toward consensus / disagreement votes. A dash under Score / Win rate / Net PnL means undecidable, not 0.',
 };

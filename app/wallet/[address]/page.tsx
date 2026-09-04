@@ -86,7 +86,7 @@ export default async function Page({ params }: Props) {
     zhBits.push(`ROI ${s.roiPct >= 0 ? "+" : ""}${Math.round(s.roiPct)}%`);
   if (s.isWhitelist)
     zhBits.push(
-      s.score != null ? `🏆 白名单(${Math.round(s.score)}分)` : "🏆 白名单",
+      s.score != null ? `🏆 白名单 · ${Math.round(s.score)} 分` : "🏆 白名单",
     );
   if (s.alerts30d > 0) zhBits.push(`近30天 ${s.alerts30d} 条告警`);
   if (s.firstSeenTs != null) {
@@ -97,21 +97,37 @@ export default async function Page({ params }: Props) {
   return (
     <>
       <script type="application/ld+json">{breadcrumb}</script>
+      <WalletDossierClient />
       {s.hasData ? (
-        <section className="ds-main" style={{ paddingBottom: 0 }}>
-          <div
-            className="ds-card"
-            style={{
-              padding: "var(--s-4)",
-              display: "grid",
-              gap: "var(--s-2)",
-            }}
-          >
-            <div className="ds-label">
-              已结算快照 · settled snapshot (local)
+        // 已结算快照(服务端本地数据)—— 卡内：标题条 → 内容 → 灰色说明条，
+        // 与档案页其余卡片同一语法。
+        // 位置在客户端档案**之后**:页壳的第一件事必须是页头(设计稿 13 是
+        // 顶栏 → 页头 → 概览卡),页头之上不能先冒出一张卡。爬虫照读 —— 这段
+        // 仍在 DOM 里,只是排在主内容后面,即「附加摘要」的常规位置。
+        <section className="ds-main" style={{ paddingTop: 0 }}>
+          <div className="ds-card" style={{ overflow: "hidden" }}>
+            <div className="card-bar">
+              📌 已结算快照 · settled snapshot (local)
             </div>
-            <div style={{ fontSize: "var(--t-sm)" }}>{zhBits.join(" · ")}</div>
-            <div className="ds-label" style={{ textTransform: "none" }}>
+            {/* 每一条快照事实是一枚灰底名称标签(Etherscan name tag)——
+                emoji 只在标签内承担语义,不散在正文句子中间。 */}
+            {zhBits.length > 0 ? (
+              <div
+                style={{
+                  padding: "var(--s-4)",
+                  display: "flex",
+                  gap: "var(--s-2)",
+                  flexWrap: "wrap",
+                }}
+              >
+                {zhBits.map((b) => (
+                  <span className="ds-tag" key={b}>
+                    {b}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <div className="note-strip">
               Polymarket wallet {s.address}
               {s.winRatePct != null && s.settledCount != null
                 ? ` — ${Math.round(s.winRatePct)}% win rate over ${s.settledCount} settled positions`
@@ -119,12 +135,11 @@ export default async function Page({ params }: Props) {
               {s.realizedPnlUsd != null
                 ? `, ${signedUsd(s.realizedPnlUsd)} realized PnL`
                 : ""}
-              . Live dossier below.
+              . Live dossier above.
             </div>
           </div>
         </section>
       ) : null}
-      <WalletDossierClient />
     </>
   );
 }

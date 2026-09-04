@@ -27,14 +27,18 @@ export const DICT_DISCOVERY: Record<string, string> = {
   "smart {s} 条 · 共识成员 {c} 条": "{s} smart · {c} consensus-member rows",
   "记分卡数据不可用(旧部署或接口错误)。":
     "Scorecard unavailable (stale deployment or API error).",
-  "每渠道的向前战绩:smart/共识告警只对在池钱包触发,每条已结算告警天然是该钱包在池期间的一次前向实验;按首发渠道(source)归组。逐行贡献 = 结算胜负 − 入场隐含 − 协议费(概率点/行),区间为市场聚类稳健口径。":
-    "Forward record per channel: smart/consensus alerts only fire for pool members, so every graded alert is a forward experiment made while the wallet was in the pool; grouped by first-discoverer source. Per-row contribution = settlement result − entry implied − protocol fee (probability points), intervals are market-clustered robust.",
-  "全局榜 × 做市商横切(官方榜不区分做市商,该不该留由数据说话)":
-    "Global board × market-maker split (the official leaderboard doesn't separate MMs — let the data decide)",
-  "已打分告警 {a} 条 → 展开 {r} 行;费用不可定价剔除 {f} 行(绝不当 0);「已离池」桶 {o} 行 —— 30 天老化与清退会删除钱包行,来源失联的历史告警不丢弃、单独成桶,桶的大小本身就是幸存者盲区的读数。":
-    "{a} graded alerts → {r} rows; {f} rows dropped for unpriceable fees (never guessed as 0); {o} rows in the departed bucket — 30-day aging and purges delete wallet rows, so orphaned history is kept in its own bucket rather than discarded; the bucket's size is itself the survivorship blind-spot reading.",
-  "多重比较提醒:本表共 {g} 个分组,α=0.05 下期望假阳性 ≈ {e} 个 —— 单组「显著」在独立时间段复现之前只是候选假设;判定不接任何自动清退,动手走既有准入/重审路径。":
-    "Multiple-comparison reminder: {g} groups here, so ~{e} false positives are expected at α=0.05 — any single significant group is a candidate hypothesis until it replicates in an independent period; verdicts trigger no automatic purges, act via the existing admission/re-audit paths.",
+  // 渠道口径与逐行贡献公式从正文灰框搬进了对应列头的 (?)
+  "smart / 共识告警只对在池钱包触发，每条已结算告警都是该钱包在池期间的一次前向实验；按首发渠道(source)归组。":
+    "smart / consensus alerts only fire for pool members, so every graded alert is a forward experiment made while the wallet was in the pool; grouped by first-discoverer source.",
+  "逐行贡献 = 结算胜负 − 入场隐含 − 协议费(概率点/行)；区间为市场聚类稳健口径。":
+    "Per-row contribution = settlement result − entry implied − protocol fee (probability points); intervals are market-clustered robust.",
+  "全局榜 × 做市商横切": "Global board × market-maker split",
+  "官方榜不区分做市商，该不该留由数据说话。":
+    "The official leaderboard doesn't separate market makers — let the data decide whether they belong.",
+  "已打分告警 {a} 条 → {r} 行；费用不可定价剔除 {f} 行（绝不当 0）；已离池 {o} 行 = 幸存者盲区读数。":
+    "{a} graded alerts → {r} rows; {f} rows dropped for unpriceable fees (never guessed as 0); {o} departed rows = the survivorship blind-spot reading.",
+  "本表 {g} 个分组，α=0.05 下期望假阳性 ≈ {e} 个 —— 单组「显著」在独立时间段复现前只是候选假设。":
+    "{g} groups here, so ~{e} false positives are expected at α=0.05 — any single significant group is a candidate hypothesis until it replicates in an independent period.",
 
   // 渠道名(CHANNEL_META,证据子表渠道列 / ch: 筛选 chips 共用)
   共识同行: "Consensus echo",
@@ -49,6 +53,7 @@ export const DICT_DISCOVERY: Record<string, string> = {
 
   // 候选状态
   做市机器人: "Market-maker bot",
+  "做市机器人 · 硬拒": "Market-maker bot · rejected",
   候选中: "Candidate",
 
   // 证据明细子表
@@ -64,25 +69,32 @@ export const DICT_DISCOVERY: Record<string, string> = {
     "Legacy evidence rows stored no market details — the engine backfills them from gamma automatically (about 1 minute after startup); a few delisted markets stay blank",
 
   // 页头 / 错误
-  "白名单之外的聪明钱候选漏斗：成交流涌现（共识同行 / 拆单建仓 / 内幕签名）+ 已结算市场早期赢家 + 分类榜专家。候选须 30 天内证据广度 ≥3 并通过战绩审查（做市机器人硬拒）才会入池。点击行展开证据明细。":
-    "The smart-money candidate funnel beyond the whitelist: firehose emergence (consensus echo / split-buy entry / insider signature) + early winners in settled markets + category-board specialists. A candidate needs evidence breadth ≥3 within 30 days and must pass the track-record review (market-maker bots hard-rejected) to enter the pool. Click a row to expand its evidence detail.",
   "加载失败：{msg}": "Failed to load: {msg}",
 
-  // 漏斗条
+  // 页头（Etherscan 皮：12px 小标 + 24/600 标题 + 14px 描述）—— 描述压到
+  // 一句话；入池口径全文只在 /guide#discovery（页头右侧动作钮）。
+  白名单之外的候选漏斗: "The candidate funnel beyond the whitelist",
+  "候选须 30 天内证据广度 ≥3 且通过战绩审查才入池。":
+    "A candidate needs evidence breadth ≥3 within 30 days and must pass the track-record review to enter the pool.",
+
+  // 漏斗 KPI 四格（Etherscan 皮：01–04 编号取代了原来的 ①②③④ + 箭头）
+  "01 · 30 天证据": "01 · 30-day evidence",
+  "02 · 候选钱包": "02 · Candidate wallets",
+  "03 · 准入闸门": "03 · Admission gate",
+  "04 · 共识白名单池": "04 · Consensus whitelist pool",
+  "复发 ≥3": "Recurrence ≥3",
+  "{n} 榜": "{n} from boards",
+  "{n} 发现": "{n} discovered",
+
+  // 漏斗（KPI 四格的辅助文案 / 入口 title；①②③④ 那版竖排漏斗条已下线，
+  // 「聚合」「通过」两键留给其他页面的动态 t()）
   发现漏斗: "Discovery funnel",
-  "① 30 天证据": "① 30-day evidence",
   "成交流涌现 + 结算回溯": "Firehose emergence + settlement sweep",
   聚合: "Aggregate",
   查看候选漏斗列表: "View the candidate funnel list",
-  "② 候选钱包 →": "② Candidate wallets →",
   "纯观察 · 不进任何信号": "Watch-only · feeds no signals",
-  "复发≥3 · 战绩审查": "Recurrence ≥3 · track-record review",
-  "准入闸门：复发广度 ≥3 → 战绩审查（胜率≥55%&≥10结算 或 盈利&ROI≥5%&≥5结算）→ 做市机器人硬拒。分类榜走旁路：免复发、仅战绩审查。":
-    "Admission gate: recurrence breadth ≥3 → track-record review (win rate ≥55% & ≥10 settled, or profitable & ROI ≥5% & ≥5 settled) → market-maker bots hard-rejected. Category boards take a bypass: no recurrence, track-record review only.",
-  "③ 准入闸门": "③ Admission gate",
   "机器人硬拒 · 分类榜旁路": "Bots hard-rejected · category-board bypass",
   通过: "Pass",
-  "④ 共识白名单池 · {n}": "④ Consensus whitelist pool · {n}",
   "查看全局榜成员（top-100 自带门槛，免审查）":
     "View global-board members (top-100 is its own bar — review waived)",
   全局榜: "Global board",
@@ -90,28 +102,28 @@ export const DICT_DISCOVERY: Record<string, string> = {
     "View members produced by the discovery channels (category-board specialists + funnel graduates)",
   发现渠道: "Discovery channels",
 
-  // 信号密度趋势
+  // 信号密度趋势（三列口径挂在各自表头的 (?) 上，不再有常驻说明框）
   信号密度: "Signal density",
-  "左侧列 = 共识信号引擎（每日推送 ÷ 当日平均 6h 窗口成交量，$1M 归一——窗口滚动重叠不能求和，平均窗口量是热度的无偏代理）；「新证据」列 = 发现渠道当日首次入账的候选证据行。密度随热度同跌 = 市场降温；热度稳定密度独跌 = 阈值需重校":
-    "Left columns = the consensus signal engine (daily alerts ÷ that day's average 6h-window volume, normalized to $1M — rolling windows overlap so volumes must not be summed; average window volume is an unbiased heat proxy). The “new evidence” column = candidate evidence rows first recorded by the discovery channels that day. Density falling with heat = the market itself cooled; density falling alone under stable heat = thresholds drifted and need retuning",
   "信号密度（14 天） · 共识推送 ÷ 平均窗口量 + 发现渠道日产出":
     "Signal density (14d) · consensus alerts ÷ avg window volume + daily discovery output",
   日期: "Date",
   共识轮: "Cycles",
   平均窗口量: "Avg window vol",
+  "当日平均 6h 窗口成交量 —— 窗口滚动重叠不能求和，平均窗口量是热度的无偏代理":
+    "That day's average 6h-window volume — rolling windows overlap so volumes must not be summed; average window volume is an unbiased heat proxy",
   原始组: "Raw groups",
   分歧剔除: "Contested dropped",
   推送: "Fired",
-  "推送 ÷ 平均窗口量（条/$1M）": "Fired ÷ avg window volume (alerts/$1M)",
+  "推送 ÷ 平均窗口量（条/$1M）；随热度同跌 = 市场降温，热度稳定而密度独跌 = 阈值需重校":
+    "Fired ÷ avg window volume (alerts/$1M); falling together with heat = the market cooled, falling alone under stable heat = thresholds need retuning",
   密度: "Density",
   "发现渠道（共识同行/拆单建仓/内幕签名/早期赢家）当日首次入账的证据行数":
     "Evidence rows first recorded that day by the discovery channels (consensus echo / split-buy entry / insider signature / early winner)",
   新证据: "New evidence",
   "{n} 条/$1M": "{n}/$1M",
 
-  // 分类榜旁路提示
-  "分类榜旁路：六类 × 周/月榜前 25 直接进闸门（榜单排名即复发证据，仅过战绩审查） · ↺ 在池成员每日按战绩重新认证，30 天不再合格自动出池——行为再现即可重新成为候选":
-    "Category-board bypass: the top 25 of each weekly/monthly board across six categories go straight to the gate (board rank counts as recurrence evidence; track-record review only) · ↺ pool members re-certify daily on track record and age out after 30 days without re-qualifying — recurring behavior makes them candidates again",
+  // 页头右侧动作钮 —— 跳 /guide#discovery 的漏斗口径全文
+  漏斗规则全文: "Full funnel rules",
 
   // 控件区
   视图切换: "View switch",
@@ -171,16 +183,23 @@ export const DICT_DISCOVERY: Record<string, string> = {
   最近确认: "Last confirmed",
   "暂无 —— 候选通过准入审查（复发 ≥3 + 战绩闸）或分类榜播种后出现在这里":
     "Empty — wallets appear here after a candidate passes admission (recurrence ≥3 + the track-record gate) or a category board seeds them",
+  // 卡底琥珀条压到一行：两种 — 成因用最短句式列全
+  "— 是「判不了」不是零：评分 / 胜率 / 净盈亏 = 尚无战绩快照；最近确认 = 来源未记录时间。":
+    "A — means “can't be judged”, not zero: score / win rate / net PnL = no track-record snapshot yet; last confirmed = the source recorded no time.",
 
   // 标签说明弹窗(词表正文 name/kind/detail 的译文由 glossary 分片供给)
   钱包标签说明: "Wallet tag guide",
-  "与「说明」页同一数据源；悬停任意标签也能看到一句话提示。点击下方标签可直接按其筛选当前列表。":
-    "Same data source as the Glossary page; hovering any tag shows its one-line tip. Click a tag below to filter the current list by it.",
   类别: "Category",
   定义: "Definition",
 
   // 白名单弹窗(WhitelistDialog;「聪明钱白名单」标题键由 common 分片供给)
   " · {n} 个钱包": " · {n} wallets",
+  共识白名单池: "Consensus whitelist pool",
+  "{n} 个钱包": "{n} wallets",
+  "其中 {n} 个无投票权": "{n} of them carry no vote",
+  // emoji 留在徽章上，正文里只引用文字名（readme §1：emoji 不进正文句中）。
+  "「无投票权」= 做市机器人（成交市场数 ≥1000）：保留池成员资格以积累战绩数据，但做市流是库存再平衡、不是方向性观点，因此不计入共识 / 分歧投票。评分 / 胜率 / 净盈亏的 — 是「判不了」，不是零。":
+    "“No vote” = market-maker bot (≥1000 markets traded): it keeps pool membership so track-record data keeps accruing, but market-making flow is inventory rebalancing rather than a directional view, so it never counts toward consensus / split votes. A — under score / win rate / net PnL means “can't be judged”, not zero.",
   "搜索地址…（0x…）": "Search address… (0x…)",
   搜索白名单地址: "Search whitelist addresses",
   "加载中…": "Loading…",
@@ -189,22 +208,34 @@ export const DICT_DISCOVERY: Record<string, string> = {
   无匹配地址: "No matching addresses",
   地址: "Address",
   手动: "manual",
+  // 手动白名单行(is_whitelist=1)不参与 30 天老化清退 —— 灰底名称标签写全
+  // 这层含义，比只写「手动」多一条读者真正关心的信息。
+  "手动 · 永不过期": "Manual · never expires",
   "做市机器人（成交市场数 ≥1000）：保留池成员资格积累战绩数据，但不计入共识/分歧投票——做市流是库存再平衡，不是方向性观点":
     "Market-maker bot (≥1000 markets traded): keeps pool membership to accrue track-record data, but never votes in consensus/split — market-making flow is inventory rebalancing, not a directional view",
   无投票权: "no vote",
   // 名人堂/反指(第二梯队八件套,2026-08-28)
   "👑 名人堂": "👑 Hall of fame",
-  "名人堂数据缺失（接口错误兜底）。": "League data missing (API error fallback).",
+  // 视图切换的按钮文案 —— emoji 不上按钮(readme §1),👑 只留在 12px 小标。
+  名人堂: "Hall of fame",
+  "名人堂数据缺失（接口错误兜底）。":
+    "League data missing (API error fallback).",
   "代号 / 钱包": "Codename / wallet",
+  "代号是确定性哈希的纯趣味展示，地址才是身份。":
+    "Codenames are deterministic-hash fun only — the address is the identity.",
   "样本 n（市场）": "n (markets)",
   "净 edge（点/仓）": "Net edge (pts/fill)",
+  "逐行贡献 = 结算(0/1) − 入场隐含 − 每股协议费；区间按市场聚簇（CRVE）。":
+    "Per-row contribution = settlement (0/1) − entry implied − per-share protocol fee; intervals are market-clustered (CRVE).",
   "最佳 / 最惨一战": "Best / worst call",
-  "👑 名人堂 · 前向净 edge 显著为正": "👑 Hall of fame · forward net edge significantly positive",
+  "👑 名人堂 · 前向净 edge 显著为正":
+    "👑 Hall of fame · forward net edge significantly positive",
   "暂无净 edge 显著为正的钱包（≥10 市场才发判定）。":
     "No wallet with significantly positive net edge yet (verdicts need ≥10 markets).",
-  "🪞 反指名单 · 前向净 edge 显著为负": "🪞 Fade list · forward net edge significantly negative",
+  "🪞 反指名单 · 前向净 edge 显著为负":
+    "🪞 Fade list · forward net edge significantly negative",
   "暂无净 edge 显著为负的钱包——逆势少数边暂时还是孤例。":
     "No wallet with significantly negative net edge yet — the contrarian-minority tier remains a lone example for now.",
-  "口径：逐行贡献 = 结算(0/1) − 入场隐含 − 每股协议费；区间按市场聚簇（CRVE）；代号是确定性哈希的纯趣味展示，地址才是身份。多重比较：本页共检验 {w} 个 ≥10 市场的钱包，区间未做 Bonferroni 校正——两张名单是研究线索，不是交易结论。":
-    "Definitions: per-row contribution = settlement (0/1) − entry implied − per-share protocol fee; intervals market-clustered (CRVE); codenames are deterministic-hash fun only — the address is the identity. Multiplicity: {w} wallets with ≥10 markets were tested and the intervals carry no Bonferroni correction — both lists are research leads, not trading conclusions.",
+  "共检验 {w} 个 ≥10 市场的钱包，区间未做 Bonferroni 校正 —— 两张名单是研究线索，不是交易结论。":
+    "{w} wallets with ≥10 markets were tested and the intervals carry no Bonferroni correction — both lists are research leads, not trading conclusions.",
 };

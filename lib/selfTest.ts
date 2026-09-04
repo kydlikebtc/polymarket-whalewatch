@@ -13,10 +13,13 @@ import {
 // ---------------------------------------------------------------------------
 // 聪明钱自测(设计文档 2026-08-28-smart-money-selftest-design.md):访客粘贴
 // 地址领判决书。判决口径的红线是**严格复用**——权威判定原样透传
-// evaluateAdmission(准入闸唯一实现),本模块只做两件闸门不做的事:
+// evaluateAdmission(准入闸唯一实现),本模块只做三件闸门不做的事:
 //   1. 在 hold 之上分「为什么判不了」(truncated / 样本不足 / 净盈亏不可得),
 //      因为「你没过」与「我判不了」混为一谈是本站最不能犯的那类错;
-//   2. 池内三轴 midrank 分位(样本=当前 smart_wallets,本地读,零上游)。
+//   2. 池内三轴 midrank 分位(样本=当前 smart_wallets,本地读,零上游);
+//   3. admit 时标出走的是哪条路(admittedPath)——判决卡要在两条路上出
+//      「✅ 走这条过的」/「未走这条」徽章,而闸门只回一个 admit。这是**归因**
+//      不是第二次判决:只在闸门已经说 admit 时才问,阈值全部引用同一份常量。
 // 复发广度(30 天 ≥3 市场)刻意不在此处:它是发现渠道的候选资格闸,不是
 // 战绩质量闸——池内成员续期同样只考战绩(见 lib/admission.ts)。
 // ---------------------------------------------------------------------------
@@ -25,6 +28,9 @@ export type SelfTestVerdictKind =
   "pass" | "fail" | "bot" | "unjudged" | "no_data";
 
 export type UnjudgedReason = "truncated" | "small_sample" | "pnl_unavailable";
+
+/** 准入两条路的归属:1=胜率路、2=ROI 路、both=两条都到线。 */
+export type AdmittedPath = 1 | 2 | "both";
 
 export interface PoolMemberRow {
   address: string; // lowercased
@@ -45,6 +51,12 @@ export interface SelfTestVerdict {
   unjudgedReason: UnjudgedReason | null;
   /** evaluateAdmission 原始结果 —— 权威口径,展示层不得另判。 */
   gate: AdmissionVerdict;
+  /**
+   * gate="admit" 时走的是哪条路 —— 同样是权威口径,展示层照标不复算。
+   * 非 admit 为 null;admit 却两条都不匹配(闸门口径漂移)也为 null:
+   * 宁可不标归属,也不编一条路出来。
+   */
+  admittedPath: AdmittedPath | null;
   stats: WalletStats | null;
   /**
    * admission 同款构造的 0-100 评分(vol=0,效率轴走 settled roi)。
@@ -89,6 +101,30 @@ function axis(
 }
 
 /**
+ * 「过了闸,过的是哪条路」—— 判定权仍在 evaluateAdmission:调用方只在闸门
+ * 已经回 admit 时问这个问题,这里做的是归因,不是重判一次。两条路的条件与
+ * 阈值全部引用 admissionGate 的同一份导出常量(与 evaluateAdmission 里的
+ * 两个分支逐条对应),永不另抄数字;闸门口径改到两条都不匹配时返回 null。
+ */
+function admittedVia(stats: WalletStats): AdmittedPath | null {
+  const profitable = stats.netPnl != null && stats.netPnl > 0;
+  const viaWinRate =
+    profitable &&
+    stats.winRate != null &&
+    stats.settledCount >= ADMIT_MIN_SETTLED &&
+    stats.winRate >= ADMIT_MIN_WIN_RATE;
+  const viaRoi =
+    profitable &&
+    stats.roi != null &&
+    stats.roi >= ADMIT_MIN_ROI &&
+    stats.settledCount >= ADMIT_MIN_SETTLED_ROI;
+  if (viaWinRate && viaRoi) return "both";
+  if (viaWinRate) return 1;
+  if (viaRoi) return 2;
+  return null;
+}
+
+/**
  * 纯函数:stats(可为 null=上游取数失败)+ 池成员 → 判决书。
  * 判决分层见文件头注;分位样本=传入的池(调用方声明口径)。
  */
@@ -98,6 +134,8 @@ export function buildSelfTestVerdict(
   pool: PoolMemberRow[],
 ): SelfTestVerdict {
   const gate = evaluateAdmission(stats);
+  // 归属紧挨判定产出:同一份 stats、同一组常量,中间不插别的逻辑。
+  const admittedPath = stats && gate === "admit" ? admittedVia(stats) : null;
   const addr = address.toLowerCase();
 
   let verdict: SelfTestVerdictKind;
@@ -143,6 +181,7 @@ export function buildSelfTestVerdict(
     verdict,
     unjudgedReason,
     gate,
+    admittedPath,
     stats,
     score,
     percentiles: {

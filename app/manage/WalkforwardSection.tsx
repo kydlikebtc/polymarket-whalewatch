@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { WalkforwardReport, WfTierReport } from "../../lib/walkforward";
 import type { WfDueInfo, WfReportDiff } from "../../lib/walkforwardDiff";
 import type { WfRunState } from "../../lib/walkforwardRun";
-import { SectionHead } from "./bits";
+import { Foldable, SectionHead } from "./bits";
 import { sectionView } from "./sectionGate";
 import { authHeaders } from "./shared";
 import {
@@ -48,45 +48,66 @@ function SurvivorRows({ t }: { t: WfTierReport }) {
   const survivors = t.candidates.filter((c) => c.survives);
   if (survivors.length === 0) return null;
   return (
-    <table
-      className="ds-table ds-table--compact"
-      style={{ marginTop: "var(--s-2)" }}
-    >
-      <thead>
-        <tr>
-          <th>存活变体</th>
-          <th>OOS 超额(点/仓)</th>
-          <th>Bonferroni 下界</th>
-          <th>随机化 p</th>
-          <th>各折 OOS</th>
-        </tr>
-      </thead>
-      <tbody>
-        {survivors.map((v) => (
-          <tr key={v.key}>
-            <td>{v.label}</td>
-            <td className="mono">
-              {v.pooled
-                ? `${pts(v.pooled.point)}(n=${v.pooled.n} 市场=${v.pooled.markets})`
-                : "—"}
-            </td>
-            <td className="mono">{v.loBonf != null ? pts(v.loBonf) : "—"}</td>
-            <td className="mono">{v.randP?.toFixed(4) ?? "—"}</td>
-            <td className="mono ds-hint">
-              {v.folds
-                .filter((f) => f.evaluable)
-                .map(
-                  (f) =>
-                    `${new Date(f.fold * 1000).toISOString().slice(5, 10)}:${
-                      f.validatePoint == null ? "—" : pts(f.validatePoint)
-                    }`,
-                )
-                .join("  ")}
-            </td>
+    <div className="ds-table-wrap" style={{ marginTop: "var(--s-2)" }}>
+      <table className="ds-table ds-table--compact">
+        <thead>
+          <tr>
+            <th>存活变体</th>
+            <th>OOS 超额（点/仓）</th>
+            <th>Bonferroni 下界</th>
+            <th>随机化 p</th>
+            <th>各折 OOS</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {survivors.map((v) => (
+            <tr key={v.key}>
+              {/* 门槛说明永不截断 —— 换行,顶对齐。 */}
+              <td className="cell-wrap" data-label="存活变体">
+                {v.label}
+              </td>
+              {/* 这四处 `—` 是防御性兜底:本表只列存活变体,而 survives =
+                  passClustered && passRand,两者都要求 pooled/loBonf/randP 非
+                  空(lib/walkforward.ts),各折也已按 evaluable 过滤过。真跑出来
+                  是空的话它就是「判不了」,所以用 faint 与真读数分家,不与正文
+                  同色。 */}
+              <td className="cell-wrap" data-label="OOS 超额">
+                {v.pooled ? (
+                  `${pts(v.pooled.point)}（n=${v.pooled.n} 市场=${v.pooled.markets}）`
+                ) : (
+                  <span className="faint">—</span>
+                )}
+              </td>
+              <td data-label="Bonferroni 下界">
+                {v.loBonf != null ? (
+                  pts(v.loBonf)
+                ) : (
+                  <span className="faint">—</span>
+                )}
+              </td>
+              <td data-label="随机化 p">
+                {v.randP != null ? (
+                  v.randP.toFixed(4)
+                ) : (
+                  <span className="faint">—</span>
+                )}
+              </td>
+              <td className="cell-wrap muted" data-label="各折 OOS">
+                {v.folds
+                  .filter((f) => f.evaluable)
+                  .map(
+                    (f) =>
+                      `${new Date(f.fold * 1000).toISOString().slice(5, 10)}:${
+                        f.validatePoint == null ? "—" : pts(f.validatePoint)
+                      }`,
+                  )
+                  .join("  ")}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -214,105 +235,108 @@ export default function WalkforwardSection({ token }: { token: string }) {
       >
         <SectionHead
           title="🧪 阈值重推(walk-forward)"
-          hint="对厚档做收紧/平移方向的网格×子集选择,三道显著性闸(聚类 CI + Bonferroni + 方向随机化)。报告只给建议 —— 绝不自动改任何存量档参数。完整方法论与读法见下方使用说明。"
+          // 三道闸叫什么名字属于方法论,写在下方可折的使用说明里;这里只留
+          // 那句会决定「敢不敢按这个钮」的话。
+          hint="报告只给建议 —— 绝不自动改任何存量档参数。读法见下方使用说明。"
         />
-        <div
-          style={{
-            display: "flex",
-            gap: "var(--s-3)",
-            alignItems: "center",
-            flexWrap: "wrap",
-            marginBottom: "var(--s-3)",
-          }}
-        >
+        {/* 全屏一律描边白底 —— 唯一的蓝底主按钮是页头的「刷新」,它在这个
+            分区上同屏可见(此前这里数漏了那一枚)。 */}
+        <div className="filter-bar">
           <button
-            className="ds-btn ds-btn--sm"
+            className="ds-btn"
             disabled={running}
             onClick={() => void startRun()}
           >
-            {running ? "⏳ 跑中…" : "▶ 对生产库跑一次重推"}
+            {running ? "跑中…" : "▶ 对生产库跑一次重推"}
           </button>
           <button
-            className="ds-btn ds-btn--subtle ds-btn--sm"
+            className="ds-btn"
             disabled={data?.report == null}
+            title="逐折明细 / 落选格 / 固定诚实段落都在这份 JSON 里"
             onClick={() => void download()}
           >
-            ⬇ 下载完整报告 JSON
+            ↓ 下载完整报告 JSON
           </button>
-          {stateLine && <span className="ds-hint mono">{stateLine}</span>}
+          {stateLine && <span className="ds-hint">{stateLine}</span>}
         </div>
-        {data?.due && (
-          <div
-            className="ds-hint"
-            style={{
-              marginBottom: "var(--s-3)",
-              ...(data.due.due ? { color: "var(--warn, #b45309)" } : {}),
-            }}
-          >
-            {dueLine(data.due)}
-          </div>
-        )}
+        {data?.due &&
+          (data.due.due ? (
+            <div
+              className="ds-callout ds-callout--warn"
+              style={{ marginBottom: "var(--s-3)" }}
+            >
+              {dueLine(data.due)}
+            </div>
+          ) : (
+            <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
+              {dueLine(data.due)}
+            </div>
+          ))}
         {actionMsg && (
           <div
-            className="ds-hint"
-            style={{
-              color: "var(--warn, #b45309)",
-              marginBottom: "var(--s-3)",
-            }}
+            className="ds-callout ds-callout--warn"
+            style={{ marginBottom: "var(--s-3)" }}
           >
             {actionMsg}
           </div>
         )}
         {data?.runState.lastRun && !data.runState.lastRun.ok && (
-          <pre
-            className="mono ds-hint"
-            style={{
-              whiteSpace: "pre-wrap",
-              maxHeight: 200,
-              overflow: "auto",
-              border: "1px solid var(--line, #ddd)",
-              borderRadius: 6,
-              padding: "var(--s-3)",
-              marginBottom: "var(--s-3)",
-            }}
-          >
-            {data.runState.lastRun.tail.slice(-2_000)}
-          </pre>
+          <>
+            <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+              上次运行的输出尾巴
+            </div>
+            {/* 全站唯一的深色面就是代码面板 —— 子进程日志走 .doc-pre。 */}
+            <pre
+              className="doc-pre"
+              style={{
+                whiteSpace: "pre-wrap",
+                maxHeight: 200,
+                overflow: "auto",
+                marginBottom: "var(--s-3)",
+              }}
+            >
+              {data.runState.lastRun.tail.slice(-2_000)}
+            </pre>
+          </>
         )}
 
-        {view.kind === "loading" && <div className="ds-hint">加载中…</div>}
+        {view.kind === "loading" && (
+          <div className="ds-empty">正在读取最新报告…</div>
+        )}
         {view.kind === "error" && (
-          <div className="ds-hint" style={{ color: "var(--warn, #b45309)" }}>
-            加载失败:{view.message}
-          </div>
+          // 「读不到不影响存量档位」与区块头的「只给建议」是同一句话。
+          <div className="ds-empty">加载失败：{view.message}</div>
         )}
         {view.kind === "ready" &&
           (view.data.report == null ? (
-            <div className="ds-hint">
-              还没有任何报告。点上方「▶ 对生产库跑一次重推」,或在服务器上执行:
-              <code className="mono" style={{ margin: "0 var(--s-2)" }}>
-                npx tsx scripts/walkforward.ts [dbPath]
-              </code>
+            <div className="ds-empty">
+              还没有任何报告。
+              <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+                点上方「▶ 对生产库跑一次重推」，或在服务器上执行{" "}
+                <code className="doc-code">
+                  npx tsx scripts/walkforward.ts [dbPath]
+                </code>
+                。
+              </div>
             </div>
           ) : (
             <>
-              <div
-                className="ds-hint mono"
-                style={{ marginBottom: "var(--s-3)" }}
-              >
+              <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
                 {reportMeta({
                   createdAt: view.data.createdAt ?? 0,
                   report: view.data.report,
                 })}
               </div>
               {view.data.report.tiers.map((t) => (
-                <div key={t.strategyId} style={{ marginBottom: "var(--s-4)" }}>
-                  <div className="ds-hint">{tierLine(t)}</div>
+                <div key={t.strategyId} style={{ marginBottom: "var(--s-5)" }}>
+                  <div style={{ lineHeight: "var(--lh-snug)" }}>
+                    {tierLine(t)}
+                  </div>
                   <SurvivorRows t={t} />
                   {(t.watchlist.length > 0 || t.trainRejected > 0) && (
                     <div
-                      className="ds-hint muted"
-                      style={{ marginTop: "var(--s-1)" }}
+                      className="ds-hint"
+                      style={{ marginTop: "var(--s-2)" }}
                     >
                       格账本:候选 {t.candidates.length} · train 落选{" "}
                       {t.trainRejected}(validate 从未被看)· 可评折不足{" "}
@@ -329,16 +353,16 @@ export default function WalkforwardSection({ token }: { token: string }) {
               {diffRes && (
                 <div
                   style={{
-                    borderTop: "1px solid var(--line, #ddd)",
-                    paddingTop: "var(--s-3)",
-                    marginBottom: "var(--s-3)",
+                    borderTop: "1px solid var(--ww-border)",
+                    paddingTop: "var(--s-4)",
+                    marginBottom: "var(--s-4)",
                   }}
                 >
-                  <div className="ds-hint" style={{ fontWeight: 600 }}>
+                  <div className="ds-label" style={{ marginBottom: 4 }}>
                     🔁 与上次重推对比
                   </div>
                   {diffRes.diff == null ? (
-                    <div className="ds-hint muted">
+                    <div className="ds-hint">
                       {diffRes.reason ?? "暂无可对比的上一份报告"}
                     </div>
                   ) : (
@@ -347,7 +371,7 @@ export default function WalkforwardSection({ token }: { token: string }) {
                         {diffHeadline(diffRes.diff)}
                       </div>
                       {diffRes.diff.changed.map((c) => (
-                        <div key={c.strategyId} className="ds-hint mono">
+                        <div key={c.strategyId} className="ds-hint">
                           {diffTierLine(c)}
                         </div>
                       ))}
@@ -355,75 +379,77 @@ export default function WalkforwardSection({ token }: { token: string }) {
                   )}
                 </div>
               )}
-              <div className="ds-hint muted">
-                可观测锥:本报告只能回放收紧方向(原始流未归档);放松方向的唯一
-                诚实做法是开更松的挑战者档向前跑。逐折明细/落选格/固定诚实段落
-                在「⬇ 下载完整报告 JSON」里。
+              {/* 口径 —— 灰底说明条,不是脚注小字。「明细在下载里」已收进
+                  那枚下载钮的 title。 */}
+              <div className="ds-callout">
+                可观测锥:本报告只能回放<b>收紧</b>方向（原始流未归档）；放松只能
+                开更松的挑战者档向前跑。
               </div>
             </>
           ))}
       </section>
 
+      {/* 使用说明是**方法论**,理解成本一次性,却每次打开这个 tab 都占三屏 ——
+          收进默认折叠的 Foldable(与两块地图面板同一副姿态,展开态记本浏览器)。
+          折的是教学,不折任何读数:上方报告本体一行没动。 */}
       <section
         className="ds-card"
-        style={{ padding: "var(--s-5)", marginBottom: "var(--s-5)" }}
+        style={{ overflow: "hidden", marginBottom: "var(--s-5)" }}
       >
-        <SectionHead
+        <Foldable
+          storageKey="manageWfGuide"
           title="📖 使用说明"
-          hint="从跑一次到建挑战者档的完整路径;数字口径与红线在最后。"
-        />
-        <ol style={{ margin: 0, paddingLeft: "1.4em", lineHeight: 1.9 }}>
-          <li>
-            <b>这是什么。</b>19 个策略档的检测参数(单笔下限 / 钱包数 / 价格上限
-            / 新鲜度 / 偏离护栏…)全是设计时的直觉初值。本工具用已结算纸面仓做
-            walk-forward 检验:「假如当时参数更紧,战绩会不会显著更好」。每个变体
-            = 对历史仓的过滤器子集(真滑点真手续费,零新模拟);退出维度查九规则
-            反事实表。<b>它只产出建议,永不改动任何在跑档位的参数</b> ——
-            档位参数一旦运行就是其公开战绩的定义。
-          </li>
-          <li>
-            <b>怎么跑。</b>点上方「▶ 对生产库跑一次重推」:服务端起独立子进程执行
-            <code className="mono"> npx tsx scripts/walkforward.ts</code>
-            (与 SSH 手工跑同一条路径),一般几秒到一分钟,完成后本页自动出新报告;
-            每次运行在 <code className="mono">walkforward_reports</code>{" "}
-            表新增一行(历史留痕,不覆盖)。同一数据窗口重跑结果逐字节相同
-            (随机化种子固定)。<b>节律:月度</b> —— validate 折按完整 UTC
-            周自然长出,窗口没长新折时重跑只会得到同一份结论。顶部「📅
-            月度例行」状态行替你记这个日子;满 30 天转 amber 提醒,
-            <b>只提醒 不自动跑</b>。新报告落库后下方自动出「🔁
-            与上次重推对比」—— 只报结构性翻案(存活集合/观察名单/薄档判定),point
-            漂移不算翻案。
-          </li>
-          <li>
-            <b>怎么读。</b>每档一行结论:🏁 有存活变体(下方表格给明细)/ ⭕
-            无变体存活(这是一等结论,不是失败)/ 🪶 薄档(样本不足两折, 只报现状)。
-            <b>存活 = 三道闸全过</b>:①市场聚类 CI 的 Bonferroni 下界 &gt;
-            0(同市场多仓是一次随机事件的副本,按仓数算区间会虚窄); ②Bonferroni
-            按「实际发布 validate 成绩的格数 G」校正(跑得越多单个
-            显著越不值钱);③方向随机化 p ≤ 0.05/G(按市场隐含概率重掷结算一万次,
-            专治「子集选择把运气选出来」)。数字口径:OOS 超额 =
-            费用后、入场赔率调整的逐仓贡献(概率点);train 只选 validate 只评,
-            train 落选的格连数字都不发布(发布即烧 OOS)。
-          </li>
-          <li>
-            <b>怎么采纳(手工挑战者档)。</b>从存活变体里挑 ≤3 个(贪多 = 把
-            Bonferroni 白算了)→ 到「🧭 对外产出 → ② 策略信号」手工新建档位:
-            名称加 <code className="mono">·t26</code> 类标记、params
-            按变体参数填 (注意:报告里 minPerWalletUsd
-            是均值口径近似,建档要配真逐钱包值)、
-            <b>push 保持关</b>,静默向前跑。满一个月后回本页再跑一次,同一份报告
-            自然评出 champion vs challenger;原档去留(继续跑 / 关推送)是运营
-            决定,工具不代劳。
-          </li>
-          <li>
-            <b>红线与近似(读数前必知)。</b>只能回放收紧方向 —— 原始成交流
-            刻意未归档,「假如阈值更松」没有数据基础,放松只能开更松的新档向前跑;
-            score 下限维度不可回放(仓位未记录触发钱包与彼时评分),已用净买下限
-            平移顶替;退出规则读数是纸面对纸面的下界(~10min 蜡烛盲区,实盘须
-            另计退出侧盘口与费);报告不输出任何买卖建议。完整的固定诚实段落
-            随每份下载的 JSON 落库。
-          </li>
-        </ol>
+          summary="怎么跑 · 怎么读 · 怎么采纳 · 红线"
+          flush
+        >
+          {/* 说明段落走行高阶里的 1.6（--lh-note）—— 层级来自小标与分格线,
+              不来自把行距拉开。 */}
+          <ol
+            style={{
+              margin: 0,
+              padding: "var(--s-4) var(--s-4) var(--s-4) 2.4em",
+              lineHeight: "var(--lh-note)",
+            }}
+          >
+            <li style={{ marginBottom: "var(--s-3)" }}>
+              <b>这是什么。</b>用已结算纸面仓做 walk-forward
+              检验:「假如当时参数更紧,战绩会不会显著更好」。变体 =
+              对历史仓的过滤器子集(真滑点真手续费,零新模拟)。
+              <b>只产出建议,永不改动在跑档位的参数</b>。
+            </li>
+            <li style={{ marginBottom: "var(--s-3)" }}>
+              <b>怎么跑。</b>点「▶ 对生产库跑一次重推」起子进程执行
+              <code className="doc-code"> npx tsx scripts/walkforward.ts</code>
+              (与 SSH 手工跑同一条路径),完成后本页自动出新报告,每次运行在
+              <code className="doc-code"> walkforward_reports</code>{" "}
+              留一行不覆盖。<b>节律:月度</b> —— validate 折按完整 UTC
+              周长出,窗口没长新折时重跑只会得到同一份结论;顶部「📅 月度例行」
+              替你记日子,<b>只提醒 不自动跑</b>。
+            </li>
+            <li style={{ marginBottom: "var(--s-3)" }}>
+              <b>怎么读。</b>每档一行结论:🏁 有存活变体 / ⭕
+              无变体存活(一等结论,不是失败)/ 🪶 薄档(不足两折,只报现状)。
+              <b>存活 = 三道闸全过</b>:市场聚类 CI 的 Bonferroni 下界 &gt; 0
+              ·Bonferroni 按已发布 validate 的格数 G 校正 ·方向随机化 p ≤
+              0.05/G。OOS 超额 = 费用后、入场赔率调整的逐仓贡献(概率点);train
+              只选 validate 只评,落选格连数字都不发布。
+            </li>
+            <li style={{ marginBottom: "var(--s-3)" }}>
+              <b>怎么采纳(手工挑战者档)。</b>从存活变体里挑 ≤3 个(贪多 = 把
+              Bonferroni 白算了)→ 到「🧭 对外产出 → ② 策略信号」新建档位:名称加
+              <code className="doc-code"> ·t26</code> 类标记、params
+              按变体参数填(报告里 minPerWalletUsd 是均值口径近似,建档要配真逐
+              钱包值)、<b>push 保持关</b>,静默向前跑。满一个月再跑一次,同一份
+              报告自然评出 champion vs challenger。
+            </li>
+            <li>
+              <b>红线与近似(读数前必知)。</b>只能回放收紧方向(原始成交流未归档);
+              score 下限维度不可回放,已用净买下限平移顶替;退出规则读数是纸面
+              对纸面的下界(~10min 蜡烛盲区,实盘须另计退出侧盘口与费);报告不
+              输出任何买卖建议。
+            </li>
+          </ol>
+        </Foldable>
       </section>
     </>
   );

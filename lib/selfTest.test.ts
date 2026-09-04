@@ -71,6 +71,8 @@ describe("buildSelfTestVerdict 判决分层", () => {
     expect(v.gate).toBe("admit");
     expect(v.gate).toBe(evaluateAdmission(s));
     expect(v.unjudgedReason).toBeNull();
+    // ROI 0.02 < 5% → 只有胜率路到线,判决卡在①出「走这条过的」。
+    expect(v.admittedPath).toBe(1);
   });
 
   it("ROI 路过闸:胜率不够但 ROI≥5%、已结算≥5、净盈亏为正 → pass", () => {
@@ -78,6 +80,21 @@ describe("buildSelfTestVerdict 判决分层", () => {
     const v = buildSelfTestVerdict("0x1", s, pool);
     expect(v.verdict).toBe("pass");
     expect(v.gate).toBe("admit");
+    expect(v.admittedPath).toBe(2);
+  });
+
+  it("两条路都到线 → admittedPath both(两行都标「走这条过的」)", () => {
+    const s = stats({ winRate: 0.6, netPnl: 1200, roi: 0.2, settledCount: 12 });
+    const v = buildSelfTestVerdict("0x1", s, pool);
+    expect(v.gate).toBe("admit");
+    expect(v.admittedPath).toBe("both");
+  });
+
+  it("胜率够但样本 6 < 10 → 只能算 ROI 路(样本线按路各算各的)", () => {
+    const s = stats({ winRate: 0.9, netPnl: 400, roi: 0.3, settledCount: 6 });
+    const v = buildSelfTestVerdict("0x1", s, pool);
+    expect(v.gate).toBe("admit");
+    expect(v.admittedPath).toBe(2);
   });
 
   it("做市商 → bot,评分为 null(胜率/ROI 口径不适用)", () => {
@@ -91,6 +108,7 @@ describe("buildSelfTestVerdict 判决分层", () => {
     expect(v.gate).toBe("reject_bot");
     expect(v.score).toBeNull();
     expect(v.percentiles.score).toBeNull();
+    expect(v.admittedPath).toBeNull();
   });
 
   it("截断样本 → unjudged/truncated(胜率/ROI 已为 null,绝不显示错数)", () => {
@@ -99,6 +117,7 @@ describe("buildSelfTestVerdict 判决分层", () => {
     expect(v.verdict).toBe("unjudged");
     expect(v.unjudgedReason).toBe("truncated");
     expect(v.gate).toBe("hold");
+    expect(v.admittedPath).toBeNull();
   });
 
   it("已结算不足 5 市场 → unjudged/small_sample(两条路的样本线都没到)", () => {
@@ -126,6 +145,8 @@ describe("buildSelfTestVerdict 判决分层", () => {
     expect(v.verdict).toBe("fail");
     expect(v.gate).toBe("hold");
     expect(v.unjudgedReason).toBeNull();
+    // 没过闸就没有归属可言 —— 判决卡两行都出「❌ 未到线」而不是「未走这条」。
+    expect(v.admittedPath).toBeNull();
   });
 
   it("正盈亏但两条路都差口气 → fail(不是 unjudged)", () => {
@@ -139,6 +160,7 @@ describe("buildSelfTestVerdict 判决分层", () => {
     expect(v.stats).toBeNull();
     expect(v.score).toBeNull();
     expect(v.percentiles.winRate).toBeNull();
+    expect(v.admittedPath).toBeNull();
   });
 
   it("criteria 快照 = admissionGate 导出常量(展示口径永不另抄一份)", () => {

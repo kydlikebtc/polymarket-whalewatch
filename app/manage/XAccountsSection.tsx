@@ -80,42 +80,47 @@ interface Payload {
 
 // 各类内容的展示元数据(与 lib/xSettings.X_KINDS 同源语义;这里是客户端
 // 组件,不能 import 那个碰 DB 的模块,故就近镜像一份最小集)。
-// hint 不再写死数字 —— 由生效参数动态生成(kindHint),页面永不说旧话。
-const KINDS: { kind: string; label: string }[] = [
-  { kind: "whale", label: "🐳 巨鲸大单" },
-  { kind: "consensus", label: "🔥 聪明钱共识" },
-  { kind: "pregame", label: "⏰ 赛前聚合" },
-  { kind: "weekly", label: "📊 周报成绩单" },
-  { kind: "settled", label: "✅ 结算战报" },
-  { kind: "scorecard", label: "📋 每日战报榜" },
-  { kind: "pulse", label: "📈 异常市场日榜" },
-  { kind: "divergence", label: "⚔️ 小单vs鲸鱼分歧" },
+//
+// hint 是一句话的身份说明,不再复述数字:日上限 / 金额阈值 / 窗口 / 发帖时刻
+// 全都以输入框的形式就在同一张卡里(PARAM_FIELDS),在句子里再写一遍等于同一
+// 个数出现两处。「默认关」也删了 —— 开关自己就在左边,出厂值不是读数。
+// 只有 divergence 的发帖时刻没有自己的输入框(与日榜共用),故那句留在 hint。
+const KINDS: { kind: string; label: string; hint: string }[] = [
+  {
+    kind: "whale",
+    label: "🐳 巨鲸大单",
+    // emoji 不进正文句子(它只住灰底标签 / KPI 图标位 / 12px 小标前缀)——
+    // 下方那枚输入框的标签「🚨 级 ≥ $」才是它的位置。
+    hint: "单笔达阈值即发,超警报级金额时抬头升级;量最大,最容易吃满日配额",
+  },
+  { kind: "consensus", label: "🔥 聪明钱共识", hint: "稀有且独家,优先级最高" },
+  { kind: "pregame", label: "⏰ 赛前聚合", hint: "结算前窗口内的热门市场汇总" },
+  {
+    kind: "weekly",
+    label: "📊 周报成绩单",
+    hint: "每周一发图卡 + 链接,唯一的 $0.20 帖",
+  },
+  {
+    kind: "settled",
+    label: "✅ 结算战报",
+    hint: "回复自己发过的信号帖补结果(赢输都发);自回复没有独立分发,曝光靠「每日战报榜」",
+  },
+  {
+    kind: "scorecard",
+    label: "📋 每日战报榜",
+    hint: "昨日全部结算聚成一条主帖(有输单必带),每天至多 1 条,0 结算的日子静默",
+  },
+  {
+    kind: "pulse",
+    label: "📈 异常市场日榜",
+    hint: "昨日最异常市场(与 /pulse 页同源),每天至多 1 条",
+  },
+  {
+    kind: "divergence",
+    label: "⚔️ 小单vs鲸鱼分歧",
+    hint: "昨日「小单与鲸鱼对立」的市场,每天至多 1 条,无分歧的日子静默;发帖时刻与日榜共用",
+  },
 ];
-
-function kindHint(kind: string, p: XParams): string {
-  switch (kind) {
-    case "whale":
-      return `单笔 ≥ $${p.whaleMinTradeUsd.toLocaleString("en-US")} 即发,≥ $${p.whaleSirenUsd.toLocaleString("en-US")} 升 🚨 警报抬头。量最大,最容易吃满日配额(上限 ${p.whaleDailyCap} 条/天)`;
-    case "consensus":
-      return p.consensusDailyCap == null
-        ? "稀有且独家,优先级最高,不设日上限"
-        : `稀有且独家,优先级最高,至多 ${p.consensusDailyCap} 条/天`;
-    case "pregame":
-      return `结算前 ${p.pregameMinH}-${p.pregameMaxH}h 热门市场汇总,至多 ${p.pregameDailyCap} 条/天`;
-    case "weekly":
-      return `每周一 ${String(p.weeklyUtcHour).padStart(2, "0")}:00 UTC 后图卡 + 链接,唯一的 $0.20 帖`;
-    case "settled":
-      return `回复自己发过的信号帖,补上结果(赢输都发),至多 ${p.settledDailyCap} 条/天。自回复没有独立分发 —— 它是可核验的凭证层,曝光靠「每日战报榜」。默认关`;
-    case "scorecard":
-      return `每日 ${String(p.scorecardUtcHour).padStart(2, "0")}:00 UTC 后把昨日全部结算聚成一条主帖(几战几胜 + 代表行,有输单必带),每天至多 1 条,0 结算的日子静默。默认关`;
-    case "pulse":
-      return `每日 ${String(p.pulseUtcHour).padStart(2, "0")}:00 UTC 后发昨日最异常市场(异常分四分量拆解,与 /pulse 页同源),每天至多 1 条。默认关`;
-    case "divergence":
-      return `每日 ${String(p.pulseUtcHour).padStart(2, "0")}:00 UTC 后发昨日「小单与鲸鱼对立」的市场(双边材料性达标才有),每天至多 1 条,无分歧的日子静默。默认关`;
-    default:
-      return "";
-  }
-}
 
 // 每张卡片下渲染的参数输入。suffix 是输入框后的单位字;width 给长数字留位。
 const PARAM_FIELDS: Record<
@@ -202,11 +207,13 @@ function toTplForm(t: Record<string, string | null>): TplForm {
   return out;
 }
 
+// skipped 刻意不在表里:灰底描边是**名称标签**,不表状态,而按运营现状(日
+// 上限 22 条/天)跳过是常态 —— 整列徽章会把每一轮正常限流渲染成事故。它在
+// 表格里走 muted 纯文字,见下方状态格。也不能改琥珀:琥珀是「需留神的口径」。
 const STATUS_TONE: Record<string, "up" | "down" | "warn" | "default"> = {
   posted: "up",
   failed: "down",
   claimed: "warn",
-  skipped: "default",
 };
 
 const STATUS_TEXT: Record<string, string> = {
@@ -378,13 +385,19 @@ export default function XAccountsSection({ token }: { token: string }) {
   };
 
   return (
-    <section className="ds-card" style={{ padding: "var(--s-5)" }}>
+    <section
+      className="ds-card"
+      style={{ padding: "var(--s-5)", marginBottom: "var(--s-5)" }}
+    >
       <SectionHead
         title="🅒 𝕏 播报账号"
-        hint="同时只有一个账号「使用中」，其余待命。切换后引擎下一轮（≤60s）自动改用新账号，无需重启。"
+        // 「一个使用中、其余待命」原本在这儿与表底说明条逐字重复 —— 只留表底
+        // 那条(它就在状态列旁边)。
         aside={
+          // 描边白底 —— 页头的「刷新」是全页唯一的蓝底主按钮,任何子 tab 上
+          // 都同屏可见。
           <button
-            className="ds-btn ds-btn--primary ds-btn--sm"
+            className="ds-btn ds-btn--sm"
             disabled={busy || !token || !data?.appConfigured}
             onClick={() => void post({ action: "start" })}
           >
@@ -414,108 +427,129 @@ export default function XAccountsSection({ token }: { token: string }) {
       ) : null}
 
       {data && !data.appConfigured ? (
-        <div className="ds-callout" style={{ marginBottom: "var(--s-3)" }}>
-          未配置 X App 凭据：请在服务器 <code>.env</code> 设置{" "}
-          <code>X_API_KEY</code> 与 <code>X_API_SECRET</code> 后重启。这两项属于
-          App（不属于账号），永远只从 .env 读、不进库。
+        <div
+          className="ds-callout ds-callout--warn"
+          style={{ marginBottom: "var(--s-3)" }}
+        >
+          未配置 X App 凭据：请在服务器 <code className="doc-code">.env</code>{" "}
+          设置 <code className="doc-code">X_API_KEY</code> 与{" "}
+          <code className="doc-code">X_API_SECRET</code> 后重启。
         </div>
       ) : null}
 
       {data ? (
         <div className="ds-callout" style={{ marginBottom: "var(--s-3)" }}>
           X App 后台的 Callback URI 必须<b>逐字</b>登记为：
-          <code style={{ marginLeft: 6 }}>{data.callbackUrl}</code>
+          <code className="doc-code" style={{ marginLeft: 6 }}>
+            {data.callbackUrl}
+          </code>
           {data.envFallback && data.accounts.length === 0 ? (
             <div style={{ marginTop: 6 }}>
-              当前使用 .env 里的单账号 token 发帖（向后兼容）。授权任意账号后，
-              库中账号优先。
+              当前用 .env 的单账号 token 发帖；授权后库中账号优先。
             </div>
           ) : null}
         </div>
       ) : null}
 
       {view.kind === "error" ? (
-        <div className="ds-empty">{view.message}</div>
+        <div className="ds-empty">
+          {view.message}
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            通常是管理令牌失效;换令牌后自动重试。
+          </div>
+        </div>
       ) : view.kind === "loading" ? (
-        <div className="ds-empty">加载中…</div>
+        <div className="ds-empty">正在读取授权账号…</div>
       ) : data!.accounts.length === 0 ? (
         <div className="ds-empty">
-          尚无授权账号 —— 点右上角「授权新账号」，用要发帖的那个 X
-          账号登录并同意
+          尚无授权账号。
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            {"点右上角「授权新账号」;在此之前引擎用 .env 的单账号 token 发帖。"}
+          </div>
         </div>
       ) : (
-        <table className="ds-table ds-table--compact">
-          <thead>
-            <tr>
-              <th>账号</th>
-              <th>状态</th>
-              <th>授权时间</th>
-              <th>最近发帖</th>
-              <th className="is-right">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {view.data.accounts.map((a) => (
-              <tr
-                key={a.id}
-                style={a.isActive ? { background: "var(--up-50)" } : undefined}
-              >
-                <td data-label="账号">
-                  <a
-                    className="mono"
-                    href={`https://x.com/${a.screenName}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    @{a.screenName}
-                  </a>
-                </td>
-                <td data-label="状态">
-                  {a.isActive ? (
-                    <Tag variant="up">🟢 使用中</Tag>
-                  ) : (
-                    <Tag>待命</Tag>
-                  )}
-                </td>
-                <td className="mono muted" data-label="授权时间">
-                  {timeText(a.createdAt)}
-                </td>
-                <td className="mono muted" data-label="最近发帖">
-                  {agoText(a.lastPostAt)}
-                </td>
-                <td className="is-right" data-label="操作">
-                  {!a.isActive ? (
-                    <button
-                      className="ds-btn ds-btn--sm"
-                      disabled={busy}
-                      onClick={() =>
-                        void post({ action: "activate", id: a.id })
-                      }
-                    >
-                      设为使用中
-                    </button>
-                  ) : null}{" "}
-                  <button
-                    className="ds-btn ds-btn--danger ds-btn--sm"
-                    disabled={busy}
-                    onClick={() => {
-                      // 删使用中的账号会让播报换号(或在没有其它账号时停摆),
-                      // 与全站危险操作一致地二次确认。
-                      const msg = a.isActive
-                        ? `@${a.screenName} 正在使用中，删除后将由其余账号顶上（若无其余账号则停止发帖）。确认删除？`
-                        : `确认删除 @${a.screenName} 的授权？`;
-                      if (window.confirm(msg)) {
-                        void post({ action: "delete", id: a.id });
-                      }
-                    }}
-                  >
-                    删除
-                  </button>
-                </td>
+        <div className="ds-table-wrap">
+          <table className="ds-table">
+            <thead>
+              <tr>
+                <th>账号</th>
+                <th>状态</th>
+                <th>授权时间</th>
+                <th>最近发帖</th>
+                <th className="is-right">操作</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {/* 行没有任何行级强调：使用中不染整行,只靠状态徽章分轻重。 */}
+              {view.data.accounts.map((a) => (
+                <tr key={a.id}>
+                  <td data-label="账号">
+                    <a
+                      href={`https://x.com/${a.screenName}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      @{a.screenName}
+                    </a>
+                  </td>
+                  {/* 「待命」不是故障也不是名字 —— 灰底名称标签不表状态,中性
+                      态走 muted 纯文字,让绿徽章一眼指出唯一在用的那个账号。 */}
+                  <td data-label="状态">
+                    {a.isActive ? (
+                      <Tag variant="up">✅ 使用中</Tag>
+                    ) : (
+                      <span className="muted">待命</span>
+                    )}
+                  </td>
+                  <td className="muted" data-label="授权时间">
+                    {timeText(a.createdAt)}
+                  </td>
+                  <td className="muted" data-label="最近发帖">
+                    {agoText(a.lastPostAt)}
+                  </td>
+                  <td
+                    className="is-right"
+                    data-label="操作"
+                    style={{ whiteSpace: "nowrap" }}
+                  >
+                    {!a.isActive ? (
+                      <button
+                        className="ds-btn ds-btn--sm"
+                        disabled={busy}
+                        onClick={() =>
+                          void post({ action: "activate", id: a.id })
+                        }
+                      >
+                        设为使用中
+                      </button>
+                    ) : null}{" "}
+                    <button
+                      className="ds-btn ds-btn--danger ds-btn--sm"
+                      disabled={busy}
+                      onClick={() => {
+                        // 删使用中的账号会让播报换号(或在没有其它账号时停摆),
+                        // 与全站危险操作一致地二次确认。
+                        const msg = a.isActive
+                          ? `@${a.screenName} 正在使用中，删除后将由其余账号顶上（若无其余账号则停止发帖）。确认删除？`
+                          : `确认删除 @${a.screenName} 的授权？`;
+                        if (window.confirm(msg)) {
+                          void post({ action: "delete", id: a.id });
+                        }
+                      }}
+                    >
+                      删除
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="note-strip">
+            {
+              "同时只有一个账号「使用中」,点「设为使用中」即换号,引擎下一轮(≤60s)自动改用。access token 存在库里,本页永不显示。"
+            }
+          </div>
+        </div>
       )}
 
       {data ? (
@@ -524,10 +558,11 @@ export default function XAccountsSection({ token }: { token: string }) {
           <div style={{ marginTop: "var(--s-6)" }}>
             <SectionHead
               title="播报内容类型"
-              hint="关掉的类型不再发帖也不占预算；数字参数（日上限/阈值/窗口/预算）改完点「保存参数」。开关与参数都在引擎下一轮（≤60s）生效，无需重启。重新开启不会补发关闭期间的旧内容。"
+              hint="关掉的类型不再发帖也不占预算，重新开启不补发。改完点「保存参数」，引擎下一轮（≤60s）生效。"
               aside={
+                /* 描边白底 —— 全页唯一的蓝底主按钮是页头的「刷新」。 */
                 <button
-                  className="ds-btn ds-btn--primary ds-btn--sm"
+                  className="ds-btn ds-btn--sm"
                   disabled={busy || !token || !dirty}
                   onClick={saveParams}
                 >
@@ -536,54 +571,59 @@ export default function XAccountsSection({ token }: { token: string }) {
               }
             />
             {form ? (
-              <div
-                className="ds-hint"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  flexWrap: "wrap",
-                  marginBottom: "var(--s-2)",
-                }}
-              >
-                💰 花费上限(全类型共享)：日 $
-                <input
-                  className="ds-input mono"
-                  style={{ width: 56, padding: "2px 6px" }}
-                  value={form.dailySpendCapUsd}
-                  placeholder="不限"
-                  title="UTC 日花费上限(claimed+posted 台账口径)。留空 = 不限"
-                  disabled={busy || !token}
-                  onChange={(e) =>
-                    setForm({ ...form, dailySpendCapUsd: e.target.value })
-                  }
-                />
-                · 周 $
-                <input
-                  className="ds-input mono"
-                  style={{ width: 56, padding: "2px 6px" }}
-                  value={form.weeklySpendCapUsd}
-                  placeholder="不限"
-                  title="UTC 周(周一起)花费上限。留空 = 不限"
-                  disabled={busy || !token}
-                  onChange={(e) =>
-                    setForm({ ...form, weeklySpendCapUsd: e.target.value })
-                  }
-                />
-                · 月 $
-                <input
-                  className="ds-input mono"
-                  style={{ width: 56, padding: "2px 6px" }}
-                  value={form.budgetUsd}
-                  title={`月硬熔断,必填。默认 $${data.defaults.budgetUsd}(来自 .env X_MONTHLY_BUDGET_USD)`}
-                  disabled={busy || !token}
-                  onChange={(e) =>
-                    setForm({ ...form, budgetUsd: e.target.value })
-                  }
-                />
-                —— 月上限是硬熔断(必填,默认来自
-                .env，保存后以后台值为准)；日/周留空 = 不限。
-              </div>
+              <>
+                <div
+                  className="ds-label"
+                  style={{ marginBottom: "var(--s-2)" }}
+                >
+                  💰 花费上限（全类型共享）
+                </div>
+                <div
+                  className="filter-row"
+                  style={{ marginBottom: "var(--s-2)" }}
+                >
+                  <span className="filter-row__label">日 $</span>
+                  <input
+                    className="ds-input ds-input--mono"
+                    style={{ width: 72 }}
+                    value={form.dailySpendCapUsd}
+                    placeholder="不限"
+                    title="UTC 日花费上限(claimed+posted 台账口径)。留空 = 不限"
+                    disabled={busy || !token}
+                    onChange={(e) =>
+                      setForm({ ...form, dailySpendCapUsd: e.target.value })
+                    }
+                  />
+                  <span className="filter-row__label">周 $</span>
+                  <input
+                    className="ds-input ds-input--mono"
+                    style={{ width: 72 }}
+                    value={form.weeklySpendCapUsd}
+                    placeholder="不限"
+                    title="UTC 周(周一起)花费上限。留空 = 不限"
+                    disabled={busy || !token}
+                    onChange={(e) =>
+                      setForm({ ...form, weeklySpendCapUsd: e.target.value })
+                    }
+                  />
+                  <span className="filter-row__label">月 $</span>
+                  <input
+                    className="ds-input ds-input--mono"
+                    style={{ width: 72 }}
+                    value={form.budgetUsd}
+                    title={`月硬熔断,必填。默认 $${data.defaults.budgetUsd}(来自 .env X_MONTHLY_BUDGET_USD)`}
+                    disabled={busy || !token}
+                    onChange={(e) =>
+                      setForm({ ...form, budgetUsd: e.target.value })
+                    }
+                  />
+                </div>
+                {/* 「月上限必填、默认来自 .env」已写在那个输入框的 title 里;
+                    这里只留会被读错的那半句。 */}
+                <div className="ds-hint" style={{ marginBottom: "var(--s-4)" }}>
+                  日 / 周留空 = <b>不限</b>，不是 0；月上限是硬熔断。
+                </div>
+              </>
             ) : null}
             <div
               style={{
@@ -605,38 +645,48 @@ export default function XAccountsSection({ token }: { token: string }) {
                       alignContent: "start",
                     }}
                   >
-                    {/* 开关独占内层 label:参数输入不能进 label,否则点
-                        输入框会误触 checkbox。 */}
-                    <label
+                    {/* 单个布尔开关 —— 设计系统的 .ds-toggle 胶囊（32×18）,
+                        包在 button 里；参数输入独立成行,点它不会误触开关。 */}
+                    <button
+                      type="button"
+                      aria-pressed={on}
+                      disabled={busy || !token}
+                      title={on ? "点击关闭这一类播报" : "点击开启这一类播报"}
                       style={{
                         display: "flex",
                         gap: "var(--s-2)",
                         alignItems: "flex-start",
-                        cursor: busy ? "default" : "pointer",
+                        textAlign: "left",
+                        appearance: "none",
+                        border: 0,
+                        background: "transparent",
+                        padding: 0,
+                        font: "inherit",
+                        color: "inherit",
+                        cursor: busy || !token ? "default" : "pointer",
                       }}
+                      onClick={() =>
+                        void post({
+                          action: "kinds",
+                          kinds: { [k.kind]: !on },
+                        })
+                      }
                     >
-                      <input
-                        type="checkbox"
-                        checked={on}
-                        disabled={busy || !token}
-                        onChange={(e) =>
-                          void post({
-                            action: "kinds",
-                            kinds: { [k.kind]: e.target.checked },
-                          })
-                        }
+                      <span
+                        className="ds-toggle"
+                        data-on={on}
                         style={{ marginTop: 3 }}
                       />
                       <span style={{ display: "grid", gap: 2 }}>
-                        <span style={{ fontWeight: 500 }}>
+                        <span>
+                          {/* 「已关闭」是需留神的状态,走琥珀 —— 灰底不表状态,
+                              裸标签会让关掉的那张卡与 🐳/🔥 类型名同色同形。 */}
                           {k.label}{" "}
                           {!on ? <Tag variant="warn">已关闭</Tag> : null}
                         </span>
-                        <span className="ds-hint">
-                          {kindHint(k.kind, data.params)}
-                        </span>
+                        <span className="ds-hint">{k.hint}</span>
                       </span>
-                    </label>
+                    </button>
                     {form ? (
                       <span
                         style={{
@@ -644,7 +694,7 @@ export default function XAccountsSection({ token }: { token: string }) {
                           flexWrap: "wrap",
                           alignItems: "center",
                           gap: "var(--s-2)",
-                          paddingLeft: 24,
+                          paddingLeft: 40,
                         }}
                       >
                         {(PARAM_FIELDS[k.kind] ?? []).map((f) => (
@@ -659,10 +709,10 @@ export default function XAccountsSection({ token }: { token: string }) {
                           >
                             {f.label}
                             <input
-                              className="ds-input mono"
+                              className="ds-input ds-input--mono"
                               style={{
-                                width: f.width ?? 52,
-                                padding: "2px 6px",
+                                width: f.width ?? 60,
+                                padding: "0 6px",
                               }}
                               value={form[f.key]}
                               placeholder={
@@ -693,10 +743,14 @@ export default function XAccountsSection({ token }: { token: string }) {
           <div style={{ marginTop: "var(--s-6)" }}>
             <SectionHead
               title="✍️ 文案模板"
-              hint="留空 = 内置英文文案。{占位符} 替换为实时数据，数据缺失的段渲染为空并自动收行。保存时校验：未知占位符/缺 {title}/夹带链接/固定部分超长都会被拒；运行时超 280 加权字符自动截标题，模板不可用则回退内置 —— 怎么都不会发出折叠帖或带链接帖。"
+              // 运行时的兜底(超 280 截标题、模板不可用回退内置)是「怎么都不会
+              // 出事」的安抚,不改变任何操作 —— 删。保存会被拒的四种情形留着,
+              // 那是写模板时必须知道的。
+              hint="留空 = 内置英文文案。{占位符} 替换为实时数据；保存时校验：未知占位符 / 缺 {title} / 夹带链接 / 固定部分超长都会被拒。"
               aside={
+                /* 描边白底 —— 全页唯一的蓝底主按钮是页头的「刷新」。 */
                 <button
-                  className="ds-btn ds-btn--primary ds-btn--sm"
+                  className="ds-btn ds-btn--sm"
                   disabled={busy || !token || !dirtyTpl}
                   onClick={saveTemplates}
                 >
@@ -708,27 +762,38 @@ export default function XAccountsSection({ token }: { token: string }) {
               <div style={{ display: "grid", gap: "var(--s-3)" }}>
                 {KINDS.map((k) => (
                   <div key={k.kind} style={{ display: "grid", gap: 4 }}>
-                    <span className="ds-hint">
-                      <b>{k.label}</b>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "var(--s-2)",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {k.label}
                       {data.templates[k.kind] ? (
-                        <Tag variant="up">自定义中</Tag>
+                        <Tag variant="brand">自定义中</Tag>
                       ) : (
-                        <span className="muted">（内置）</span>
+                        <Tag>内置</Tag>
                       )}
-                      {" · 可用占位符:"}
-                      <code>
-                        {(data.templateVocab[k.kind] ?? [])
-                          .map((v) => `{${v}}`)
-                          .join(" ")}
-                      </code>
+                      <span className="ds-hint">
+                        可用占位符：
+                        <code className="doc-code">
+                          {(data.templateVocab[k.kind] ?? [])
+                            .map((v) => `{${v}}`)
+                            .join(" ")}
+                        </code>
+                      </span>
                     </span>
                     <textarea
-                      className="ds-input mono"
+                      className="ds-input ds-input--mono"
                       rows={3}
                       style={{
                         width: "100%",
+                        height: "auto",
+                        padding: "var(--s-2) var(--s-3)",
                         resize: "vertical",
-                        fontSize: "var(--t-sm)",
+                        lineHeight: "var(--lh-normal)",
                       }}
                       value={tplForm[k.kind]}
                       placeholder="留空 = 内置文案"
@@ -747,9 +812,9 @@ export default function XAccountsSection({ token }: { token: string }) {
           <div style={{ marginTop: "var(--s-6)" }}>
             <SectionHead
               title="播报历史"
-              hint="最近 50 条。「已跳过」= 被类型开关/金额阈值/预算熔断拦下，未发出也不计费。"
+              hint="最近 50 条。「已跳过」= 被开关 / 阈值 / 预算拦下，未发出也不计费。"
               aside={
-                <span className="ds-hint mono">
+                <span className="ds-hint">
                   本月已花费 ${data.history.spentThisMonthUsd.toFixed(3)} / $
                   {data.budgetUsd}
                   {Object.entries(data.history.counts).length > 0 ? (
@@ -764,154 +829,194 @@ export default function XAccountsSection({ token }: { token: string }) {
               }
             />
             {data.histogram.some((d2) => d2.total > 0) ? (
-              <div style={{ margin: "var(--s-2) 0", overflowX: "auto" }}>
-                <div className="ds-hint" style={{ marginBottom: 4 }}>
-                  时间分布 · 近 14 天 × UTC
-                  小时，仅统计已发布。悬停格子看类型明细。
-                </div>
-                <table
-                  className="ds-table ds-table--compact"
-                  style={{ width: "auto" }}
+              <>
+                <div
+                  className="ds-label"
+                  style={{ marginBottom: "var(--s-2)" }}
                 >
+                  时间分布 · 近 14 天 × UTC 小时
+                </div>
+                {/* 「悬停格子看类型明细」是可发现的交互,删;`·` 的口径留。 */}
+                <div className="ds-hint" style={{ marginBottom: "var(--s-2)" }}>
+                  仅统计已发布。<span className="faint">·</span>{" "}
+                  是零，不是「判不了」。
+                </div>
+                <div
+                  className="ds-table-wrap"
+                  style={{ marginBottom: "var(--s-4)" }}
+                >
+                  <table
+                    className="ds-table ds-table--compact"
+                    style={{ width: "auto" }}
+                  >
+                    <thead>
+                      <tr>
+                        {/* 表头不留空 —— 窄屏堆叠卡靠 data-label 说「日期」,
+                            桌面表头得说同一句话。 */}
+                        <th style={{ padding: "6px 8px" }}>日期</th>
+                        {Array.from({ length: 24 }, (_, h) => (
+                          <th
+                            key={h}
+                            className="muted"
+                            style={{ padding: "6px 5px" }}
+                          >
+                            {h}
+                          </th>
+                        ))}
+                        <th className="muted" style={{ padding: "6px 8px" }}>
+                          Σ
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.histogram.map((d2) => (
+                        <tr key={d2.day}>
+                          <td
+                            className="muted"
+                            style={{ padding: "6px 8px" }}
+                            data-label="日期"
+                          >
+                            {d2.day}
+                          </td>
+                          {d2.hours.map((cell, h) => {
+                            const total = Object.values(cell).reduce(
+                              (a, b) => a + b,
+                              0,
+                            );
+                            const tip = Object.entries(cell)
+                              .map(
+                                ([kk, n]) =>
+                                  `${KINDS.find((x) => x.kind === kk)?.label ?? kk} ×${n}`,
+                              )
+                              .join("\n");
+                            return (
+                              // 密度靠底色深浅,不靠加粗或字号跳档。
+                              <td
+                                key={h}
+                                className="is-right"
+                                title={tip || undefined}
+                                style={{
+                                  padding: "6px 5px",
+                                  background:
+                                    total >= 5
+                                      ? "var(--ww-up-bg)"
+                                      : total > 0
+                                        ? "var(--ww-up-wash)"
+                                        : undefined,
+                                }}
+                              >
+                                {total > 0 ? (
+                                  total
+                                ) : (
+                                  <span
+                                    style={{ color: "var(--ww-text-empty)" }}
+                                  >
+                                    ·
+                                  </span>
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td
+                            className="is-right"
+                            style={{ padding: "6px 8px" }}
+                            data-label="Σ"
+                          >
+                            {d2.total}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : null}
+            {data.history.posts.length === 0 ? (
+              <div className="ds-empty">
+                还没有播报记录。
+                <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+                  {"授权账号并等信号触发后,这里会出现每条帖子(含「已跳过」)。"}
+                </div>
+              </div>
+            ) : (
+              <div className="ds-table-wrap">
+                <table className="ds-table">
                   <thead>
                     <tr>
-                      <th />
-                      {Array.from({ length: 24 }, (_, h) => (
-                        <th
-                          key={h}
-                          className="mono muted"
-                          style={{ padding: "2px 4px", fontSize: 10 }}
-                        >
-                          {h}
-                        </th>
-                      ))}
-                      <th
-                        className="mono muted"
-                        style={{ padding: "2px 4px", fontSize: 10 }}
-                      >
-                        Σ
-                      </th>
+                      <th>时间</th>
+                      <th>类型</th>
+                      <th>状态</th>
+                      <th>内容</th>
+                      <th className="is-right">成本</th>
+                      <th>链接</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.histogram.map((d2) => (
-                      <tr key={d2.day}>
-                        <td
-                          className="mono muted"
-                          style={{ padding: "2px 6px", fontSize: 11 }}
-                        >
-                          {d2.day}
+                    {data.history.posts.map((pst) => (
+                      <tr key={pst.id}>
+                        <td className="muted" data-label="时间">
+                          {timeText(pst.createdAt)}
                         </td>
-                        {d2.hours.map((cell, h) => {
-                          const total = Object.values(cell).reduce(
-                            (a, b) => a + b,
-                            0,
-                          );
-                          const tip = Object.entries(cell)
-                            .map(
-                              ([kk, n]) =>
-                                `${KINDS.find((x) => x.kind === kk)?.label ?? kk} ×${n}`,
-                            )
-                            .join("\n");
-                          return (
-                            <td
-                              key={h}
-                              className="mono is-right"
-                              title={tip || undefined}
-                              style={{
-                                padding: "2px 4px",
-                                fontSize: 11,
-                                background:
-                                  total > 0 ? "var(--up-50)" : undefined,
-                                // 量级一眼可辨:≥5 加粗(接近日 cap 的时段)。
-                                fontWeight: total >= 5 ? 700 : undefined,
-                              }}
+                        <td data-label="类型">
+                          {KINDS.find((k) => k.kind === pst.kind)?.label ??
+                            pst.kind}
+                        </td>
+                        {/* 「已跳过」是常态不是状态:走 muted 纯文字,让绿/红
+                            徽章留给真正发生过的事(发布成功 / 失败)。 */}
+                        <td data-label="状态">
+                          {pst.status === "skipped" ? (
+                            <span
+                              className="muted"
+                              title="被类型开关 / 金额阈值 / 预算熔断拦下,未发出也不计费"
                             >
-                              {total > 0 ? (
-                                total
-                              ) : (
-                                <span className="muted">·</span>
-                              )}
-                            </td>
-                          );
-                        })}
+                              {STATUS_TEXT.skipped}
+                            </span>
+                          ) : (
+                            <Tag variant={STATUS_TONE[pst.status] ?? "default"}>
+                              {STATUS_TEXT[pst.status] ?? pst.status}
+                            </Tag>
+                          )}
+                        </td>
+                        {/* 帖子正文永不截断 —— 换行。 */}
                         <td
-                          className="mono is-right"
-                          style={{
-                            padding: "2px 6px",
-                            fontSize: 11,
-                            fontWeight: 600,
-                          }}
+                          className="cell-wrap"
+                          data-label="内容"
+                          style={{ maxWidth: 420 }}
                         >
-                          {d2.total}
+                          {pst.text || <span className="faint">—</span>}
+                        </td>
+                        {/* 成本是中性色 —— 它是成本,不是盈亏。 */}
+                        <td className="is-right" data-label="成本">
+                          {pst.costUsd > 0 ? (
+                            `$${pst.costUsd.toFixed(3)}`
+                          ) : (
+                            <span className="faint">—</span>
+                          )}
+                        </td>
+                        <td data-label="链接">
+                          {pst.xPostId ? (
+                            <a
+                              href={`https://x.com/i/status/${pst.xPostId}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              查看 ↗
+                            </a>
+                          ) : (
+                            <span className="faint">—</span>
+                          )}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                <div className="note-strip">
+                  <span className="faint">—</span>
+                  {
+                    " 两种:成本 = 没花钱(只有 $0.20 的周报图卡帖有成本),链接 = 没有产生真实帖子(跳过 / 失败 / 发送中)。"
+                  }
+                </div>
               </div>
-            ) : null}
-            {data.history.posts.length === 0 ? (
-              <div className="ds-empty">
-                还没有播报记录 —— 授权账号并等待信号触发后，这里会出现每条帖子
-              </div>
-            ) : (
-              <table className="ds-table ds-table--compact">
-                <thead>
-                  <tr>
-                    <th>时间</th>
-                    <th>类型</th>
-                    <th>状态</th>
-                    <th>内容</th>
-                    <th className="is-right">成本</th>
-                    <th>链接</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.history.posts.map((pst) => (
-                    <tr key={pst.id}>
-                      <td className="mono muted" data-label="时间">
-                        {timeText(pst.createdAt)}
-                      </td>
-                      <td data-label="类型">
-                        {KINDS.find((k) => k.kind === pst.kind)?.label ??
-                          pst.kind}
-                      </td>
-                      <td data-label="状态">
-                        <Tag variant={STATUS_TONE[pst.status] ?? "default"}>
-                          {STATUS_TEXT[pst.status] ?? pst.status}
-                        </Tag>
-                      </td>
-                      <td
-                        data-label="内容"
-                        style={{
-                          whiteSpace: "normal",
-                          maxWidth: 420,
-                          fontSize: "var(--t-sm)",
-                        }}
-                      >
-                        {pst.text || <span className="muted">—</span>}
-                      </td>
-                      <td className="mono is-right" data-label="成本">
-                        {pst.costUsd > 0 ? `$${pst.costUsd.toFixed(3)}` : "—"}
-                      </td>
-                      <td data-label="链接">
-                        {pst.xPostId ? (
-                          <a
-                            href={`https://x.com/i/status/${pst.xPostId}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            查看 ↗
-                          </a>
-                        ) : (
-                          <span className="muted">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             )}
           </div>
         </>

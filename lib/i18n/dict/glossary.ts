@@ -17,32 +17,36 @@
 // 本页覆盖率自查),只是属主在别的分片。
 export const DICT_GLOSSARY: Record<string, string> = {
   // -------------------------------------------------------- 页面自身文案
-  "📖 图标与名词说明": "📖 Icon & term reference",
-  "全站所有符号和术语的定义 — 鼠标悬停在任意页面的图标上也能看到同样的解释":
-    "Definitions for every symbol and term across the site — hovering any icon on any page shows the same explanation",
-  图标标识: "Icons",
-  "钱包标签（聪明钱发现 / 钱包档案页）":
-    "Wallet tags (smart-money discovery / wallet dossier)",
+  // 克制表达(2026-09-04):页头描述压成一句「这页是什么」;计数移进筛选钮;
+  // 阶梯的告诫从卡底脚注上提到卡头(口径放数据前面);名词卡底那条纯自述的
+  // 说明条整条删。旧版跳转条 / 旧版阶梯速查 / 旧版双栏表头的键随之零引用,
+  // 一并删掉不留死键。
   核心名词: "Core terms",
-  "信号强度速查（由弱到强）": "Signal strength quick map (weakest → strongest)",
   符号: "Symbol",
   名称: "Name",
   含义: "Meaning",
-  名词: "Term",
-  解释: "Explanation",
-  "有人下了重注（最基础）": "someone placed a heavy bet (the most basic layer)",
-  "有人在刻意隐藏地建仓（绕过单笔监控）":
-    "someone is deliberately building a hidden position (dodging single-fill monitoring)",
-  甜区赔率: "sweet-spot odds",
-  "新钱包在有利赔率上下重注（可疑）":
-    "a fresh wallet betting big at favorable odds (suspicious)",
-  聪明钱出手: "Smart money steps in",
-  "历史高胜率的钱包在买（有战绩背书）":
-    "historically high-win-rate wallets are buying (a track record behind them)",
-  "多个高胜率钱包独立得出同一结论（最强单一信号）":
-    "several high-win-rate wallets independently reaching the same conclusion (the strongest single signal)",
-  "无论哪一层，📐 验证列都会在事后告诉你：这个信号最终准不准。":
-    "Whichever layer it is, the 📐 validation column tells you after the fact whether the signal actually held up.",
+  名词: "Terms",
+  // Etherscan 风版式(设计稿 17):页头小标 / 标题 / 一句话描述 + 260px 搜索框
+  // + 四分类筛选条 + 五级阶梯卡 + 三组标签卡 + 双栏定义列表。
+  "名词级定义 · 板块级见「功能说明书」":
+    "Term-level definitions · section-level lives in the feature guide",
+  "说明 · 图标与名词": "Reference · icons & terms",
+  "全站图标、钱包标签与名词的唯一定义表，与各页悬停提示同源。":
+    "The single definition table for every icon, wallet tag and term on the site — the same source the hover tips read from.",
+  "搜索图标 / 标签 / 名词": "Search icons / tags / terms",
+  "没有匹配「{q}」的条目": 'Nothing matches "{q}"',
+  图标: "Icons",
+  钱包标签: "Wallet tags",
+  "· {n} 个": "· {n} total",
+  信号强度五级阶梯: "Five-step signal strength ladder",
+  "· 只表示该多看一眼的程度，不是胜率（胜率见信号战绩页）":
+    "· ranks how much extra attention something deserves, not hit rate (for that, see the signal record page)",
+  "单笔达阈值（默认 ≥$10k）":
+    "Single fill hits the threshold (≥$10k by default)",
+  "单笔 ≥$50k": "Single fill ≥$50k",
+  多笔小额累积净买入: "Net buy accumulated from many small fills",
+  白名单钱包在场: "A whitelisted wallet is in it",
+  "≥2 个白名单同向": "≥2 whitelisted wallets on the same side",
 
   // ------------------------------------------------ ICONS · 名称 / tip / 详解
   // 💰
@@ -128,6 +132,11 @@ export const DICT_GLOSSARY: Record<string, string> = {
 
   // ------------------------------------------------ TERMS · 名词 / 解释
   // 「战绩」「净买入」「距结算」「跟单空间」词条名沿用先行分片译文,此处只补 detail。
+  // 2026-09-04 补漏:「反事实退出」自入表起从未登记,英文 /glossary 上 37 条
+  // 名词里独有它整段掉回中文(词表无机器闸,只能靠属主人工对账查出来)。
+  反事实退出: "Counterfactual exits",
+  "深度分析第⑧块:用已结算仓的真实价格路径(~10 分钟蜡烛,每仓终生只取一次)离线模拟九个退出规则 —— 止损/止盈各 10/20/30¢ + 限时 24/72/168 小时,回答「如果早退会怎样」。口径:按首个越线观测价保守成交(快盘中触发被低估,Δ 是下界);未触发的仓按实际结算入账;九规则互相独立;纸面对纸面可比,推及实盘须另计退出侧盘口与费用。这是活体退出档方案(会让引擎每轮为每个持仓取价,与预算纪律冲突)被否决后的替代:先用历史回答规则有没有用,再决定要不要造机制。":
+    'The eighth block of deep analysis: using the real price paths of settled positions (~10-minute candles, fetched once per position for its lifetime), it simulates nine exit rules offline — stop-loss and take-profit at 10/20/30¢ each, plus time limits of 24/72/168 hours — answering "what if we had left early". Basis: fills are booked conservatively at the first observed price past the line (a trigger inside a fast candle is understated, so Δ is a lower bound); positions that never trigger are booked at their actual settlement; the nine rules are independent of one another; paper is comparable with paper, and carrying this over to live trading needs the exit-side book and fees counted separately. This replaces a live exit tier (which would make the engine fetch a price for every open position every cycle, colliding with budget discipline) after that was rejected: let history answer whether a rule works before building the machinery.',
   "钱包在已结算市场上的历史表现：胜率（盈利仓位占比）· 已实现盈亏（USD）。悬停可见已结算市场数与 ROI。统计合并两个来源：已平仓/已赎回仓位（/closed-positions），以及已判定但从未平仓的仓位——尤其是持有到归零的亏损单（输光的仓位没有东西可赎回，链上不会产生任何结算记录，只统计前者会把胜率虚推到 100%）。缓存 24 小时。":
     "A wallet's historical performance on settled markets: win rate (share of profitable positions) · realized PnL (USD). Hover to see the settled-market count and ROI. The statistics merge two sources: closed/redeemed positions (/closed-positions), plus resolved positions that were never closed — above all losers held to zero (a wiped-out position has nothing to redeem, so it leaves no settlement record on chain; counting only the former would inflate the win rate to 100%). Cached for 24 hours.",
   "已实现盈亏 ÷ 成本。成本 = 买入份额 × 平均买入价（注意 Polymarket API 的 totalBought 是份额而非美元）。":
@@ -151,8 +160,8 @@ export const DICT_GLOSSARY: Record<string, string> = {
     "The market's current order-book depth (from the Gamma API); for the same amount, the higher the impact ratio the more anomalous the fill.",
   "距市场结束时间的剩余小时数。内幕信息的价值随结算临近急剧升值，知情者常在最后几小时突击进场——告警条件里可设'距结算 ≤N 小时'。":
     "Hours left until the market's end time. Insider information appreciates sharply as resolution nears, and the informed often storm in during the final hours — the alert conditions support 'time to resolution ≤N hours'.",
-  "现价 − 聪明钱建仓均价。差距 ≤5¢ 显示'仍可跟'（还能以接近聪明钱的成本跟进），更大显示'已跑'（价格已被推走）。市场已结算时改为显示'已结算 ✓ 命中 / ✗ 落空'——即这次共识最终对没对。":
-    "Current price − smart money's average entry. A gap ≤5¢ reads 'followable' (you can still get in near smart money's cost); anything larger reads 'gone' (the price has been pushed away). Once the market settles it shows 'settled ✓ hit / ✗ missed' instead — whether this consensus turned out right.",
+  "现价 − 聪明钱建仓均价，双边判读：|差| ≤5¢ 显示'仍可跟'（还能以接近聪明钱的成本跟进）；正向超出显示'已跑'（价格已被推走）；负向超出显示'已反向'（价格已跌破聪明钱成本，共识论点可能已被推翻，此时跟进是接飞刀而不是捡便宜）。市场已结算时改为显示'已结算 ✓ 命中 / ✗ 落空'——即这次共识最终对没对。":
+    "Current price − smart money's average entry, read on both sides: a gap of |≤5¢| reads 'followable' (you can still get in near smart money's cost); beyond that on the upside it reads 'gone' (the price has been pushed away); beyond it on the downside it reads 'reversed' (the price has fallen through smart money's cost, the consensus thesis may already be broken, and following now is catching a falling knife rather than picking up a bargain). Once the market settles it shows 'settled ✓ hit / ✗ missed' instead — whether this consensus turned out right.",
   "评分（0-100）": "Score (0-100)",
   "聪明钱综合评分：盈利规模最多 40 分（$1m+ 满分）+ 资金效率最多 30 分（优先用已结算 ROI，10%+ 满分，区分真信号与高频做市；无战绩时回退榜单同期 pnl/vol）+ 已结算胜率最多 30 分（胜率 100% 或战绩被截断时按 0.9 保守折价——仅含已结算仓位，死扛型胜率被高估）。可解释、非黑盒。":
     "The composite smart-money score: profit size up to 40 points ($1m+ maxes it) + capital efficiency up to 30 points (settled ROI preferred, 10%+ maxes it — separating real signal from high-frequency market making; falls back to same-period leaderboard pnl/vol when there is no record) + settled win rate up to 30 points (a 100% win rate or a truncated record is conservatively discounted by 0.9 — settled positions only, where hold-to-the-end diehards' win rates read inflated). Explainable — no black box.",
@@ -188,8 +197,8 @@ export const DICT_GLOSSARY: Record<string, string> = {
   "发现页的 14 天趋势表，覆盖两个信号面：左侧列跟踪共识信号引擎——每日共识推送数 ÷ 当日平均 6 小时窗口成交量（按 $1M 归一）；『新证据』列跟踪发现渠道——四条渠道（共识同行/拆单建仓/内幕签名/早期赢家）当日首次入账的候选证据行数。所有共识/拆单阈值（2 钱包 / $5k / 6h …）都隐含『当前成交量水位』假设——预测市场热度是周期性的，大盘量退潮后要么信号荒（共识永不成组）要么被迫降阈值引入噪声。密度随热度同跌 = 市场自身降温；热度稳定而密度独跌 = 阈值漂移需要重校。注意窗口每 5 分钟滚动、彼此重叠，成交量不能跨轮求和，取当日平均窗口量作为热度代理。":
     "The discovery page's 14-day trend table, covering two signal surfaces. The left columns track the consensus signal engine — daily consensus pushes ÷ that day's average 6-hour-window volume (normalized per $1M). The 'new evidence' column tracks the discovery channels — candidate evidence rows first recorded that day across the four channels (consensus echo / split-buy entry / insider signature / early winner). Every consensus/split-buy threshold (2 wallets / $5k / 6h …) implicitly assumes 'the current volume level' — prediction-market heat is cyclical, and when overall volume ebbs you get either a signal drought (consensus never forms) or forced threshold cuts that let in noise. Density falling with heat = the market itself cooling; density falling alone while heat holds = threshold drift needing recalibration. Note the windows roll every 5 minutes and overlap, so volume cannot be summed across cycles; the day's average window volume serves as the heat proxy.",
   聪明钱发现渠道: "Smart-money discovery channels",
-  "白名单之外的聪明钱来源。官方榜单只按规模（盈利/成交额）排名，会系统性漏掉『有本事但资金不大』的钱包。发现页汇聚四条渠道的候选：🔁 共识同行（与白名单共识同一结果同向净买 ≥$2k）、🧩 拆单建仓（≥3 笔低于 $10k 的拆单净买 ≥$5k 且无对冲/做市嫌疑）、🕵️ 内幕签名（账龄 ≤7 天新地址单笔 ≥$5k 买 0.5–0.9 价带）、🎯 早期赢家（在已结算市场提前 ≥24 小时以 ≤40¢ 买中获胜结果——衡量技能而非规模）。另有 🏅 分类榜专家经每日播种进入准入审查（详见「分类榜专家」词条）。每个标签的完整定义见本页「钱包标签」一节。":
-    "Sources of smart money beyond the whitelist. The official leaderboards rank by size (profit/volume) only, so they structurally miss skilled-but-small wallets. The discovery page pools candidates from four channels: 🔁 consensus echo (net-buying ≥$2k of the same outcome, same direction as a whitelist consensus), 🧩 split-buy entry (≥3 sub-$10k split orders netting ≥$5k with no hedge/market-making suspicion), 🕵️ insider signature (an address ≤7 days old with a single ≥$5k buy in the 0.5–0.9 price band), 🎯 early winner (bought the winning outcome of a settled market ≥24 hours before resolution at ≤40¢ — measuring skill, not size). 🏅 category-board specialists additionally enter admission review via daily seeding (see the 'Category-board specialist' entry). Full definitions of every tag are in the 'Wallet tags' section on this page.",
+  "白名单之外的聪明钱来源。官方榜单只按规模（盈利/成交额）排名，会系统性漏掉『有本事但资金不大』的钱包。发现页汇聚四条渠道的候选：🔁 共识同行（与白名单共识同一结果同向净买 ≥$2k）、🧩 拆单建仓（≥3 笔低于 $10k 的拆单净买 ≥$5k 且无对冲/做市嫌疑）、🕵️ 内幕签名（账龄 ≤7 天新地址单笔 ≥$5k 买 0.5–0.9 价带）、🥇 早期赢家（在已结算市场提前 ≥24 小时以 ≤40¢ 买中获胜结果——衡量技能而非规模）。另有 🏅 分类榜专家经每日播种进入准入审查（详见「分类榜专家」词条）。每个标签的完整定义见本页「钱包标签」一节。":
+    "Sources of smart money beyond the whitelist. The official leaderboards rank by size (profit/volume) only, so they structurally miss skilled-but-small wallets. The discovery page pools candidates from four channels: 🔁 consensus echo (net-buying ≥$2k of the same outcome, same direction as a whitelist consensus), 🧩 split-buy entry (≥3 sub-$10k split orders netting ≥$5k with no hedge/market-making suspicion), 🕵️ insider signature (an address ≤7 days old with a single ≥$5k buy in the 0.5–0.9 price band), 🥇 early winner (bought the winning outcome of a settled market ≥24 hours before resolution at ≤40¢ — measuring skill, not size). 🏅 category-board specialists additionally enter admission review via daily seeding (see the 'Category-board specialist' entry). Full definitions of every tag are in the 'Wallet tags' section on this page.",
   "分类榜专家（渠道③）": "Category-board specialist (channel ③)",
   "Polymarket 官方排行榜的类别切分维度：sports / politics / crypto / culture / tech / finance 六类（实测有效值），每类按『该类别市场内』的盈利独立排名。它解决全局榜的结构性盲区——全局榜只看总盈利规模，体育大户天然霸榜，其他赛道的专家再准也进不了前 100（实测同一周：politics 分类榜第 1 名盈利 $3.8 万，全局榜第 1 名 $810 万，差 200 多倍）。系统每日抓取每类周榜/月榜前 25 名、只收全局榜之外的钱包。三条纪律：①类内口径警示——分类榜的盈利/成交额只统计该类别市场，与全局榜的全账户口径不同基，两者绝不混算，富化后一律以官方全账户净盈亏为准；②榜尾不是质量保证——实测 culture 周榜第 25 名当周仅赚 $1,899，故分类榜钱包必须通过与发现渠道完全相同的准入战绩审查才能入池（实测约七成被拒）；③入池后 source 记为 category:<类别>，与其他来源同规则：每日重认证、30 天不再合格自动出池。":
     "The category dimension of Polymarket's official leaderboards: six classes — sports / politics / crypto / culture / tech / finance (verified live) — each ranked independently by profit within that category's markets. It fixes the global boards' structural blind spot: the global boards look only at total profit size, sports whales naturally dominate, and specialists in other verticals can never crack the top 100 however accurate they are (verified in the same week: the politics #1 earned $38k while the global #1 earned $8.1M — a 200×+ gap). The system fetches each category's weekly/monthly top 25 daily and takes only wallets absent from the global boards. Three disciplines: ① in-category basis warning — a category board's profit/volume counts only that category's markets, a different base from the global boards' whole-account figures; the two are never mixed, and after enrichment the official whole-account net PnL prevails; ② the board's tail is no quality guarantee — verified: the culture weekly #25 earned just $1,899 that week — so category-board wallets must pass exactly the same admission track-record review as the discovery channels before entering the pool (about seven in ten are rejected in practice); ③ once admitted, source reads category:<category>, under the same rules as every other source: daily re-certification, automatic removal after 30 days of no longer qualifying.",
@@ -281,7 +290,7 @@ export const DICT_GLOSSARY: Record<string, string> = {
     "An address ≤7 days old making a single ≥$5k buy in the 0.5–0.9 price band",
   "渠道①子信号：注册不足 7 天的新地址，单笔 ≥$5,000 买入 0.5–0.9 价带（有利赔率）——『内幕猎杀组合』的自动化版本：异常内幕资金倾向用新钱包、在有利赔率果断下注。×N 表示 30 天内在 N 个不同市场命中此签名。":
     "A channel-① sub-signal: a fresh address under 7 days old makes a single ≥$5,000 buy in the 0.5–0.9 price band (favorable odds) — the automated version of the 'insider-hunt combo': abnormal insider money tends to bet decisively with fresh wallets at favorable odds. ×N means this signature hit in N distinct markets within 30 days.",
-  // 🎯 ch:early_winner(渠道名「早期赢家」已在 discovery 分片)
+  // 🥇 ch:early_winner(渠道名「早期赢家」已在 discovery 分片)
   "在已结算市场提前 ≥24 小时以 ≤40¢ 买中获胜结果——衡量技能而非规模":
     "Bought the winning outcome of a settled market ≥24 hours early at ≤40¢ — measuring skill, not size",
   "行为标签，池内外通用：回溯刚结算的市场（成交量 ≥$1 万、生命周期 ≥24 小时），找出在结算前 ≥24 小时就以 ≤40¢ 买入获胜结果、累计 ≥$500 的钱包——当时市场认为不足四成概率的事，TA 提前一天以上重仓买对了。24 小时提前量排除盘中价格摆动和临场狙击（后者归内幕签名管）；两边都买的排除。对池外钱包它是候选证据，对池内成员它是最有分量的技能标注。×N 表示在 N 个已结算市场留下此战绩。":
@@ -303,5 +312,5 @@ export const DICT_GLOSSARY: Record<string, string> = {
   "🔁 共识同行": "🔁 Consensus echo",
   "🧩 拆单建仓": "🧩 Split-buy entry",
   "🕵️ 内幕签名": "🕵️ Insider signature",
-  "🎯 早期赢家": "🎯 Early winner",
+  "🥇 早期赢家": "🥇 Early winner",
 };

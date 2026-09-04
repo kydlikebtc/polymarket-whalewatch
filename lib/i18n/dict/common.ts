@@ -17,6 +17,9 @@ export const DICT_COMMON: Record<string, string> = {
   "TG 频道": "TG Channel",
   只读监控: "Read-only",
   切换语言: "Switch language",
+  // 顶栏实时时钟(LiveClock)
+  实时: "Live",
+  "当前本地时间": "Current local time",
 
   // CopyButton / QuietLink / MarketSlugActions / WalletLink
   复制: "Copy",

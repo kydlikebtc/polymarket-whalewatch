@@ -73,8 +73,13 @@ export default async function RootLayout({
   return (
     <html lang={lang === "en" ? "en" : "zh-CN"}>
       <head>
-        {/* Fonts via <link> (not next/font) so the build never blocks on a
-            network fetch and degrades gracefully to system fonts offline. */}
+        {/* 界面字体**不下载** —— 走各平台原生 UI 字体（macOS/iOS 的 SF Pro、
+            Windows 的 Segoe UI、Android 的 Roboto）+ 系统中文（PingFang SC /
+            微软雅黑）。理由写在 app/globals.css 的 --ww-font 注释里：曾经显式
+            加载 Roboto 想「对齐 etherscan 的声明」，反而比 etherscan 在同一台
+            Mac 上的实际观感更廉价，而且拉丁与中文来自两家字体、混排会轻重不匀。
+            零字体请求，首屏不闪、离线也一致。
+            只留 JetBrains Mono：全站唯一的等宽用处是代码面板与行内 code。 */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="icon" href="/favicon.ico" />
         <link
@@ -83,7 +88,7 @@ export default async function RootLayout({
           crossOrigin="anonymous"
         />
         <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap"
           rel="stylesheet"
         />
         <script type="application/ld+json">{JSON_LD}</script>

@@ -35,26 +35,53 @@ const usd = (n: number): string => `$${Math.round(n).toLocaleString("en-US")}`;
 const cents = (p: number | null): string =>
   p == null ? "—" : `${(p * 100).toFixed(1).replace(/\.0$/, "")}¢`;
 
-// 各榜自带的口径折叠。此前全页五节的方法学挤在页尾一坨三大段,读第一张表想
-// 核对「异常分怎么算」得滚到页底再滚回来 —— 拆开就近可查。写法沿用 /status、
-// /record 的既有先例(原生 details + .ds-hint summary),不新增 CSS。只有真正
-// 全页共用的两把尺(小单/鲸鱼口径)仍留在页尾,不在各榜重复。
+// 各榜的口径。此前全页五节的方法学挤在页尾一坨三大段,读第一张表想核对
+// 「异常分怎么算」得滚到页底再滚回来 —— 拆开就近可查。Etherscan 皮把它从
+// details 折叠改成常驻的卡底灰色说明条。只有真正全页共用的两把尺(小单/
+// 鲸鱼口径)仍留在页尾,不在各榜重复。
+//
+// 2026-09-04 再收一轮:常驻条只留「不读就会把数字读错」的那部分 —— 入榜
+// 门槛、样本不足时的退化、幸存者偏差。加权公式与「这个指标怎么定义」退到
+// 对应数值列的表头 title(每榜一条,鼠标停在列名上就能核对),分色理据与
+// VIX 类比这种「我们为什么这么设计」直接删。判据来自用户实测反馈:页面
+// 要克制,一条精准的口径胜过六条各说一半的。
 function Methodology({ children }: { children: ReactNode }) {
-  const { t } = useLang();
+  return <div className="note-strip">{children}</div>;
+}
+
+// 榜卡的标题条 —— 14/600 榜名 + 13px 灰色一句话说明,与表头之间一道 1px
+// 分隔线。层级来自这条线和字重,不来自字号跳档:副标降一档到 13px（说明条
+// 的字号）而不是把榜名放大。
+function BoardBar({ title, sub }: { title: string; sub: string }) {
   return (
-    <details style={{ marginTop: "var(--s-3)" }}>
-      <summary className="ds-hint" style={{ cursor: "pointer" }}>
-        {t("口径")}
-      </summary>
-      <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
-        {children}
-      </div>
-    </details>
+    <div className="card-bar" style={{ alignItems: "baseline" }}>
+      <span style={{ fontWeight: 600 }}>{title}</span>
+      <span className="ds-hint">{sub}</span>
+    </div>
+  );
+}
+
+// 表在卡内：wrap 只保留横向滚动，边框/圆角/阴影一律交给外层那张卡，
+// 免得卡里再套一张卡。
+function BoardTable({ children }: { children: ReactNode }) {
+  return (
+    <div
+      className="ds-table-wrap"
+      style={{
+        border: 0,
+        borderRadius: 0,
+        boxShadow: "none",
+        background: "transparent",
+      }}
+    >
+      <table className="ds-table">{children}</table>
+    </div>
   );
 }
 
 // 超出 ROWS_COLLAPSED 时的展开/收起。行数未超上限就整个不渲染 —— 一个恒为
-// 「展开全部 2 行」的按钮只会制造噪声。
+// 「展开全部 2 行」的按钮只会制造噪声。整行带上边线,作为表与说明条之间的
+// 一格。
 function RowsToggle({
   total,
   expanded,
@@ -67,19 +94,21 @@ function RowsToggle({
   const { t } = useLang();
   if (total <= ROWS_COLLAPSED) return null;
   return (
-    <button
-      type="button"
-      className="ds-btn ds-btn--subtle ds-btn--sm"
-      style={{ marginTop: "var(--s-3)" }}
-      onClick={onToggle}
+    <div
+      style={{
+        padding: "var(--s-3) var(--s-4)",
+        borderTop: "1px solid var(--ww-border)",
+      }}
     >
-      {expanded
-        ? t("收起，只看前 {n} 行", { n: ROWS_COLLAPSED })
-        : t("展开全部 {total} 行（还有 {rest} 条）", {
-            total,
-            rest: total - ROWS_COLLAPSED,
-          })}
-    </button>
+      <button type="button" className="ds-btn ds-btn--sm" onClick={onToggle}>
+        {expanded
+          ? t("收起，只看前 {n} 行", { n: ROWS_COLLAPSED })
+          : t("展开全部 {total} 行（还有 {rest} 条）", {
+              total,
+              rest: total - ROWS_COLLAPSED,
+            })}
+      </button>
+    </div>
   );
 }
 
@@ -183,6 +212,9 @@ function ScoreSpark({ series }: { series: { day: string; score: number }[] }) {
 // payload 客户端现算 —— 不给 /api/pulse 加键,5 分钟缓存窗口里的旧 payload
 // 照常渲染,每张卡各自降级成「—」而不是整条消失。一次只见一榜之后,这条是
 // 全局视野的主要来源,所以它常驻在标签之上而不是进某个标签。
+// KPI 分格卡：一张白卡四等分，格间 1px 竖线，每格一个 20px emoji 图标位。
+// 值 18px 常规字重（这套皮的数字与正文同字体同字号），第一格的分数用蓝 ——
+// 它是这一屏唯一的「先看这里」。
 export function PulseOverview({ report }: { report: PulsePayload }) {
   const { t } = useLang();
   const cats = report.conviction?.categories ?? [];
@@ -194,56 +226,41 @@ export function PulseOverview({ report }: { report: PulsePayload }) {
   // top 按 score 降序(marketPulse.ts:261),这里取 [0] 是对的。
   const topMarket = report.top[0] ?? null;
   const totalVol = report.top.reduce((s, m) => s + m.volumeUsd, 0);
-  const ellipsis = {
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  } as const;
+  // 市场名永不截断（设计稿 §1.1）—— 副行改成换行，此前的单行省略号会把
+  // 「是哪个市场」这条唯一有用的信息切掉。
   return (
-    <section className="kpi" style={{ marginBottom: "var(--s-5)" }}>
-      <StatCard label={t("最激辩品类")}>
-        <div className="kpi-value">{hottest ? hottest.score : "—"}</div>
-        <div className="kpi-sub" style={ellipsis}>
-          {hottest ? t(catLabel(hottest.key)) : t("确信指数暂不可用")}
+    <section className="kpi" style={{ marginBottom: "var(--s-4)" }}>
+      <StatCard label={t("最激辩品类")} icon="🔥">
+        <div className="kpi-value" style={{ color: "var(--ww-link)" }}>
+          {hottest
+            ? `${hottest.score} · ${t(catLabel(hottest.key))}`
+            : t("确信指数暂不可用")}
         </div>
+        {hottest ? <div className="kpi-sub">{t("确信指数最高")}</div> : null}
       </StatCard>
-      <StatCard label={t("最异常市场")}>
+      <StatCard label={t("最异常市场")} icon="📈">
         <div className="kpi-value">{topMarket ? topMarket.score : "—"}</div>
-        <div
-          className="kpi-sub"
-          style={ellipsis}
-          title={topMarket?.title ?? undefined}
-        >
+        {/* 市场名不截断：长标题在这里换行，overflow-wrap anywhere 兜住
+            没有空格的 conditionId 降级值。 */}
+        <div className="kpi-sub" style={{ overflowWrap: "anywhere" }}>
           {topMarket
             ? (topMarket.title ?? topMarket.conditionId)
             : t("该日无市场入榜")}
         </div>
       </StatCard>
-      <StatCard label={t("方向分歧")}>
+      <StatCard label={t("方向分歧")} icon="⚖️">
         <div className="kpi-value">{report.divergences.length}</div>
-        <div className="kpi-sub" style={ellipsis}>
-          {t("组达双边门槛")}
-        </div>
+        <div className="kpi-sub">{t("组达双边门槛")}</div>
       </StatCard>
-      <StatCard label={t("入榜市场")}>
+      <StatCard label={t("入榜市场")} icon="🗂">
         <div className="kpi-value">{report.top.length}</div>
-        <div className="kpi-sub" style={ellipsis}>
-          {t("日榜总量 {v}", { v: usd(totalVol) })}
-        </div>
+        <div className="kpi-sub">{t("日榜总量 {v}", { v: usd(totalVol) })}</div>
       </StatCard>
     </section>
   );
 }
 
 /* ------------------------------------------------------------- 五个榜单 */
-
-function BoardHeading({ children }: { children: ReactNode }) {
-  return (
-    <h2 style={{ fontSize: "var(--t-lg)", margin: "0 0 var(--s-3)" }}>
-      {children}
-    </h2>
-  );
-}
 
 /* --------------------------------------------------- 本站给市场打的标记 */
 
@@ -273,10 +290,11 @@ function BoardTagChip({ kind }: { kind: BoardTag }) {
 // 性质完全不同的事实共用一个「·」,而品类自己内部还有一个「·」,分隔符层级
 // 是乱的,品类被埋掉。抽成 chip 后一眼可辨,剩下的提示继续留在灰行。
 //
-// 配色刻意只用 brand + 默认灰:ds-tag--up/--down 在本仓是金融方向语义
+// 配色刻意只用 brand:ds-tag--up/--down 在本仓是金融方向语义
 // (ui.tsx SideTag:BUY 绿 / SELL 红),给「政治」发一个红 chip 会被读成
-// 「跌」。一级用 brand 上色、二级留灰,层级靠既有色阶而不是新造一套品类
-// 调色板 —— 八个品类要八种在明暗两套主题下都成立的颜色,那是另一个活。
+// 「跌」;琥珀则被本站自己的榜单标记占着。设计稿 §2.1 把「体育 · 足球」
+// 这类分类徽章明确归到蓝描边一类,所以一级二级同色,靠先后顺序分层级 ——
+// 八个品类要八种在明暗两套主题下都成立的颜色,那是另一个活。
 // catLabel/subLabel 的输出是全站的**规范中文键**(它把 gamma 的英文标签映射
 // 成中文),显示前必须再过一次 t() 才能在英文界面回到英文 —— 否则英文页面上
 // 只有词表里有的品类会显示中文(Sports→体育),词表外的反而透传英文(Iran),
@@ -298,7 +316,7 @@ function CategoryTags({
       {/* 二级与一级同名时不重复发一个 chip —— 与 catLabelFine 的既有去重
           规则同一条(categoryLabel.ts:72),换了渲染形式不换语义。去重在
           译后比较:两个英文标签可能译到同一中文,也可能反过来。 */}
-      {sub !== "" && sub !== primary && <Tag>{sub}</Tag>}
+      {sub !== "" && sub !== primary && <Tag variant="brand">{sub}</Tag>}
     </>
   );
 }
@@ -328,7 +346,9 @@ function MarketCell({
   const { t } = useLang();
   return (
     <>
-      <div style={{ fontWeight: 500 }}>
+      {/* 市场名不加字重、不截断 —— 换行最多两行（td 上的 .cell-wrap 给
+          line-height 1.35 与 overflow-wrap:anywhere）。行内没有行级强调。 */}
+      <div>
         {title ?? conditionId}
         {/* conditionId 必须传:MarketSlugActions 的 🎯(打开本站市场信号卡)只在
             拿得到它时才渲染,而全站只有 /pulse 漏了这个参数 —— 榜单行因此比
@@ -348,6 +368,8 @@ function MarketCell({
           flexWrap: "wrap",
           gap: "var(--s-2)",
           marginTop: 4,
+          fontSize: "var(--t-sm)",
+          color: "var(--ww-text-muted)",
         }}
       >
         <CategoryTags category={category} subcategory={subcategory} />
@@ -361,9 +383,9 @@ function MarketCell({
             ))}
           </span>
         )}
-        {hints.length > 0 && (
-          <span className="ds-hint">{hints.join(" · ")}</span>
-        )}
+        {/* 提示句与它左边的 chip 同处一行：12px muted 已由外层给定，
+            这里不再套 .ds-hint（那会把它顶回 13px，一行里两个字号）。 */}
+        {hints.length > 0 && <span>{hints.join(" · ")}</span>}
       </div>
     </>
   );
@@ -384,47 +406,64 @@ export function ConvictionBoard({
     : data.categories.slice(0, ROWS_COLLAPSED);
   return (
     <section>
-      <BoardHeading>{t("确信指数 · 品类激辩度")}</BoardHeading>
-      <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
-        {t(
-          "高 = 激辩/恐慌（阵营对峙、小单与鲸鱼对立、价格动荡、量能异动），低 = 确信（一边倒、平静）。VIX 语义，逐品类按日合成。",
-        )}
-      </div>
-      <div className="ds-table-wrap">
-        <table className="ds-table">
-          <thead>
-            <tr>
-              <th>{t("品类")}</th>
-              <th className="is-right">{t("指数")}</th>
-              <th>{t("构成")}</th>
-              <th>{t("近 {n} 日", { n: data.days })}</th>
-              <th className="is-right">{t("量能")}</th>
-              <th className="is-right">{t("市场数")}</th>
+      <BoardBar
+        title={`01 ${t("确信指数 · 品类激辩度")}`}
+        sub={t("今天整体情绪落在哪个品类 —— 漏斗的起点")}
+      />
+      <BoardTable>
+        <thead>
+          <tr>
+            <th>{t("品类")}</th>
+            {/* 完整加权公式退到表头 title:它是「这个指标怎么定义」,不是
+                「不读会读错」。卡底只留会改变读数的两条(不给分门槛 / 基线
+                不足时的退化)。 */}
+            <th
+              className="is-right"
+              title={t(
+                "确信指数 = 0.30·阵营对峙（量能加权 1−单边度）+ 0.30·对立度（合格分歧市场量能占比，双边门槛与「方向分歧」标签页同尺）+ 0.20·价格动荡 + 0.20·量能异动",
+              )}
+            >
+              {t("指数")}
+            </th>
+            <th>{t("构成")}</th>
+            <th>{t("近 {n} 日", { n: data.days })}</th>
+            <th className="is-right">{t("量能")}</th>
+            <th className="is-right">{t("市场数")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((c) => (
+            <tr key={c.key || "__other"}>
+              {/* 身份格刻意不带 data-label —— 窄屏堆叠卡里它铺满整行做
+                  卡头（globals.css:1224 `td:not([data-label])`），其余每格
+                  才由 data-label 供出「标签左 / 值右」的那个标签。 */}
+              <td>{t(catLabel(c.key))}</td>
+              {/* 分数与正文同字号常规字重：层级来自分格线和小标，
+                  不来自字号跳档。 */}
+              <td className="is-right num mono" data-label={t("指数")}>
+                {c.score}
+              </td>
+              {/* 微条组与迷你趋势线在窄屏放不进「标签左 / 值右」的一行，
+                  用 col-block 让标签压在上面、图形整行铺开。 */}
+              <td className="col-block" data-label={t("构成")}>
+                <ConvictionChips c={c.components} />
+              </td>
+              <td
+                className="ds-hint col-block"
+                data-label={t("近 {n} 日", { n: data.days })}
+              >
+                <ScoreSpark series={c.series} />
+              </td>
+              <td className="is-right num mono" data-label={t("量能")}>
+                {usd(c.volumeUsd)}
+              </td>
+              <td className="is-right num mono" data-label={t("市场数")}>
+                {c.markets}
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {rows.map((c) => (
-              <tr key={c.key || "__other"}>
-                <td style={{ fontWeight: 500 }}>{t(catLabel(c.key))}</td>
-                <td
-                  className="is-right num mono"
-                  style={{ fontSize: "var(--t-lg)", fontWeight: 600 }}
-                >
-                  {c.score}
-                </td>
-                <td>
-                  <ConvictionChips c={c.components} />
-                </td>
-                <td className="ds-hint">
-                  <ScoreSpark series={c.series} />
-                </td>
-                <td className="is-right num mono">{usd(c.volumeUsd)}</td>
-                <td className="is-right num mono">{c.markets}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </BoardTable>
       <RowsToggle
         total={data.categories.length}
         expanded={expanded}
@@ -432,7 +471,7 @@ export function ConvictionBoard({
       />
       <Methodology>
         {t(
-          "确信指数 = 0.30·阵营对峙（量能加权 1−单边度）+ 0.30·对立度（合格分歧市场量能占比，双边门槛与「方向分歧」标签页同尺）+ 0.20·价格动荡 + 0.20·量能异动；品类日总量 <$10k 不给分；量能异动在品类自身基线不足 3 天时退化为当日横截面分位。",
+          "高 = 激辩/恐慌，低 = 确信（一边倒、平静）；品类日总量 <$10k 不给分，自身基线不足 3 天时量能异动退化为当日横截面分位。",
         )}
       </Methodology>
     </section>
@@ -454,84 +493,103 @@ export function AnomalyBoard({
   const rows = expanded ? all : all.slice(0, ROWS_COLLAPSED);
   return (
     <section>
-      <BoardHeading>{t("异常市场日榜")}</BoardHeading>
+      <BoardBar
+        title={`02 ${t("异常市场日榜")}`}
+        sub={t("量能 / 单边 / 鲸鱼 / 价移四项合成的市场级异动")}
+      />
       {all.length === 0 ? (
-        <div className="ds-hint">
-          {t("该日无达到材料性门槛（$10k 总量）的市场。")}
+        <div className="ds-empty" style={{ border: 0, borderRadius: 0 }}>
+          <div>{t("该日无达到材料性门槛（$10k 总量）的市场。")}</div>
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            {t("底座每 UTC 日收盘后重建 —— 明天再来。")}
+          </div>
         </div>
       ) : (
-        <div className="ds-table-wrap">
-          <table className="ds-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>{t("市场")}</th>
-                <th className="is-right">{t("异常分")}</th>
-                <th>{t("构成")}</th>
-                <th className="is-right">{t("量能")}</th>
-                <th className="is-right">{t("顶结果首→末价")}</th>
+        <BoardTable>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>{t("市场")}</th>
+              {/* 加权公式同确信指数:退到表头 title。 */}
+              <th
+                className="is-right"
+                title={t(
+                  "异常分 = 0.35·量能异动 + 0.25·单边度 + 0.20·鲸鱼占比 + 0.20·日内价移",
+                )}
+              >
+                {t("异常分")}
+              </th>
+              <th>{t("构成")}</th>
+              <th className="is-right">{t("量能")}</th>
+              <th className="is-right">{t("顶结果首→末价")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((m, i) => (
+              <tr key={m.conditionId}>
+                {/* 序号补零成两位（01/02/…）——榜已按异常分排序，序号本身
+                    就是量级；两位宽度让这一列右边缘对齐。 */}
+                <td className="num mono muted" data-label="#">
+                  {String(i + 1).padStart(2, "0")}
+                </td>
+                {/* 市场格同样不带 data-label：窄屏下它是卡头（全站同一条
+                    约定，见 app/page.tsx 的 24h 扫描行）。 */}
+                <td className="cell-wrap">
+                  <MarketCell
+                    title={m.title}
+                    conditionId={m.conditionId}
+                    slug={m.slug}
+                    eventSlug={m.eventSlug}
+                    category={m.category}
+                    subcategory={m.subcategory}
+                    boardTags={otherTags(membership, m.conditionId, "anomaly")}
+                    hints={[
+                      ...(m.topOutcome ? [m.topOutcome] : []),
+                      ...(m.volRatio != null
+                        ? [
+                            t("量能为其 {n} 日均值的 {r} 倍", {
+                              n: m.volBaselineDays,
+                              r: m.volRatio.toFixed(1),
+                            }),
+                          ]
+                        : []),
+                      ...(m.washRatio != null && m.washRatio >= 0.1
+                        ? [
+                            t("洗量占比 {p}%", {
+                              p: Math.round(m.washRatio * 100),
+                            }),
+                          ]
+                        : []),
+                    ]}
+                  />
+                </td>
+                <td className="is-right num mono" data-label={t("异常分")}>
+                  {m.score}
+                </td>
+                {/* 四条微条在窄屏铺整行：col-block 把标签压到上面一行。 */}
+                <td className="col-block" data-label={t("构成")}>
+                  <CompChips c={m.components} />
+                </td>
+                <td className="is-right num mono" data-label={t("量能")}>
+                  {usd(m.volumeUsd)}
+                </td>
+                <td
+                  className="is-right num mono"
+                  data-label={t("顶结果首→末价")}
+                >
+                  {cents(m.priceFirst)} → {cents(m.priceLast)}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {rows.map((m, i) => (
-                <tr key={m.conditionId}>
-                  <td className="num mono">{i + 1}</td>
-                  <td>
-                    <MarketCell
-                      title={m.title}
-                      conditionId={m.conditionId}
-                      slug={m.slug}
-                      eventSlug={m.eventSlug}
-                      category={m.category}
-                      subcategory={m.subcategory}
-                      boardTags={otherTags(
-                        membership,
-                        m.conditionId,
-                        "anomaly",
-                      )}
-                      hints={[
-                        ...(m.topOutcome ? [m.topOutcome] : []),
-                        ...(m.volRatio != null
-                          ? [
-                              t("量能为其 {n} 日均值的 {r} 倍", {
-                                n: m.volBaselineDays,
-                                r: m.volRatio.toFixed(1),
-                              }),
-                            ]
-                          : []),
-                        ...(m.washRatio != null && m.washRatio >= 0.1
-                          ? [
-                              t("洗量占比 {p}%", {
-                                p: Math.round(m.washRatio * 100),
-                              }),
-                            ]
-                          : []),
-                      ]}
-                    />
-                  </td>
-                  <td
-                    className="is-right num mono"
-                    style={{ fontSize: "var(--t-lg)", fontWeight: 600 }}
-                  >
-                    {m.score}
-                  </td>
-                  <td>
-                    <CompChips c={m.components} />
-                  </td>
-                  <td className="is-right num mono">{usd(m.volumeUsd)}</td>
-                  <td className="is-right num mono">
-                    {cents(m.priceFirst)} → {cents(m.priceLast)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </BoardTable>
       )}
       <RowsToggle total={all.length} expanded={expanded} onToggle={onToggle} />
+      {/* 两色分工那句（电蓝 = 品类 / 琥珀 = 本站标记）删掉：它解释的是我们
+          为什么这么配色，不改变任何一个数怎么读，标签自身的文字已经自明。 */}
       <Methodology>
         {t(
-          "异常分 = 0.35·量能异动 + 0.25·单边度 + 0.20·鲸鱼占比 + 0.20·日内价移，各分量 0–1 可逐项核对；量能异动在同市场基线不足 3 天时退化为当日横截面分位。",
+          "各分量 0–1，可逐项核对；量能异动在同市场基线不足 3 天时退化为当日横截面分位。",
         )}
       </Methodology>
     </section>
@@ -553,59 +611,71 @@ export function DivergenceBoard({
   const rows = expanded ? all : all.slice(0, ROWS_COLLAPSED);
   return (
     <section>
-      <BoardHeading>{t("小单 vs 鲸鱼 · 方向分歧")}</BoardHeading>
+      <BoardBar
+        title={`03 ${t("小单 vs 鲸鱼 · 方向分歧")}`}
+        sub={t("两桶各自净买入的顶结果不同")}
+      />
       {all.length === 0 ? (
-        <div className="ds-hint">
-          {t("该日无达到双边材料性门槛的方向分歧。")}
+        <div className="ds-empty" style={{ border: 0, borderRadius: 0 }}>
+          <div>{t("该日无达到双边材料性门槛的方向分歧。")}</div>
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            {t("小单与鲸鱼在所有覆盖市场里同向，这本身是信息。")}
+          </div>
         </div>
       ) : (
-        <div className="ds-table-wrap">
-          <table className="ds-table">
-            <thead>
-              <tr>
-                <th>{t("市场")}</th>
-                <th>{t("小单在买")}</th>
-                <th>{t("鲸鱼在买")}</th>
-                <th className="is-right">{t("分歧强度")}</th>
+        <BoardTable>
+          <thead>
+            <tr>
+              <th>{t("市场")}</th>
+              <th>{t("小单在买")}</th>
+              <th>{t("鲸鱼在买")}</th>
+              {/* 强度的定义退到表头 title，卡底只留入榜门槛。 */}
+              <th
+                className="is-right"
+                title={t("min(小单净额, 鲸鱼净额) —— 弱的那边定强度")}
+              >
+                {t("分歧强度")}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((d) => (
+              <tr key={d.conditionId}>
+                <td className="cell-wrap">
+                  <MarketCell
+                    title={d.title}
+                    conditionId={d.conditionId}
+                    slug={d.slug}
+                    category={d.category}
+                    subcategory={d.subcategory}
+                    boardTags={otherTags(
+                      membership,
+                      d.conditionId,
+                      "divergence",
+                    )}
+                  />
+                </td>
+                {/* 净买入是方向（买 = 绿），不是成本 —— 这是五类语义里
+                    唯一还留着涨绿的地方。 */}
+                <td data-label={t("小单在买")}>
+                  {d.smallTopOutcome}{" "}
+                  <span className="num mono up">+{usd(d.smallNetUsd)}</span>
+                </td>
+                <td data-label={t("鲸鱼在买")}>
+                  {d.whaleTopOutcome}{" "}
+                  <span className="num mono up">+{usd(d.whaleNetUsd)}</span>
+                </td>
+                <td className="is-right num mono" data-label={t("分歧强度")}>
+                  {usd(d.strength)}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {rows.map((d) => (
-                <tr key={d.conditionId}>
-                  <td>
-                    <MarketCell
-                      title={d.title}
-                      conditionId={d.conditionId}
-                      slug={d.slug}
-                      category={d.category}
-                      subcategory={d.subcategory}
-                      boardTags={otherTags(
-                        membership,
-                        d.conditionId,
-                        "divergence",
-                      )}
-                    />
-                  </td>
-                  <td>
-                    {d.smallTopOutcome}{" "}
-                    <span className="num mono up">+{usd(d.smallNetUsd)}</span>
-                  </td>
-                  <td>
-                    {d.whaleTopOutcome}{" "}
-                    <span className="num mono up">+{usd(d.whaleNetUsd)}</span>
-                  </td>
-                  <td className="is-right num mono">{usd(d.strength)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </BoardTable>
       )}
       <RowsToggle total={all.length} expanded={expanded} onToggle={onToggle} />
       <Methodology>
-        {t(
-          "入榜需两桶各自净买入的顶结果不同，且小单净买入 ≥$5k、鲸鱼净买入 ≥$50k；分歧强度 = min(小单净额, 鲸鱼净额) —— 两边都得有真金白银才算真分歧，弱的那边定强度。",
-        )}
+        {t("入榜需两桶顶结果不同，且小单净买入 ≥$5k、鲸鱼净买入 ≥$50k。")}
       </Methodology>
     </section>
   );
@@ -626,62 +696,71 @@ export function GhostBoard({
   const rows = expanded ? all : all.slice(0, ROWS_COLLAPSED);
   return (
     <section>
-      <BoardHeading>{t("无鲸异动 · 没人付大钱的剧烈价移")}</BoardHeading>
-      <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
-        {t(
-          "价移 ≥10¢ 但当日没有任何一笔 ≥$10k —— 要么簿子薄到小单就能推，要么有人在蚂蚁搬家。",
-        )}
-      </div>
-      <div className="ds-table-wrap">
-        <table className="ds-table">
-          <thead>
-            <tr>
-              <th>{t("市场")}</th>
-              <th className="is-right">{t("价移")}</th>
-              <th className="is-right">{t("首→末价")}</th>
-              <th className="is-right">{t("量能")}</th>
-              <th className="is-right">{t("单笔最大")}</th>
+      <BoardBar
+        title={`04 ${t("无鲸异动 · 没人付大钱的剧烈价移")}`}
+        sub={t("价移 ≥10¢ 但当日无任何一笔 ≥$10k")}
+      />
+      <BoardTable>
+        <thead>
+          <tr>
+            <th>{t("市场")}</th>
+            {/* 「这行意味着什么」的解读退到表头 title —— 它是因果猜测，
+                不是读数规则，不该占正文一行。 */}
+            <th
+              className="is-right"
+              title={t("要么簿子薄到小单就能推，要么有人在蚂蚁搬家")}
+            >
+              {t("价移")}
+            </th>
+            <th className="is-right">{t("首→末价")}</th>
+            <th className="is-right">{t("量能")}</th>
+            <th className="is-right">{t("单笔最大")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((g) => (
+            <tr key={g.conditionId}>
+              <td className="cell-wrap">
+                <MarketCell
+                  title={g.title}
+                  conditionId={g.conditionId}
+                  slug={g.slug}
+                  eventSlug={g.eventSlug}
+                  category={g.category}
+                  subcategory={g.subcategory}
+                  boardTags={otherTags(membership, g.conditionId, "ghost")}
+                  hints={
+                    g.washRatio != null && g.washRatio >= 0.1
+                      ? [
+                          t("洗量占比 {p}%", {
+                            p: Math.round(g.washRatio * 100),
+                          }),
+                        ]
+                      : []
+                  }
+                />
+              </td>
+              <td className="is-right num mono" data-label={t("价移")}>
+                {g.moveCents.toFixed(0)}¢
+              </td>
+              <td className="is-right num mono" data-label={t("首→末价")}>
+                {cents(g.priceFirst)} → {cents(g.priceLast)}
+              </td>
+              <td className="is-right num mono" data-label={t("量能")}>
+                {usd(g.volumeUsd)}
+              </td>
+              <td className="is-right num mono" data-label={t("单笔最大")}>
+                {usd(g.maxFillUsd)}
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {rows.map((g) => (
-              <tr key={g.conditionId}>
-                <td>
-                  <MarketCell
-                    title={g.title}
-                    conditionId={g.conditionId}
-                    slug={g.slug}
-                    eventSlug={g.eventSlug}
-                    category={g.category}
-                    subcategory={g.subcategory}
-                    boardTags={otherTags(membership, g.conditionId, "ghost")}
-                    hints={
-                      g.washRatio != null && g.washRatio >= 0.1
-                        ? [
-                            t("洗量占比 {p}%", {
-                              p: Math.round(g.washRatio * 100),
-                            }),
-                          ]
-                        : []
-                    }
-                  />
-                </td>
-                <td className="is-right num mono">{g.moveCents.toFixed(0)}¢</td>
-                <td className="is-right num mono">
-                  {cents(g.priceFirst)} → {cents(g.priceLast)}
-                </td>
-                <td className="is-right num mono">{usd(g.volumeUsd)}</td>
-                <td className="is-right num mono">{usd(g.maxFillUsd)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </BoardTable>
       <RowsToggle total={all.length} expanded={expanded} onToggle={onToggle} />
+      {/* 「价移 ≥10¢ 且单笔最大 <$10k」已在标题条副标里说过，卡底不重复；
+          只留幸存者偏差那条（早于采集日的日份根本进不了榜）。 */}
       <Methodology>
-        {t(
-          "无鲸异动 = 价移 ≥10¢ 且当日单笔最大 <$10k（判定材料 2026-08-28 起采集，之前的日份不进榜）。",
-        )}
+        {t("判定材料 2026-08-28 起采集，之前的日份不进榜。")}
       </Methodology>
     </section>
   );
@@ -702,50 +781,57 @@ export function WashBoard({
   const rows = expanded ? all : all.slice(0, ROWS_COLLAPSED);
   return (
     <section>
-      <BoardHeading>{t("洗量榜 · 同钱包当日往返")}</BoardHeading>
-      <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
-        {t(
-          "同一钱包在同一市场当日既买又卖的配对量占比（双腿口径）。是结构描述不是指控——做市、调仓也长这样；把它当「这个市场的量能里有多少不是方向性意见」来读。",
-        )}
-      </div>
-      <div className="ds-table-wrap">
-        <table className="ds-table">
-          <thead>
-            <tr>
-              <th>{t("市场")}</th>
-              <th className="is-right">{t("洗量占比")}</th>
-              <th className="is-right">{t("配对量")}</th>
-              <th className="is-right">{t("量能")}</th>
+      <BoardBar
+        title={`05 ${t("洗量榜 · 同钱包当日往返")}`}
+        sub={t("是结构描述不是指控 —— 做市、调仓也长这样")}
+      />
+      <BoardTable>
+        <thead>
+          <tr>
+            <th>{t("市场")}</th>
+            {/* 公式与「该怎么读这个百分比」退到表头 title；「不是指控」那句
+                留在标题条副标里，那是唯一会造成误读的一条。 */}
+            <th
+              className="is-right"
+              title={t(
+                "同钱包当日买卖配对量 ×2 ÷ 总量（双腿口径）—— 读作「这个市场的量能里有多少不是方向性意见」",
+              )}
+            >
+              {t("洗量占比")}
+            </th>
+            <th className="is-right">{t("配对量")}</th>
+            <th className="is-right">{t("量能")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((w) => (
+            <tr key={w.conditionId}>
+              <td className="cell-wrap">
+                <MarketCell
+                  title={w.title}
+                  conditionId={w.conditionId}
+                  slug={w.slug}
+                  category={w.category}
+                  subcategory={w.subcategory}
+                  boardTags={otherTags(membership, w.conditionId, "wash")}
+                />
+              </td>
+              <td className="is-right num mono" data-label={t("洗量占比")}>
+                {Math.round(w.washRatio * 100)}%
+              </td>
+              <td className="is-right num mono" data-label={t("配对量")}>
+                {usd(2 * w.washUsd)}
+              </td>
+              <td className="is-right num mono" data-label={t("量能")}>
+                {usd(w.volumeUsd)}
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {rows.map((w) => (
-              <tr key={w.conditionId}>
-                <td>
-                  <MarketCell
-                    title={w.title}
-                    conditionId={w.conditionId}
-                    slug={w.slug}
-                    category={w.category}
-                    subcategory={w.subcategory}
-                    boardTags={otherTags(membership, w.conditionId, "wash")}
-                  />
-                </td>
-                <td className="is-right num mono" style={{ fontWeight: 600 }}>
-                  {Math.round(w.washRatio * 100)}%
-                </td>
-                <td className="is-right num mono">{usd(2 * w.washUsd)}</td>
-                <td className="is-right num mono">{usd(w.volumeUsd)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </BoardTable>
       <RowsToggle total={all.length} expanded={expanded} onToggle={onToggle} />
       <Methodology>
-        {t(
-          "洗量占比 = 同钱包当日买卖配对量 ×2 ÷ 总量，只统计单笔 ≥$2k 的抓取窗口；入榜需占比 ≥20% 且当日总量 ≥$10k。",
-        )}
+        {t("入榜需占比 ≥20% 且当日总量 ≥$10k；只统计单笔 ≥$2k 的抓取窗口。")}
       </Methodology>
     </section>
   );

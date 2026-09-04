@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { StatCard } from "../ui";
-import { Dot, SectionHead } from "./bits";
+import { SectionHead } from "./bits";
 import { authHeaders } from "./shared";
 
 // 区块:市场深度卡(/api/market-card/[cid])的预算与可观测。
@@ -38,6 +38,8 @@ interface Payload {
   archivedWindows: number;
 }
 
+// hint 不再占一行正文 —— 它进 label 的 title(设计系统里表头 (?) 的那套
+// 做法),输入框旁边只留「默认 N」这一个读数。
 const FIELDS: { key: keyof Settings; label: string; hint: string }[] = [
   {
     key: "budgetPerMin",
@@ -66,18 +68,30 @@ export default function MarketCardSection({ token }: { token: string }) {
   const [draft, setDraft] = useState<Settings | null>(null);
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  // 读取失败与保存回执分开存:save() 写完 note 就 void load(),两者共用一个
+  // 状态的话「已保存」会被随后的加载结果冲掉。
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/market-card", {
         headers: authHeaders(token),
       });
-      if (!res.ok) return;
-      const body = (await res.json()) as Payload;
+      const body = (await res.json()) as Payload & { error?: string };
+      // 服务端的原话必须露出来 —— 此前这里是 `if (!res.ok) return;` 加一个
+      // 空 catch:令牌失效时 data 恒为 null,空态永远停在「正在读取…」,把
+      // 故障说成了慢。与同目录 AlertRulesSection 同一副姿态。
+      if (!res.ok) {
+        setLoadErr(body.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      setLoadErr(null);
       setData(body);
       setDraft(body.settings);
-    } catch {
-      // 面板拉不到不该炸掉整个 /manage —— 其余区块各自拉各自的数据。
+    } catch (e) {
+      // 面板拉不到不该炸掉整个 /manage —— 其余区块各自拉各自的数据,
+      // 但本区块得说清自己为什么空。
+      setLoadErr(e instanceof Error ? e.message : String(e));
     }
   }, [token]);
 
@@ -117,9 +131,28 @@ export default function MarketCardSection({ token }: { token: string }) {
 
   if (!data || !draft) {
     return (
-      <section>
+      <section
+        className="ds-card"
+        style={{ padding: "var(--s-5)", marginBottom: "var(--s-5)" }}
+      >
         <SectionHead title="🎯 市场深度卡" />
-        <p className="ds-muted">加载中…</p>
+        {loadErr && (
+          <div
+            className="ds-callout ds-callout--error"
+            style={{ marginBottom: "var(--s-3)" }}
+          >
+            {loadErr}
+          </div>
+        )}
+        {/* 空态给内容也给出路 —— 不返回 null,也不把「读不到」说成「正在读取」。 */}
+        <div className="ds-empty">
+          {loadErr ? "读不到预算与计数。" : "正在读取预算与计数…"}
+          {loadErr && (
+            <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+              通常是管理令牌失效;换令牌后自动重试。
+            </div>
+          )}
+        </div>
       </section>
     );
   }
@@ -130,85 +163,106 @@ export default function MarketCardSection({ token }: { token: string }) {
   const throttled = data.effectiveBudget < data.settings.budgetPerMin;
 
   return (
-    <section>
+    <section
+      className="ds-card"
+      style={{ padding: "var(--s-5)", marginBottom: "var(--s-5)" }}
+    >
       <SectionHead title="🎯 市场深度卡" />
 
-      <p className="ds-muted" style={{ marginBottom: "var(--s-3)" }}>
-        计数是<strong>进程内累计</strong>,重启归零——它回答「这个进程活着这段
-        时间里预算花在哪了」,不是历史统计。
-      </p>
+      {/* 刷新失败时(如保存后回读被拒)数据还是旧的 —— 说出来,别让它装新。 */}
+      {loadErr && (
+        <div
+          className="ds-callout ds-callout--error"
+          style={{ marginBottom: "var(--s-3)" }}
+        >
+          {loadErr}
+        </div>
+      )}
 
-      <div className="kpi-grid">
-        <StatCard label="零上游命中">
-          <div className="ds-num">
+      {/* 口径先行 —— 统计声明放在数据前面,不放脚注（琥珀 = 读前必看）。
+          本区块只留这一条琥珀:限流与被拒的成因改写在对应那格 KPI 的副行上,
+          读数在哪儿,解释就在哪儿。 */}
+      <div
+        className="ds-callout ds-callout--warn"
+        style={{ marginBottom: "var(--s-4)" }}
+      >
+        计数是<b>进程内累计</b>,重启归零 —— 不是历史统计。
+      </div>
+
+      {/* KPI 分格卡:一张白卡 N 等分,格间 1px 竖线;值 18px 常规字重。 */}
+      <section className="kpi">
+        <StatCard label="零上游命中" icon="🎯">
+          <div className="kpi-value">
             {s.hit}
-            {hitRate != null && (
-              <span className="ds-muted" style={{ fontSize: "0.8em" }}>
-                {" "}
-                · {hitRate}%
-              </span>
-            )}
+            {hitRate != null && <span className="muted"> · {hitRate}%</span>}
           </div>
+          <div className="kpi-sub">窗口还新鲜,一次上游都没打</div>
         </StatCard>
-        <StatCard label="热续 / 冷启">
-          <div className="ds-num">
+        <StatCard label="热续 / 冷启" icon="🔥">
+          <div className="kpi-value">
             {s.warm} / {s.cold}
           </div>
         </StatCard>
-        <StatCard label="降级(发了旧卡)">
-          <div className="ds-num">{s.degraded}</div>
+        <StatCard label="降级（发了旧卡）" icon="🕰">
+          <div className="kpi-value">{s.degraded}</div>
         </StatCard>
-        <StatCard label="拒绝(429)">
-          <div className="ds-num">
-            <Dot tone={s.refused > 0 ? "warn" : "muted"}>{s.refused}</Dot>
+        <StatCard label="拒绝（429）" icon="🚧">
+          <div
+            className="kpi-value"
+            style={s.refused > 0 ? { color: "var(--ww-warn)" } : undefined}
+          >
+            {s.refused}
           </div>
+          {/* 「持续非零该调参数了」原本是数据下方一整条说明条 —— 挪到它解释的
+              那个数底下。 */}
+          {s.refused > 0 && (
+            <div className="kpi-sub">持续非零 = 该上调预算或工作集</div>
+          )}
         </StatCard>
-        <StatCard label="工作集 / 存档">
-          <div className="ds-num">
+        <StatCard label="工作集 / 存档" icon="📦">
+          <div className="kpi-value">
             {s.workingSet} / {data.archivedWindows}
           </div>
         </StatCard>
-        <StatCard label="此刻生效额度">
-          <div className="ds-num">
-            <Dot tone={throttled ? "warn" : "up"}>
-              {data.effectiveBudget}/min
-            </Dot>
+        {/* 「为什么此刻的额度比配置低」原本是数据下方一整条琥珀说明条 ——
+            成因挪到这一格的副行,与那个变琥珀的数字同处。「卡片永远给引擎
+            让路」是设计理由,收进 title。 */}
+        <StatCard label="此刻生效额度" icon="⛽">
+          <div
+            className="kpi-value"
+            style={throttled ? { color: "var(--ww-warn)" } : undefined}
+            title={
+              throttled
+                ? "卡片永远给引擎让路:引擎断更时继续取上游令牌是在加深故障"
+                : undefined
+            }
+          >
+            {data.effectiveBudget}/min
+          </div>
+          <div className="kpi-sub">
+            配置上限 {data.settings.budgetPerMin}/min
+            {throttled &&
+              (data.staleLoops.length > 0
+                ? ` · 循环停跳(${data.staleLoops.join(", ")}),已归零`
+                : " · 循环漂移,已降到 25%")}
           </div>
         </StatCard>
-      </div>
+      </section>
 
-      {throttled && (
-        <p className="ds-muted" style={{ marginTop: "var(--s-2)" }}>
-          ⚠️ 生效额度低于配置值:引擎
-          {data.staleLoops.length > 0
-            ? `有循环停跳(${data.staleLoops.join(", ")}),预算已归零`
-            : "循环出现漂移,预算已降到 25%"}
-          。卡片永远给引擎让路——引擎断更时继续取令牌是在加深故障。
-        </p>
-      )}
-
-      {s.refused > 0 && (
-        <p className="ds-muted" style={{ marginTop: "var(--s-2)" }}>
-          有请求被拒:若持续非零,说明预算或工作集上限该往上调了。
-        </p>
-      )}
-
-      <div style={{ marginTop: "var(--s-4)" }}>
-        <div className="ds-label" style={{ marginBottom: "var(--s-2)" }}>
+      <div style={{ marginTop: "var(--s-5)" }}>
+        <div className="ds-label" style={{ marginBottom: "var(--s-3)" }}>
           参数
         </div>
         {FIELDS.map((f) => (
           <label
             key={f.key}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "var(--s-3)",
-              marginBottom: "var(--s-2)",
-              flexWrap: "wrap",
-            }}
+            className="filter-row"
+            style={{ marginBottom: "var(--s-3)" }}
+            title={f.hint}
           >
-            <span style={{ minWidth: "7rem" }}>{f.label}</span>
+            <span className="filter-row__label" style={{ minWidth: "7rem" }}>
+              {f.label}
+            </span>
             <input
               type="number"
               className="ds-input"
@@ -218,23 +272,21 @@ export default function MarketCardSection({ token }: { token: string }) {
                 setDraft({ ...draft, [f.key]: Number(e.target.value) })
               }
             />
-            <span className="ds-muted" style={{ fontSize: "0.85em" }}>
-              {f.hint}(默认 {data.defaults[f.key]})
-            </span>
+            <span className="ds-hint">默认 {data.defaults[f.key]}</span>
           </label>
         ))}
-        <button
-          className="ds-btn"
-          onClick={() => void save()}
-          disabled={saving}
-        >
-          {saving ? "保存中…" : "保存"}
-        </button>
-        {note && (
-          <span className="ds-muted" style={{ marginLeft: "var(--s-3)" }}>
-            {note}
-          </span>
-        )}
+        <div className="filter-row" style={{ marginTop: "var(--s-4)" }}>
+          {/* 描边白底 —— 页头的「刷新」是全页唯一的蓝底主按钮,它在这个子
+              tab 上同屏可见,这里再来一枚就是一屏两主。 */}
+          <button
+            className="ds-btn"
+            onClick={() => void save()}
+            disabled={saving}
+          >
+            {saving ? "保存中…" : "保存"}
+          </button>
+          {note && <span className="ds-hint">{note}</span>}
+        </div>
       </div>
     </section>
   );

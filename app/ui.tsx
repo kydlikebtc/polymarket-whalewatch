@@ -143,6 +143,37 @@ function NavGroup({
   );
 }
 
+// 顶栏右侧的实时时钟（绿点 + 「实时 HH:MM:SS」)。设计稿每一幅都有它 ——
+// 它是「这页是活的」的唯一常驻证据。挂载前渲染 null:服务端渲染一个时间
+// 串必然与客户端首帧不一致(水合错位),而这块纯装饰,晚一帧出现无代价。
+//
+// **走浏览器本地时区**(2026-09-04 裁决)。全站各页的时间戳本来就都是
+// toLocaleTimeString / toLocaleString(本地),顶栏此前单独走 UTC,于是
+// UTC+8 的读者会看到顶栏「实时 04:42」而表里最新一行是「12:42」——
+// 同一时刻两个数,对不上号。统一到本地后两者恒等。
+//
+// 注意与「业务口径里的 UTC」分家:30 天闸门、脉搏底座每日重建、周桶切分、
+// 𝕏 播报时刻都是**服务端真实按 UTC 日历日执行**的,那些文案里的 UTC 不能
+// 跟着改 —— 它们描述的是服务端行为,不是显示时区。
+function LiveClock() {
+  const { t } = useLang();
+  const [now, setNow] = useState<string | null>(null);
+  useEffect(() => {
+    const tick = () =>
+      setNow(new Date().toLocaleTimeString("zh-CN", { hour12: false }));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+  if (!now) return null;
+  return (
+    <span className="topbar__clock" title={t("当前本地时间")}>
+      <span className="topbar__clock-dot" aria-hidden />
+      {t("实时")} {now}
+    </span>
+  );
+}
+
 export function TopNav() {
   const pathname = usePathname();
   const router = useRouter();
@@ -163,10 +194,16 @@ export function TopNav() {
   return (
     <nav className="topbar">
       <div className="topbar__inner">
+        {/* 字标就是 WhaleWatch（22/700）—— 设计稿 25 幅一致。站点对外名片、
+            metadata title、TG 频道名本来就是这个名字。 */}
         <span className="topbar__brand">
-          <span aria-hidden>🐋</span>
-          {t("Polymarket 监控")}
+          <span className="topbar__whale" aria-hidden>
+            🐋
+          </span>
+          WhaleWatch
         </span>
+        {/* 导航右靠（设计稿：字标居左，导航与右侧 chrome 连成一片） */}
+        <span style={{ flex: 1 }} />
         <div className="topbar__nav">
           {NAV.map((entry) =>
             "items" in entry ? (
@@ -189,11 +226,12 @@ export function TopNav() {
             ),
           )}
         </div>
-        <span style={{ flex: 1 }} />
+        <span className="topbar__sep" aria-hidden />
+        <LiveClock />
         {/* External channel link — same explicit window.open fallback as
             WalletLink (the webview ignores target=_blank on its own). */}
         <a
-          className="nav-link"
+          className="nav-btn"
           href="https://t.me/Polymarket_WhaleWatch"
           target="_blank"
           rel="noreferrer"
@@ -207,16 +245,20 @@ export function TopNav() {
             );
           }}
         >
-          📣 {t("TG 频道")}
+          {/* 不带 📣 —— 设计稿帧 01 把它画成「📣 TG 频道」,但设计系统
+              readme §1 的硬规则是「emoji 不放在按钮上」,两者撞车。
+              2026-09-04 裁决:按规范走。emoji 在本站承担的是信号/档位语义
+              (💰 🐳 🧩 🏆 🔥 与 19 档策略符号),让它同时兼任装饰会稀释
+              那套语义 —— 读者得先判断这个 emoji 是「有含义」还是「只是好看」。 */}
+          {t("TG 频道")}
         </a>
         {/* 语言切换:显示的是「切过去」的目标语言。 */}
         <button
           type="button"
-          className="nav-link"
+          className="nav-btn"
           onClick={() => setLang(lang === "zh" ? "en" : "zh")}
           title={t("切换语言")}
           aria-label={t("切换语言")}
-          style={{ background: "none", border: "none", cursor: "pointer" }}
         >
           {lang === "zh" ? "EN" : "中文"}
         </button>
@@ -527,10 +569,13 @@ export function Tag({
   return <span className={cls}>{children}</span>;
 }
 
-// BUY → green (up) pill, SELL → red (down) pill. Direction is financial.
+// BUY → 绿描边，SELL → 红描边。方向是金融含义。
+// 固定 56px 宽(.ds-tag--dir):BUY / SELL 在表格的方向列里要对齐成一条直线,
+// 宽度随字数变化会让整列参差。
 export function SideTag({ side }: { side: string }) {
   const v = side === "BUY" ? "up" : side === "SELL" ? "down" : "default";
-  return <Tag variant={v}>{side}</Tag>;
+  const base = v === "default" ? "ds-tag" : `ds-tag ds-tag--${v}`;
+  return <span className={`${base} ds-tag--dir`}>{side}</span>;
 }
 
 /* ------------------------------------------------------------- Field row */
@@ -552,17 +597,39 @@ export function Field({
 
 /* ------------------------------------------------------------- KPI card */
 
+// KPI 分格 —— 一格。整排格子由外层 .kpi 拼成一张白卡，格间 1px 竖线。
+// icon 是设计稿的图标位:emoji 20px(承担语义,如 💰 / 🐳 / 🏆)。不给就
+// 只有小标 + 值,布局不变 —— 现有调用方一个都不用改。
 export function StatCard({
   label,
+  icon,
   children,
 }: {
   label: string;
+  icon?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <div className="kpi-card">
-      <div className="ds-label">{label}</div>
-      {children}
+    <div
+      className="kpi-card"
+      style={
+        icon
+          ? { display: "flex", alignItems: "flex-start", gap: "var(--s-3)" }
+          : undefined
+      }
+    >
+      {icon ? (
+        <span
+          aria-hidden
+          style={{ flex: "0 0 auto", fontSize: 20, lineHeight: 1.1 }}
+        >
+          {icon}
+        </span>
+      ) : null}
+      <div style={icon ? { minWidth: 0, flex: 1 } : undefined}>
+        <div className="ds-label">{label}</div>
+        {children}
+      </div>
     </div>
   );
 }
@@ -739,7 +806,11 @@ export function WalletStatsBadge({
 /* ---------------------------------------------------------- SoundToggle */
 
 // New-record notification sound toggle. Drive it with the useSoundToggle hook
-// (state + persistence + chime-on-enable). 🔔 = on, 🔕 = off.
+// (state + persistence + chime-on-enable).
+// **按钮上不放 emoji**(设计系统 readme §1 硬规则:emoji 只在灰底名称标签内、
+// KPI 图标位、12px 小标前缀三处)。原来的 🔔/🔕 兼任了「开/关」的指示,拿掉
+// 后由文案 + .ds-btn--active(蓝描边 + 6% 蓝底 + 蓝字)承担 —— 这本来就是这套
+// 皮里「此项已选中」的标准表达,比一个要靠辨认铃铛有没有划线的 emoji 更清楚。
 export function SoundToggle({
   on,
   onToggle,
@@ -751,7 +822,7 @@ export function SoundToggle({
   return (
     <button
       type="button"
-      className={`ds-btn ${on ? "ds-btn--subtle" : "ds-btn--ghost"}`}
+      className={`ds-btn ${on ? "ds-btn--active" : ""}`}
       onClick={onToggle}
       aria-pressed={on}
       title={
@@ -761,22 +832,27 @@ export function SoundToggle({
       }
       style={{ flexShrink: 0 }}
     >
-      {on ? `🔔 ${t("提示音 开")}` : `🔕 ${t("提示音 关")}`}
+      {on ? t("提示音 开") : t("提示音 关")}
     </button>
   );
 }
 
 /* ------------------------------------------------------------------ Modal */
 
-// Lightweight centered modal: backdrop-click + Esc close, scroll-locked card.
-// Reuses .ds-card for a surface consistent with the rest of the dashboard.
+// 弹窗 —— 背板点击 + Esc 关闭,卡内滚动。
+// 版式出自设计稿:标题条 `16px 24px` + 底边,内容 `16px 24px 24px`,
+// 圆角 12,遮罩 rgba(8,29,53,.45),阴影 0 24px 64px rgba(8,29,53,.28)。
+// 横向 24px 不是拍脑袋:此前 /follow 详情弹窗实测(getBoundingClientRect
+// 量内容块与弹窗四边的实际间距)发现 16px 夹在两个 24px 中间(区块间 gap
+// 24、背板外间距 24),两侧看起来比上下更紧 —— 该弹窗单独调到 24 修掉了它。
+// 设计稿把 24 定为全站弹窗的横向内边距,于是这里成为默认值,调用方不再
+// 需要传 padding(那个 prop 已随之删除)。
 export function Modal({
   open,
   onClose,
   title,
   children,
   width = 560,
-  padding = "var(--s-4, 16px)",
 }: {
   open: boolean;
   onClose: () => void;
@@ -786,13 +862,6 @@ export function Modal({
   // vw 收窄"这种响应式上限——CSS `min(1200px, 92vw)` 表达力比单个数字强,
   // 加 string 分支让调用方能直接传这类表达式,不用引入新的 prop。
   width?: number | string;
-  // 默认沿用原有 16px(不动其余两个调用方 WhitelistDialog/discovery 的现状)。
-  // /follow 详情弹窗改宽到 24px 横向内边距——不是盲目加大:实测(getBoundingClientRect)
-  // 过内容与弹窗四边的间距,16px 是真实生效值且逐元素都不溢出,但比它自己内部的
-  // 节奏(区块间 gap 24px、背板到弹窗的外间距也是 24px)更窄,两侧看起来比上下/
-  // 外部更紧。调宽到与这两处对齐的 24px,垂直方向(标题行、内容区上下)维持
-  // 16px 不变——用户反馈明确是「两边」,不该连带动没人抱怨的垂直节奏。
-  padding?: string;
 }) {
   const { t } = useLang();
   useEffect(() => {
@@ -811,7 +880,7 @@ export function Modal({
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0,0,0,0.45)",
+        background: "var(--ww-scrim)",
         display: "flex",
         alignItems: "flex-start",
         justifyContent: "center",
@@ -828,6 +897,7 @@ export function Modal({
         style={{
           width: "100%",
           maxWidth: width,
+          boxShadow: "var(--shadow-modal)",
           // 这个 div 是外层 flex 容器(justifyContent:center)里唯一的
           // flex item。flex item 的默认 min-width 是 "auto"(= 内容的
           // min-content 宽度),这个自动最小值会压过 max-width——弹窗内一旦
@@ -860,23 +930,53 @@ export function Modal({
           maxHeight: "85vh",
           display: "flex",
           flexDirection: "column",
-          padding,
+          padding: 0,
+          overflow: "hidden",
         }}
       >
+        {/* 标题条:20/600 + 底边分格线。关闭钮是 28px 无框图标钮 ——
+            这套皮里「关闭」不是一个需要描边强调的动作。 */}
         <div
           style={{
             display: "flex",
-            alignItems: "center",
+            alignItems: "flex-start",
             justifyContent: "space-between",
-            gap: "var(--s-2)",
-            marginBottom: "var(--s-3)",
+            gap: "var(--s-4)",
+            padding: "var(--s-4) var(--s-6)",
+            borderBottom: "1px solid var(--ww-border)",
           }}
         >
-          <strong>{title}</strong>
+          <span
+            style={{
+              minWidth: 0,
+              fontSize: "var(--t-xl)",
+              fontWeight: 600,
+              lineHeight: 1.3,
+              color: "var(--ww-text)",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {title}
+          </span>
           <button
-            className="ds-btn ds-btn--ghost"
+            type="button"
             onClick={onClose}
             aria-label={t("关闭")}
+            style={{
+              flex: "0 0 auto",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 28,
+              height: 28,
+              border: 0,
+              borderRadius: "var(--r-btn)",
+              background: "none",
+              color: "var(--ww-text-muted)",
+              fontSize: 18,
+              lineHeight: 1,
+              cursor: "pointer",
+            }}
           >
             ✕
           </button>
@@ -891,7 +991,7 @@ export function Modal({
           style={{
             overflow: "auto",
             minHeight: 0,
-            paddingRight: "var(--s-3, 12px)",
+            padding: "var(--s-4) var(--s-6) var(--s-6)",
             scrollbarGutter: "stable",
           }}
         >

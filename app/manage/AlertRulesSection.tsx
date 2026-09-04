@@ -139,21 +139,46 @@ export default function AlertRulesSection({ token }: { token: string }) {
     <section
       id="rules"
       className="ds-card"
-      style={{ marginBottom: "var(--s-5)", scrollMarginTop: "var(--s-6)" }}
+      style={{
+        padding: "var(--s-5)",
+        marginBottom: "var(--s-5)",
+        scrollMarginTop: "var(--s-6)",
+      }}
     >
       <SectionHead
         title="TG 告警频道 · 触发条件（alerts 进料闸）"
+        // 只留会改变操作的两件事:改这里同时改了 ① 的进料(不止 TG),以及
+        // 保存要不要令牌。「同时是信号线 ① 与总线 large 的共同进料闸」的
+        // 来龙去脉由 ① 区块的 hint 承担。
         hint={
           <>
-            这套条件决定「哪些成交进 alerts 台账并推 TG 告警」—— 它同时是
-            信号线 ① 与总线 large 的共同进料闸(总开关/冷却只影响 TG 推送,
-            不影响入库)。与 /alerts 页配置面板同一份规则;保存
+            这套条件同时决定「进 alerts 台账」与「推 TG 告警」;总开关与冷却只
+            管推送,不管入库。保存
             {readonly ? "需要上方管理令牌" : "(本地部署免令牌)"}。
           </>
         }
       />
       {!form ? (
-        <div className="ds-empty">加载中…</div>
+        <>
+          {/* 服务端的原话必须露出来 —— 此前它只在表单渲染出来之后才有位置显示,
+              加载失败时整块永远停在「正在读取…」,把故障说成了慢。 */}
+          {msg && (
+            <div
+              className="ds-callout ds-callout--error"
+              style={{ marginBottom: "var(--s-3)" }}
+            >
+              {msg}
+            </div>
+          )}
+          <div className="ds-empty">
+            {msg ? "读不到当前触发条件。" : "正在读取当前触发条件…"}
+            {msg && (
+              <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+                {"通常是管理令牌失效;这套规则在 /alerts 配置面板也能改。"}
+              </div>
+            )}
+          </div>
+        </>
       ) : (
         <>
           <div
@@ -204,17 +229,16 @@ export default function AlertRulesSection({ token }: { token: string }) {
             {numField("距结算 ≤ 小时(空=不限)", "maxHoursToEnd", "24")}
             {numField("同钱包同市场冷却 分钟", "cooldownMinutes", "30")}
           </div>
-          <div
-            style={{ display: "flex", gap: "var(--s-3)", alignItems: "center" }}
-          >
-            <button
-              className="ds-btn ds-btn--primary"
-              disabled={saving}
-              onClick={save}
-            >
+          {/* 描边白底 —— 本屏的主按钮留给上方 TG 目标的「添加」,每屏至多一个。 */}
+          <div className="filter-row">
+            <button className="ds-btn" disabled={saving} onClick={save}>
               {saving ? "保存中…" : "保存规则"}
             </button>
             {msg && <span className="ds-hint">{msg}</span>}
+          </div>
+          {/* 四个字段的标签里已各写了「空=不限」,这里只补那半句会被读错的。 */}
+          <div className="ds-hint" style={{ marginTop: "var(--s-3)" }}>
+            空 = 不限,不是 0。
           </div>
         </>
       )}

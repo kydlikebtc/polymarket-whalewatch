@@ -5,16 +5,22 @@
 export const DICT_GUIDE: Record<string, string> = {
   // -------- 页面骨架
   功能说明书: "Feature guide",
-  "每个板块三件事：这是什么、怎么使用、怎么解读。解读块继承全站的诚实纪律——每节都写清口径、样本与「别这么读」。名词级定义在":
-    'Three things per section: what it is, how to use it, how to read it. The reading blocks inherit the site-wide honesty discipline — every section spells out its basis, sample, and a "don\'t read it this way". Term-level definitions live in the',
-  "；本页讲板块。": "; this page covers the sections.",
   目录: "Contents",
+  // Etherscan 风版式(设计稿 16):页头小标 + 一句话描述 + 计数钮 + 左侧锚点轨。
+  // 克制表达(2026-09-04):页头描述只留「这页是什么」,方法论那半句删;末尾
+  // 那条自述版式的脚注整条删 —— 随之零引用的键一并删掉,不留死键。
+  "板块级说明 · 名词级见「说明」":
+    "Section-level guide · term-level lives in Glossary",
+  "每个板块三件事：这是什么、怎么使用、怎么解读。":
+    "Three things per section: what it is, how to use it, how to read it.",
+  "共 {n} 节": "{n} sections",
+  锚点目录: "On this page",
   这是什么: "What it is",
   怎么使用: "How to use",
   怎么解读: "How to read",
   "打开 →": "open →",
-  "口径的完整论证散在设计文档与 CHANGELOG（GitHub 仓库 docs/），本页是它们的板块级摘要——两处冲突时以代码与测试为准。":
-    "The full arguments behind each basis live in the design docs and CHANGELOG (docs/ in the GitHub repo); this page is their per-section digest — where they conflict, code and tests win.",
+  "本页是各板块口径的摘要；与代码 / 测试冲突时以后者为准。":
+    "This page digests each section's basis — where it conflicts with the code or tests, they win.",
 
   // -------- 新板块 title(NAV 之外)
   钱包档案: "Wallet dossier",
@@ -121,8 +127,8 @@ export const DICT_GUIDE: Record<string, string> = {
     "Disagreement: when both sides of a market hold whitelist positions, a quality-weighted (score × size) balance is struck — mutually exclusive with consensus; a contested market never masquerades as consensus.",
   "离场：池内钱包的卖侧镜像聚合（净卖出份额 × 均卖价），「白名单正在集体撤出」可能比进场更有信息量。":
     'Exits: the sell-side mirror aggregation for pool wallets (net shares sold × average sell price) — "the whitelist is collectively leaving" can carry more information than entries.',
-  "每组附现价与跟单空间（现价距共识均价的¢差）。":
-    "Each group carries the current price and follow room (the ¢ gap between current price and the consensus average).",
+  "每组附现价与跟单空间（现价 − 共识均价的 ¢ 差）：|差| ≤5¢ 记「仍可跟」，正向超出记「已跑」，负向超出记「已反向」。":
+    'Each group carries the current price and follow room (current price − consensus average, in ¢): |gap| ≤5¢ reads "followable", above that on the upside "gone", below it on the downside "reversed".',
   "三个 tab 切换共识/分歧/离场；行展开看每个成员的建仓明细。":
     "Three tabs switch consensus / disagreement / exits; rows expand into each member's entry detail.",
   "Telegram 推送只在共识形成与升级（又一个钱包加入）时发，不重复轰炸。":
@@ -131,14 +137,15 @@ export const DICT_GUIDE: Record<string, string> = {
     '"Consensus" inside a contested market is fake consensus and the detector drops it — a consensus group you see means no comparably-weighted opposing whitelist position existed at the time.',
   "高频做市商不投票：他们的成交是库存调平不是方向观点（口径红线）。":
     "HF market makers don't vote: their fills are inventory rebalancing, not directional opinion (a basis red line).",
-  "共识形成价 ≠ 你的进场价：形成后价格常已移动，跟单空间列就是这段距离——负空间大时进场即接飞刀。":
-    "Formation price ≠ your entry price: the market often moves after formation, and the follow-room column is exactly that distance — entering on a large negative room is catching the knife.",
+  "共识形成价 ≠ 你的进场价：跟单空间列就是这段距离——「已反向」不是折扣，是共识论点可能已被推翻，进场即接飞刀。":
+    'Formation price ≠ your entry price: the follow-room column is exactly that distance — "reversed" is not a discount, it means the consensus thesis may already be broken and entering is catching the knife.',
 
   // -------- 聪明钱发现
   "聪明钱从哪来：证据漏斗 → 准入闸 → 白名单池，全程可审计。":
     "Where smart money comes from: evidence funnel → admission gate → whitelist pool, auditable end to end.",
-  "四条发现渠道积累 30 天证据：🔁 同行（反复与已知聪明钱同侧）、🧩 拆单老手、🕵️ 内幕形态（新钱包+甜区重注）、🎯 早期赢家。":
-    "Four discovery channels accumulate 30 days of evidence: 🔁 echo (repeatedly siding with known smart money), 🧩 splitter veterans, 🕵️ insider shape (fresh wallet + sweet-spot heavy bet), 🎯 early winners.",
+  // 🥇 而非 🎯 —— 一符两义裁决(2026-09-04):🎯 归「冷门猎手」与市场信号卡。
+  "四条发现渠道积累 30 天证据：🔁 同行（反复与已知聪明钱同侧）、🧩 拆单老手、🕵️ 内幕形态（新钱包+甜区重注）、🥇 早期赢家。":
+    "Four discovery channels accumulate 30 days of evidence: 🔁 echo (repeatedly siding with known smart money), 🧩 splitter veterans, 🕵️ insider shape (fresh wallet + sweet-spot heavy bet), 🥇 early winners.",
   "准入闸：复发广度（30 天 ≥3 个不同市场）+ 战绩闸（已结算 ≥10 且胜率 ≥55% 且净盈亏为正，或 ≥5 且 ROI ≥5%）双合格才入池。":
     "The admission gate: recurrence breadth (≥3 distinct markets in 30 days) + the track-record gate (≥10 settled with ≥55% win rate and positive net P/L, or ≥5 settled with ≥5% ROI) — both required to enter the pool.",
   "渠道效果记分卡：每条已评级告警都是池成员的前向实验——按来源渠道算净 edge ± 聚簇区间，含离池桶与做市商横切。":

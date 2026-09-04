@@ -11,7 +11,6 @@ import {
 } from "react";
 import {
   AgeBadge,
-  Field,
   HoldingCell,
   Icon,
   MarketSlugActions,
@@ -206,11 +205,9 @@ function AccumDetail({ g }: { g: AccumGroup }) {
               <td className="mono is-right" data-label={t("金额")}>
                 ${fmtUsd(b.usd)}
               </td>
-              <td
-                className="mono is-right"
-                data-label={t("价格(赔率)")}
-                style={{ color: "var(--warn-700)" }}
-              >
+              {/* 赔率是价格不是警示 —— 中性色（设计稿 §2.1：琥珀只留给
+                  「需留神的口径」，成本/价格类数字一律中性）。 */}
+              <td className="mono is-right" data-label={t("价格(赔率)")}>
                 {b.price.toFixed(3)}
               </td>
             </tr>
@@ -264,6 +261,9 @@ const AccumRow = memo(function AccumRow({
         >
           {isOpen ? "▾" : "▸"}
         </td>
+        {/* 钱包 · 地址年龄同格：地址首尾省略后本来就短，年龄是它的属性
+            （这个钱包多新），两者读起来是一件事。合并省下一列的左右内边距，
+            宽度还给市场列 —— 见表头注释里的列宽预算。 */}
         <td>
           <WalletLink
             address={g.wallet ?? ""}
@@ -271,16 +271,19 @@ const AccumRow = memo(function AccumRow({
           >
             {shortWallet(g.wallet)}
           </WalletLink>
-        </td>
-        <td data-label={t("地址年龄")}>
-          <AgeBadge ageDays={age} />
+          <span style={{ marginLeft: "var(--s-2)" }}>
+            <AgeBadge ageDays={age} />
+          </span>
         </td>
         <td data-label={t("战绩")} onClick={(e) => e.stopPropagation()}>
           <WalletStatsBadge stats={stats} smart={smart} />
         </td>
+        {/* 市场名永不截断（设计稿 §1.1）：换行、顶对齐、overflow-wrap
+            anywhere —— 全站只有钱包地址与哈希做首尾省略。 */}
         <td
+          className="cell-wrap"
           data-label={t("市场 · 结果")}
-          style={{ whiteSpace: "normal", maxWidth: 360 }}
+          style={{ maxWidth: 360 }}
         >
           {g.eventSlug ? (
             <a
@@ -294,65 +297,75 @@ const AccumRow = memo(function AccumRow({
           ) : (
             g.title
           )}
-          {/* ⧉ copies the MARKET slug, ↗ opens the wired.fund trade page —
+          {/* 结果名 = 灰底名称标签（Etherscan name tag，不表示状态）；
+              🐳 巨鲸单只在 ≥$50k 时出现，emoji 收在标签里而不是压在金额上。
+              ⧉ copies the MARKET slug, ↗ opens the wired.fund trade page —
               same affordance as the 24h scanner. */}
-          <div className="kpi-sub" style={{ whiteSpace: "nowrap" }}>
-            {g.outcome}
-            <MarketSlugActions
-              slug={g.slug}
-              eventSlug={g.eventSlug}
-              conditionId={g.conditionId}
-            />
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "var(--s-2)",
+              marginTop: 4,
+              fontSize: "var(--t-sm)",
+              color: "var(--ww-text-muted)",
+            }}
+          >
+            <Tag>{g.outcome}</Tag>
+            {whale ? (
+              <Tag>
+                <Icon s="🐳" />
+                {t("巨鲸单")}
+              </Tag>
+            ) : null}
+            {/* 对冲 / 做市标记从独立的「标记」列挪到这里：它们是对这一笔
+                建仓的限定语（"这个方向可能不作数"），本来就该紧挨着市场·结果
+                读，独占一列既占宽度又离被限定的对象很远。琥珀 = 需留神的
+                口径，与徽章五类语义一致。 */}
+            {g.hedgeSuspect ? (
+              <span
+                title={
+                  t(
+                    "同钱包在同市场的对侧结果也有净买入——对冲/套利嫌疑，方向意图存疑。",
+                  ) +
+                  (g.hedgeAdjustedNetUsd != null
+                    ? t(
+                        "按 1−价格 折算对侧买入后，本方向净买入约 ${n}（仅二元市场折算）。",
+                        { n: fmtUsd(g.hedgeAdjustedNetUsd) },
+                      )
+                    : t("多结果市场仅标记不折算。")) +
+                  t("默认沉底")
+                }
+                style={{ cursor: "help" }}
+              >
+                <Tag variant="warn">{t("对冲?")}</Tag>
+              </span>
+            ) : null}
+            {g.mmSuspect ? (
+              <span
+                title={t(
+                  "买卖高频交替（换向率 {pct}%，仅统计 ≥floor 的可见单，实际只高不低）——更像做市库存管理而非定向建仓。默认沉底",
+                  { pct: Math.round(g.flipRate * 100) },
+                )}
+                style={{ cursor: "help" }}
+              >
+                <Tag variant="warn">{t("做市?")}</Tag>
+              </span>
+            ) : null}
+            <span style={{ whiteSpace: "nowrap" }}>
+              <MarketSlugActions
+                slug={g.slug}
+                eventSlug={g.eventSlug}
+                conditionId={g.conditionId}
+              />
+            </span>
           </div>
         </td>
-        <td data-label={t("标记")}>
-          {g.hedgeSuspect || g.mmSuspect ? (
-            <span
-              style={{
-                display: "flex",
-                gap: "var(--s-1)",
-                flexWrap: "wrap",
-              }}
-            >
-              {g.hedgeSuspect ? (
-                <span
-                  title={
-                    t(
-                      "同钱包在同市场的对侧结果也有净买入——对冲/套利嫌疑，方向意图存疑。",
-                    ) +
-                    (g.hedgeAdjustedNetUsd != null
-                      ? t(
-                          "按 1−价格 折算对侧买入后，本方向净买入约 ${n}（仅二元市场折算）。",
-                          { n: fmtUsd(g.hedgeAdjustedNetUsd) },
-                        )
-                      : t("多结果市场仅标记不折算。")) +
-                    t("默认沉底")
-                  }
-                  style={{ cursor: "help" }}
-                >
-                  <Tag variant="warn">{t("对冲?")}</Tag>
-                </span>
-              ) : null}
-              {g.mmSuspect ? (
-                <span
-                  title={t(
-                    "买卖高频交替（换向率 {pct}%，仅统计 ≥floor 的可见单，实际只高不低）——更像做市库存管理而非定向建仓。默认沉底",
-                    { pct: Math.round(g.flipRate * 100) },
-                  )}
-                  style={{ cursor: "help" }}
-                >
-                  <Tag variant="warn">{t("做市?")}</Tag>
-                </span>
-              ) : null}
-            </span>
-          ) : (
-            <span className="muted">—</span>
-          )}
-        </td>
+        {/* 赔率 = 价格，不是警示：中性色、常规字重、与正文同字号。 */}
         <td
           className="mono is-right"
-          data-label={t("平均赔率")}
-          style={{ color: "var(--warn-700)", fontWeight: 600 }}
+          data-label={t("赔率")}
           title={t("按 size 加权的平均买入价（赔率）")}
         >
           {g.avgBuyPrice.toFixed(3)}
@@ -379,9 +392,9 @@ const AccumRow = memo(function AccumRow({
             },
           )}
         >
-          <span className="up" style={{ fontWeight: 700 }}>
-            <Icon s={whale ? "🐳" : "🧩"} /> ${fmtUsd(g.exposureUsd)}
-          </span>
+          {/* 金额与正文同字体同字号常规字重，不染色、不放 emoji ——
+              轻重由榜的排序与标签承担，行本身没有行级强调。 */}
+          ${fmtUsd(g.exposureUsd)}
         </td>
         <td className="mono is-right" data-label={t("笔数")}>
           {t("{n} 买", { n: g.buyCount })}
@@ -392,11 +405,11 @@ const AccumRow = memo(function AccumRow({
         <td className="mono is-right" data-label={t("毛买入")}>
           ${fmtUsd(g.buyUsd)}
         </td>
+        {/* 毛卖出是量级不是方向：红只留给真正的卖出方向徽章，
+            这里为 0 时压成 muted，>0 时与其它金额同色。 */}
         <td
-          className={
-            g.sellUsd > 0 ? "mono is-right down" : "mono is-right muted"
-          }
-          data-label={t("毛卖出(≥floor)")}
+          className={g.sellUsd > 0 ? "mono is-right" : "mono is-right muted"}
+          data-label={t("毛卖出")}
         >
           ${fmtUsd(g.sellUsd)}
         </td>
@@ -404,11 +417,11 @@ const AccumRow = memo(function AccumRow({
       {isOpen ? (
         <tr>
           <td
-            colSpan={13}
+            colSpan={11}
             style={{
-              padding: "0 var(--s-3) var(--s-3) var(--s-10)",
-              borderBottom: "1px solid var(--n-150)",
-              background: "var(--n-50)",
+              padding: "0 var(--s-4) var(--s-4) var(--s-10)",
+              borderBottom: "1px solid var(--ww-border)",
+              background: "var(--ww-surface-muted)",
             }}
           >
             <AccumDetail g={g} />
@@ -625,142 +638,60 @@ export default function AccumulationPage() {
 
   const stats = data?.stats;
 
+  // KPI「最大净买入」副行用的那一组 —— 一个没有主语的金额没法用，设计稿在
+  // 这格底下写的是它落在哪个市场的哪个结果。纯展示派生：扫的是完整的
+  // data.groups（不受渲染上限与当前排序影响），不参与排序 / 筛选 / 请求。
+  const topGroup = (data?.groups ?? []).reduce<AccumGroup | null>(
+    (best, g) => (best == null || g.exposureUsd > best.exposureUsd ? g : best),
+    null,
+  );
+
   const view = tableViewState(data != null, data?.groups.length ?? 0, loading);
 
   return (
     <main className="ds-main">
-      <header
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: "var(--s-4)",
-          marginBottom: "var(--s-4)",
-        }}
-      >
-        <div>
-          <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-            🧩 {t("拆单 / 累计买入榜")}
-          </h1>
-          <div className="ds-hint">
-            {t(
-              "按 (钱包·市场·结果) 聚合多笔小额买入，揪出绕过单笔监控的累积建仓",
-            )}
-            {lastRefreshed
-              ? t(" · 最后刷新 {time}", { time: lastRefreshed })
-              : ""}
-            {loading ? (
-              <span style={{ color: "var(--warn-700)" }}>
-                {t(" · 加载中…")}
-              </span>
-            ) : null}
-          </div>
+      {/* 页头 —— 12px 小标（emoji 前缀承担语义）+ 24/600 标题 +
+          14px muted 描述（≤700px）+ 右侧动作钮 + 1px 底边。 */}
+      <header className="page-head">
+        <div style={{ minWidth: 0 }}>
+          <div className="page-head__eyebrow">{t("🧩 绕过单笔监控的建仓")}</div>
+          <h1 className="page-head__title">{t("拆单累计")}</h1>
+          {/* 描述只说「这页是什么」。原句后半「单笔监控看不到的建仓方式」
+              与上面的小标同义，删掉不丢信息。 */}
+          <p className="page-head__desc">
+            {t("同一钱包在同一市场的多笔小额买入，合并成一条。")}
+          </p>
         </div>
-        <SoundToggle on={soundOn} onToggle={toggle} />
+        <div className="page-head__actions">
+          <SoundToggle on={soundOn} onToggle={toggle} />
+        </div>
       </header>
 
-      {/* Controls */}
-      <section
-        className="ds-card"
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: "var(--s-3)",
-          padding: "var(--s-4)",
-          marginBottom: "var(--s-5)",
-        }}
+      {/* 口径条 —— 全页只留这一条琥珀，且只留「不读就会把数字读错」的那句：
+          净买入是上界。原句里的 floor / ≥3 笔 / 每笔 <$10k 三项参数已经由
+          「统计口径」KPI 格与筛选条逐字报出，不在这里再念一遍。
+          覆盖被截断是同一类「读数会偏」的告诫，并进同一条，不另起一框。 */}
+      <div
+        className="ds-callout ds-callout--warn"
+        style={{ marginBottom: "var(--s-4)" }}
       >
-        <Field label={t("时间窗")}>
-          <Segmented<Hours>
-            ariaLabel={t("时间窗")}
-            value={hours}
-            onChange={setHours}
-            options={([1, 2, 4] as Hours[]).map((h) => ({
-              label: `${h}h`,
-              value: h,
-            }))}
-          />
-        </Field>
-
-        <Field label={t("精度")}>
-          <Segmented<Floor>
-            ariaLabel={t("精度")}
-            value={floor}
-            onChange={setFloor}
-            options={FLOOR_PRESETS.map((f) => ({
-              label: <span className="mono">${fmtUsd(f)}</span>,
-              value: f,
-            }))}
-          />
-          <span className="ds-hint">
-            {t("floor 越低越能抓到小额拆单，但时间窗越短")}
-          </span>
-        </Field>
-
-        <Field label={t("净买入")}>
-          <Segmented<number>
-            ariaLabel={t("净买入")}
-            value={minNetUsd}
-            onChange={setMinNetUsd}
-            options={NET_PRESETS.map((p) => ({
-              label: <span className="mono">${fmtUsd(p)}</span>,
-              value: p,
-            }))}
-          />
-          <input
-            type="number"
-            min={0}
-            placeholder={t("自定义 USD")}
-            value={customText}
-            onChange={(e) => setCustomText(e.target.value)}
-            onBlur={applyCustom}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") applyCustom();
-            }}
-            className="ds-input ds-input--mono"
-            style={{ width: 130 }}
-          />
-          <span className="ds-hint">
-            {t("当前净买入 ≥")}{" "}
-            <span className="mono">${fmtUsd(minNetUsd)}</span>
-          </span>
-          <span style={{ flex: 1 }} />
-          <button
-            className="ds-btn ds-btn--ghost"
-            onClick={() => {
-              // Manual refresh = a fresh user-triggered pull: re-arm the
-              // one-shot auto-retry budget before firing.
-              rearmAutoRetry();
-              load();
-            }}
-          >
-            {t("刷新")}
-          </button>
-          <label
-            className="ds-hint"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "var(--s-1)",
-              cursor: "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.checked)}
-            />
-            {t("自动刷新 30s")}
-          </label>
-        </Field>
-
-        <div className="ds-hint">
-          {t("精度 floor")} <span className="mono">${fmtUsd(floor)}</span>
-          {t(
-            " · 每笔 < $10k 才算拆单 · ≥3 笔买入 · 低于 floor 的卖出不可见，净买入为上界",
-          )}
-        </div>
-      </section>
+        {t("低于精度 floor 的卖出不可见 —— 净买入是上界")}
+        {data?.truncated ? (
+          <>
+            {" · "}
+            {data.oldestTs
+              ? t("API 回看深度已用满，实际覆盖 {span}（自 {time} 起）", {
+                  span: fmtWindowSpan(
+                    data.oldestTs,
+                    Math.floor(Date.now() / 1000),
+                    t,
+                  ),
+                  time: fmtTime(data.oldestTs),
+                })
+              : t("API 回看深度已用满，窗口尾部未全覆盖")}
+          </>
+        ) : null}
+      </div>
 
       {/* While the one-shot auto retry is pending, the transient error is
           being handled — show the warm-up notice (below) instead of a scary
@@ -774,82 +705,224 @@ export default function AccumulationPage() {
         </div>
       ) : null}
 
-      {/* Stats header */}
+      {/* KPI 分格卡 —— 一张白卡四等分，格间 1px 竖线；icon 是 20px emoji
+          图标位。值 18px 常规字重，与正文同字体，不加粗不放大。 */}
       {stats ? (
-        <section className="kpi" style={{ marginBottom: "var(--s-5)" }}>
-          <StatCard label={t("累积者数")}>
-            <div className="kpi-value">{stats.groupCount}</div>
+        <section className="kpi" style={{ marginBottom: "var(--s-4)" }}>
+          <StatCard label={t("累积者数")} icon="🧩">
+            <div className="kpi-value">
+              {t("{n} 个钱包", { n: stats.groupCount })}
+            </div>
+            <div className="kpi-sub">{t("当前 {h}H 窗口", { h: hours })}</div>
           </StatCard>
-          <StatCard label={t("合计净买入")}>
-            <div className="kpi-value">${fmtUsd(stats.totalExposureUsd)}</div>
+          <StatCard label={t("合计净买入")} icon="💰">
+            <div className="kpi-value" style={{ color: "var(--ww-link)" }}>
+              ${fmtUsd(stats.totalExposureUsd)}
+            </div>
           </StatCard>
-          <StatCard label={t("最大净买入")}>
+          <StatCard label={t("最大净买入")} icon="🐳">
             <div className="kpi-value">${fmtUsd(stats.topExposureUsd)}</div>
+            {/* 市场名不截断：这里换行，不做省略号（全站只有地址与哈希做
+                首尾省略）。结果名跟在「·」后面，与表内同一读法。 */}
+            {topGroup ? (
+              <div className="kpi-sub" style={{ overflowWrap: "anywhere" }}>
+                {topGroup.title} · {topGroup.outcome}
+              </div>
+            ) : null}
+          </StatCard>
+          <StatCard label={t("统计口径")} icon="📐">
+            <div className="kpi-value">
+              {t("{h}H · floor ${f}", { h: hours, f: fmtUsd(floor) })}
+            </div>
+            <div className="kpi-sub">
+              {t("≥3 笔 · 每笔 <$10k")}
+              {data?.oldestTs
+                ? t(" · 覆盖自 {time}", { time: fmtTime(data.oldestTs) })
+                : ""}
+            </div>
           </StatCard>
         </section>
       ) : null}
 
-      {data && (data.truncated || data.oldestTs) ? (
-        <div
-          className={
-            data.truncated ? "ds-callout ds-callout--warn" : "ds-callout"
-          }
-          style={{
-            marginBottom: "var(--s-4)",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "var(--s-3)",
-            alignItems: "center",
-          }}
-        >
-          {data.truncated ? (
-            <span>
-              ⏱️ {t("成交太密集，API 回看深度已用满 — 以下为完整覆盖时段")}
-            </span>
-          ) : null}
-          {data.oldestTs ? (
-            <span>
-              {t("实际覆盖 {span}（自 {time} 起）", {
-                span: fmtWindowSpan(
-                  data.oldestTs,
-                  Math.floor(Date.now() / 1000),
-                  t,
-                ),
-                time: fmtTime(data.oldestTs),
-              })}
-            </span>
-          ) : null}
+      {/* 筛选条 —— 一排 32px 控件躺在页面底上，不套卡：它是主表卡的参数，
+          加一层框会把它和主表并列成「两块内容」（设计稿 §5.5）。
+          三组都是互斥单选，用 Segmented；右侧对齐唯一的主按钮。 */}
+      <div className="filter-bar">
+        <div className="filter-row">
+          <span className="filter-row__label">{t("时间窗")}</span>
+          <Segmented<Hours>
+            ariaLabel={t("时间窗")}
+            value={hours}
+            onChange={setHours}
+            options={([1, 2, 4] as Hours[]).map((h) => ({
+              label: `${h}H`,
+              value: h,
+            }))}
+          />
         </div>
-      ) : null}
 
-      {/* Table */}
+        <div className="filter-row">
+          {/* floor 的取舍（越低抓得越细、覆盖越短）是调参说明，不是读数告诫
+              —— 收进这个标签的 title，不占正文。 */}
+          <span
+            className="filter-row__label"
+            title={t("floor 越低越能抓到小额拆单，但时间窗越短")}
+          >
+            {t("精度")}
+          </span>
+          <Segmented<Floor>
+            ariaLabel={t("精度")}
+            value={floor}
+            onChange={setFloor}
+            options={FLOOR_PRESETS.map((f) => ({
+              label: `$${fmtUsd(f)}`,
+              value: f,
+            }))}
+          />
+        </div>
+
+        <div className="filter-row">
+          <span className="filter-row__label">{t("净买入")}</span>
+          <Segmented<number>
+            ariaLabel={t("净买入")}
+            value={minNetUsd}
+            onChange={setMinNetUsd}
+            options={NET_PRESETS.map((p) => ({
+              label: `$${fmtUsd(p)}`,
+              value: p,
+            }))}
+          />
+          {/* 字号由 .ds-input 定死在 15px（readme §3 字阶：正文 / 导航 /
+              输入同一档），这里只给宽度 —— 与 24h 扫描页的同一个输入框
+              逐字一致（app/page.tsx:657）。 */}
+          <input
+            type="number"
+            min={0}
+            placeholder={t("自定义 USD")}
+            value={customText}
+            onChange={(e) => setCustomText(e.target.value)}
+            onBlur={applyCustom}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applyCustom();
+            }}
+            className="ds-input ds-input--mono"
+            style={{ width: 130 }}
+          />
+          {/* 自定义值不落在任何一个预设段上时，当前门槛只有这里说得清。 */}
+          <span className="ds-hint">
+            {t("当前净买入 ≥")} ${fmtUsd(minNetUsd)}
+          </span>
+        </div>
+
+        <div className="filter-bar__right">
+          <span className="ds-hint">
+            {loading
+              ? t("加载中…")
+              : lastRefreshed
+                ? t("最后刷新 {time}", { time: lastRefreshed })
+                : ""}
+          </span>
+          {/* 开关 32×18 胶囊；原生 checkbox 铺在它上面保持键盘与读屏可达
+              （与 24h 扫描页同一写法，两页的筛选条右侧要长得一样）。 */}
+          <label
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--s-2)",
+              fontSize: "var(--t-base)",
+              cursor: "pointer",
+            }}
+          >
+            <span style={{ position: "relative", display: "inline-flex" }}>
+              <span
+                className="ds-toggle"
+                data-on={autoRefresh ? "true" : "false"}
+                aria-hidden
+              />
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={(e) => setAutoRefresh(e.target.checked)}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  margin: 0,
+                  opacity: 0,
+                  cursor: "pointer",
+                }}
+              />
+            </span>
+            {t("自动刷新 30s")}
+          </label>
+          {/* 每屏至多一个主按钮 —— 这一屏的主按钮就是它。 */}
+          <button
+            className="ds-btn ds-btn--primary"
+            onClick={() => {
+              // Manual refresh = a fresh user-triggered pull: re-arm the
+              // one-shot auto-retry budget before firing.
+              rearmAutoRetry();
+              load();
+            }}
+          >
+            {t("刷新")}
+          </button>
+        </div>
+      </div>
+
+      {/* 主表卡 —— 卡内：标题条 → 表头 → 行 → 灰色说明条。 */}
       {autoRetrying ? (
         // The pull failed on a cold upstream cache and a one-shot retry is
         // scheduled — show progress instead of an error + empty table.
-        <div className="ds-empty">⏳ {t("上游缓存预热中，自动重试…")}</div>
+        <div className="ds-empty">{t("上游缓存预热中，自动重试…")}</div>
       ) : view === "loading" ? (
         // First fetch, nothing to show yet — the deep double-sided window pull
         // can take 5-15s and a blank area reads as "the tool is broken".
         <div className="ds-empty">
-          ⏳{" "}
-          {t(
-            "正在聚合 {hours}h 内的拆单买入 — 深度拉取首次约 5-15 秒，请稍候…",
-            {
-              hours,
-            },
-          )}
+          {t("正在聚合 {hours}h 内的拆单买入 —— 首次深拉约 5-15 秒…", {
+            hours,
+          })}
         </div>
       ) : view === "empty" ? (
-        <div className="ds-empty">{t("该条件下暂无拆单累计")}</div>
+        // 空态给内容也给出路 —— 空的表格框比一句话更糟。
+        <div className="ds-empty">
+          <div>{t("该条件下暂无拆单累计")}</div>
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            {t("放宽净买入门槛、降低 floor 或拉长时间窗。")}
+          </div>
+        </div>
       ) : view === "rows" ? (
-        <>
-          <div className="ds-table-wrap">
+        <div className="ds-card" style={{ overflow: "hidden" }}>
+          <div className="card-bar">
+            <span style={{ fontWeight: 600 }}>{t("拆单累计榜")}</span>
+            <span className="muted">
+              {t("· 共 {n} 组", { n: sortedGroups.length })}
+            </span>
+          </div>
+          {/* 表已在卡内，wrap 只留横向滚动，边框/圆角/阴影交给外层卡。 */}
+          <div
+            className="ds-table-wrap"
+            style={{
+              border: 0,
+              borderRadius: 0,
+              boxShadow: "none",
+              background: "transparent",
+            }}
+          >
             <table className="ds-table">
               <thead>
                 <tr>
                   <th style={{ width: 28, padding: "var(--s-2) var(--s-1)" }} />
-                  <th>{t("钱包")}</th>
-                  <th>{t("地址年龄")}</th>
+                  {/* 地址年龄并进钱包列、标记并进市场格的 meta 行(设计稿帧 02
+                      的处理)。这是列宽预算逼出来的,不是省事:设计系统的硬规则
+                      是「固定列之和 + 市场列最小宽 + gap×(n−1) + 32 ≤ 1076」,
+                      13 列时实测表宽 1147 > 容器 1078,不但冒出横向滚动条,
+                      「市场 · 结果」还只分到 111px —— 市场名被压成七八行,而
+                      市场名恰恰是本表唯一永不截断的文本。两处合并各省一列的
+                      左右内边距,把宽度还给市场列;没有删任何数据、没有动
+                      任何排序键。 */}
+                  <th>{t("钱包 · 地址年龄")}</th>
                   <th
                     title={t(
                       "已结算市场胜率 · 已实现盈亏（🏆 = 聪明钱白名单）",
@@ -857,20 +930,29 @@ export default function AccumulationPage() {
                   >
                     {t("战绩")}
                   </th>
-                  <th>{t("市场 · 结果")}</th>
                   <th
                     title={t(
-                      "对冲嫌疑 = 同钱包也净买入了同市场的对侧结果；做市嫌疑 = 买卖高频交替。两类默认沉底",
+                      "结果名与标记跟在市场名下方：对冲嫌疑 = 同钱包也净买入了同市场的对侧结果；做市嫌疑 = 买卖高频交替。两类默认沉底",
                     )}
                   >
-                    {t("标记")}
+                    {t("市场 · 结果")}
                   </th>
-                  <th className="is-right">{t("平均赔率")}</th>
+                  <th
+                    className="is-right"
+                    title={t("按 size 加权的平均买入价（赔率）")}
+                  >
+                    {t("赔率")}
+                  </th>
                   <th className="is-right">{t("时间")}</th>
+                  {/* 「净买入 = 成本敞口」的定义原先躺在卡底说明条里；口径归
+                      列头的 (?) title，正文不背定义（单元格 title 另有本行的
+                      实际股数 × 均价）。 */}
                   <th
                     className="is-sortable is-right"
                     onClick={() => toggleSort("net")}
-                    title={t("点击按净买入排序")}
+                    title={t(
+                      "成本敞口 = 留存净股数 × 买入均价 · 点击按净买入排序",
+                    )}
                   >
                     {t("净买入")}
                     {sortArrow("net")}
@@ -899,13 +981,15 @@ export default function AccumulationPage() {
                     {t("毛买入")}
                     {sortArrow("buyUsd")}
                   </th>
+                  {/* 口径收进 (?) 的 title：表头永远 nowrap，长口径写进列名
+                      会把这一列钉宽到 122px（实测），那份宽度该给市场列。 */}
                   <th
                     className="is-right"
                     title={t(
                       "仅统计 ≥ 精度 floor 的卖出——更小的卖单在此精度下不可见，净买入应视为上界",
                     )}
                   >
-                    {t("毛卖出(≥floor)")}
+                    {t("毛卖出")}
                   </th>
                 </tr>
               </thead>
@@ -929,19 +1013,32 @@ export default function AccumulationPage() {
             </table>
           </div>
           {hiddenCount > 0 ? (
-            <div style={{ textAlign: "center", marginTop: "var(--s-3)" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--s-3)",
+                flexWrap: "wrap",
+                padding: "var(--s-3) var(--s-4)",
+                borderTop: "1px solid var(--ww-border)",
+              }}
+            >
               <button
-                className="ds-btn ds-btn--ghost"
+                className="ds-btn ds-btn--sm"
                 onClick={() => setShowAllRows(true)}
               >
                 {t("显示其余 {n} 行", { n: hiddenCount })}
               </button>
-              <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
+              <span className="ds-hint">
                 {t("统计卡已包含全部 {n} 组", { n: sortedGroups.length })}
-              </div>
+              </span>
             </div>
           ) : null}
-        </>
+          {/* 卡底说明条已撤：它说的两件事都另有去处 —— floor 取舍进了筛选条
+              「精度」标签的 title，成本敞口口径进了「净买入」列头的 title，
+              「对冲?/做市? 默认沉底」进了这两个标记自己的 title 与
+              「市场 · 结果」列头。正文不重复讲一遍。 */}
+        </div>
       ) : null}
     </main>
   );

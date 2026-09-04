@@ -16,9 +16,11 @@ export function parseTheme(v: string | null): EmbedTheme {
   return v === "dark" ? "dark" : "light";
 }
 
-// 设计系统是 OKLCH token,但嵌入卡拿不到 globals.css —— 这里是对应色的
-// sRGB 近似,只服务嵌入场景,站内永远用 token。
-const PALETTE: Record<
+// 嵌入卡拿不到 globals.css(iframe 里没有它),所以颜色必须在这里写死。
+// 导出是给测试用的:主题断言应该表达「dark 换了底色」这个意图,而不是钉死
+// 某个十六进制值 —— 后者每次调色板微调都会红一次,且在 dark.bg 恰好等于
+// light.fg 时(本套皮就是如此,都是 #081d35)还会给出假阴性。
+export const EMBED_PALETTE: Record<
   EmbedTheme,
   {
     bg: string;
@@ -30,23 +32,27 @@ const PALETTE: Record<
     link: string;
   }
 > = {
+  // light 是站点本体的 Etherscan 风点值(与 app/globals.css 的 --ww-* 一一
+  // 对应),这样嵌到别处的卡和站内看到的是同一套颜色。dark 是给嵌入方的
+  // 深底适配 —— 它不是「站内深色面」(站内唯一深色面是代码面板),而是
+  // 别人页面底色深时的可读性兜底,用同一族色相压暗/提亮得来。
   light: {
     bg: "#ffffff",
-    fg: "#1c1f2a",
-    muted: "#6b7085",
-    border: "#e3e5ee",
-    up: "#0f7a4d",
-    down: "#b3372c",
-    link: "#2743e0",
+    fg: "#081d35",
+    muted: "#6c757d",
+    border: "#e9ecef",
+    up: "#00a186",
+    down: "#dc3545",
+    link: "#0784c3",
   },
   dark: {
-    bg: "#14161e",
-    fg: "#e8eaf2",
-    muted: "#9aa0b5",
-    border: "#2a2e3d",
-    up: "#3ecf8e",
-    down: "#ff6b5e",
-    link: "#8fa2ff",
+    bg: "#081d35",
+    fg: "rgba(255,255,255,0.86)",
+    muted: "rgba(255,255,255,0.55)",
+    border: "rgba(255,255,255,0.12)",
+    up: "#3fd6b8",
+    down: "#ff7b86",
+    link: "#4db8e8",
   },
 };
 
@@ -65,17 +71,18 @@ const shell = (
   footerHref: string,
   host: string,
 ): string => {
-  const p = PALETTE[theme];
+  const p = EMBED_PALETTE[theme];
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <style>
-  html,body{margin:0;padding:0;background:${p.bg};color:${p.fg};font:12px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-  .wrap{padding:12px 14px}
-  .title{font-size:13px;font-weight:600;margin:0 0 8px}
+  html,body{margin:0;padding:0;background:${p.bg};color:${p.fg};font:13px/1.5 "Helvetica Neue",Helvetica,Arial,"PingFang SC","Noto Sans SC",sans-serif}
+  .wrap{padding:12px 16px}
+  .title{font-size:14px;font-weight:600;margin:0 0 8px}
   table{border-collapse:collapse;width:100%}
-  td,th{padding:3px 0;text-align:left;font-weight:400}
-  td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  td,th{padding:4px 0;text-align:left;font-weight:400}
+  /* 数字不用等宽,与正文同字体同字号常规字重 —— 与站内同一条规矩。 */
+  td.num{text-align:right;white-space:nowrap}
   .muted{color:${p.muted}}
   .up{color:${p.up}}
   .down{color:${p.down}}
@@ -131,7 +138,7 @@ export function renderRecordEmbed(
         ? `<div class="muted" style="margin-top:4px">+${moreCount} more tiers</div>`
         : "";
     const digest = feed.digest.day
-      ? ` · digest ${escapeHtml(feed.digest.day)} <span style="font-family:ui-monospace,monospace">${escapeHtml((feed.digest.tail ?? "").slice(0, 10))}…</span>`
+      ? ` · digest ${escapeHtml(feed.digest.day)} <span>${escapeHtml((feed.digest.tail ?? "").slice(0, 10))}…</span>`
       : "";
     inner = `<p class="title">WhaleWatch · published-signal record (30d, price-adjusted)</p>
 <table><tr class="muted"><th>tier</th><th style="text-align:right">pushed</th><th style="text-align:right">settled record</th></tr>${trs}</table>${more}
@@ -212,7 +219,7 @@ export function renderSelfTestEmbed(
   let inner: string;
   if (v.verdict === "no_data") {
     inner = `<p class="title">WhaleWatch · smart-money self-test</p>
-<p><span style="font-family:ui-monospace,monospace">${escapeHtml(addr)}</span> — <b>Not tested yet</b>: no cached record for this address.</p>
+<p><span>${escapeHtml(addr)}</span> — <b>Not tested yet</b>: no cached record for this address.</p>
 <p class="muted">Run the self-test on ${escapeHtml(host)} to get a verdict against the smart-money pool-admission bar.</p>`;
   } else {
     const s = v.stats;
@@ -247,7 +254,7 @@ export function renderSelfTestEmbed(
       input.statsFetchedAt != null
         ? ` · Data as of ${new Date(input.statsFetchedAt * 1000).toISOString().slice(0, 10)}`
         : "";
-    inner = `<p class="title">WhaleWatch · smart-money self-test · <span style="font-family:ui-monospace,monospace">${escapeHtml(addr)}</span></p>
+    inner = `<p class="title">WhaleWatch · smart-money self-test · <span>${escapeHtml(addr)}</span></p>
 <p class="${head.tone}" style="font-weight:600;margin:0 0 8px">${escapeHtml(head.text)}</p>
 <table><tr class="muted"><th></th><th style="text-align:right">value</th><th style="text-align:right">pool pct</th></tr>${trs}</table>
 <div class="muted" style="margin-top:6px">${s ? `${s.settledCount} settled` : ""}${asOf} · pool of ${v.poolSize}${v.inPool ? " (already a member)" : ""}</div>
@@ -269,7 +276,7 @@ export function renderStatusEmbed(
   cont: ContinuityReport,
   opts: { theme: EmbedTheme; baseUrl: string },
 ): string {
-  const p = PALETTE[opts.theme];
+  const p = EMBED_PALETTE[opts.theme];
   const host = new URL(opts.baseUrl).host;
   const stale = health.loops.filter((l) => l.stale).length;
   const headline = health.ok

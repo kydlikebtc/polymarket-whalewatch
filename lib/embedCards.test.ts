@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  EMBED_PALETTE,
   escapeHtml,
   fmtRecordCell,
   parseTheme,
@@ -23,6 +24,10 @@ function strat(over: Partial<RecordFeedStrategy> = {}): RecordFeedStrategy {
     source: "whale",
     pushedCount: 12,
     record: { settled: 8, wins: 6, implied: 4.2, excess: 1.8, sd: 1.2 },
+    // 嵌入卡不印纸面盈亏(只有 tier / pushed / settled record 三列),这里
+    // 只是把 RecordFeedStrategy 的必填字段补齐 —— 字段是随 /record 第 4 格
+    // 改成「纸面盈亏」加的,见 lib/recordFeed。
+    realizedPnl: 1840,
     settledRecent: [],
     ...over,
   };
@@ -147,8 +152,11 @@ describe("renderRecordEmbed", () => {
       theme: "light",
       baseUrl: BASE,
     });
-    expect(dark).toContain("#14161e");
-    expect(light).not.toContain("#14161e");
+    // 断言意图而非某个色值:dark 换了 body 底色,light 用的是自己的底色。
+    // 直接比十六进制在 dark.bg === light.fg 时会假阴性(本套皮正是如此)。
+    expect(dark).toContain(`background:${EMBED_PALETTE.dark.bg}`);
+    expect(light).toContain(`background:${EMBED_PALETTE.light.bg}`);
+    expect(light).not.toContain(`background:${EMBED_PALETTE.dark.bg}`);
   });
 });
 
@@ -274,6 +282,6 @@ describe("renderSelfTestEmbed", () => {
       wstats({ winRate: 0.6, netPnl: 1200, roi: 0.02, settledCount: 12 }),
       { theme: "dark" },
     );
-    expect(html).toContain("#14161e");
+    expect(html).toContain(`background:${EMBED_PALETTE.dark.bg}`);
   });
 });

@@ -3,7 +3,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AgeBadge,
-  Field,
   Icon,
   MarketSlugActions,
   Segmented,
@@ -125,10 +124,11 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
   const whale = t.usd >= 50000;
   return (
     <tr>
-      <td className="mono muted" data-label={tr("时间")}>
-        {fmtClock(t.ts)}
-      </td>
-      <td style={{ whiteSpace: "normal", maxWidth: 360 }}>
+      <td data-label={tr("时间")}>{fmtClock(t.ts)}</td>
+      {/* 市场名永不截断 —— 换行（.cell-wrap：line-height 1.35 +
+          overflow-wrap:anywhere），顶对齐。这一格刻意不带 data-label：
+          移动端堆叠卡靠「无 label 的格」把它铺满整行当卡头。 */}
+      <td className="cell-wrap" style={{ maxWidth: 420 }}>
         {t.eventSlug ? (
           <a
             href={`https://polymarket.com/event/${t.eventSlug}`}
@@ -144,31 +144,66 @@ const ScanRow = memo(function ScanRow({ t, age, stats, smart }: ScanRowProps) {
             can never orphan-wrap under a long title. It copies the MARKET slug
             (the per-market key gamma /markets?slug= takes) — not the event
             slug. */}
-        <div className="kpi-sub" style={{ whiteSpace: "nowrap" }}>
-          {t.outcome}
+        <div
+          className="kpi-sub"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "var(--s-2)",
+          }}
+        >
+          {/* 结果名走灰底名称标签（Etherscan name tag）—— 灰底不表示状态。
+              .ds-tag 默认 nowrap + 22px 定高；结果名不许截断，所以给超长的
+              那几个解开换行（短名视觉零变化：minHeight 仍是 22）。 */}
+          {t.outcome ? (
+            <span
+              className="ds-tag"
+              style={{
+                whiteSpace: "normal",
+                overflowWrap: "anywhere",
+                maxWidth: "100%",
+                height: "auto",
+                minHeight: "var(--h-tag)",
+                lineHeight: 1.35,
+              }}
+            >
+              {t.outcome}
+            </span>
+          ) : null}
           {/* 「体育·NBA」的合成/去重仍归 catLabelFine 唯一属主；这里只把
               合成结果按「·」逐段过字典（段=类别词表单词，词表不含「·」，
               未知标签透传英文原文、缺译回退原样）。 */}
-          {t.category
-            ? ` · ${catLabelFine(t.category, t.subcategory)
+          {t.category ? (
+            <span>
+              {catLabelFine(t.category, t.subcategory)
                 .split("·")
                 .map((seg) => tr(seg))
-                .join("·")}`
-            : ""}
-          <MarketSlugActions
-            slug={t.slug}
-            eventSlug={t.eventSlug}
-            conditionId={t.conditionId}
-          />
+                .join("·")}
+            </span>
+          ) : null}
+          <span style={{ display: "inline-flex", alignItems: "center" }}>
+            <MarketSlugActions
+              slug={t.slug}
+              eventSlug={t.eventSlug}
+              conditionId={t.conditionId}
+            />
+          </span>
         </div>
       </td>
       <td data-label={tr("方向")}>
         <SideTag side={t.side} />
       </td>
-      <td className="mono is-right" data-label={tr("金额")}>
-        <Icon s={whale ? "🐳" : "💰"} /> ${fmtUsd(t.usd)}
+      {/* 金额只在巨鲸单上带 🐳 —— 每行都挂一个 💰 等于没挂，emoji 要承担语义 */}
+      <td className="is-right" data-label={tr("金额")}>
+        {whale ? (
+          <>
+            <Icon s="🐳" />{" "}
+          </>
+        ) : null}
+        ${fmtUsd(t.usd)}
       </td>
-      <td className="mono is-right" data-label={tr("价格")}>
+      <td className="is-right" data-label={tr("价格")}>
         {t.price.toFixed(3)}
       </td>
       <td data-label={tr("钱包")}>
@@ -471,52 +506,159 @@ export default function Page() {
 
   return (
     <main className="ds-main">
-      <header
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: "var(--s-4)",
-          marginBottom: "var(--s-4)",
-        }}
-      >
+      {/* 页头 —— 12px 小标（emoji 前缀）+ 24/600 标题 + ≤700px 描述 + 右侧动作钮 */}
+      <header className="page-head">
         <div>
-          <h1 style={{ fontSize: "var(--t-2xl)", marginBottom: "var(--s-1)" }}>
-            🔍 {t("24h 大额成交扫描器")}
-          </h1>
-          <div className="ds-hint">
-            {t("实时查询 Polymarket 公共 API（不落库）")}
-            {lastRefreshed
-              ? t(" · 最后刷新 {time}", { time: lastRefreshed })
-              : ""}
-            {loading ? (
-              <span style={{ color: "var(--warn-700)" }}>
-                {t(" · 加载中…")}
-              </span>
-            ) : null}
+          <div className="page-head__eyebrow">
+            💰 {t("实时扫描 · 不落库 · 时间按本地时区")}
           </div>
+          <h1 className="page-head__title">{t("大额成交扫描器")}</h1>
+          {/* 描述压到一句话：说清「这页是什么」即可。筛选维度由下面的筛选条
+              自己报名，不在描述里重念一遍。 */}
+          <p className="page-head__desc">
+            {t("逐笔筛出 Polymarket 的大额成交，每行可点进钱包档案。")}
+          </p>
         </div>
-        <SoundToggle on={soundOn} onToggle={toggle} />
+        <div className="page-head__actions">
+          <SoundToggle on={soundOn} onToggle={toggle} />
+        </div>
       </header>
 
-      {/* Controls */}
-      <section
-        className="ds-card"
+      {/* 口径条 —— 统计声明放在数据「前面」，不放脚注。
+          While the one-shot auto retry is pending, the transient error is
+          being handled — show the warm-up notice (below) instead of a scary
+          callout. A retry that fails again falls through to this callout. */}
+      {data?.error && !autoRetrying ? (
+        <div
+          className="ds-callout ds-callout--error"
+          style={{ marginBottom: "var(--s-5)" }}
+        >
+          {t("扫描失败: {msg}", { msg: data.error })}
+        </div>
+      ) : null}
+
+      {data?.truncated ? (
+        <div
+          className="ds-callout ds-callout--warn"
+          style={{ marginBottom: "var(--s-5)" }}
+        >
+          {t("成交太密集，API 回看深度已用满 —— 窗口尾部未全覆盖")}
+        </div>
+      ) : null}
+
+      {/* KPI 分格卡 —— 一张白卡内 4 等分，格间 1px 竖线 */}
+      {stats ? (
+        <section className="kpi" style={{ marginBottom: "var(--s-4)" }}>
+          <StatCard label={t("笔数")} icon="📋">
+            <div className="kpi-value">{fmtUsd(stats.count)}</div>
+            {/* 值走 stats.count（服务端口径:只过 minUsd/side/hours）,副行走
+                displayedTrades（再过价格区间 / 类型 / 地址年龄三项客户端筛选）。
+                两个口径不同源,所以副行必须自报主语 —— 否则「已全部显示」会在
+                客户端筛选把 1,911 收到 240 行时,对着 1,911 这个值撒谎。 */}
+            <div className="kpi-sub">
+              {hiddenCount > 0
+                ? t("符合筛选 {m} 笔 · 显示前 {n} 条", {
+                    m: fmtUsd(displayedTrades.length),
+                    n: fmtUsd(visibleTrades.length),
+                  })
+                : t("符合筛选 {m} 笔 · 已全部显示", {
+                    m: fmtUsd(displayedTrades.length),
+                  })}
+            </div>
+          </StatCard>
+          <StatCard label={t("总额")} icon="💰">
+            <div className="kpi-value" style={{ color: "var(--ww-link)" }}>
+              ${fmtUsd(stats.totalUsd)}
+            </div>
+            {/* 门槛读 data.filters.minUsd（跟 stats 同一次响应）而不是 minUsd
+                这个筛选 state:切金额档后深拉要 5-15 秒,期间 state 已是新门槛、
+                总额还是旧门槛的数,副行会先于值改口。 */}
+            <div className="kpi-sub">
+              {t("单笔 ≥ {amt}", {
+                amt: `$${fmtUsd(data?.filters.minUsd ?? minUsd)}`,
+              })}
+            </div>
+          </StatCard>
+          {/* 图标位用 📊 —— 买卖双向额的分格,与 /wallet 档案「近窗买入 / 卖出」
+              KPI 同一图标、同一语义。不用 ⚖️:它在本站已被「聪明钱分歧」占死
+              (glossary.ts、/consensus 与 /pulse 的「方向分歧」KPI、市场信号卡
+              「⚖️ 分歧」),一个 emoji 不能背两个含义。 */}
+          <StatCard
+            label={t("买 / 卖 · 买方占 {pct}%", { pct: buyPct.toFixed(1) })}
+            icon="📊"
+          >
+            <div className="kpi-value" style={{ color: "var(--ww-up)" }}>
+              ${fmtUsd(buyUsd)}
+            </div>
+            <div className="kpi-sub" style={{ color: "var(--ww-down)" }}>
+              {t("卖 {amt}", { amt: `$${fmtUsd(sellUsd)}` })}
+            </div>
+            {/* 比例条 6px / 圆角 99 —— 买绿卖红是真正的方向语义 */}
+            <div className="split-bar" style={{ marginTop: "var(--s-2)" }}>
+              <span
+                style={{
+                  flex: `0 0 ${buyPct}%`,
+                  background: "var(--ww-up)",
+                }}
+              />
+              <span
+                style={{
+                  flex: `0 0 ${sellPct}%`,
+                  background: "var(--ww-down)",
+                }}
+              />
+            </div>
+          </StatCard>
+          <StatCard label={t("最大单")} icon="🐳">
+            {stats.maxTrade ? (
+              <>
+                <div className="kpi-value">${fmtUsd(stats.maxTrade.usd)}</div>
+                {/* 市场名永不截断 —— 换行，不做省略号 */}
+                <div className="kpi-sub" style={{ lineHeight: 1.4 }}>
+                  {stats.maxTrade.eventSlug ? (
+                    <a
+                      href={`https://polymarket.com/event/${stats.maxTrade.eventSlug}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {stats.maxTrade.title}
+                    </a>
+                  ) : (
+                    stats.maxTrade.title
+                  )}
+                </div>
+              </>
+            ) : (
+              // 「—」是判不了，不是零 —— 走 faint，与真实的 0 严格分家
+              <div
+                className="kpi-value"
+                style={{ color: "var(--ww-text-faint)" }}
+              >
+                —
+              </div>
+            )}
+          </StatCard>
+        </section>
+      ) : null}
+
+      {/* 筛选条 —— 摊在页面底上，不装卡：它是主表卡的参数，不是并列的内容块。
+          一排 32px 控件，右侧对齐全屏唯一的主按钮。 */}
+      <div
         style={{
           display: "flex",
           flexDirection: "column",
           gap: "var(--s-3)",
-          padding: "var(--s-4)",
-          marginBottom: "var(--s-5)",
+          marginBottom: "var(--s-4)",
         }}
       >
-        <Field label={t("金额")}>
+        <div className="filter-bar" style={{ marginBottom: 0 }}>
+          <span className="filter-row__label">{t("金额")}</span>
           <Segmented<number>
             ariaLabel={t("最低金额")}
             value={minUsd}
             onChange={setMinUsd}
             options={AMOUNT_PRESETS.map((p) => ({
-              label: <span className="mono">${fmtUsd(p)}</span>,
+              label: `$${fmtUsd(p)}`,
               value: p,
             }))}
           />
@@ -530,15 +672,70 @@ export default function Page() {
             onKeyDown={(e) => {
               if (e.key === "Enter") applyCustom();
             }}
-            className="ds-input ds-input--mono"
+            className="ds-input"
             style={{ width: 130 }}
           />
           <span className="ds-hint">
-            {t("当前 ≥")} <span className="mono">${fmtUsd(minUsd)}</span>
+            {t("当前 ≥")} ${fmtUsd(minUsd)}
           </span>
-        </Field>
 
-        <Field label={t("方向")}>
+          <span className="filter-bar__right">
+            <span className="ds-hint">
+              {loading
+                ? t("加载中…")
+                : lastRefreshed
+                  ? t("最后刷新 {time}", { time: lastRefreshed })
+                  : ""}
+            </span>
+            {/* 开关 32×18 胶囊；原生 checkbox 铺在它上面保持键盘与读屏可达 */}
+            <label
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "var(--s-2)",
+                fontSize: "var(--t-base)",
+                cursor: "pointer",
+              }}
+            >
+              <span style={{ position: "relative", display: "inline-flex" }}>
+                <span
+                  className="ds-toggle"
+                  data-on={autoRefresh ? "true" : "false"}
+                  aria-hidden
+                />
+                <input
+                  type="checkbox"
+                  checked={autoRefresh}
+                  onChange={(e) => setAutoRefresh(e.target.checked)}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: "100%",
+                    height: "100%",
+                    margin: 0,
+                    opacity: 0,
+                    cursor: "pointer",
+                  }}
+                />
+              </span>
+              {t("自动刷新 30s")}
+            </label>
+            <button
+              className="ds-btn ds-btn--primary"
+              onClick={() => {
+                // Manual refresh = a fresh user-triggered pull: re-arm the
+                // one-shot auto-retry budget before firing.
+                rearmAutoRetry();
+                load();
+              }}
+            >
+              {t("刷新")}
+            </button>
+          </span>
+        </div>
+
+        <div className="filter-row">
+          <span className="filter-row__label">{t("方向")}</span>
           <Segmented<Side>
             ariaLabel={t("方向")}
             value={side}
@@ -549,9 +746,12 @@ export default function Page() {
               { label: t("卖出 SELL"), value: "SELL" },
             ]}
           />
-        </Field>
-
-        <Field label={t("时间")}>
+          <span
+            className="filter-row__label"
+            style={{ marginLeft: "var(--s-3)" }}
+          >
+            {t("时间")}
+          </span>
           <Segmented<Hours>
             ariaLabel={t("时间窗")}
             value={hours}
@@ -561,47 +761,25 @@ export default function Page() {
               value: h,
             }))}
           />
-          <span style={{ flex: 1 }} />
-          <button
-            className="ds-btn ds-btn--ghost"
-            onClick={() => {
-              // Manual refresh = a fresh user-triggered pull: re-arm the
-              // one-shot auto-retry budget before firing.
-              rearmAutoRetry();
-              load();
-            }}
+          {/* Price (odds) band — insider money tends to buy at favorable odds. */}
+          <span
+            className="filter-row__label"
+            style={{ marginLeft: "var(--s-3)" }}
           >
-            {t("刷新")}
-          </button>
-          <label
-            className="ds-hint"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "var(--s-1)",
-              cursor: "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.checked)}
-            />
-            {t("自动刷新 30s")}
-          </label>
-        </Field>
-
-        {/* Price (odds) band — insider money tends to buy at favorable odds. */}
-        <Field label={t("价格")}>
+            {t("价格")}
+          </span>
+          {/* 单位口径（赔率 0–1，不是 ¢）收进两个输入框的 title —— 占位符
+              已经写着 0 / 1，行内再挂一条 hint 是同一句话说两遍。 */}
           <input
             type="number"
             step={0.01}
             min={0}
             max={1}
             placeholder="0"
+            title={t("赔率 0–1")}
             value={minPrice}
             onChange={(e) => setMinPrice(e.target.value)}
-            className="ds-input ds-input--mono"
+            className="ds-input"
             style={{ width: 70 }}
           />
           <span className="ds-hint">–</span>
@@ -611,14 +789,15 @@ export default function Page() {
             min={0}
             max={1}
             placeholder="1"
+            title={t("赔率 0–1")}
             value={maxPrice}
             onChange={(e) => setMaxPrice(e.target.value)}
-            className="ds-input ds-input--mono"
+            className="ds-input"
             style={{ width: 70 }}
           />
           {minPrice || maxPrice ? (
             <button
-              className="ds-btn ds-btn--subtle ds-btn--sm"
+              className="ds-btn ds-btn--sm"
               onClick={() => {
                 setMinPrice("");
                 setMaxPrice("");
@@ -627,13 +806,14 @@ export default function Page() {
               {t("清除")}
             </button>
           ) : null}
-          <span className="ds-hint">{t("赔率 0–1")}</span>
-        </Field>
+        </div>
 
         {/* Market category — from the event's gamma tags, server-enriched. */}
-        <Field label={t("类型")}>
+        <div className="filter-row">
+          <span className="filter-row__label">{t("类型")}</span>
           <Segmented<string>
             ariaLabel={t("市场类型")}
+            className="ds-segmented--wrap"
             value={category ?? "__ALL__"}
             onChange={(v) => setCategory(v === "__ALL__" ? null : v)}
             options={[
@@ -643,10 +823,11 @@ export default function Page() {
               ...categoryOptions.map((c) => ({ label: t(c), value: c })),
             ]}
           />
-        </Field>
+        </div>
 
         {/* Address age — insider money tends to use relatively new wallets. */}
-        <Field label={t("地址年龄")}>
+        <div className="filter-row">
+          <span className="filter-row__label">{t("地址年龄")}</span>
           <Segmented<number>
             ariaLabel={t("地址年龄")}
             value={maxAgeDays ?? AGE_ALL}
@@ -677,201 +858,152 @@ export default function Page() {
               const n = Number(v);
               setMaxAgeDays(Number.isFinite(n) && n >= 0 ? n : null);
             }}
-            className="ds-input ds-input--mono"
+            className="ds-input"
             style={{ width: 56 }}
           />
           <span className="ds-hint">{t("天")}</span>
-        </Field>
-      </section>
-
-      {/* While the one-shot auto retry is pending, the transient error is
-          being handled — show the warm-up notice (below) instead of a scary
-          callout. A retry that fails again falls through to this callout. */}
-      {data?.error && !autoRetrying ? (
-        <div
-          className="ds-callout ds-callout--error"
-          style={{ marginBottom: "var(--s-4)" }}
-        >
-          {t("扫描失败: {msg}", { msg: data.error })}
         </div>
-      ) : null}
+      </div>
 
-      {/* Stats header */}
-      {stats ? (
-        <section className="kpi" style={{ marginBottom: "var(--s-5)" }}>
-          <StatCard label={t("笔数")}>
-            <div className="kpi-value">{stats.count}</div>
-          </StatCard>
-          <StatCard label={t("总额")}>
-            <div className="kpi-value">${fmtUsd(stats.totalUsd)}</div>
-          </StatCard>
-          <StatCard label={t("买额 vs 卖额")}>
-            <div
-              className="mono"
-              style={{ fontSize: "var(--t-md)", margin: "var(--s-2) 0" }}
-            >
-              <span className="up" style={{ fontWeight: 600 }}>
-                {t("买 {amt}", { amt: `$${fmtUsd(buyUsd)}` })}
-              </span>
-              <span className="muted"> · </span>
-              <span className="down" style={{ fontWeight: 600 }}>
-                {t("卖 {amt}", { amt: `$${fmtUsd(sellUsd)}` })}
-              </span>
-            </div>
-            <div
-              style={{
-                height: 8,
-                borderRadius: 4,
-                overflow: "hidden",
-                display: "flex",
-                background: "var(--n-100)",
-              }}
-            >
-              <div
-                style={{ width: `${buyPct}%`, background: "var(--up-500)" }}
-              />
-              <div
-                style={{ width: `${sellPct}%`, background: "var(--down-500)" }}
-              />
-            </div>
-          </StatCard>
-          <StatCard label={t("最大单")}>
-            {stats.maxTrade ? (
-              <div>
-                <div className="kpi-value" style={{ fontSize: 18 }}>
-                  ${fmtUsd(stats.maxTrade.usd)}
-                </div>
-                <div
-                  className="kpi-sub"
-                  style={{
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                  title={stats.maxTrade.title}
-                >
-                  {stats.maxTrade.title}
-                </div>
-              </div>
-            ) : (
-              <div className="kpi-value muted" style={{ fontSize: 18 }}>
-                —
-              </div>
-            )}
-          </StatCard>
-        </section>
-      ) : null}
-
-      {data?.truncated ? (
-        <div
-          className="ds-callout ds-callout--warn"
-          style={{ marginBottom: "var(--s-4)" }}
-        >
-          ⏱️ {t("成交太密集，API 回看深度已用满 — 时间窗尾部的部分成交未覆盖")}
-        </div>
-      ) : null}
-
-      {/* Filtered count (reflects the client-side price/age filters) */}
-      {data && data.trades.length > 0 ? (
-        <div className="ds-hint" style={{ marginBottom: "var(--s-3)" }}>
-          {t("符合筛选")}{" "}
-          <strong className="mono" style={{ color: "var(--n-800)" }}>
-            {displayedTrades.length}
-          </strong>{" "}
-          {t("笔")}
-          {agesStillLoading ? (
-            <span className="muted">
-              {t(" · 地址年龄加载中，结果将随加载补全")}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* Table */}
+      {/* 主表卡 —— 卡内：标题条 → 表头 → 行 → 说明条 */}
       {autoRetrying ? (
         // The pull failed on a cold upstream cache and a one-shot retry is
         // scheduled — show progress instead of an error + empty table.
-        <div className="ds-empty">⏳ {t("上游缓存预热中，自动重试…")}</div>
+        // 空态的第二行只留「下一步」，机制解释（为什么重试会成）删掉。
+        <div className="ds-empty">
+          <div>{t("上游缓存预热中，自动重试…")}</div>
+          <div style={{ marginTop: "var(--s-2)" }}>
+            {t("也可以直接点「刷新」。")}
+          </div>
+        </div>
       ) : view === "loading" ? (
         // First fetch, nothing to show yet — a deep 24h pull can take 5-15s
         // and a blank area reads as "the tool is broken".
         <div className="ds-empty">
-          ⏳{" "}
-          {t("正在扫描 {hours}h 成交 — 深度拉取首次约 5-15 秒，请稍候…", {
-            hours,
-          })}
+          <div>
+            {t("正在扫描 {hours}h 成交 —— 首次深拉约 5-15 秒…", {
+              hours,
+            })}
+          </div>
+          <div style={{ marginTop: "var(--s-2)" }}>
+            {t("嫌慢就把时间窗切到 1h。")}
+          </div>
         </div>
       ) : view === "empty" ? (
         <div className="ds-empty">
-          {t("该筛选条件下 {hours}h 内暂无成交", { hours })}
+          <div>{t("该筛选条件下 {hours}h 内暂无成交", { hours })}</div>
+          <div style={{ marginTop: "var(--s-2)" }}>
+            {t("试试降低金额门槛、拉长时间窗，或清掉价格 / 类型 / 地址年龄。")}
+          </div>
         </div>
       ) : view === "rows" ? (
-        <>
-          <div className="ds-table-wrap">
-            <table className="ds-table">
-              <thead>
-                <tr>
-                  <th
-                    className="is-sortable"
-                    onClick={() => toggleSort("time")}
-                    title={t("点击按时间排序")}
-                  >
-                    {t("时间")}
-                    {sortArrow("time")}
-                  </th>
-                  <th>{t("市场 / 结果")}</th>
-                  <th>{t("方向")}</th>
-                  <th
-                    className="is-sortable is-right"
-                    onClick={() => toggleSort("amount")}
-                    title={t("点击按金额排序")}
-                  >
-                    {t("金额")}
-                    {sortArrow("amount")}
-                  </th>
-                  <th className="is-right">{t("价格")}</th>
-                  <th>{t("钱包")}</th>
-                  <th>{t("地址年龄")}</th>
-                  <th
-                    title={t(
-                      "已结算市场胜率 · 已实现盈亏（🏆 = 聪明钱白名单）",
-                    )}
-                  >
-                    {t("战绩")}
-                  </th>
-                  <th>tx</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleTrades.map((t, i) => (
-                  <ScanRow
-                    key={`${t.txHash}-${t.wallet}-${i}`}
-                    t={t}
-                    age={ages[t.wallet?.toLowerCase()]}
-                    stats={walletStats[t.wallet?.toLowerCase()]}
-                    smart={smart[t.wallet?.toLowerCase()]}
-                  />
-                ))}
-              </tbody>
-            </table>
+        <div className="ds-table-wrap">
+          {/* 卡内标题条 */}
+          <div className="card-bar">
+            <span>
+              {t("共 {n} 笔符合筛选", { n: fmtUsd(displayedTrades.length) })}
+              {hiddenCount > 0 ? (
+                <span className="muted">
+                  {t("（显示前 {n} 条）", { n: fmtUsd(visibleTrades.length) })}
+                </span>
+              ) : null}
+            </span>
+            {agesStillLoading ? (
+              <span className="muted">{t("地址年龄加载中，结果会补全")}</span>
+            ) : null}
           </div>
+          <table className="ds-table">
+            <thead>
+              <tr>
+                <th
+                  className="is-sortable"
+                  onClick={() => toggleSort("time")}
+                  title={t("点击按时间排序")}
+                >
+                  {t("时间")}
+                  {sortArrow("time")}
+                </th>
+                <th>{t("市场 / 结果")}</th>
+                {/* 有口径的列头把口径写在 title 里（与下方「战绩」同一做法） */}
+                <th
+                  title={t(
+                    "该笔成交的方向：BUY = 买入该结果的份额，SELL = 卖出该结果的份额",
+                  )}
+                >
+                  {t("方向")}
+                </th>
+                <th
+                  className="is-sortable is-right"
+                  onClick={() => toggleSort("amount")}
+                  title={t("点击按金额排序")}
+                >
+                  {t("金额")}
+                  {sortArrow("amount")}
+                </th>
+                <th className="is-right">{t("价格")}</th>
+                <th>{t("钱包")}</th>
+                <th>{t("地址年龄")}</th>
+                <th
+                  title={t("已结算市场胜率 · 已实现盈亏（🏆 = 聪明钱白名单）")}
+                >
+                  {t("战绩")}
+                </th>
+                <th>tx</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleTrades.map((t, i) => (
+                <ScanRow
+                  key={`${t.txHash}-${t.wallet}-${i}`}
+                  t={t}
+                  age={ages[t.wallet?.toLowerCase()]}
+                  stats={walletStats[t.wallet?.toLowerCase()]}
+                  smart={smart[t.wallet?.toLowerCase()]}
+                />
+              ))}
+            </tbody>
+          </table>
           {hiddenCount > 0 ? (
-            <div style={{ textAlign: "center", marginTop: "var(--s-3)" }}>
+            <div
+              className="note-strip"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--s-3)",
+                flexWrap: "wrap",
+              }}
+            >
               <button
-                className="ds-btn ds-btn--ghost"
+                className="ds-btn ds-btn--sm"
                 onClick={() => setShowAllRows(true)}
               >
-                {t("显示其余 {n} 行", { n: hiddenCount })}
+                {t("显示其余 {n} 行", { n: fmtUsd(hiddenCount) })}
               </button>
-              <div className="ds-hint" style={{ marginTop: "var(--s-1)" }}>
-                {t("统计卡与「符合筛选」计数已包含全部 {n} 笔", {
-                  n: displayedTrades.length,
+              <span>
+                {t("统计卡已包含全部 {n} 笔", {
+                  n: fmtUsd(displayedTrades.length),
                 })}
-              </div>
+              </span>
             </div>
           ) : null}
-        </>
-      ) : null}
+          {/* 降级态说明 —— 「—」是「判不了」，不是零（readme §1.2 要求这条
+              留在表下的琥珀条里）。两种降级态用最短句式列全，不写成段落。 */}
+          <div className="note-strip note-strip--warn">
+            {t(
+              "「…」= 后台补齐中 · 「—」= 判不了，不是零：战绩的「—」是无已结算市场，不是 0 胜率",
+            )}
+          </div>
+        </div>
+      ) : (
+        // view === "idle" —— 还没发出第一次请求（URL 参数尚未读入）。
+        // 空态绝不返回 null：给内容，也给出路。
+        <div className="ds-empty">
+          <div>{t("正在准备扫描…")}</div>
+          <div style={{ marginTop: "var(--s-2)" }}>
+            {t("一直停着就点筛选条右侧的「刷新」。")}
+          </div>
+        </div>
+      )}
     </main>
   );
 }
