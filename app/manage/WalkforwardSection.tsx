@@ -252,7 +252,7 @@ export default function WalkforwardSection({ token }: { token: string }) {
             disabled={data?.report == null}
             onClick={() => void download()}
           >
-            ⬇ 下载完整报告 JSON
+            ↓ 下载完整报告 JSON
           </button>
           {stateLine && <span className="ds-hint">{stateLine}</span>}
         </div>
@@ -384,7 +384,7 @@ export default function WalkforwardSection({ token }: { token: string }) {
               <div className="ds-callout">
                 可观测锥:本报告只能回放<b>收紧</b>方向（原始流未归档）；放松方向
                 的唯一诚实做法是开更松的挑战者档向前跑。逐折明细 / 落选格 /
-                固定诚实段落在「⬇ 下载完整报告 JSON」里。
+                固定诚实段落在「↓ 下载完整报告 JSON」里。
               </div>
             </>
           ))}

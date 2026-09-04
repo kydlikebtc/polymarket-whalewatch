@@ -146,20 +146,28 @@ function NavGroup({
 // 顶栏右侧的实时时钟（绿点 + 「实时 HH:MM:SS」)。设计稿每一幅都有它 ——
 // 它是「这页是活的」的唯一常驻证据。挂载前渲染 null:服务端渲染一个时间
 // 串必然与客户端首帧不一致(水合错位),而这块纯装饰,晚一帧出现无代价。
-// 用 UTC:全站数据时间都是 UTC(各页头也这么写),顶栏跟着走本地时区会让
-// 「实时 22:42」与表里的 22:34 对不上号。
+//
+// **走浏览器本地时区**(2026-09-04 裁决)。全站各页的时间戳本来就都是
+// toLocaleTimeString / toLocaleString(本地),顶栏此前单独走 UTC,于是
+// UTC+8 的读者会看到顶栏「实时 04:42」而表里最新一行是「12:42」——
+// 同一时刻两个数,对不上号。统一到本地后两者恒等。
+//
+// 注意与「业务口径里的 UTC」分家:30 天闸门、脉搏底座每日重建、周桶切分、
+// 𝕏 播报时刻都是**服务端真实按 UTC 日历日执行**的,那些文案里的 UTC 不能
+// 跟着改 —— 它们描述的是服务端行为,不是显示时区。
 function LiveClock() {
   const { t } = useLang();
   const [now, setNow] = useState<string | null>(null);
   useEffect(() => {
-    const tick = () => setNow(new Date().toISOString().slice(11, 19));
+    const tick = () =>
+      setNow(new Date().toLocaleTimeString("zh-CN", { hour12: false }));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, []);
   if (!now) return null;
   return (
-    <span className="topbar__clock" title={t("当前 UTC 时间")}>
+    <span className="topbar__clock" title={t("当前本地时间")}>
       <span className="topbar__clock-dot" aria-hidden />
       {t("实时")} {now}
     </span>
@@ -237,7 +245,12 @@ export function TopNav() {
             );
           }}
         >
-          📣 {t("TG 频道")}
+          {/* 不带 📣 —— 设计稿帧 01 把它画成「📣 TG 频道」,但设计系统
+              readme §1 的硬规则是「emoji 不放在按钮上」,两者撞车。
+              2026-09-04 裁决:按规范走。emoji 在本站承担的是信号/档位语义
+              (💰 🐳 🧩 🏆 🔥 与 19 档策略符号),让它同时兼任装饰会稀释
+              那套语义 —— 读者得先判断这个 emoji 是「有含义」还是「只是好看」。 */}
+          {t("TG 频道")}
         </a>
         {/* 语言切换:显示的是「切过去」的目标语言。 */}
         <button
@@ -793,7 +806,11 @@ export function WalletStatsBadge({
 /* ---------------------------------------------------------- SoundToggle */
 
 // New-record notification sound toggle. Drive it with the useSoundToggle hook
-// (state + persistence + chime-on-enable). 🔔 = on, 🔕 = off.
+// (state + persistence + chime-on-enable).
+// **按钮上不放 emoji**(设计系统 readme §1 硬规则:emoji 只在灰底名称标签内、
+// KPI 图标位、12px 小标前缀三处)。原来的 🔔/🔕 兼任了「开/关」的指示,拿掉
+// 后由文案 + .ds-btn--active(蓝描边 + 6% 蓝底 + 蓝字)承担 —— 这本来就是这套
+// 皮里「此项已选中」的标准表达,比一个要靠辨认铃铛有没有划线的 emoji 更清楚。
 export function SoundToggle({
   on,
   onToggle,
@@ -805,7 +822,7 @@ export function SoundToggle({
   return (
     <button
       type="button"
-      className={`ds-btn ${on ? "ds-btn--subtle" : "ds-btn--ghost"}`}
+      className={`ds-btn ${on ? "ds-btn--active" : ""}`}
       onClick={onToggle}
       aria-pressed={on}
       title={
@@ -815,7 +832,7 @@ export function SoundToggle({
       }
       style={{ flexShrink: 0 }}
     >
-      {on ? `🔔 ${t("提示音 开")}` : `🔕 ${t("提示音 关")}`}
+      {on ? t("提示音 开") : t("提示音 关")}
     </button>
   );
 }

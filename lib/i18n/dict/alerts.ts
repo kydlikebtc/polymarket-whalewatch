@@ -19,8 +19,7 @@ export const DICT_ALERTS: Record<string, string> = {
   "命中告警条件的大额成交逐条出现在下方，最新一条在最上面。条件（金额 / 方向 / 赔率 / 地址年龄 / 冷却 / 聪明钱）统一在运营页配置。":
     "Large fills that match the alert conditions appear below one by one, newest first. The conditions (amount / side / odds / wallet age / cooldown / smart money) are configured on the ops page.",
   // 时区声明（设计系统 §1：时区在页头注明一次）
-  "本页时间按浏览器本地时区显示（顶栏的「实时」时钟走 UTC）。":
-    "Times on this page follow your browser's local time zone (the “Live” clock in the top bar runs on UTC).",
+  "本页时间按浏览器本地时区显示。": "Times on this page use your local timezone.",
 
   // 口径条（琥珀，放在数据前面）—— 只放统计声明；降级态的读法在表下方的
   // 琥珀说明条里（设计系统 §1.2：「—」的成因写在表下方）。

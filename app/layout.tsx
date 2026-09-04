@@ -73,10 +73,15 @@ export default async function RootLayout({
   return (
     <html lang={lang === "en" ? "en" : "zh-CN"}>
       <head>
-        {/* 界面字体是系统字体(Helvetica Neue / PingFang SC / Noto Sans SC),
-            不下载 —— Etherscan 风的正文与数字同族同字号,没有 webfont 依赖。
-            只留 JetBrains Mono:全站唯一的等宽用处是代码面板与行内 code。
-            仍走 <link> 而非 next/font,构建不因网络阻塞,离线优雅降级。 */}
+        {/* 界面字体 Roboto —— 对齐参考站 etherscan.io(它的 --bs-body-font-family
+            以 Roboto 打头)。etherscan 自己不加载 webfont、靠系统装了才生效,
+            我们显式加载,好让各平台都真的渲染成 Roboto。字重只取 400/500/700:
+            这套皮的层级来自 1px 分格线与 12px 大写小标,不来自字重跳档,
+            400=正文与全部数字 · 500=当前导航项/徽章/分段选中 · 700=只有字标。
+            JetBrains Mono 是全站唯一的等宽用处:代码面板与行内 code。
+            中文由系统字体(PingFang SC / Noto Sans SC)接住,不下载 CJK webfont
+            —— 一个中文字重就是几 MB,不值当。
+            仍走 <link> 而非 next/font:构建不因网络阻塞,离线优雅降级到系统栈。 */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="icon" href="/favicon.ico" />
         <link
@@ -85,7 +90,7 @@ export default async function RootLayout({
           crossOrigin="anonymous"
         />
         <link
-          href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
           rel="stylesheet"
         />
         <script type="application/ld+json">{JSON_LD}</script>

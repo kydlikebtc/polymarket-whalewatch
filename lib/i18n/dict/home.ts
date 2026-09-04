@@ -7,7 +7,8 @@ export const DICT_HOME: Record<string, string> = {
   " · 最后刷新 {time}": " · last refreshed {time}",
   " · 加载中…": " · loading…",
   // Etherscan 风页头:12px 小标 + 24/600 标题 + ≤700px 描述
-  "实时扫描 · 不落库 · 时间 UTC": "Live scan · nothing stored · times in UTC",
+  "实时扫描 · 不落库 · 时间按本地时区":
+    "Live scan · nothing stored · times in your local timezone",
   大额成交扫描器: "Whale Trade Scanner",
   "按金额、方向、时间窗、赔率与地址年龄筛出单笔大额成交；每一行都能点进钱包档案与市场信号卡。":
     "Filter single large fills by size, side, time window, odds and wallet age — every row opens the wallet dossier and the market signal card.",

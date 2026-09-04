@@ -510,7 +510,7 @@ export default function Page() {
       <header className="page-head">
         <div>
           <div className="page-head__eyebrow">
-            💰 {t("实时扫描 · 不落库 · 时间 UTC")}
+            💰 {t("实时扫描 · 不落库 · 时间按本地时区")}
           </div>
           <h1 className="page-head__title">{t("大额成交扫描器")}</h1>
           <p className="page-head__desc">

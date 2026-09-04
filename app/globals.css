@@ -76,12 +76,22 @@
   /* 弹窗 */
   --ww-scrim: rgba(8, 29, 53, 0.45);
 
-  /* 字体 —— 全局单一系统字体，不加载 webfont。
+  /* 字体 —— 对齐参考站 etherscan.io。
+     实测 etherscan.io 的 --bs-body-font-family 是 Roboto 打头的 Bootstrap 5 栈；
+     它自己不加载 webfont（@font-face 里只有 Font Awesome），靠系统装了 Roboto
+     才生效，所以在 macOS 上它实际回退到 system-ui。我们把 Roboto 显式加载
+     （见 app/layout.tsx），这样各平台都真的渲染成 Roboto —— 「和参考站一致」
+     指的是看起来一致，不是照抄一份在半数机器上不生效的声明。
+     栈的其余部分逐字照抄 etherscan，只多插一层 CJK 回退：Roboto 没有中文
+     字形，而本站界面是中文（etherscan 纯英文不需要这一层）。CJK 必须排在
+     通用 sans-serif 之前，否则中文会掉进系统默认字体。
      数字不用等宽：KPI 值 / 表格 / 金额 / 时间与正文同字体同字号常规字重。
      JetBrains Mono 只出现在代码面板与行内 code。 */
   --ww-font:
-    "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Noto Sans SC",
-    sans-serif;
+    Roboto, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", "Noto Sans",
+    "Liberation Sans", Arial, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans SC", sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   --ww-font-mono:
     "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
