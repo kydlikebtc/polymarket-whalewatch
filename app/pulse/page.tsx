@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useLang } from "../i18n";
-import { Tag } from "../ui";
 import {
   buildQueryString,
   parseChoiceParam,
@@ -127,7 +126,12 @@ export default function PulsePage() {
   return (
     <main className="ds-main">
       {/* 页头 —— 12px 小标（emoji 前缀承担语义）+ 24/600 标题 + 14px 描述；
-          右侧动作位放数据日期这枚灰底名称标签（它是事实，不是按钮）。 */}
+          右侧动作位放数据覆盖读数。它是事实不是按钮，但也不是「名称标签」：
+          灰底 name tag 按 readme §2.1 只发给实体名（结果名、品类），发给
+          「数据到 X · 底座 N 天」这种状态读数就把灰底用成了状态色。设计稿
+          帧 09 这一位是 32px 中性描边条，用 .status-pill 的无修饰基态
+          （灰描边 / 透明底，globals.css:1667）撑起来，尺寸按 --h-btn/--r-btn
+          对齐页头动作位的其余控件。 */}
       <header className="page-head">
         <div style={{ minWidth: 0 }}>
           <div className="page-head__eyebrow">
@@ -142,12 +146,21 @@ export default function PulsePage() {
         </div>
         {report?.latestDay && (
           <div className="page-head__actions">
-            <Tag>
+            <span
+              className="status-pill"
+              style={{
+                height: "var(--h-btn)",
+                padding: "0 var(--s-3)",
+                borderRadius: "var(--r-btn)",
+                fontSize: "var(--t-base)",
+                fontWeight: 400,
+              }}
+            >
               {t("数据到 {d}（UTC）· 底座已积累 {n} 天", {
                 d: report.latestDay,
                 n: report.dayCount,
               })}
-            </Tag>
+            </span>
           </div>
         )}
       </header>

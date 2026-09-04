@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Modal, Tag, WalletLink, fmtSignedUsdCompact } from "./ui";
+import { CopyButton, Modal, Tag, WalletLink, fmtSignedUsdCompact } from "./ui";
 import { useLang } from "./i18n";
 
 type Row = {
@@ -124,7 +124,11 @@ export function WhitelistDialog({
           )}
         </div>
       ) : (
-        <div className="ds-table-wrap">
+        // 弹窗里不套第二层卡：Modal 自己已经是「标题条 + 内容区」两层
+        // (readme §5)，再包一层 .ds-table-wrap 的描边 / 圆角 / 卡阴影就成了
+        // 卡中卡。这里只保留横向滚动兜底，行与卡底琥珀条直接躺在内容区上，
+        // 层级交回 1px 分格线。
+        <div style={{ overflowX: "auto" }}>
           <table className="ds-table">
             <thead>
               <tr>
@@ -154,9 +158,22 @@ export function WhitelistDialog({
                         flexWrap: "wrap",
                       }}
                     >
-                      <WalletLink address={r.address}>
-                        {shortWallet(r.address)}
-                      </WalletLink>
+                      {/* 地址做了首尾省略，复制钮把完整地址交回给读者 ——
+                          与 /wallet 档案页页头同一枚 13px ⧉。地址与 ⧉ 是同
+                          一个单元，收在内层 span 里（间距由 .copy-btn 自带的
+                          4px 左外边距给），外层 8px 才是它与徽章的间距。 */}
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          minWidth: 0,
+                        }}
+                      >
+                        <WalletLink address={r.address}>
+                          {shortWallet(r.address)}
+                        </WalletLink>
+                        <CopyButton text={r.address} />
+                      </span>
                       {/* 灰底名称标签 = 「这个地址是谁」，不表示状态：手动
                           白名单行(is_whitelist=1)不参与 30 天老化清退，
                           「永不过期」是它与其余池成员的实际区别。 */}
@@ -205,11 +222,13 @@ export function WhitelistDialog({
               ))}
             </tbody>
           </table>
-          {/* 卡底琥珀条 —— 投票权口径与 `—` 的含义，触屏也读得到。 */}
+          {/* 卡底琥珀条 —— 投票权口径与 `—` 的含义，触屏也读得到。
+              emoji 留在徽章上，正文里只引用文字名（readme §1）；`—` 的成因
+              把本表出现过的三列写全（评分 / 胜率 / 净盈亏），不穷举一半。 */}
           <div className="note-strip note-strip--warn">
             ⚠️{" "}
             {t(
-              "「🤖 无投票权」= 做市机器人（成交市场数 ≥1000）：保留池成员资格以积累战绩数据，但做市流是库存再平衡、不是方向性观点，因此不计入共识 / 分歧投票。评分 / 胜率的 — 是「判不了」，不是零。",
+              "「无投票权」= 做市机器人（成交市场数 ≥1000）：保留池成员资格以积累战绩数据，但做市流是库存再平衡、不是方向性观点，因此不计入共识 / 分歧投票。评分 / 胜率 / 净盈亏的 — 是「判不了」，不是零。",
             )}
           </div>
         </div>

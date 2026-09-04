@@ -124,24 +124,33 @@ export default function StatusStrip({
           }
           onClick={() => onJump("health")}
         />
+        {/* ops.tg == null(这套 bot 还没发过任何一条)是判不了,不是通过 ——
+            此前它落进 else 分支,被渲染成绿色的「正常」。口径与下方健康度区块
+            (「—」+「状态未知(无发送记录)」)、与下游管线表逐字一致。 */}
         <KpiCard
           label="TG 发送"
           icon="📣"
           value={
-            ops == null
+            ops == null || ops.tg == null
               ? locked
-              : ops.tg?.failing
+              : ops.tg.failing
                 ? `连败 ${ops.tg.consecutiveSendFailures}`
                 : "正常"
           }
           valueColor={
-            ops == null
+            ops == null || ops.tg == null
               ? undefined
-              : ops.tg?.failing
+              : ops.tg.failing
                 ? "var(--ww-down)"
                 : "var(--ww-up)"
           }
-          sub={ops == null ? "需管理令牌" : undefined}
+          sub={
+            ops == null
+              ? "需管理令牌"
+              : ops.tg == null
+                ? "状态未知(无发送记录)"
+                : undefined
+          }
           onClick={() => onJump("health")}
         />
         <KpiCard

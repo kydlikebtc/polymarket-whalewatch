@@ -1584,8 +1584,11 @@ tr:hover .copy-btn,
   white-space: normal;
   line-height: var(--lh-normal);
 }
+/* th 不跟着解除 nowrap —— 「表头永远 nowrap」是全站唯一的截断规则里那条
+   没有例外的（readme §1.1）。上面 td 解除是对的（文档表格装的是成句说明），
+   但表头是短标签，允许折行只会把两个字的列头拧成两行。 */
 .doc-prose .ds-table th {
-  white-space: normal;
+  white-space: nowrap;
 }
 .doc-prose blockquote {
   margin: 0 0 var(--s-4);

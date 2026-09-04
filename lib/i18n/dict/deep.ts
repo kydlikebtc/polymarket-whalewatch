@@ -116,6 +116,8 @@ export const DICT_DEEP: Record<string, string> = {
   "右列 = edge 与该档落袋": "right columns = edge and per-band realized PnL",
   "edge = 实际胜率 − 隐含胜率(该桶均入场价)。入场价本身就是市场定价的获胜概率,持续为正才是可复制的优势,而不是运气":
     "edge = actual win rate − implied win rate (the bucket's average entry price). The entry price is itself the market-priced probability of winning; a persistently positive edge is a repeatable advantage, not luck",
+  "「·」= 该档赔率带零仓,这个价位区间从没下过注,不是 edge 为 0;「—」= 该档有仓但全是平局,没有实际胜率可比,是判不了不是零;琥珀「样本不足」= 该档 <{n} 仓,读数只够看方向。":
+    "'·' = zero positions in that odds band — nothing was ever bet in that price range, which is not an edge of 0. '—' = the band has positions but they are all pushes, so there is no actual win rate to compare — undecidable, not zero. The amber 'low sample' tag = fewer than {n} positions in that band, directional read only.",
 
   // -------------------------------------------------- ③ 单仓盈亏分布
   单仓盈亏分布: "Per-position PnL distribution",
@@ -183,6 +185,8 @@ export const DICT_DEEP: Record<string, string> = {
     "No tracks to pivot on yet — once positions settle, this becomes the 'which signal has edge on which track' matrix",
   "暂无可统计的赛道 — 有仓位结算后这里会逐赛道给出 edge、胜率与落袋":
     "No track stats yet — once positions settle, edge, win rate and realized PnL appear here track by track",
+  "⚠️ 「—」= 该赛道全是平局,没有实际胜率可比,edge 也就无从算起 —— 是判不了,不是零;标了「样本不足」的行(<{n} 仓)也不是「没 edge」,是这一行还判不了。":
+    "⚠️ '—' = the track is all pushes, so there is no actual win rate to compare and no edge to compute — undecidable, not zero. Rows tagged 'low sample' (<{n} pos) are not 'no edge' either, just not decidable yet.",
   "{name} × {label}:{n} 仓 {rec},": "{name} × {label}: {n} pos {rec}, ",
   "胜率 {a}% vs 隐含 {b}%,": "win rate {a}% vs implied {b}%, ",
   "落袋 {pnl}": "realized {pnl}",
@@ -190,8 +194,8 @@ export const DICT_DEEP: Record<string, string> = {
 
   // -------------------------------------- ⑦ 缺陷诊断 + 反事实剔除
   "缺陷诊断 — 亏在哪类下注": "Weakness diagnosis — where the losses live",
-  "把已结算仓按赛道/持有时长(快慢市场)/赔率带三个维度切段,列出「段内 ≥{n} 仓且累计亏损」的特征段(最亏在前,至多 5 段)—— 定向优化的靶点。⚠️ 各段互有重叠(一仓可同时属「足球」与「>7 天」),「剔除后」数字不可相加":
-    "Settled positions are sliced along three dimensions — track / holding duration (fast vs slow markets) / odds band — listing segments with ≥{n} positions and a cumulative loss (worst first, max 5): the targets for directed optimization. ⚠️ Segments overlap (one position can be both 'Soccer' and '>7 d'), so the 'without it' numbers must not be summed",
+  "把已结算仓按赛道/持有时长(快慢市场)/赔率带三个维度切段,列出「段内 ≥{n} 仓且累计亏损」的特征段(最亏在前,至多 5 段)—— 定向优化的靶点。各段互有重叠(一仓可同时属「足球」与「>7 天」),「剔除后」数字不可相加":
+    "Settled positions are sliced along three dimensions — track / holding duration (fast vs slow markets) / odds band — listing segments with ≥{n} positions and a cumulative loss (worst first, max 5): the targets for directed optimization. Segments overlap (one position can be both 'Soccer' and '>7 d'), so the 'without it' numbers must not be summed",
   "未发现 ≥{n} 仓且累计亏损的特征段 — 样本继续积累中,或这一档暂无集中的亏损特征":
     "No segment with ≥{n} positions and a cumulative loss — the sample is still accruing, or this tier has no concentrated loss pattern yet",
   "对照 · 最强特征(edge>0 且落袋为正 —— 优化是「砍最亏的、 保最强的」两面)":

@@ -284,11 +284,9 @@ export default function KeysSection({ token }: { token: string }) {
             上都拿不到，不需要订阅方自己筛。
           </div>
         </div>
-        <button
-          className="ds-btn ds-btn--primary"
-          disabled={busy}
-          onClick={issue}
-        >
+        {/* 描边白底 —— 每屏至多一枚主按钮,而页头的「刷新」在任何子 tab 上
+            都同屏可见,那一枚就是全页唯一的蓝底钮。 */}
+        <button className="ds-btn" disabled={busy} onClick={issue}>
           签发新 key
         </button>
       </div>
@@ -390,8 +388,9 @@ export default function KeysSection({ token }: { token: string }) {
           </table>
           <div className="note-strip">
             「最近使用」的 <span className="faint">—</span> 是「从没被用过」,
-            不是零 —— 签发了但订户还没接。已吊销的行留在表里做审计痕迹,不会
-            被清理。
+            不是零 —— 签发了但订户还没接;「操作」列的{" "}
+            <span className="faint">—</span> 是「已吊销,没有可执行的操作」。
+            已吊销的行留在表里做审计痕迹,不会被清理。
           </div>
         </div>
       )}

@@ -130,6 +130,9 @@ export const DICT_DISCOVERY: Record<string, string> = {
   "分类榜旁路：六类 × 周/月榜前 25 直接进闸门（榜单排名即复发证据，仅过战绩审查） · ↺ 在池成员每日按战绩重新认证，30 天不再合格自动出池——行为再现即可重新成为候选":
     "Category-board bypass: the top 25 of each weekly/monthly board across six categories go straight to the gate (board rank counts as recurrence evidence; track-record review only) · ↺ pool members re-certify daily on track record and age out after 30 days without re-qualifying — recurring behavior makes them candidates again",
 
+  // 页头右侧动作钮 —— 跳 /guide#discovery 的漏斗口径全文
+  漏斗规则全文: "Full funnel rules",
+
   // 控件区
   视图切换: "View switch",
   "候选漏斗 ({n})": "Candidate funnel ({n})",
@@ -205,8 +208,9 @@ export const DICT_DISCOVERY: Record<string, string> = {
   共识白名单池: "Consensus whitelist pool",
   "{n} 个钱包": "{n} wallets",
   "其中 {n} 个无投票权": "{n} of them carry no vote",
-  "「🤖 无投票权」= 做市机器人（成交市场数 ≥1000）：保留池成员资格以积累战绩数据，但做市流是库存再平衡、不是方向性观点，因此不计入共识 / 分歧投票。评分 / 胜率的 — 是「判不了」，不是零。":
-    "“🤖 no vote” = market-maker bot (≥1000 markets traded): it keeps pool membership so track-record data keeps accruing, but market-making flow is inventory rebalancing rather than a directional view, so it never counts toward consensus / split votes. A — under score / win rate means “can't be judged”, not zero.",
+  // emoji 留在徽章上，正文里只引用文字名（readme §1：emoji 不进正文句中）。
+  "「无投票权」= 做市机器人（成交市场数 ≥1000）：保留池成员资格以积累战绩数据，但做市流是库存再平衡、不是方向性观点，因此不计入共识 / 分歧投票。评分 / 胜率 / 净盈亏的 — 是「判不了」，不是零。":
+    "“No vote” = market-maker bot (≥1000 markets traded): it keeps pool membership so track-record data keeps accruing, but market-making flow is inventory rebalancing rather than a directional view, so it never counts toward consensus / split votes. A — under score / win rate / net PnL means “can't be judged”, not zero.",
   "搜索地址…（0x…）": "Search address… (0x…)",
   搜索白名单地址: "Search whitelist addresses",
   "加载中…": "Loading…",

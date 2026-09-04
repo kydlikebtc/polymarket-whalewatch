@@ -163,23 +163,29 @@ function MarketDetail({ market }: { market: DisagreementMarket }) {
             background: "var(--ww-surface)",
           }}
         >
+          {/* 标题条是「MOROCCO 一侧展开␣· 4 个钱包 · …」的一句连写:粗标题与
+              灰色续写包在同一个 flex 子项里,否则 .card-bar 的 12px gap 会加在
+              「· 」前面变成双重间隔,窄屏 flex-wrap 时灰续写还会整段掉到第二
+              行、以一个孤零零的「· 」开头。 */}
           <div className="card-bar">
-            <span style={{ fontWeight: 600 }}>
-              {t("{outcome} 一侧展开", { outcome: s.outcome })}
-            </span>
-            <span className="ds-hint">
-              {t(
-                " · {n} 个钱包 · 净买 ${net} · 质量加权 ${weighted} · 建仓均价 {avg}",
-                {
-                  n: s.walletCount,
-                  net: fmtUsd(s.netUsd),
-                  weighted: fmtUsd(s.weightedUsd),
-                  avg: s.avgBuyPrice.toFixed(3),
-                },
-              )}
-              {s.currentPrice != null
-                ? t(" · 现价 {cur}", { cur: s.currentPrice.toFixed(3) })
-                : ""}
+            <span style={{ minWidth: 0 }}>
+              <span style={{ fontWeight: 600 }}>
+                {t("{outcome} 一侧展开", { outcome: s.outcome })}
+              </span>
+              <span className="ds-hint">
+                {t(
+                  " · {n} 个钱包 · 净买 ${net} · 质量加权 ${weighted} · 建仓均价 {avg}",
+                  {
+                    n: s.walletCount,
+                    net: fmtUsd(s.netUsd),
+                    weighted: fmtUsd(s.weightedUsd),
+                    avg: s.avgBuyPrice.toFixed(3),
+                  },
+                )}
+                {s.currentPrice != null
+                  ? t(" · 现价 {cur}", { cur: s.currentPrice.toFixed(3) })
+                  : ""}
+              </span>
             </span>
           </div>
           <table className="ds-table--compact">
@@ -412,10 +418,17 @@ export function DisagreementSection({
                     >
                       <BalanceBar sides={m.sides} total={m.totalWeightedUsd} />
                     </td>
-                    {/* 倾斜是结论文字,不是徽章:蓝色在全站只表示可点击。 */}
-                    <td data-label={t("倾斜")}>
+                    {/* 倾斜是结论文字,不是徽章:蓝色在全站只表示可点击。
+                        「倒向 63%」「势均力敌 52%」是定长文案,照设计稿 nowrap
+                        钉在 110px 列里;已结算那一支里带的是结果名,结果名永不
+                        截断也不许被禁折行(否则会把 110px 顶宽、挤扁自适应的
+                        市场列),所以这一支改走 .cell-wrap 让它换行。 */}
+                    <td
+                      className={settled ? "cell-wrap" : undefined}
+                      data-label={t("倾斜")}
+                    >
                       {settled ? (
-                        <span style={{ whiteSpace: "nowrap" }}>
+                        <span>
                           🏁 {t("已结算")}
                           {winnerOutcome
                             ? t(" · {outcome} 胜", { outcome: winnerOutcome })
@@ -462,10 +475,12 @@ export function DisagreementSection({
           </tbody>
         </table>
       </div>
-      {/* 口径写在数据旁边,不写脚注:天平称的是加权额,不是原始金额。 */}
+      {/* 口径写在数据旁边,不写脚注:天平称的是加权额,不是原始金额。
+          「—」的成因要列全,不能穷举一半:评分/胜率的 — 与「当前持仓」的 —
+          (ui.tsx HoldingCell 无仓位时也渲染 —)含义不同。 */}
       <div className="note-strip note-strip--warn">
         {t(
-          "天平称的是质量加权额（净买入 × 钱包评分权重），不是原始金额；同时在两边都净买入的钱包按对冲/做市从两侧一起剔除。明细里的 — 表示该钱包还没有已结算样本，评分与胜率判不了，不是 0。",
+          "天平称的是质量加权额（净买入 × 钱包评分权重），不是原始金额；同时在两边都净买入的钱包按对冲/做市从两侧一起剔除。展开明细里有两种 —：评分与胜率栏的 — 是该钱包还没有已结算样本、判不了，当前持仓栏的 — 是它此刻在该结果已无持仓（窗口内买过但已清仓或转向）。都不是 0。",
         )}
       </div>
     </div>

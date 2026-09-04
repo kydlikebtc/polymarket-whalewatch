@@ -1,7 +1,9 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
+  CopyButton,
   fmtSignedUsdCompact,
   MarketSlugActions,
   Modal,
@@ -378,8 +380,11 @@ function ScorecardTable({
       <Tag variant="warn">{t("· 市场数不足")}</Tag>
     );
   return (
+    // 记分卡是「渠道记分卡」视图的主表，不是谁的展开明细 —— 主表走 14px
+    // 的 .ds-table。--compact（13px）只留给嵌套的展开明细子表，两者都用它
+    // 就把「主表 / 明细」这一级层级抹平了。
     <div className="ds-table-wrap">
-      <table className="ds-table ds-table--compact">
+      <table className="ds-table">
         <thead>
           <tr>
             <th>{t("渠道")}</th>
@@ -523,9 +528,11 @@ function LeagueSection({
   }
   const pts = (v: number) =>
     `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}`;
+  // 名人堂 / 反指是「名人堂」视图的两张主表 —— 同上，主表 14px，
+  // --compact 只归展开明细子表所有。
   const leagueTable = (rows: LeagueRowView[]) => (
     <div className="ds-table-wrap" style={{ marginBottom: "var(--s-4)" }}>
-      <table className="ds-table ds-table--compact">
+      <table className="ds-table">
         <thead>
           <tr>
             <th>{t("代号 / 钱包")}</th>
@@ -756,9 +763,21 @@ export default function DiscoveryPage() {
     });
   };
 
+  // 地址是全站唯一做首尾省略的东西 —— 后面跟一枚 13px ⧉ 把完整地址交回给
+  // 读者（与 /wallet 档案页页头同一枚）。间距由 .copy-btn 自带的 4px 左外
+  // 边距给，不再叠 gap。CopyButton 自带 stopPropagation，点它不会展开行。
   const walletCell = (address: string) => (
-    <WalletLink address={address}>{shortWallet(address)}</WalletLink>
+    <span style={{ display: "inline-flex", alignItems: "center", minWidth: 0 }}>
+      <WalletLink address={address}>{shortWallet(address)}</WalletLink>
+      <CopyButton text={address} />
+    </span>
   );
+
+  // 降级态两个符号分家(readme §1.2 / 说明页「…」词条):`…` = 还在取数,
+  // `—` = 取到了但判不了。首屏 data 尚为 null 时四格 KPI 全写 `—` 会把
+  // 「加载中」冒充成「判不了」—— 主表早就用 ds-empty 区分了这两件事。
+  const kpiNum = (v: number | null | undefined): number | string =>
+    v ?? (loading ? "…" : "—");
 
   // 漏斗末段的比例条 —— 纯展示派生量(在池 = 全局榜 + 发现渠道)。
   const poolTotal = data?.counts.poolTotal ?? null;
@@ -782,7 +801,7 @@ export default function DiscoveryPage() {
     <main className="ds-main">
       {/* 页头区 —— 12px 小标(emoji 前缀)+ 24/600 标题 + 14px muted 描述。 */}
       <header className="page-head">
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div className="page-head__eyebrow">
             🔭 {t("白名单之外的候选漏斗")}
           </div>
@@ -792,6 +811,14 @@ export default function DiscoveryPage() {
               "候选须 30 天内证据广度 ≥3 且通过战绩审查才入池。点击行展开证据明细。",
             )}
           </p>
+        </div>
+        {/* 页头右侧动作钮（页头标准形的第四件）—— 页内琥珀条只写得下漏斗
+            口径的摘要，全文在说明书的「聪明钱发现」一节。站内跳转用 →，
+            ↗ 全站留给站外链接。 */}
+        <div className="page-head__actions">
+          <Link className="ds-btn" href="/guide#discovery">
+            {t("漏斗规则全文")} →
+          </Link>
         </div>
       </header>
 
@@ -820,7 +847,7 @@ export default function DiscoveryPage() {
           02 / 04 两格仍是原来的入口，点击切视图并预置筛选。 */}
       <section className="kpi" aria-label={t("发现漏斗")}>
         <StatCard label={t("01 · 30 天证据")} icon="🔍">
-          <div className="kpi-value">{data?.counts.evidenceRows ?? "—"}</div>
+          <div className="kpi-value">{kpiNum(data?.counts.evidenceRows)}</div>
           <div className="kpi-sub">{t("成交流涌现 + 结算回溯")}</div>
         </StatCard>
 
@@ -847,7 +874,7 @@ export default function DiscoveryPage() {
           <div style={{ minWidth: 0, flex: 1 }}>
             <div className="ds-label">{t("02 · 候选钱包")}</div>
             <div className="kpi-value">
-              {data?.counts.candidateWallets ?? "—"}
+              {kpiNum(data?.counts.candidateWallets)}
             </div>
             <div className="kpi-sub">{t("纯观察 · 不进任何信号")}</div>
           </div>
@@ -875,7 +902,7 @@ export default function DiscoveryPage() {
           <div style={{ minWidth: 0, flex: 1 }}>
             <div className="ds-label">{t("04 · 共识白名单池")}</div>
             <div className="kpi-value" style={{ color: "var(--ww-link)" }}>
-              {poolTotal ?? "—"}{" "}
+              {kpiNum(poolTotal)}{" "}
               <span
                 style={{
                   fontSize: "var(--t-base)",
@@ -889,7 +916,7 @@ export default function DiscoveryPage() {
                   onClick={() => switchView("members", ["src:leaderboard"])}
                   title={t("查看全局榜成员（top-100 自带门槛，免审查）")}
                 >
-                  {t("{n} 榜", { n: poolGlobal ?? "—" })}
+                  {t("{n} 榜", { n: kpiNum(poolGlobal) })}
                 </button>{" "}
                 +{" "}
                 <button
@@ -898,7 +925,7 @@ export default function DiscoveryPage() {
                   onClick={() => switchView("members", ["grp:discovery"])}
                   title={t("查看发现渠道产出的成员（分类榜专家 + 漏斗毕业生）")}
                 >
-                  {t("{n} 发现", { n: poolDiscovery ?? "—" })}
+                  {t("{n} 发现", { n: kpiNum(poolDiscovery) })}
                 </button>
               </span>
             </div>
@@ -1420,7 +1447,9 @@ export default function DiscoveryPage() {
             "与「说明」页同一数据源；列表与筛选条里的任意标签，悬停都能看到同一句提示。",
           )}
         </div>
-        <div className="ds-table-wrap">
+        {/* 弹窗里不套第二层卡（readme §5：弹窗只有标题条 + 内容区两层）——
+            与白名单弹窗同一处理，只留横向滚动兜底。 */}
+        <div style={{ overflowX: "auto" }}>
           <table className="ds-table">
             <thead>
               <tr>

@@ -248,6 +248,10 @@ export const DICT_FOLLOW: Record<string, string> = {
   形成后2h: "2h markout",
   持有期: "Held",
   已实现: "Realized",
+  // 卡底琥珀条:同一张表里四处成因不同的「—」+ 一个非「—」的降级态,
+  // 一条列全(表下说明,不是脚注)。
+  "⚠️ 表里的「—」是「判不了」,不是 0,四处成因各不相同:「延迟成本」与「形成后2h」的「—」= 老仓没有形成价(上线前的仓位不回填);「执行滑点」的「—」= 盘口无历史(仅新开仓有值);「进价→结算价」右侧的「—」= 该仓没有结算价读数。另有一个非「—」的降级态:「薄」= 盘口深度吃不满本仓名义金额,均价按已成交部分计(悬停给出实际成交额)。成本三列(追价 / 延迟 / 执行滑点)一律中性色,只有 |¢差| > 10¢ 转琥珀;「形成后2h」是价格方向,涨绿跌红、±0.5¢ 死区记平推 —— 与成本类是两套语义,别混着读。":
+    "⚠️ A「—」in this table means 「cannot be judged」, not 0, and the four causes differ: 「—」under Latency cost and 2h markout = the position predates launch and has no formation price (older positions are not backfilled); 「—」under Execution slippage = the order book has no history (only newly opened positions carry a value); 「—」on the right of Entry→Settle = this position has no settlement price reading. One degraded state is not a 「—」: 「thin」 = the book was too shallow to fill this position's notional, so the average price covers the filled portion only (hover for the amount actually filled). The three cost columns (chase / latency / execution slippage) are always neutral in color and turn amber only above |¢ gap| > 10¢; 2h markout is a price direction — green up, red down, with a ±0.5¢ dead zone counted as flat — a different semantic from the cost columns, do not read them as one.",
   "取价失败,或该市场暂无可用的近期行情数据":
     "Price fetch failed, or this market has no recent quote data available",
 
@@ -260,6 +264,9 @@ export const DICT_FOLLOW: Record<string, string> = {
   当前价: "Now",
   已持有: "Held",
   待结算: "Awaiting settlement",
+  // 卡底琥珀条(持仓中表):三处「—」+ 一个「…」中间态。
+  "⚠️ 表里的「—」是「判不了」,不是 0,三处成因各不相同:「当前价」的「—」= 缺 asset 或取价失败,不可取价(不是加载中 —— 还在取价时显示「…」);「延迟成本」的「—」= 老仓没有形成价(上线前的仓位不回填);「执行滑点」的「—」= 盘口无历史(仅新开仓有值),其「薄」= 盘口深度吃不满本仓名义金额,均价按已成交部分计。当前价只在挂载这张表时惰性取一次,仅供参考:持有中仓位没有已实现盈亏,不进胜率/ROI/年化,本页所有战绩都是结算口径。":
+    "⚠️ A「—」in this table means 「cannot be judged」, not 0, and the three causes differ: 「—」under Now = the asset id is missing or the fetch failed, so no price can be quoted (this is not a loading state — while the fetch is in flight the cell shows 「…」); 「—」under Latency cost = the position predates launch and has no formation price; 「—」under Execution slippage = the order book has no history (only newly opened positions carry a value), and its 「thin」 marker means the book was too shallow to fill this position's notional, so the average price covers the filled portion only. The current price is fetched lazily, once, when this table mounts, and is reference only: open positions have no realized P&L and feed no win rate, ROI or annualized return — every record figure on this page is on a settlement basis.",
 
   // ------------------------------------------ 赛道 × 策略优势矩阵(副 tab)
   "暂无已结算仓位 — 有仓位结算后这里会给出「哪类信号在哪个赛道有 edge」的透视矩阵":

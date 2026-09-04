@@ -419,18 +419,32 @@ export function ConvictionBoard({
         <tbody>
           {rows.map((c) => (
             <tr key={c.key || "__other"}>
+              {/* 身份格刻意不带 data-label —— 窄屏堆叠卡里它铺满整行做
+                  卡头（globals.css:1224 `td:not([data-label])`），其余每格
+                  才由 data-label 供出「标签左 / 值右」的那个标签。 */}
               <td>{t(catLabel(c.key))}</td>
               {/* 分数与正文同字号常规字重：层级来自分格线和小标，
                   不来自字号跳档。 */}
-              <td className="is-right num mono">{c.score}</td>
-              <td>
+              <td className="is-right num mono" data-label={t("指数")}>
+                {c.score}
+              </td>
+              {/* 微条组与迷你趋势线在窄屏放不进「标签左 / 值右」的一行，
+                  用 col-block 让标签压在上面、图形整行铺开。 */}
+              <td className="col-block" data-label={t("构成")}>
                 <ConvictionChips c={c.components} />
               </td>
-              <td className="ds-hint">
+              <td
+                className="ds-hint col-block"
+                data-label={t("近 {n} 日", { n: data.days })}
+              >
                 <ScoreSpark series={c.series} />
               </td>
-              <td className="is-right num mono">{usd(c.volumeUsd)}</td>
-              <td className="is-right num mono">{c.markets}</td>
+              <td className="is-right num mono" data-label={t("量能")}>
+                {usd(c.volumeUsd)}
+              </td>
+              <td className="is-right num mono" data-label={t("市场数")}>
+                {c.markets}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -495,9 +509,11 @@ export function AnomalyBoard({
               <tr key={m.conditionId}>
                 {/* 序号补零成两位（01/02/…）——榜已按异常分排序，序号本身
                     就是量级；两位宽度让这一列右边缘对齐。 */}
-                <td className="num mono muted">
+                <td className="num mono muted" data-label="#">
                   {String(i + 1).padStart(2, "0")}
                 </td>
+                {/* 市场格同样不带 data-label：窄屏下它是卡头（全站同一条
+                    约定，见 app/page.tsx 的 24h 扫描行）。 */}
                 <td className="cell-wrap">
                   <MarketCell
                     title={m.title}
@@ -527,12 +543,20 @@ export function AnomalyBoard({
                     ]}
                   />
                 </td>
-                <td className="is-right num mono">{m.score}</td>
-                <td>
+                <td className="is-right num mono" data-label={t("异常分")}>
+                  {m.score}
+                </td>
+                {/* 四条微条在窄屏铺整行：col-block 把标签压到上面一行。 */}
+                <td className="col-block" data-label={t("构成")}>
                   <CompChips c={m.components} />
                 </td>
-                <td className="is-right num mono">{usd(m.volumeUsd)}</td>
-                <td className="is-right num mono">
+                <td className="is-right num mono" data-label={t("量能")}>
+                  {usd(m.volumeUsd)}
+                </td>
+                <td
+                  className="is-right num mono"
+                  data-label={t("顶结果首→末价")}
+                >
                   {cents(m.priceFirst)} → {cents(m.priceLast)}
                 </td>
               </tr>
@@ -608,15 +632,17 @@ export function DivergenceBoard({
                 </td>
                 {/* 净买入是方向（买 = 绿），不是成本 —— 这是五类语义里
                     唯一还留着涨绿的地方。 */}
-                <td>
+                <td data-label={t("小单在买")}>
                   {d.smallTopOutcome}{" "}
                   <span className="num mono up">+{usd(d.smallNetUsd)}</span>
                 </td>
-                <td>
+                <td data-label={t("鲸鱼在买")}>
                   {d.whaleTopOutcome}{" "}
                   <span className="num mono up">+{usd(d.whaleNetUsd)}</span>
                 </td>
-                <td className="is-right num mono">{usd(d.strength)}</td>
+                <td className="is-right num mono" data-label={t("分歧强度")}>
+                  {usd(d.strength)}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -684,12 +710,18 @@ export function GhostBoard({
                   }
                 />
               </td>
-              <td className="is-right num mono">{g.moveCents.toFixed(0)}¢</td>
-              <td className="is-right num mono">
+              <td className="is-right num mono" data-label={t("价移")}>
+                {g.moveCents.toFixed(0)}¢
+              </td>
+              <td className="is-right num mono" data-label={t("首→末价")}>
                 {cents(g.priceFirst)} → {cents(g.priceLast)}
               </td>
-              <td className="is-right num mono">{usd(g.volumeUsd)}</td>
-              <td className="is-right num mono">{usd(g.maxFillUsd)}</td>
+              <td className="is-right num mono" data-label={t("量能")}>
+                {usd(g.volumeUsd)}
+              </td>
+              <td className="is-right num mono" data-label={t("单笔最大")}>
+                {usd(g.maxFillUsd)}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -748,11 +780,15 @@ export function WashBoard({
                   boardTags={otherTags(membership, w.conditionId, "wash")}
                 />
               </td>
-              <td className="is-right num mono">
+              <td className="is-right num mono" data-label={t("洗量占比")}>
                 {Math.round(w.washRatio * 100)}%
               </td>
-              <td className="is-right num mono">{usd(2 * w.washUsd)}</td>
-              <td className="is-right num mono">{usd(w.volumeUsd)}</td>
+              <td className="is-right num mono" data-label={t("配对量")}>
+                {usd(2 * w.washUsd)}
+              </td>
+              <td className="is-right num mono" data-label={t("量能")}>
+                {usd(w.volumeUsd)}
+              </td>
             </tr>
           ))}
         </tbody>

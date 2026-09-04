@@ -54,6 +54,15 @@ function StrategyCard({ s }: { s: RecordFeedStrategy }) {
   const winsPct = Math.min(100, (s.record.wins / denom) * 100);
   const impliedPct = Math.min(100, (s.record.implied / denom) * 100);
   const settled = s.record.settled > 0;
+  // 样本闸不在呈现层复算。formatRecordLine(lib/signalRecord,全站唯一实现)
+  // 在 settled < MIN_RECORD_SAMPLE 时刻意只返回「N/M 中（样本不足）」——
+  // 既不给 excess 也不给 ±2σ 判词,免得没有噪声底的数字被当成结论引用
+  // (见该函数 wording rules 第 2、3 条)。这里只读它的结论、不自己定阈值:
+  // 它没发判词,这一屏就不许把 excess 裸印成 18px 读数。
+  // 「样本不足」只出现在短式那一支,长式必带判词。用 includes 而不是 endsWith:
+  // 万一字面量将来变形,includes 的失手方向是「多藏一格」而不是「多给一个数」,
+  // 而这一格宁可少说也不能虚报(代价:档位名里若含这四个字会误判成不足)。
+  const graded = line != null && !line.includes("样本不足");
   return (
     <section style={{ marginBottom: "var(--s-10)" }}>
       {/* 档位标识行 —— 占设计稿的「筛选条」槽位(一排控件高的元素 + 右对齐
@@ -74,6 +83,15 @@ function StrategyCard({ s }: { s: RecordFeedStrategy }) {
         <span className="filter-bar__right ds-hint">
           已发布 {s.pushedCount} 条
         </span>
+      </div>
+
+      {/* 显著性判词 —— 统计声明放在数据前面,不放脚注(readme §1 口径先行)。
+          「样本不足」/「仍在运气范围内」/「已超运气范围」这三句判词全站只有
+          formatRecordLine 产出,是对下面整排 KPI 的定性;它排在读数之后就成了
+          脚注,读者会先记住 18px 的百分数再决定要不要读它。 */}
+      <div className="ds-callout" style={{ marginBottom: "var(--s-4)" }}>
+        {line ??
+          "已发布信号尚无结算样本:胜率、超额都要等第一条结算判定落地后才谈得上。"}
       </div>
 
       {/* KPI 分格卡 —— 已发布 / 已结算 / 命中率(含市场预期基准线)/ 超额 */}
@@ -98,9 +116,12 @@ function StrategyCard({ s }: { s: RecordFeedStrategy }) {
           }
           icon="🎯"
         >
+          {/* 蓝色强调只给「读得动的读数」—— 样本不足时同一个百分数不过是
+              原始计数的另一种写法(formatRecordLine 允许照实报计数,但不许
+              把它打扮成结论),所以退回中性色 + 琥珀「样本不足」徽章。 */}
           <div
             className="kpi-value"
-            style={settled ? { color: "var(--ww-link)" } : undefined}
+            style={graded ? { color: "var(--ww-link)" } : undefined}
           >
             {settled ? (
               <>
@@ -118,6 +139,11 @@ function StrategyCard({ s }: { s: RecordFeedStrategy }) {
               <span className="faint">—</span>
             )}
           </div>
+          {settled && !graded ? (
+            <div style={{ marginTop: "var(--s-2)" }}>
+              <Tag variant="warn">样本不足 · {s.record.settled} 仓</Tag>
+            </div>
+          ) : null}
           {settled ? (
             <>
               <div
@@ -160,17 +186,28 @@ function StrategyCard({ s }: { s: RecordFeedStrategy }) {
           )}
         </StatCard>
         <StatCard label="超额 · 命中 − 市场预期" icon="📐">
+          {/* 超额永远不与噪声底判词分家:没过样本闸就走「—」+ 琥珀徽章,
+              不给数(「—」是判不了,不是零)。 */}
           <div className="kpi-value">
-            {settled ? (
+            {graded ? (
               signed1(s.record.excess)
             ) : (
               <span className="faint">—</span>
             )}
           </div>
+          {settled && !graded ? (
+            <div style={{ marginTop: "var(--s-2)" }}>
+              <Tag variant="warn">样本不足 · {s.record.settled} 仓</Tag>
+            </div>
+          ) : null}
           <div className="kpi-sub">
-            {settled && s.record.sd > 0
-              ? `运气尺度 1σ = ${s.record.sd.toFixed(1)}`
-              : "尚无结算样本"}
+            {graded
+              ? s.record.sd > 0
+                ? `运气尺度 1σ = ${s.record.sd.toFixed(1)}`
+                : "运气尺度算不出 —— 这批入场价全在 0 / 100¢"
+              : settled
+                ? "样本够了才给数:没有 ±2σ 判词的超额只是噪声"
+                : "尚无结算样本"}
           </div>
         </StatCard>
       </section>
@@ -255,10 +292,7 @@ function StrategyCard({ s }: { s: RecordFeedStrategy }) {
             </div>
           </div>
         )}
-        <div className="note-strip">
-          {line ??
-            "已发布信号尚无结算样本:胜率、超额都要等第一条结算判定落地后才谈得上。"}
-        </div>
+        {/* 判词已上移到 KPI 之前(口径先行);这里只留读表用的口径条。 */}
         {s.settledRecent.length > 0 && (
           <div className="note-strip note-strip--warn">
             表内「—」是判不了,不是零 ——

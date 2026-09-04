@@ -386,8 +386,10 @@ export default function XAccountsSection({ token }: { token: string }) {
         title="🅒 𝕏 播报账号"
         hint="同时只有一个账号「使用中」，其余待命。切换后引擎下一轮（≤60s）自动改用新账号，无需重启。"
         aside={
+          // 描边白底 —— 页头的「刷新」是全页唯一的蓝底主按钮,任何子 tab 上
+          // 都同屏可见。
           <button
-            className="ds-btn ds-btn--primary ds-btn--sm"
+            className="ds-btn ds-btn--sm"
             disabled={busy || !token || !data?.appConfigured}
             onClick={() => void post({ action: "start" })}
           >
@@ -485,11 +487,13 @@ export default function XAccountsSection({ token }: { token: string }) {
                       @{a.screenName}
                     </a>
                   </td>
+                  {/* 「待命」不是故障也不是名字 —— 灰底名称标签不表状态,中性
+                      态走 muted 纯文字,让绿徽章一眼指出唯一在用的那个账号。 */}
                   <td data-label="状态">
                     {a.isActive ? (
                       <Tag variant="up">✅ 使用中</Tag>
                     ) : (
-                      <Tag>待命</Tag>
+                      <span className="muted">待命</span>
                     )}
                   </td>
                   <td className="muted" data-label="授权时间">
@@ -551,7 +555,7 @@ export default function XAccountsSection({ token }: { token: string }) {
               title="播报内容类型"
               hint="关掉的类型不再发帖也不占预算；数字参数（日上限/阈值/窗口/预算）改完点「保存参数」。开关与参数都在引擎下一轮（≤60s）生效，无需重启。重新开启不会补发关闭期间的旧内容。"
               aside={
-                /* 描边白底 —— 本屏的主按钮是上方的「授权新账号」。 */
+                /* 描边白底 —— 全页唯一的蓝底主按钮是页头的「刷新」。 */
                 <button
                   className="ds-btn ds-btn--sm"
                   disabled={busy || !token || !dirty}
@@ -669,7 +673,10 @@ export default function XAccountsSection({ token }: { token: string }) {
                       />
                       <span style={{ display: "grid", gap: 2 }}>
                         <span>
-                          {k.label} {!on ? <Tag>已关闭</Tag> : null}
+                          {/* 「已关闭」是需留神的状态,走琥珀 —— 灰底不表状态,
+                              裸标签会让关掉的那张卡与 🐳/🔥 类型名同色同形。 */}
+                          {k.label}{" "}
+                          {!on ? <Tag variant="warn">已关闭</Tag> : null}
                         </span>
                         <span className="ds-hint">
                           {kindHint(k.kind, data.params)}
@@ -734,7 +741,7 @@ export default function XAccountsSection({ token }: { token: string }) {
               title="✍️ 文案模板"
               hint="留空 = 内置英文文案。{占位符} 替换为实时数据，数据缺失的段渲染为空并自动收行。保存时校验：未知占位符/缺 {title}/夹带链接/固定部分超长都会被拒；运行时超 280 加权字符自动截标题，模板不可用则回退内置 —— 怎么都不会发出折叠帖或带链接帖。"
               aside={
-                /* 描边白底 —— 本屏的主按钮是上方的「授权新账号」。 */
+                /* 描边白底 —— 全页唯一的蓝底主按钮是页头的「刷新」。 */
                 <button
                   className="ds-btn ds-btn--sm"
                   disabled={busy || !token || !dirtyTpl}
@@ -836,7 +843,9 @@ export default function XAccountsSection({ token }: { token: string }) {
                   >
                     <thead>
                       <tr>
-                        <th />
+                        {/* 表头不留空 —— 窄屏堆叠卡靠 data-label 说「日期」,
+                            桌面表头得说同一句话。 */}
+                        <th style={{ padding: "6px 8px" }}>日期</th>
                         {Array.from({ length: 24 }, (_, h) => (
                           <th
                             key={h}

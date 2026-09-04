@@ -175,10 +175,12 @@ export function PipelinesOverview({
       carries:
         "① 告警频道(env) · ② 信号频道(付费实时 + 公开延迟) · 多目标(tg_targets,按类型分发)",
       manage: "bot+频道组合的增删改/暂停,按类型分发",
-      // 状态是徽章不是句子:绿=正常、红=停跳/连败、灰底=名称标签(不表状态)。
+      // 状态是徽章不是句子:绿=正常、红=停跳/连败。灰底只给名称标签,不表
+      // 状态 —— 所以「判不了」(从没发过任何一条)走 faint 文字而不是第五类
+      // 徽章,与 KPI 条、健康度区块同一副面孔。
       status:
         tgOk == null ? (
-          <Tag>无发送记录</Tag>
+          <span className="faint">无发送记录</span>
         ) : tgOk.failing ? (
           <Tag variant="down">连败 {tgOk.consecutiveSendFailures}</Tag>
         ) : (
@@ -301,7 +303,29 @@ export function RoutingMatrix({
   channels: { key: string }[] | null;
   onJump: (section: string) => void;
 }) {
-  if (!routing) return null;
+  // 空态不返回 null:这块默认展开,routing 还没回来时整张矩阵连同标题条
+  // 一起消失,运营者看不出是「在加载」还是「这版接口没这块」,数据回来后
+  // 卡片又突然长高一截。
+  if (!routing) {
+    return (
+      <Foldable
+        storageKey="manageGuideMatrix"
+        title="路由矩阵(事件类型 × 管线)"
+        hint="每格显示当前开关态,点击直达属主开关。矩阵不另存配置 —— 每个开关只有一个属主,这里只是拼图。"
+        summary="接线状态还没读到"
+        defaultOpen
+      >
+        <div className="ds-empty">
+          {"还没读到当前接线状态。"}
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            {
+              "矩阵读的是 /api/admin/signals 的 routing —— 用页头「刷新」再取一次;取不到也不影响改开关,每个开关的属主子模块(告警条件 / TG 目标 / 端点 / 𝕏)照常可用。"
+            }
+          </div>
+        </div>
+      </Foldable>
+    );
+  }
   const on = (b: boolean) => (b ? "开" : "关");
   const tgSignal =
     channels?.some((c) => c.key === "tg_paid" || c.key === "tg_public") ??

@@ -72,9 +72,9 @@ export const DICT_CONSENSUS: Record<string, string> = {
     "Widen the window to 12h, or drop the per-wallet net-buy floor to $5,000, and look again.",
   "去实时告警 →": "Go to live alerts →",
   "共 {n} 组共识": "{n} consensus groups",
-  // 表下方琥珀条:「—」是判不了,不是零
-  "现价栏的 — 表示该结果缺 asset、取不到价（不是加载中），跟单空间也随之判不了；明细里的 — 表示该钱包还没有已结算样本，评分算不出来，都不等于 0。建仓均价按金额加权；已结算的市场不再谈跟单空间，只标命中或落空。":
-    "A — under 现价 means the outcome has no asset to price (not “loading”), which also leaves the follow gap undecidable; a — in the details means the wallet has no settled sample yet, so no score can be computed. Neither is a zero. Average entry is size-weighted; settled markets drop the follow gap and show hit or miss instead.",
+  // 表下方琥珀条:「—」是判不了,不是零 —— 三处成因逐一列全
+  "现价栏的 — 表示该结果缺 asset、取不到价（不是加载中），跟单空间也随之判不了；展开明细里有两种 —：评分栏的 — 是该钱包还没有已结算样本、评分算不出来，当前持仓栏的 — 是它此刻在该结果已无持仓（窗口内买过但已清仓或转向）。三种都不等于 0。建仓均价按金额加权；跟单空间是成本类 ¢ 差、一律中性色，只有 |¢差| 超过 10¢ 才转琥珀；已结算的市场不再谈跟单空间，只标命中或落空。":
+    "A — under Now means the outcome has no asset to price (not “loading”), which also leaves the follow gap undecidable. Expanded details carry two more: a — under Score means the wallet has no settled sample yet, so no score can be computed; a — under Current position means it holds none of this outcome right now (bought in-window, since cleared or flipped). None of the three is a zero. Average entry is size-weighted; the follow gap is a cost in ¢, so it stays neutral in colour and only turns amber past |10¢|; settled markets drop the follow gap and show hit or miss instead.",
   "市场 · 结果": "Market · Outcome",
   钱包数: "Wallets",
   建仓均价: "Avg entry",
@@ -120,8 +120,8 @@ export const DICT_CONSENSUS: Record<string, string> = {
   // 倾斜列改成图标 + 文字:蓝色在全站只表示可点击,不表示状态结论
   "⬛ 倒向 {pct}%": "⬛ Leans {pct}%",
   "⚠️ 势均力敌 {pct}%": "⚠️ Balanced {pct}%",
-  "天平称的是质量加权额（净买入 × 钱包评分权重），不是原始金额；同时在两边都净买入的钱包按对冲/做市从两侧一起剔除。明细里的 — 表示该钱包还没有已结算样本，评分与胜率判不了，不是 0。":
-    "The balance weighs quality-weighted size (net buy × the wallet's score weight), not raw dollars; wallets that net-bought both sides are dropped from both as hedging/market-making. A — in the details means the wallet has no settled sample yet, so score and win rate are undecidable — not zero.",
+  "天平称的是质量加权额（净买入 × 钱包评分权重），不是原始金额；同时在两边都净买入的钱包按对冲/做市从两侧一起剔除。展开明细里有两种 —：评分与胜率栏的 — 是该钱包还没有已结算样本、判不了，当前持仓栏的 — 是它此刻在该结果已无持仓（窗口内买过但已清仓或转向）。都不是 0。":
+    "The balance weighs quality-weighted size (net buy × the wallet's score weight), not raw dollars; wallets that net-bought both sides are dropped from both as hedging/market-making. Expanded details carry two kinds of —: under Score and Win rate it means the wallet has no settled sample yet, so neither is decidable; under Current position it means the wallet holds none of this outcome right now (bought in-window, since cleared or flipped). Neither is a zero.",
   市场: "Market",
   质量加权天平: "Quality-weighted balance",
   倾斜: "Tilt",

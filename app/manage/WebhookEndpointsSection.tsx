@@ -323,7 +323,7 @@ export default function WebhookEndpointsSection({
             })}
           </div>
         </div>
-        {/* 描边白底 —— 本屏的主按钮是上方的「签发新 key」,每屏至多一个。 */}
+        {/* 描边白底 —— 全页唯一的蓝底主按钮是页头的「刷新」,每屏至多一个。 */}
         <button
           className="ds-btn"
           disabled={
@@ -338,7 +338,18 @@ export default function WebhookEndpointsSection({
           登记端点
         </button>
       </div>
-      {webhooks == null || webhooks.length === 0 ? (
+      {/* 「读不到」与「确实一个都没有」是两件事:上层 KeysSection 拉取失败时
+          把 webhooks 置回 null,此刻屏幕上会同时出现 key 表的「需要有效管理
+          令牌」与这里的「尚无端点」—— 后者把判不了说成了零。 */}
+      {webhooks == null ? (
+        <div className="ds-empty">
+          还没读到端点清单。
+          <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
+            与上方 key 表同一次请求 —— 令牌失效或 /api/admin/webhooks
+            拒绝时两张表一起空。页头「刷新」可重取。
+          </div>
+        </div>
+      ) : webhooks.length === 0 ? (
         <div className="ds-empty">
           尚无 webhook 端点。
           <div className="ds-hint" style={{ marginTop: "var(--s-2)" }}>
@@ -390,13 +401,16 @@ export default function WebhookEndpointsSection({
                       </div>
                     )}
                   </td>
+                  {/* 「已停用」是需留神的状态(手动停用,或连败 10 次自动熔断),
+                      走琥珀 —— 灰底是名称标签,不表状态,此前它把一个「不再投递」
+                      的端点渲染得像个中性名字。 */}
                   <td data-label="状态">
                     {w.key_revoked_at != null ? (
                       <Tag variant="down">key 已吊销</Tag>
                     ) : w.active === 1 ? (
                       <Tag variant="up">活跃</Tag>
                     ) : (
-                      <Tag>已停用</Tag>
+                      <Tag variant="warn">已停用</Tag>
                     )}
                   </td>
                   <td

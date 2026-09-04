@@ -57,6 +57,12 @@ export const DICT_SELFTEST: Record<string, string> = {
   "🏆 已在池内": "🏆 In pool",
   "🏆 该地址已在本站聪明钱池内（分位含自身）":
     "🏆 This address is already in the smart-money pool (percentiles include itself)",
+  // 「前 X%」是 midrank 分位的镜像换算,换算规则与「分位含自身」都写在卡底
+  // 那条灰底口径条里(桌面 hover 的裸 title 触屏读不到,口径不能藏)。
+  "「池内前 X%」= 池内约 X% 的成员不低于你（同值各算一半）":
+    '"Top X% in pool" = about X% of members are not below you (ties split evenly)',
+  "该地址已在池内，分位含自身":
+    "This address is already in the pool, so the percentiles include it",
   // 「已结算 {n} 仓」不在此片:与 follow 分片同键同值,统一由那片提供。
   "判决计算于 {at}": "Verdict computed {at}",
   "战绩数据截至 {at}": "Record data as of {at}",
@@ -66,6 +72,10 @@ export const DICT_SELFTEST: Record<string, string> = {
   // -------- 口径展示(数字来自 admissionGate 常量,不硬编码)
   准入口径: "Admission bar",
   "· 两条路满足其一": "· either path qualifies",
+  // 「❌ 未到线」只在闸门明确判定 fail(两条路都没到线)时出;pass 时闸门
+  // 不告诉我们走的是哪一条,展示层不复算,所以下面两个键暂时没有调用点
+  // (等服务端补 admittedPath 字段后原样复用,不重编)。
+  "❌ 未到线": "❌ Below the line",
   "✅ 走这条过的": "✅ cleared via this path",
   未走这条: "Not this path",
   "卡内 — 是「判不了」不是零：做市商或截断样本下胜率 / ROI 被判为不可用，池内该轴没有可比成员时分位同样不出数。":

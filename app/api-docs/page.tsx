@@ -446,7 +446,9 @@ function Block({
                 padding: "4px 10px",
                 borderRadius: "var(--r-sm)",
                 background: "var(--ww-code-tab)",
-                color: "#fff",
+                // 深色面上的字色走令牌（--ww-text-on-dark，与 tip-pop / 代码面板
+                // 同一档），不写死 #fff：面板配色只在 :root 那一处调。
+                color: "var(--ww-text-on-dark)",
               }}
             >
               {langLabel(block.lang, block.code)}

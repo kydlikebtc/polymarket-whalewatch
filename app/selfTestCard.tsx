@@ -6,7 +6,7 @@
 //
 // 版式(Etherscan 风设计稿 08 帧「判决卡」):
 //   卡一 判决徽章条(徽章上色 + 句子中性)→ 三格 KPI(格间 1px 竖线)→ 灰底口径条
-//   卡二 准入口径两条路(每条右侧一个状态徽章)→ 琥珀口径条
+//   卡二 准入口径两条路(闸门判定没到线时右侧出红徽章)→ 琥珀口径条
 //   末行 三个 32px 描边操作钮
 // 轻重只靠徽章颜色:没有行级强调、没有字号跳档、数字与正文同字体常规字重。
 import { useState } from "react";
@@ -25,7 +25,10 @@ type Tone = "default" | "up" | "down" | "warn";
  * 两个出口的同一个数不会长得不一样。数字与正文同字体、常规字重。
  */
 function fmtUsdSigned(n: number): string {
-  const sign = n < 0 ? "-" : "+";
+  // 负号是 U+2212「−」不是 ASCII 连字符 —— 与 lib/embedCards 的同名格式器、
+  // app/ui.tsx fmtSignedUsdCompact、app/follow/page.tsx 的 MINUS 一致:
+  // 同一个数在判决卡与嵌入卡上必须长得一模一样。
+  const sign = n < 0 ? "−" : "+";
   return `${sign}$${Math.round(Math.abs(n)).toLocaleString("en-US")}`;
 }
 
@@ -100,29 +103,18 @@ function headline(
 }
 
 /**
- * 两条准入路各自的达成状态 —— 只**解释**权威闸门已给出的结论,不另判:
- * pass 时点出走的是哪条路(闸门既已 admit,两条路必有其一成立),
- * fail 时闸门保证两条都没到线;其余判决(判不了 / 机器人 / 无数据)不标。
- * 万一与闸门对不上(理论上不会),宁可一个徽章都不出,也不与判决词打架。
+ * 两条准入路的达成状态 —— **只读权威闸门已经给出的结论**,一个条件都不在
+ * 展示层复算(lib/selfTest 对 gate 字段的契约原文:「evaluateAdmission 原始
+ * 结果 —— 权威口径,展示层不得另判」)。
+ *   gate="hold" 且样本判得出(verdict=fail):闸门已保证两条路都没到线 →
+ *   两条都标未到线;
+ *   gate="admit":闸门只说「过了」,没说走的是哪一条 —— 响应里没有这个字段,
+ *   与其在这里逐条复刻 admissionGate 的判据(闸门口径一改,这张卡就开始
+ *   说谎),不如不标:卡一的「✅ 过闸」徽章已经把结论说清楚了。
+ *   其余判决(机器人 / 判不了 / 无数据)同样不标。
  */
-function admittedPaths(d: SelfTestResponse): [boolean, boolean] | null {
-  const s = d.stats;
-  if (!s) return null;
-  if (d.verdict === "fail") return [false, false];
-  if (d.verdict !== "pass") return null;
-  const c = d.criteria;
-  const pnlPositive = s.netPnl != null && s.netPnl > 0;
-  const p1 =
-    pnlPositive &&
-    s.winRate != null &&
-    s.settledCount >= c.minSettled &&
-    s.winRate >= c.minWinRate;
-  const p2 =
-    pnlPositive &&
-    s.roi != null &&
-    s.roi >= c.minRoi &&
-    s.settledCount >= c.minSettledRoi;
-  return p1 || p2 ? [p1, p2] : null;
+function pathsAllMissed(d: SelfTestResponse): boolean {
+  return d.gate === "hold" && d.verdict === "fail";
 }
 
 /** midrank 分位(超过多少人)→ 「池内前 X%」。0.x% 保守收成 1%。 */
@@ -153,18 +145,9 @@ function AxisCell({
       <div className="kpi-value" style={tone ? { color: tone } : undefined}>
         {value}
       </div>
-      <div
-        className="kpi-sub"
-        // 原始口径(超过多少人 · 该轴样本数)留在 title 里,不丢。
-        title={
-          pctile
-            ? t("超过池内约 {p}% 成员 · 样本 {n}", {
-                p: Math.round(pctile.pct),
-                n: pctile.sampleN,
-              })
-            : undefined
-        }
-      >
+      {/* 「池内前 X%」的换算口径不挂裸 title(桌面 hover 才看得到,触屏永远
+          读不到),写进卡底那条灰底口径条里 —— 口径先行,不放脚注。 */}
+      <div className="kpi-sub">
         {pctile
           ? t("池内前 {p}% · 样本 {n}", {
               p: topPct(pctile.pct),
@@ -176,15 +159,19 @@ function AxisCell({
   );
 }
 
-/** 准入口径的一条路:门槛说明永不截断(换行,顶对齐),右侧一列状态徽章。 */
+/**
+ * 准入口径的一条路:门槛说明永不截断(换行,顶对齐),右侧一列状态徽章。
+ * 徽章只在闸门明确判定「没到线」时出(红描边 = 未中,readme §2.1);
+ * 灰底是名称标签,不表示状态,不拿它承载达成与否。
+ */
 function PathRow({
   text,
-  met,
+  missed,
   last,
   t,
 }: {
   text: string;
-  met: boolean | null;
+  missed: boolean;
   last?: boolean;
   t: T;
 }) {
@@ -204,11 +191,7 @@ function PathRow({
     >
       <span style={{ lineHeight: 1.35, overflowWrap: "anywhere" }}>{text}</span>
       <span style={{ display: "flex", justifyContent: "flex-end" }}>
-        {met == null ? null : met ? (
-          <Tag variant="up">{t("✅ 走这条过的")}</Tag>
-        ) : (
-          <Tag>{t("未走这条")}</Tag>
-        )}
+        {missed ? <Tag variant="down">{t("❌ 未到线")}</Tag> : null}
       </span>
     </div>
   );
@@ -221,7 +204,7 @@ export function SelfTestVerdictCard({ data }: { data: SelfTestResponse }) {
   const head = headline(data, t);
   const s = data.stats;
   const showAxes = data.verdict !== "no_data";
-  const paths = admittedPaths(data);
+  const missedBoth = pathsAllMissed(data);
 
   const embedUrl = `/embed/selftest?address=${data.address}`;
   const copyEmbed = () => {
@@ -236,13 +219,25 @@ export function SelfTestVerdictCard({ data }: { data: SelfTestResponse }) {
       });
   };
 
+  const hasPctile =
+    showAxes &&
+    (data.percentiles.winRate != null ||
+      data.percentiles.netPnl != null ||
+      data.percentiles.score != null);
+
   // 卡底灰条:分位样本口径先说,再说数据新鲜度(统计声明不当脚注)。
   // 「按本站口径挑选,非全体交易者」写在卡内而不是只写在 /selftest 的口径条里
   // —— 这张卡也长在钱包档案页(SelfTestBlock)上,那里没有口径条,它得自己说清。
+  // 「前 X%」的换算口径与「分位含自身」同样写在这里:它们都曾被塞进裸 title,
+  // 而裸 title 触屏永远读不到 —— 口径不允许藏在比脚注更深的位置。
   const meta = [
     t("分位样本 = 当前池 {n} 名成员（按本站口径挑选，非全体交易者）", {
       n: data.poolSize,
     }),
+    hasPctile
+      ? t("「池内前 X%」= 池内约 X% 的成员不低于你（同值各算一半）")
+      : "",
+    data.inPool ? t("该地址已在池内，分位含自身") : "",
     s ? t("已结算 {n} 仓", { n: s.settledCount }) : "",
     t("判决计算于 {at}", { at: fmtTs(data.computedAt, locale) }),
     data.statsFetchedAt != null
@@ -271,11 +266,9 @@ export function SelfTestVerdictCard({ data }: { data: SelfTestResponse }) {
           <span style={{ flex: "1 1 260px", minWidth: 0, lineHeight: 1.35 }}>
             {head.text}
           </span>
-          {data.inPool ? (
-            <span title={t("🏆 该地址已在本站聪明钱池内（分位含自身）")}>
-              <Tag>{t("🏆 已在池内")}</Tag>
-            </span>
-          ) : null}
+          {/* 灰底名称标签(这是个名字,不表示状态);「分位含自身」这条口径
+              写在卡底的口径条里,不藏进裸 title。 */}
+          {data.inPool ? <Tag>{t("🏆 已在池内")}</Tag> : null}
         </div>
 
         {showAxes ? (
@@ -333,7 +326,7 @@ export function SelfTestVerdictCard({ data }: { data: SelfTestResponse }) {
             n: data.criteria.minSettled,
             p: Math.round(data.criteria.minWinRate * 100),
           })}
-          met={paths ? paths[0] : null}
+          missed={missedBoth}
           t={t}
         />
         <PathRow
@@ -341,7 +334,7 @@ export function SelfTestVerdictCard({ data }: { data: SelfTestResponse }) {
             n: data.criteria.minSettledRoi,
             p: Math.round(data.criteria.minRoi * 100),
           })}
-          met={paths ? paths[1] : null}
+          missed={missedBoth}
           last
           t={t}
         />

@@ -11,11 +11,37 @@ import { useLang } from "../i18n";
 //
 // 版式出自设计稿 11「市场卡 · 粘贴落地页」:页头 → 48px 主搜索框(最宽 720)
 // → 一张双栏白卡(左「支持三种格式」三行,右「卡里会告诉你」五格)。
-// 搜索框内的放大镜是 lucide line icon(§6:功能图标走 lucide,不用 emoji),
-// 以 background-image 画进输入框内侧 —— 这样输入框仍是唯一那个元素,
-// .ds-input:focus 的焦点环照旧覆盖整个框,不会被外层包裹层裁掉。
-const SEARCH_ICON =
-  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236c757d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E\")";
+// 搜索框内的放大镜是 lucide line icon(§6:功能图标走 lucide,不用 emoji)。
+// 内联 svg + stroke="currentColor",颜色由 --ww-text-muted 接管 —— 之前是
+// data-URI 背景图,URI 里塞不进 var(),只能写死 #6c757d,令牌一调它就掉队。
+// 绝对定位压在输入框上、不吃指针事件:输入框仍是唯一那个元素,
+// .ds-input:focus 的焦点环照旧覆盖整只框,不会被外层包裹层裁掉。
+function SearchIcon() {
+  return (
+    <svg
+      aria-hidden
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{
+        position: "absolute",
+        left: 14,
+        top: "50%",
+        marginTop: -8,
+        color: "var(--ww-text-muted)",
+        pointerEvents: "none",
+      }}
+    >
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
+  );
+}
 
 // 落地页那张卡的左栏:一行「名称 + 例子」。例子用 muted，名称用正文色。
 // last 那一行不画下边线 —— 左栏比右栏矮,再画一条就是一根悬在卡中间的横线
@@ -106,6 +132,7 @@ export default function MarketLanding() {
           marginBottom: "var(--s-6)",
         }}
       >
+        <SearchIcon />
         <input
           className="ds-input"
           style={{
@@ -114,10 +141,6 @@ export default function MarketLanding() {
             height: 48,
             paddingLeft: 38,
             paddingRight: 124,
-            backgroundImage: SEARCH_ICON,
-            backgroundRepeat: "no-repeat",
-            backgroundPosition: "14px center",
-            backgroundSize: "16px 16px",
           }}
           autoFocus
           value={input}

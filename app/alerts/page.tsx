@@ -230,7 +230,9 @@ function StatLine({ label, stat }: { label: string; stat: OutcomeStat }) {
   );
   // 层级来自 12px 小标 + 徽章，不来自字号跳档或加粗：命中数与正文同字号
   // 常规字重（数字不加粗、不放大），「样本不足」改成琥珀描边徽章 —— 它是
-  // 「需留神的口径」，比把整行调暗更明确。
+  // 「需留神的口径」，比把整行调暗更明确。徽章走 20px/11px 的 ds-tag--sm
+  // （全站「样本不足」的统一档，见 follow / DeepAnalysis）：字阶里没有
+  // 10px，最小是徽章内 11px。
   return (
     <span
       style={{
@@ -250,7 +252,7 @@ function StatLine({ label, stat }: { label: string; stat: OutcomeStat }) {
         {stat.hits}/{stat.total} ({pct}%)
       </span>
       {small ? (
-        <span className="ds-tag ds-tag--xs ds-tag--warn">{t("样本不足")}</span>
+        <span className="ds-tag ds-tag--warn ds-tag--sm">{t("样本不足")}</span>
       ) : (
         <span className="muted" style={{ fontSize: "var(--t-sm)" }}>
           {t("95%区间 {lo}–{hi}%", {
@@ -273,6 +275,35 @@ function StatLine({ label, stat }: { label: string; stat: OutcomeStat }) {
           · {parts.join(" · ")}
         </span>
       ) : null}
+    </span>
+  );
+}
+
+// 表头的 (?) 提示图标 —— 这套皮的标志性细节（设计系统 §6）：每一个有口径
+// 的列头后面跟一个 13px 的淡色问号圈，口径写在它的 title 里。这里用 <Icon>
+// 包住而不是画一个 aria-hidden 的死圈：触屏没有 hover，只挂 title 等于把
+// 口径对触屏隐藏，而 Icon 自带 tip-pop（tap 弹出同一段文字）。
+function HeadTip({ tip }: { tip: string }) {
+  return (
+    <span
+      style={{
+        flex: "0 0 auto",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 13,
+        height: 13,
+        marginLeft: "var(--s-1)",
+        verticalAlign: "middle",
+        borderRadius: "var(--r-pill)",
+        border: "1px solid var(--ww-text-faint)",
+        color: "var(--ww-text-faint)",
+        fontSize: 9,
+        fontWeight: 400,
+        lineHeight: 1,
+      }}
+    >
+      <Icon s="?" title={tip} />
     </span>
   );
 }
@@ -446,6 +477,9 @@ export default function Page() {
   // 最新一条命中的时间 —— /api/alerts 已按 created_at DESC 返回，取首行。
   const latestAt = data.alerts[0]?.createdAt ?? 0;
   const tg = data.telegramHealth ?? null;
+  // 「验证」列的口径 —— 表头 title（桌面悬停）与 (?) 圆点的 tip-pop（触屏
+  // tap）同一份文案，两条路径不会漂移。三个 horizon 与上方口径条一致。
+  const verifyTip = t("信号后 10m / 1h / 24h 价格变化（按方向着色）与结算结果");
 
   return (
     <main className="ds-main">
@@ -457,10 +491,15 @@ export default function Page() {
             {t("📣 每 5 秒轮询 · 后台标签页暂停")}
           </div>
           <h1 className="page-head__title">{t("实时告警")}</h1>
+          {/* 说明段的第二句是时区声明 —— 设计系统 §1 要求时区在页头注明
+              一次。本页的 KPI 时刻与流里的时间都走浏览器本地时区，而顶栏
+              「实时」时钟是 UTC；不注明的话 UTC+8 的读者会看到顶栏 04:42
+              与正下方 KPI 12:05 并排、差 8 小时却没有任何解释。 */}
           <p className="page-head__desc">
             {t(
               "命中告警条件的大额成交逐条出现在下方，最新一条在最上面。条件（金额 / 方向 / 赔率 / 地址年龄 / 冷却 / 聪明钱）统一在运营页配置。",
-            )}
+            )}{" "}
+            {t("本页时间按浏览器本地时区显示（顶栏的「实时」时钟走 UTC）。")}
           </p>
         </div>
         <div className="page-head__actions">
@@ -633,10 +672,9 @@ export default function Page() {
                   <th className="is-right">{t("金额")}</th>
                   <th className="is-right">{t("价格")}</th>
                   <th>{t("钱包")}</th>
-                  <th
-                    title={t("信号后 1h/24h 价格变化（按方向着色）与结算结果")}
-                  >
+                  <th title={verifyTip}>
                     {t("验证")}
+                    <HeadTip tip={verifyTip} />
                   </th>
                   <th>{t("时间")}</th>
                 </tr>
@@ -831,12 +869,14 @@ export default function Page() {
         </div>
 
         {/* 卡底琥珀说明条 —— 降级态的读法。「—」是「判不了」不是零，
-            两种成因（结果名缺 / 钱包地址缺）与「…」补算中要能分开读，
-            所以写在表下方而不是混进页头的统计声明里。 */}
+            同一张表里有三处「—」（结果名缺 / 钱包地址缺 / 已结算但记平局），
+            必须逐处列全（设计系统 §1.2 与 guidelines/degraded.html：穷举一半
+            会让读者以为只有两种成因）；「…」补算中是另一个非「—」的降级态。
+            写在表下方而不是混进页头的统计声明里。 */}
         {data.count > 0 ? (
           <div className="note-strip note-strip--warn">
             {t(
-              "验证列「…」表示这一笔还在补算：新命中立即取，未取到的每分钟重试一批（一次最多 100 条）。「—」是「判不了」不是零 —— 结果列的「—」表示该笔没带结果名，钱包列的「—」表示没带钱包地址。",
+              "⚠️ 表里的三处「—」各有各的含义，不能都读成 0：结果列的「—」表示该笔没带结果名；钱包列的「—」表示没带钱包地址；验证列的「—」表示这一笔已结算但记平局（50/50 结算或结算价≈成交价），不计入胜率。另有一个非「—」的降级态：验证列的「…」表示这一笔还在补算 —— 新命中立即取，未取到的每分钟重试一批（一次最多 100 条）。",
             )}
           </div>
         ) : null}

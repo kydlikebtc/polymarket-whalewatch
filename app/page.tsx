@@ -551,23 +551,41 @@ export default function Page() {
         <section className="kpi" style={{ marginBottom: "var(--s-4)" }}>
           <StatCard label={t("笔数")} icon="📋">
             <div className="kpi-value">{fmtUsd(stats.count)}</div>
+            {/* 值走 stats.count（服务端口径:只过 minUsd/side/hours）,副行走
+                displayedTrades（再过价格区间 / 类型 / 地址年龄三项客户端筛选）。
+                两个口径不同源,所以副行必须自报主语 —— 否则「已全部显示」会在
+                客户端筛选把 1,911 收到 240 行时,对着 1,911 这个值撒谎。 */}
             <div className="kpi-sub">
               {hiddenCount > 0
-                ? t("显示前 {n} 条", { n: fmtUsd(visibleTrades.length) })
-                : t("已全部显示")}
+                ? t("符合筛选 {m} 笔 · 显示前 {n} 条", {
+                    m: fmtUsd(displayedTrades.length),
+                    n: fmtUsd(visibleTrades.length),
+                  })
+                : t("符合筛选 {m} 笔 · 已全部显示", {
+                    m: fmtUsd(displayedTrades.length),
+                  })}
             </div>
           </StatCard>
           <StatCard label={t("总额")} icon="💰">
             <div className="kpi-value" style={{ color: "var(--ww-link)" }}>
               ${fmtUsd(stats.totalUsd)}
             </div>
+            {/* 门槛读 data.filters.minUsd（跟 stats 同一次响应）而不是 minUsd
+                这个筛选 state:切金额档后深拉要 5-15 秒,期间 state 已是新门槛、
+                总额还是旧门槛的数,副行会先于值改口。 */}
             <div className="kpi-sub">
-              {t("单笔 ≥ {amt}", { amt: `$${fmtUsd(minUsd)}` })}
+              {t("单笔 ≥ {amt}", {
+                amt: `$${fmtUsd(data?.filters.minUsd ?? minUsd)}`,
+              })}
             </div>
           </StatCard>
+          {/* 图标位用 📊 —— 买卖双向额的分格,与 /wallet 档案「近窗买入 / 卖出」
+              KPI 同一图标、同一语义。不用 ⚖️:它在本站已被「聪明钱分歧」占死
+              (glossary.ts、/consensus 与 /pulse 的「方向分歧」KPI、市场信号卡
+              「⚖️ 分歧」),一个 emoji 不能背两个含义。 */}
           <StatCard
             label={t("买 / 卖 · 买方占 {pct}%", { pct: buyPct.toFixed(1) })}
-            icon="⚖️"
+            icon="📊"
           >
             <div className="kpi-value" style={{ color: "var(--ww-up)" }}>
               ${fmtUsd(buyUsd)}
@@ -908,7 +926,14 @@ export default function Page() {
                   {sortArrow("time")}
                 </th>
                 <th>{t("市场 / 结果")}</th>
-                <th>{t("方向")}</th>
+                {/* 有口径的列头把口径写在 title 里（与下方「战绩」同一做法） */}
+                <th
+                  title={t(
+                    "该笔成交的方向：BUY = 买入该结果的份额，SELL = 卖出该结果的份额",
+                  )}
+                >
+                  {t("方向")}
+                </th>
                 <th
                   className="is-sortable is-right"
                   onClick={() => toggleSort("amount")}
@@ -954,11 +979,11 @@ export default function Page() {
                 className="ds-btn ds-btn--sm"
                 onClick={() => setShowAllRows(true)}
               >
-                {t("显示其余 {n} 行", { n: hiddenCount })}
+                {t("显示其余 {n} 行", { n: fmtUsd(hiddenCount) })}
               </button>
               <span>
                 {t("统计卡与「符合筛选」计数已包含全部 {n} 笔", {
-                  n: displayedTrades.length,
+                  n: fmtUsd(displayedTrades.length),
                 })}
               </span>
             </div>

@@ -122,14 +122,13 @@ export default function StatusPage() {
 
   const tone = health == null ? "muted" : health.ok ? "up" : "down";
   // 状态页只认绿 / 红 / 灰三态 —— 多一档颜色就多一次「这个黄的到底算不算
-  // 事」的犹豫。emoji 只落在徽章内与 KPI 图标位这两个允许的位置。
+  // 事」的犹豫。emoji 只落在徽章内、KPI 图标位与 12px 小标前缀这三处。
   const toneIcon = tone === "up" ? "✅" : tone === "down" ? "❌" : "⏳";
+  // 徽章只有绿 / 红两类。tone === "muted"（还没取到数据）不走徽章,见页头动作位。
   const tonePill =
-    tone === "up"
-      ? "status-pill status-pill--up"
-      : tone === "down"
-        ? "status-pill status-pill--down"
-        : "status-pill";
+    tone === "down"
+      ? "status-pill status-pill--down"
+      : "status-pill status-pill--up";
   const headline =
     health == null
       ? t("正在获取状态…")
@@ -163,19 +162,38 @@ export default function StatusPage() {
           </p>
         </div>
         <div className="page-head__actions">
-          <span
-            className={tonePill}
-            style={{
-              gap: "var(--s-1)",
-              height: 32,
-              padding: "0 var(--s-3)",
-              borderRadius: 8,
-              fontSize: "var(--t-base)",
-            }}
-          >
-            <span aria-hidden>{toneIcon}</span>
-            {headline}
-          </span>
+          {tone === "muted" ? (
+            // 「还没取到数据」不摆徽章：徽章只有绿/红/琥珀/蓝/灰底五类语义，
+            // 没有「还不知道」这一档；裸 .status-pill（透明底 + 灰描边）会变成
+            // 第六种药丸，而灰底那类是名称标签专用、不表示状态。降成与页头小标
+            // 同款的 13px 提示文字（emoji 作小标前缀，是允许的三处之一）。
+            <span
+              className="ds-hint"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "var(--s-1)",
+                height: 32,
+              }}
+            >
+              <span aria-hidden>{toneIcon}</span>
+              {headline}
+            </span>
+          ) : (
+            <span
+              className={tonePill}
+              style={{
+                gap: "var(--s-1)",
+                height: 32,
+                padding: "0 var(--s-3)",
+                borderRadius: 8,
+                fontSize: "var(--t-base)",
+              }}
+            >
+              <span aria-hidden>{toneIcon}</span>
+              {headline}
+            </span>
+          )}
         </div>
       </header>
 
@@ -423,12 +441,23 @@ export default function StatusPage() {
       <div className="ds-table-wrap">
         <table className="ds-table">
           <thead>
+            {/* 列宽照设计稿 15：循环名自适应（1fr）· 状态 110 · 最近心跳 120
+                · 今日轮次 110 · 今日最长停顿 110。不给宽度时 auto layout 会让
+                停跳那格的「影响说明」把状态列撑到 400px、循环名列反被挤扁 ——
+                与设计稿的比例正好相反。表头永远 nowrap（全局 .ds-table th 已给），
+                所以 width 只是分配倾向，长译文不会被截断。 */}
             <tr>
               <th>{t("循环")}</th>
-              <th>{t("状态")}</th>
-              <th className="is-right">{t("最近心跳")}</th>
-              <th className="is-right">{t("今日轮次")}</th>
-              <th className="is-right">{t("今日最长停顿")}</th>
+              <th style={{ width: 110 }}>{t("状态")}</th>
+              <th className="is-right" style={{ width: 120 }}>
+                {t("最近心跳")}
+              </th>
+              <th className="is-right" style={{ width: 110 }}>
+                {t("今日轮次")}
+              </th>
+              <th className="is-right" style={{ width: 110 }}>
+                {t("今日最长停顿")}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -469,7 +498,11 @@ export default function StatusPage() {
                         {t(meta.cadence)}
                       </div>
                     </td>
-                    <td data-label={t("状态")}>
+                    {/* col-block：停跳时这格有两个子元素（徽章 + 影响说明），
+                        ≤640 的堆叠卡默认把 td 摊成 [标签][内容] 一行右对齐，
+                        影响说明会被挤到徽章右侧只剩两百来像素。改成整块左对齐，
+                        标签独占一行、说明落回徽章下方。 */}
+                    <td className="col-block" data-label={t("状态")}>
                       {l.stale ? (
                         <>
                           <span

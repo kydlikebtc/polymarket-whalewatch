@@ -1055,6 +1055,20 @@ function HelpDot() {
   );
 }
 
+// 有口径的列头 = 列名 + 一枚 (?):这套皮的规矩是「每一个有口径的列头都带
+// 一个 (?),口径写在它的 title 里」(设计系统 §6)。口径文本仍然挂在外层
+// <th title> 上,这里只补那枚可见的圈 —— 否则读者根本不知道这一列还有一段
+// 口径可读。inline-flex + gap 4:th 是 nowrap 且常带 .is-right,包一层
+// inline-flex 才能让圈跟着文字一起靠右,而不是单独掉到下一行。
+function ThHelp({ children }: { children: ReactNode }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      {children}
+      <HelpDot />
+    </span>
+  );
+}
+
 // 单个指标块(Metric):12px 大写小标(+ 口径 (?))· 15px 值 · 12px 副行。
 // 扁平等权 —— 一格与另一格之间没有主次,字号一律相同,轻重靠读者在问什么。
 // sub 是独立的插槽(不再把副行塞进 value):值行要 nowrap + 省略兜底,副行
@@ -1635,11 +1649,13 @@ function StrategyCard({
         {!s.enabled ? <Tag variant="warn">{t("已停用")}</Tag> : null}
         {/* 衰变哨兵徽章:只亮 watch/degraded 两态 —— ok 不发奖章(健康是
             默认预期),insufficient 不装懂(样本不足连「健康」都不敢说)。
-            证据在详情面板的哨兵 Metric。 */}
+            证据在详情面板的哨兵 Metric。两态都走琥珀:watch 与 degraded
+            同属「需留神的口径」,只是程度不同(文案区分),灰底在这套皮里
+            只表示「这是个名字」,拿来标运行状态会把状态降级成分类名。 */}
         {s.decay?.state === "degraded" ? (
           <Tag variant="warn">{t("⚠ 疑似衰变")}</Tag>
         ) : s.decay?.state === "watch" ? (
-          <Tag>{t("衰变观察")}</Tag>
+          <Tag variant="warn">{t("衰变观察")}</Tag>
         ) : null}
       </div>
       {/* 门槛条(见 cardParamsHint 注释):只留跨档差异化门槛 —— 12 档统一的
@@ -2969,10 +2985,11 @@ function StrategyDetailDialog({
           </span>
           <span>{t("{name} · 策略详情", { name: t(s.name) })}</span>
           {s.params.reverse === true ? <Tag>{t("反向对照")}</Tag> : null}
+          {/* 与卡片/列表同一套:两态都走琥珀,灰底只留给名称标签。 */}
           {s.decay?.state === "degraded" ? (
             <Tag variant="warn">{t("⚠ 疑似衰变")}</Tag>
           ) : s.decay?.state === "watch" ? (
-            <Tag>{t("衰变观察")}</Tag>
+            <Tag variant="warn">{t("衰变观察")}</Tag>
           ) : null}
         </span>
       }
@@ -3060,19 +3077,30 @@ function StrategyDetailDialog({
             </DetailSection>
           </>
         ) : tab === "analysis" ? (
-          <DetailSection
-            title={t("深度分析")}
-            meta={t("· 这一档的钱从哪赢来的")}
+          // 不套 DetailSection:面板自身就是一叠白卡(DeepAnalysis.tsx 的
+          // Block / ①下注质量体检卡),再包一层白卡就是卡中卡 —— 双描边 +
+          // 双阴影,而这套皮的层级只该来自 1px 分格线。外层卡的
+          // overflow:hidden 还会把格内 (?) 点开的绝对定位弹出层裁掉
+          // (globals.css .tip-pop:focus::after),触屏读者就再也读不到口径。
+          // 与首页「结算净值曲线」同一处理:区块标题降级成一行 hint(tab
+          // 标签已经承担了"这是什么"),内容直接铺开。
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--s-3)",
+            }}
           >
+            <div className="ds-hint">
+              {t("深度分析")} {t("· 这一档的钱从哪赢来的")}
+            </div>
             {/* rows 直接喂 open+settled:open 仓只进面板头部「不计入」说明,
                 所有指标只看 settled(口径见 DeepAnalysisPanel 顶部注释)。 */}
-            <div style={{ padding: "var(--s-4)" }}>
-              <DeepAnalysisPanel
-                rows={allPos}
-                exitCounterfactual={s.exitCounterfactual}
-              />
-            </div>
-          </DetailSection>
+            <DeepAnalysisPanel
+              rows={allPos}
+              exitCounterfactual={s.exitCounterfactual}
+            />
+          </div>
         ) : tab === "cost" ? (
           <DetailSection
             title={t("成本分解")}
@@ -3109,23 +3137,23 @@ function StrategyDetailDialog({
             <HistoryDialog positions={allPos} />
           </DetailSection>
         ) : (
-          <DetailSection
-            title={t("仓位明细")}
-            meta={t("· 复用首页同一套表 + 二级切换")}
-            note={t(
-              "该策略的纸面仓位——与首页「仓位明细」区同一套表格,已按这一档筛好,不用退回首页再按策略筛一遍",
-            )}
+          // 同「深度分析」tab:两张表各自就是一张白卡(表 + 表下降级态说明
+          // 条,见 SettledTable/OpenTable),不再外套 DetailSection —— 套了
+          // 就是卡中卡。原区块标题由 tab 标签承担,那句"这是首页同一套表"的
+          // 口径降级为表前一行 hint:口径先行,仍然在数据前面被读到。
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--s-3)",
+            }}
           >
-            <div
-              style={{
-                padding: "10px var(--s-4)",
-                borderBottom: "1px solid var(--ww-border)",
-                display: "flex",
-                alignItems: "center",
-                gap: "var(--s-3)",
-                flexWrap: "wrap",
-              }}
-            >
+            <div className="ds-hint">
+              {t(
+                "该策略的纸面仓位——与首页「仓位明细」区同一套表格,已按这一档筛好,不用退回首页再按策略筛一遍",
+              )}
+            </div>
+            <div className="filter-row">
               <Segmented<PosTab>
                 ariaLabel={t("仓位状态")}
                 options={[
@@ -3150,20 +3178,18 @@ function StrategyDetailDialog({
                 已经写明是哪一档),真机实测两张表在弹窗当前内容区宽度下都
                 不触发横向滚动,用不着为一个空跑的假设特意拆出第二套渲染
                 逻辑。 */}
-            <div style={{ padding: "var(--s-4)" }}>
-              {posTab === "settled" ? (
-                <SettledTable
-                  rows={settledRows}
-                  emptyText={t("该策略尚无已结算的纸面仓位")}
-                />
-              ) : (
-                <OpenTable
-                  rows={openRows}
-                  emptyText={t("该策略当前没有持仓中的纸面仓位")}
-                />
-              )}
-            </div>
-          </DetailSection>
+            {posTab === "settled" ? (
+              <SettledTable
+                rows={settledRows}
+                emptyText={t("该策略尚无已结算的纸面仓位")}
+              />
+            ) : (
+              <OpenTable
+                rows={openRows}
+                emptyText={t("该策略当前没有持仓中的纸面仓位")}
+              />
+            )}
+          </div>
         )}
       </div>
     </Modal>
@@ -3236,13 +3262,13 @@ function StrategyListView({
                     className="is-right"
                     title={t("已结算仓位累计已实现盈亏(不含持仓浮盈)")}
                   >
-                    {t("结算净值")}
+                    <ThHelp>{t("结算净值")}</ThHelp>
                   </th>
                   <th
                     className="is-right"
                     title={t("结算净值 ÷ 已投入本金(仅已结算仓)")}
                   >
-                    ROI
+                    <ThHelp>ROI</ThHelp>
                   </th>
                   <th
                     className="is-right"
@@ -3250,20 +3276,20 @@ function StrategyListView({
                       "结算净值 ÷ 峰值占用资金 × 365 ÷ 运行天数。短窗口/小样本外推极不可靠,仅供横向对比",
                     )}
                   >
-                    {t("平均年化")}
+                    <ThHelp>{t("平均年化")}</ThHelp>
                   </th>
                   <th
                     title={t(
                       "盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间与已结算样本量。50% / 8 仓 和 58% / 24 仓不该长得一样重,区间宽度就是这份轻重;平局不计入分母",
                     )}
                   >
-                    {t("胜率 · Wilson 95%CI")}
+                    <ThHelp>{t("胜率 · Wilson 95%CI")}</ThHelp>
                   </th>
                   <th
                     className="is-right"
                     title={t("净值曲线从峰值到后续谷底的最大跌幅(美元)")}
                   >
-                    {t("最大回撤")}
+                    <ThHelp>{t("最大回撤")}</ThHelp>
                   </th>
                   <th
                     className="is-right"
@@ -3271,13 +3297,13 @@ function StrategyListView({
                       "= 历史峰值占用 × 1.25(按单仓金额向上取整);推导细节与五档精确回放见「详情 → 账户推演」",
                     )}
                   >
-                    {t("建议额度")}
+                    <ThHelp>{t("建议额度")}</ThHelp>
                   </th>
                   <th
                     className="is-right"
                     title={t("当前持仓待结算数 / 策略运行天数")}
                   >
-                    {t("持有 / 运行")}
+                    <ThHelp>{t("持有 / 运行")}</ThHelp>
                   </th>
                   <th></th>
                 </tr>
@@ -3353,11 +3379,11 @@ function StrategyListRow({
               {t("样本不足 · {n} 仓", { n: m.settledCount })}
             </Tag>
           ) : null}
-          {/* 与卡片视图同一判定:哨兵只亮 watch/degraded。 */}
+          {/* 与卡片视图同一判定:哨兵只亮 watch/degraded,两态同走琥珀。 */}
           {s.decay?.state === "degraded" ? (
             <Tag variant="warn">{t("⚠ 疑似衰变")}</Tag>
           ) : s.decay?.state === "watch" ? (
-            <Tag>{t("衰变观察")}</Tag>
+            <Tag variant="warn">{t("衰变观察")}</Tag>
           ) : null}
         </span>
         {/* 门槛说明永不截断:超长换行,顶对齐(.ds-table td 已 vertical-align:
@@ -3570,126 +3596,153 @@ function SettledTable({
   }
   const now = Math.floor(Date.now() / 1000);
   return (
-    <div className="ds-table-wrap">
-      <table className="ds-table">
-        <thead>
-          <tr>
-            <th>{t("策略")}</th>
-            <th>{t("市场 · 结果")}</th>
-            <th className="is-right" title={t("现价进场 → 结算价(美分)")}>
-              {t("进价→结算价")}
-            </th>
-            <th
-              className="is-right"
-              title={t(
-                "旧称「滑点」。入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示。口径含聪明钱的信息租金(他们买得早/便宜,拿不到别追)—— 与「延迟成本」(vs 形成价)不同;也不是盘口执行滑点(纸面按报价快照成交,不吃盘口)",
-              )}
-            >
-              {t("追价成本")}
-            </th>
-            <th
-              className="is-right"
-              title={t(
-                "进场价 − 形成价(¢)。形成价=第 N 个白名单钱包到位那一刻的市价;正=共识形成后追贵了,是系统检测+执行延迟造成的可优化成本(不含信息租金,与「追价成本」口径不同)。老仓位/取价失败显示 —;|¢|>10 琥珀,与进场偏离护栏阈一致",
-              )}
-            >
-              {t("延迟成本")}
-            </th>
-            <th
-              className="is-right"
-              title={t(
-                "开仓瞬间抓 CLOB 盘口快照,按本仓名义金额模拟市价吃单:模拟成交均价 − 报价入场价(¢)。真实执行成本(跨价差+吃深度)的实测估计;琥珀(薄)=盘口深度不足只能部分成交。盘口无历史,仅新开仓有值,老仓显示 —",
-              )}
-            >
-              {t("执行滑点")}
-            </th>
-            <th
-              className="is-right"
-              title={t(
-                "markout:形成后 2 小时市价 − 形成价(¢),衡量共识形成后还有没有肉。涨绿跌红(±0.5¢ 死区记平推);形成价或 2h 回填价缺失显示 —",
-              )}
-            >
-              {t("形成后2h")}
-            </th>
-            <th className="is-right">{t("持有期")}</th>
-            <th className="is-right">{t("已实现")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((p) => {
-            const slip = rowSlippage(p);
-            const slipC = rowSlipCents(p);
-            const delayC = rowDelayCents(p);
-            const mo2 = rowMarkout2hCents(p);
-            const held = (p.exit_ts ?? now) - p.entry_ts;
-            const realized = p.realized_pnl ?? 0;
-            return (
-              <tr key={`${p.strategy_id}:${p.condition_id}:${p.outcome}`}>
-                <td data-label={t("策略")}>
-                  <StratChip name={p.strategyName} />
-                </td>
-                <td
-                  data-label={t("市场 · 结果")}
-                  style={{ whiteSpace: "normal", maxWidth: 360 }}
-                >
-                  <MarketCell p={p} />
-                </td>
-                <td className="mono is-right" data-label={t("进价→结算价")}>
-                  {cents(p.entry_price)}
-                  <span className="muted"> → </span>
-                  {p.exit_price != null ? cents(p.exit_price) : "—"}
-                </td>
-                {/* 主显示 ¢ 差(可跨仓横比),美元退居括号小字;中性色,超警示线转琥珀。 */}
-                <td
-                  className="mono is-right"
-                  data-label={t("追价成本")}
-                  style={slipWarnStyle(slipC)}
-                >
-                  {fmtSignedCents(slipC)}
-                  <span className="muted"> ({fmtSignedUsd(slip)})</span>
-                </td>
-                {/* 延迟成本:中性色(是成本不是盈亏),超护栏阈转琥珀;无形成价显示 —。 */}
-                <td
-                  className="mono is-right"
-                  data-label={t("延迟成本")}
-                  style={delayC != null ? slipWarnStyle(delayC) : undefined}
-                >
-                  {delayC != null ? (
-                    fmtSignedCents(delayC)
-                  ) : (
-                    <span className="muted">—</span>
-                  )}
-                </td>
-                {/* 执行滑点:盘口快照模拟吃单 vs 报价入场;仅新仓有值。 */}
-                <td className="is-right" data-label={t("执行滑点")}>
-                  <ExecCell p={p} />
-                </td>
-                {/* 形成后 2h:价格方向,涨绿跌红(±0.5¢ 死区平推);缺值显示 —。 */}
-                <td className="mono is-right" data-label={t("形成后2h")}>
-                  {mo2 != null ? (
-                    <span className={markoutToneClass(mo2)}>
-                      {fmtSignedCents(mo2)}
-                    </span>
-                  ) : (
-                    <span className="muted">—</span>
-                  )}
-                </td>
-                <td className="mono muted is-right" data-label={t("持有期")}>
-                  {fmtHold(held, t)}
-                </td>
-                {/* 轻重只靠颜色(涨绿跌红),不靠字重 —— 表格行里任何一格
+    // 白卡 = 表 + 卡底降级态说明条。表本身仍在 .ds-table-wrap 里(窄内容区
+    // 时横向滚动),但描边/圆角/阴影交给外层卡,不然滚动区自己一层框、卡再
+    // 一层框,就成了卡中卡;说明条作为卡的直接子级放在滚动区外 —— 放进去
+    // 的话向右滚表时它会跟着移出视区。
+    <div className="ds-card" style={{ overflow: "hidden" }}>
+      <div
+        className="ds-table-wrap"
+        style={{
+          border: 0,
+          borderRadius: 0,
+          boxShadow: "none",
+          background: "transparent",
+        }}
+      >
+        <table className="ds-table">
+          <thead>
+            <tr>
+              <th>{t("策略")}</th>
+              <th>{t("市场 · 结果")}</th>
+              <th className="is-right" title={t("现价进场 → 结算价(美分)")}>
+                <ThHelp>{t("进价→结算价")}</ThHelp>
+              </th>
+              <th
+                className="is-right"
+                title={t(
+                  "旧称「滑点」。入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示。口径含聪明钱的信息租金(他们买得早/便宜,拿不到别追)—— 与「延迟成本」(vs 形成价)不同;也不是盘口执行滑点(纸面按报价快照成交,不吃盘口)",
+                )}
+              >
+                <ThHelp>{t("追价成本")}</ThHelp>
+              </th>
+              <th
+                className="is-right"
+                title={t(
+                  "进场价 − 形成价(¢)。形成价=第 N 个白名单钱包到位那一刻的市价;正=共识形成后追贵了,是系统检测+执行延迟造成的可优化成本(不含信息租金,与「追价成本」口径不同)。老仓位/取价失败显示 —;|¢|>10 琥珀,与进场偏离护栏阈一致",
+                )}
+              >
+                <ThHelp>{t("延迟成本")}</ThHelp>
+              </th>
+              <th
+                className="is-right"
+                title={t(
+                  "开仓瞬间抓 CLOB 盘口快照,按本仓名义金额模拟市价吃单:模拟成交均价 − 报价入场价(¢)。真实执行成本(跨价差+吃深度)的实测估计;琥珀(薄)=盘口深度不足只能部分成交。盘口无历史,仅新开仓有值,老仓显示 —",
+                )}
+              >
+                <ThHelp>{t("执行滑点")}</ThHelp>
+              </th>
+              <th
+                className="is-right"
+                title={t(
+                  "markout:形成后 2 小时市价 − 形成价(¢),衡量共识形成后还有没有肉。涨绿跌红(±0.5¢ 死区记平推);形成价或 2h 回填价缺失显示 —",
+                )}
+              >
+                <ThHelp>{t("形成后2h")}</ThHelp>
+              </th>
+              <th className="is-right">{t("持有期")}</th>
+              <th className="is-right">{t("已实现")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((p) => {
+              const slip = rowSlippage(p);
+              const slipC = rowSlipCents(p);
+              const delayC = rowDelayCents(p);
+              const mo2 = rowMarkout2hCents(p);
+              const held = (p.exit_ts ?? now) - p.entry_ts;
+              const realized = p.realized_pnl ?? 0;
+              return (
+                <tr key={`${p.strategy_id}:${p.condition_id}:${p.outcome}`}>
+                  <td data-label={t("策略")}>
+                    <StratChip name={p.strategyName} />
+                  </td>
+                  <td
+                    data-label={t("市场 · 结果")}
+                    style={{ whiteSpace: "normal", maxWidth: 360 }}
+                  >
+                    <MarketCell p={p} />
+                  </td>
+                  <td className="mono is-right" data-label={t("进价→结算价")}>
+                    {cents(p.entry_price)}
+                    <span className="muted"> → </span>
+                    {p.exit_price != null ? (
+                      cents(p.exit_price)
+                    ) : (
+                      // 降级态一律走 muted:「—」是判不了,不是一个正常读数。
+                      <span className="muted">—</span>
+                    )}
+                  </td>
+                  {/* 主显示 ¢ 差(可跨仓横比),美元退居括号小字;中性色,超警示线转琥珀。 */}
+                  <td
+                    className="mono is-right"
+                    data-label={t("追价成本")}
+                    style={slipWarnStyle(slipC)}
+                  >
+                    {fmtSignedCents(slipC)}
+                    <span className="muted"> ({fmtSignedUsd(slip)})</span>
+                  </td>
+                  {/* 延迟成本:中性色(是成本不是盈亏),超护栏阈转琥珀;无形成价显示 —。 */}
+                  <td
+                    className="mono is-right"
+                    data-label={t("延迟成本")}
+                    style={delayC != null ? slipWarnStyle(delayC) : undefined}
+                  >
+                    {delayC != null ? (
+                      fmtSignedCents(delayC)
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
+                  {/* 执行滑点:盘口快照模拟吃单 vs 报价入场;仅新仓有值。 */}
+                  <td className="is-right" data-label={t("执行滑点")}>
+                    <ExecCell p={p} />
+                  </td>
+                  {/* 形成后 2h:价格方向,涨绿跌红(±0.5¢ 死区平推);缺值显示 —。 */}
+                  <td className="mono is-right" data-label={t("形成后2h")}>
+                    {mo2 != null ? (
+                      <span className={markoutToneClass(mo2)}>
+                        {fmtSignedCents(mo2)}
+                      </span>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
+                  <td className="mono muted is-right" data-label={t("持有期")}>
+                    {fmtHold(held, t)}
+                  </td>
+                  {/* 轻重只靠颜色(涨绿跌红),不靠字重 —— 表格行里任何一格
                     加粗都会变成事实上的行级强调,这套皮里每一行平等。 */}
-                <td
-                  className={`mono is-right ${pnlTone(realized)}`}
-                  data-label={t("已实现")}
-                >
-                  {fmtSignedUsd(realized)}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  <td
+                    className={`mono is-right ${pnlTone(realized)}`}
+                    data-label={t("已实现")}
+                  >
+                    {fmtSignedUsd(realized)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {/* 卡底琥珀条:表里的「—」有四处成因、还有一个非「—」的降级态,
+          它们的含义此前只藏在列头 title 的悬停里,触屏永远读不到。琥珀 =
+          需留神的口径,一条列全,不穷举一半。 */}
+      <div className="note-strip note-strip--warn">
+        {t(
+          "⚠️ 表里的「—」是「判不了」,不是 0,四处成因各不相同:「延迟成本」与「形成后2h」的「—」= 老仓没有形成价(上线前的仓位不回填);「执行滑点」的「—」= 盘口无历史(仅新开仓有值);「进价→结算价」右侧的「—」= 该仓没有结算价读数。另有一个非「—」的降级态:「薄」= 盘口深度吃不满本仓名义金额,均价按已成交部分计(悬停给出实际成交额)。成本三列(追价 / 延迟 / 执行滑点)一律中性色,只有 |¢差| > 10¢ 转琥珀;「形成后2h」是价格方向,涨绿跌红、±0.5¢ 死区记平推 —— 与成本类是两套语义,别混着读。",
+        )}
+      </div>
     </div>
   );
 }
@@ -3766,113 +3819,132 @@ function OpenTable({
   }
   const now = Math.floor(Date.now() / 1000);
   return (
-    <div className="ds-table-wrap">
-      <table className="ds-table">
-        <thead>
-          <tr>
-            <th>{t("策略")}</th>
-            <th>{t("市场 · 结果")}</th>
-            <th className="is-right" title={t("现价进场价(美分)")}>
-              {t("进价")}
-            </th>
-            <th
-              className="is-right"
-              title={t(
-                "当前市价快照(括号内为相对进场价的 ¢ 差,涨绿跌红),仅供参考——不进 ROI/胜率/年化等任何战绩口径;本页所有指标均为结算口径(只记结算盈亏,不做浮盈)。前端惰性加载,取价失败或该 token 暂无行情数据显示 —",
-              )}
-            >
-              {t("当前价")}
-            </th>
-            <th
-              className="is-right"
-              title={t(
-                "旧称「滑点」。入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示。口径含聪明钱的信息租金(他们买得早/便宜,拿不到别追)—— 与「延迟成本」(vs 形成价)不同;也不是盘口执行滑点(纸面按报价快照成交,不吃盘口)",
-              )}
-            >
-              {t("追价成本")}
-            </th>
-            <th
-              className="is-right"
-              title={t(
-                "进场价 − 形成价(¢)。形成价=第 N 个白名单钱包到位那一刻的市价;正=共识形成后追贵了,是系统检测+执行延迟造成的可优化成本(不含信息租金,与「追价成本」口径不同)。老仓位/取价失败显示 —;|¢|>10 琥珀,与进场偏离护栏阈一致",
-              )}
-            >
-              {t("延迟成本")}
-            </th>
-            <th
-              className="is-right"
-              title={t(
-                "开仓瞬间抓 CLOB 盘口快照,按本仓名义金额模拟市价吃单:模拟成交均价 − 报价入场价(¢)。真实执行成本(跨价差+吃深度)的实测估计;琥珀(薄)=盘口深度不足只能部分成交。盘口无历史,仅新开仓有值,老仓显示 —",
-              )}
-            >
-              {t("执行滑点")}
-            </th>
-            <th className="is-right">{t("已持有")}</th>
-            <th>{t("状态")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((p) => {
-            const slip = rowSlippage(p);
-            const slipC = rowSlipCents(p);
-            const delayC = rowDelayCents(p);
-            const held = now - p.entry_ts;
-            return (
-              <tr key={`${p.strategy_id}:${p.condition_id}:${p.outcome}`}>
-                <td data-label={t("策略")}>
-                  <StratChip name={p.strategyName} />
-                </td>
-                <td
-                  data-label={t("市场 · 结果")}
-                  style={{ whiteSpace: "normal", maxWidth: 360 }}
-                >
-                  <MarketCell p={p} />
-                </td>
-                <td className="mono is-right" data-label={t("进价")}>
-                  {cents(p.entry_price)}
-                </td>
-                <td className="is-right" data-label={t("当前价")}>
-                  <CurrentPriceCell
-                    p={p}
-                    price={p.asset ? prices[p.asset] : null}
-                  />
-                </td>
-                {/* 主显示 ¢ 差(可跨仓横比),美元退居括号小字;中性色,超警示线转琥珀。 */}
-                <td
-                  className="mono is-right"
-                  data-label={t("追价成本")}
-                  style={slipWarnStyle(slipC)}
-                >
-                  {fmtSignedCents(slipC)}
-                  <span className="muted"> ({fmtSignedUsd(slip)})</span>
-                </td>
-                {/* 延迟成本:中性色(是成本不是盈亏),超护栏阈转琥珀;无形成价显示 —。 */}
-                <td
-                  className="mono is-right"
-                  data-label={t("延迟成本")}
-                  style={delayC != null ? slipWarnStyle(delayC) : undefined}
-                >
-                  {delayC != null ? (
-                    fmtSignedCents(delayC)
-                  ) : (
-                    <span className="muted">—</span>
-                  )}
-                </td>
-                {/* 执行滑点:盘口快照模拟吃单 vs 报价入场;仅新仓有值。 */}
-                <td className="is-right" data-label={t("执行滑点")}>
-                  <ExecCell p={p} />
-                </td>
-                <td className="mono muted is-right" data-label={t("已持有")}>
-                  {fmtHold(held, t)}
-                </td>
-                <td data-label={t("状态")}>
-                  <Tag variant="warn">{t("待结算")}</Tag>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    // 与已结算表同一外壳:白卡 = 表(滚动区不再自带描边)+ 卡底说明条。
+    <div className="ds-card" style={{ overflow: "hidden" }}>
+      <div
+        className="ds-table-wrap"
+        style={{
+          border: 0,
+          borderRadius: 0,
+          boxShadow: "none",
+          background: "transparent",
+        }}
+      >
+        <table className="ds-table">
+          <thead>
+            <tr>
+              <th>{t("策略")}</th>
+              <th>{t("市场 · 结果")}</th>
+              <th className="is-right" title={t("现价进场价(美分)")}>
+                <ThHelp>{t("进价")}</ThHelp>
+              </th>
+              <th
+                className="is-right"
+                title={t(
+                  "当前市价快照(括号内为相对进场价的 ¢ 差,涨绿跌红),仅供参考——不进 ROI/胜率/年化等任何战绩口径;本页所有指标均为结算口径(只记结算盈亏,不做浮盈)。前端惰性加载,取价失败或该 token 暂无行情数据显示 —",
+                )}
+              >
+                <ThHelp>{t("当前价")}</ThHelp>
+              </th>
+              <th
+                className="is-right"
+                title={t(
+                  "旧称「滑点」。入场价 − 聪明钱建仓均价(¢ 差,括号内为美元口径)。正=追高;负≠捡便宜(常是行情已反向);|¢差|>10 琥珀警示。口径含聪明钱的信息租金(他们买得早/便宜,拿不到别追)—— 与「延迟成本」(vs 形成价)不同;也不是盘口执行滑点(纸面按报价快照成交,不吃盘口)",
+                )}
+              >
+                <ThHelp>{t("追价成本")}</ThHelp>
+              </th>
+              <th
+                className="is-right"
+                title={t(
+                  "进场价 − 形成价(¢)。形成价=第 N 个白名单钱包到位那一刻的市价;正=共识形成后追贵了,是系统检测+执行延迟造成的可优化成本(不含信息租金,与「追价成本」口径不同)。老仓位/取价失败显示 —;|¢|>10 琥珀,与进场偏离护栏阈一致",
+                )}
+              >
+                <ThHelp>{t("延迟成本")}</ThHelp>
+              </th>
+              <th
+                className="is-right"
+                title={t(
+                  "开仓瞬间抓 CLOB 盘口快照,按本仓名义金额模拟市价吃单:模拟成交均价 − 报价入场价(¢)。真实执行成本(跨价差+吃深度)的实测估计;琥珀(薄)=盘口深度不足只能部分成交。盘口无历史,仅新开仓有值,老仓显示 —",
+                )}
+              >
+                <ThHelp>{t("执行滑点")}</ThHelp>
+              </th>
+              <th className="is-right">{t("已持有")}</th>
+              <th>{t("状态")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((p) => {
+              const slip = rowSlippage(p);
+              const slipC = rowSlipCents(p);
+              const delayC = rowDelayCents(p);
+              const held = now - p.entry_ts;
+              return (
+                <tr key={`${p.strategy_id}:${p.condition_id}:${p.outcome}`}>
+                  <td data-label={t("策略")}>
+                    <StratChip name={p.strategyName} />
+                  </td>
+                  <td
+                    data-label={t("市场 · 结果")}
+                    style={{ whiteSpace: "normal", maxWidth: 360 }}
+                  >
+                    <MarketCell p={p} />
+                  </td>
+                  <td className="mono is-right" data-label={t("进价")}>
+                    {cents(p.entry_price)}
+                  </td>
+                  <td className="is-right" data-label={t("当前价")}>
+                    <CurrentPriceCell
+                      p={p}
+                      price={p.asset ? prices[p.asset] : null}
+                    />
+                  </td>
+                  {/* 主显示 ¢ 差(可跨仓横比),美元退居括号小字;中性色,超警示线转琥珀。 */}
+                  <td
+                    className="mono is-right"
+                    data-label={t("追价成本")}
+                    style={slipWarnStyle(slipC)}
+                  >
+                    {fmtSignedCents(slipC)}
+                    <span className="muted"> ({fmtSignedUsd(slip)})</span>
+                  </td>
+                  {/* 延迟成本:中性色(是成本不是盈亏),超护栏阈转琥珀;无形成价显示 —。 */}
+                  <td
+                    className="mono is-right"
+                    data-label={t("延迟成本")}
+                    style={delayC != null ? slipWarnStyle(delayC) : undefined}
+                  >
+                    {delayC != null ? (
+                      fmtSignedCents(delayC)
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
+                  {/* 执行滑点:盘口快照模拟吃单 vs 报价入场;仅新仓有值。 */}
+                  <td className="is-right" data-label={t("执行滑点")}>
+                    <ExecCell p={p} />
+                  </td>
+                  <td className="mono muted is-right" data-label={t("已持有")}>
+                    {fmtHold(held, t)}
+                  </td>
+                  <td data-label={t("状态")}>
+                    <Tag variant="warn">{t("待结算")}</Tag>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {/* 卡底琥珀条:持有中表里同样有三处成因不同的「—」,外加一个"还在
+          取价"的中间态(…)—— 这些含义此前只在列头 title 的悬停里,触屏
+          读不到。 */}
+      <div className="note-strip note-strip--warn">
+        {t(
+          "⚠️ 表里的「—」是「判不了」,不是 0,三处成因各不相同:「当前价」的「—」= 缺 asset 或取价失败,不可取价(不是加载中 —— 还在取价时显示「…」);「延迟成本」的「—」= 老仓没有形成价(上线前的仓位不回填);「执行滑点」的「—」= 盘口无历史(仅新开仓有值),其「薄」= 盘口深度吃不满本仓名义金额,均价按已成交部分计。当前价只在挂载这张表时惰性取一次,仅供参考:持有中仓位没有已实现盈亏,不进胜率/ROI/年化,本页所有战绩都是结算口径。",
+        )}
+      </div>
     </div>
   );
 }
@@ -4429,6 +4501,10 @@ export default function FollowPage() {
             >
               {t("全部策略")}
             </button>
+            {/* 只写档名,不带 emoji —— emoji 只在三个位置出现(灰底名称
+                标签内 / KPI 图标位 / 12px 小标前缀),按钮上不放。档位符号
+                仍然在卡片标题条、列表行、详情弹窗标题这三处名称位出现,
+                同一档在页面上认得出来,不靠这排筛选钮重复一遍。 */}
             {shown.map((s) => (
               <button
                 key={s.id}
@@ -4437,7 +4513,6 @@ export default function FollowPage() {
                 aria-pressed={effFilter === s.id}
                 onClick={() => setStratFilter(s.id)}
               >
-                <span aria-hidden>{strategyEmoji(s.name)}</span>
                 {t(s.name)}
               </button>
             ))}

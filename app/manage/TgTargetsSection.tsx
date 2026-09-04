@@ -284,8 +284,9 @@ export default function TgTargetsSection({ token }: { token: string }) {
               );
             })}
           </div>
+          {/* 描边白底 —— 页头的「刷新」是全页唯一的蓝底主按钮,同屏可见。 */}
           <button
-            className="ds-btn ds-btn--primary ds-btn--sm"
+            className="ds-btn ds-btn--sm"
             disabled={busy || !form.botToken.trim() || !form.chatId.trim()}
             onClick={async () => {
               const ok = await post(
@@ -376,8 +377,10 @@ export default function TgTargetsSection({ token }: { token: string }) {
                     {t.delayMin > 0 ? `${t.delayMin} 分钟` : "实时"}
                   </td>
                   <td data-label="状态" className="cell-wrap">
+                    {/* 「已暂停」= 这个目标当前收不到任何推送,是需留神的状态,
+                        走琥珀 —— 灰底是名称标签,不表状态。 */}
                     {t.paused ? (
-                      <Tag>⏸ 已暂停</Tag>
+                      <Tag variant="warn">⏸ 已暂停</Tag>
                     ) : t.consecutiveFailures > 0 ? (
                       <Tag variant="down">连续失败 {t.consecutiveFailures}</Tag>
                     ) : (

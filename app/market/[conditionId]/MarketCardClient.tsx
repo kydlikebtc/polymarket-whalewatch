@@ -243,6 +243,21 @@ export default function MarketCard() {
   const liquidity = meta?.liquidity ?? null;
   // 现价格里哪一侧是聪明钱站的那一侧 —— 蓝 = 当前选中(§2.1),纯展示派生。
   const smartSide = cls.kind === "consensus" ? cls.group.outcome : null;
+  // 24h 量那一格的副行(设计稿 12 第 52 行:「流动性 $412,300 · 距结算 9 天」)。
+  // 三个读数各自独立成条件、在这里拼:gamma 常见 volume24hr 为空而 liquidity
+  // 有值(新市场/低活跃市场),把副行挂在主值上会让流动性与距结算一起消失 ——
+  // 那是改版前没有的信息损失。主值缺就印「—」(判不了,不是 0,§1.2)。
+  const volSubBits = [
+    liquidity != null ? t("流动性 ${v}", { v: fmtUsd(liquidity) }) : null,
+    hoursToEnd != null && hoursToEnd > 0
+      ? `${t("距结算")} ${
+          hoursToEnd < 48
+            ? `${Math.round(hoursToEnd)}h`
+            : t("{n}天", { n: Math.round(hoursToEnd / 24) })
+        }`
+      : null,
+  ].filter((s): s is string => s != null);
+  const showVolCell = vol24h != null || volSubBits.length > 0;
   const pulseBoardTagged =
     data.pulse != null &&
     (data.pulse.boards.length > 0 || data.pulse.anomalyScore != null);
@@ -315,6 +330,23 @@ export default function MarketCard() {
             )}
           </div>
         </div>
+        {/* 页头右侧动作钮(设计稿 12 第 27 行 / readme §5 页壳第 2 条:页头带
+            右侧动作)—— 32px 描边钮,去 Polymarket 看原市场。地址走全站同一条
+            约定 polymarket.com/event/ + eventSlug(扫描页/共识页/钱包档案都是
+            它),不新造链接口径。刻意不是主按钮:本屏唯一那颗蓝底主按钮是 01 段
+            的「拉一次价格曲线」(每屏至多一个)。 */}
+        {identity?.eventSlug && (
+          <a
+            className="ds-btn"
+            href={`https://polymarket.com/event/${identity.eventSlug}`}
+            target="_blank"
+            rel="noreferrer"
+            title={t("在 Polymarket 打开这个市场")}
+            style={{ textDecoration: "none", flex: "0 0 auto" }}
+          >
+            Polymarket ↗
+          </a>
+        )}
       </header>
 
       {/* 统计声明放数据前面(§5 口径条),不放脚注 */}
@@ -330,7 +362,7 @@ export default function MarketCard() {
       )}
 
       {/* KPI 分格卡 —— 现价各一格 + 24h 量 + 窗口留存敞口 */}
-      {(outcomes.length > 0 || vol24h != null || showExposureKpi) && (
+      {(outcomes.length > 0 || showVolCell || showExposureKpi) && (
         <section className="kpi" style={{ marginBottom: "var(--s-4)" }}>
           {outcomes.slice(0, 4).map((o, i) => {
             const isSmart = smartSide != null && smartSide === o;
@@ -355,22 +387,18 @@ export default function MarketCard() {
               </StatCard>
             );
           })}
-          {vol24h != null && (
+          {showVolCell && (
             <StatCard icon="💰" label={t("24h 量")}>
-              <div className="kpi-value">${fmtUsd(vol24h)}</div>
-              <div className="kpi-sub">
-                {liquidity != null && (
-                  <>{t("流动性 ${v} · ", { v: fmtUsd(liquidity) })}</>
-                )}
-                {hoursToEnd != null && hoursToEnd > 0 && (
-                  <>
-                    {t("距结算")}{" "}
-                    {hoursToEnd < 48
-                      ? `${Math.round(hoursToEnd)}h`
-                      : t("{n}天", { n: Math.round(hoursToEnd / 24) })}
-                  </>
+              <div className="kpi-value">
+                {vol24h != null ? (
+                  `$${fmtUsd(vol24h)}`
+                ) : (
+                  <span className="faint">—</span>
                 )}
               </div>
+              {volSubBits.length > 0 && (
+                <div className="kpi-sub">{volSubBits.join(" · ")}</div>
+              )}
             </StatCard>
           )}
           {showExposureKpi && (
@@ -600,8 +628,11 @@ export default function MarketCard() {
                         >
                           {fmtCents(w.avgBuyPrice)}
                         </td>
+                        {/* 评分/胜率与敞口、买入均价同亮度(设计稿 12 第 79-82
+                            行是 #081d35 正文色):这一列是「这个钱包值不值得
+                            跟」的判断依据,压暗会让它比左边的数字弱一档。 */}
                         <td
-                          className="mono is-right muted"
+                          className="mono is-right"
                           data-label={t("评分/胜率")}
                         >
                           {w.score != null ? (
@@ -895,10 +926,13 @@ export default function MarketCard() {
   );
 }
 
-// 卡内标题条 —— 段号（muted）+ 段名（14/600）+ 口径后缀（14/400 muted，带
-// 「·」前导）。五段共用一个,编号是设计稿「五段式信号卡」的骨架:读者数得清
-// 自己看到第几段。口径不并进段名:段名是这一段叫什么,口径是它按什么口径算,
-// 两件事在设计稿里就是 600 与 400 两个字重(层级不靠字号跳档)。
+// 卡内标题条 —— 「段号 段名」（14/600 主文字色，段号与段名同级）+ 口径后缀
+// （14/400 muted，带「·」前导）。五段共用一个,编号是设计稿「五段式信号卡」
+// 的骨架:读者数得清自己看到第几段。设计稿 12 第 77/85/91/96 行是一整串 600
+// 的「02 聪明钱留存敞口」,只有口径后缀嵌套成 400 muted —— 段号不压暗,压暗
+// 会把一个标题读成「灰 02」+「黑 段名」两级。
+// 口径不并进段名:段名是这一段叫什么,口径是它按什么口径算,两件事在设计稿里
+// 就是 600 与 400 两个字重(层级不靠字号跳档)。
 // 段名不带 emoji —— emoji 只收在灰底名称标签 / KPI 图标位 / 12px 小标前缀
 // 三处(readme §1),14px 标题条不在其中;这五段的 emoji 在落地页的 KPI 图标位。
 function SectionBar({
@@ -912,8 +946,9 @@ function SectionBar({
 }) {
   return (
     <div className="card-bar" style={{ gap: "var(--s-2)" }}>
-      <span className="muted">{n}</span>
-      <span style={{ fontWeight: 600 }}>{title}</span>
+      <span style={{ fontWeight: 600 }}>
+        {n} {title}
+      </span>
       {note ? <span className="muted">· {note}</span> : null}
     </div>
   );
@@ -940,14 +975,45 @@ type ReplayData = {
   error?: string;
 };
 
-// 标记点色 —— 四类信号的分类编码(不是状态)。取设计系统的点值,让这页
-// 不出现调色板外的颜色;色相映射与改皮前一致(灰/琥珀/红/绿)。
+// 标记点色 —— 四类信号的分类编码(不是状态)。一律走 --ww-* 令牌,不写死点值:
+// 令牌一调,曲线上的点跟着走(全站其余 SVG 图表都是这么写的)。
+// ⚠️ 色相与「涨绿跌红」撞车这件事未决:共识用了红、同批新钱包用了绿,画在
+// 一条价格曲线上有被读成「跌/涨」的风险。设计系统 §9 明说「图内构造未确认」,
+// 四类分类编码在五类徽章语义里没有对应色,重新配色需要人裁决 —— 本轮先把
+// 「色→类型」的对照表画进卡底图例(原来只列 emoji,颜色根本无从解码)。
 const MARKER_COLOR: Record<string, string> = {
-  large: "#6c757d",
-  smart: "#b47d00",
-  consensus: "#dc3545",
-  cohort: "#00a186",
+  large: "var(--ww-text-muted)",
+  smart: "var(--ww-warn)",
+  consensus: "var(--ww-down)",
+  cohort: "var(--ww-up)",
 };
+const MARKER_FALLBACK = "var(--ww-text-faint)";
+
+// 卡底图例的一枚:色点 + 类型名。名字不带 emoji —— 正文句子里不放 emoji
+// (readme §1),这里要的是「这个颜色是哪一类」,emoji 帮不上忙。
+function MarkerKey({ type, label }: { type: string; label: string }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "var(--s-1)",
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: 99,
+          flex: "0 0 auto",
+          background: MARKER_COLOR[type] ?? MARKER_FALLBACK,
+        }}
+      />
+      {label}
+    </span>
+  );
+}
 
 function ReplaySection({ conditionId }: { conditionId: string }) {
   const { t } = useLang();
@@ -1043,14 +1109,35 @@ function ReplaySection({ conditionId }: { conditionId: string }) {
               <ReplayChart d={d} />
             </div>
             <div className="note-strip">
-              {t("曲线为 {o} 一侧的价格。", { o: d.outcome ?? "index 0" })}{" "}
-              {d.binary
-                ? t("另一侧的告警按 1−p 精确映射到同一坐标（标记带 ↔）。")
-                : t(
-                    "非二元市场：只显示第一结果一侧的告警，其余边无等价映射。",
-                  )}{" "}
-              {d.closed && d.resolutionPrice != null ? t("虚线为结算价。") : ""}
-              {t("标记色：💰大单 🏆聪明钱 🔥共识 🐣同批新钱包。")}
+              <div>
+                {t("曲线为 {o} 一侧的价格。", { o: d.outcome ?? "index 0" })}{" "}
+                {d.binary
+                  ? t("另一侧的告警按 1−p 精确映射到同一坐标（标记带 ↔）。")
+                  : t(
+                      "非二元市场：只显示第一结果一侧的告警，其余边无等价映射。",
+                    )}{" "}
+                {d.closed && d.resolutionPrice != null
+                  ? t("虚线为结算价。")
+                  : ""}
+              </div>
+              {/* 图例 —— 原来是一句「标记色：💰大单 🏆聪明钱…」:emoji 摆在
+                  正文句子中间(readme §1 不允许),而且自称「标记色」却不带一个
+                  色样,读者无法把图上的点映射回类型。改成真的色样对照。 */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "var(--s-3)",
+                  flexWrap: "wrap",
+                  marginTop: "var(--s-2)",
+                }}
+              >
+                <span className="ds-label">{t("标记色")}</span>
+                <MarkerKey type="large" label={t("大单")} />
+                <MarkerKey type="smart" label={t("聪明钱")} />
+                <MarkerKey type="consensus" label={t("共识")} />
+                <MarkerKey type="cohort" label={t("同批新钱包")} />
+              </div>
             </div>
           </>
         )}
@@ -1166,8 +1253,8 @@ function ReplayChart({ d }: { d: ReplayData }) {
             cx={x(Math.min(Math.max(m.ts, t0), t1))}
             cy={y(m.price)}
             r={4}
-            fill={MARKER_COLOR[m.type] ?? "#8a8a8a"}
-            stroke="white"
+            fill={MARKER_COLOR[m.type] ?? MARKER_FALLBACK}
+            stroke="var(--ww-surface)"
             strokeWidth={1}
           >
             <title>

@@ -801,6 +801,9 @@ export default function AccumulationPage() {
               value: p,
             }))}
           />
+          {/* 字号由 .ds-input 定死在 15px（readme §3 字阶：正文 / 导航 /
+              输入同一档），这里只给宽度 —— 与 24h 扫描页的同一个输入框
+              逐字一致（app/page.tsx:657）。 */}
           <input
             type="number"
             min={0}
@@ -812,7 +815,7 @@ export default function AccumulationPage() {
               if (e.key === "Enter") applyCustom();
             }}
             className="ds-input ds-input--mono"
-            style={{ width: 130, fontSize: "var(--t-md)" }}
+            style={{ width: 130 }}
           />
           {/* 自定义值不落在任何一个预设段上时，当前门槛只有这里说得清。 */}
           <span className="ds-hint">

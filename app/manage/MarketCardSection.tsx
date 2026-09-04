@@ -244,8 +244,10 @@ export default function MarketCardSection({ token }: { token: string }) {
           </label>
         ))}
         <div className="filter-row" style={{ marginTop: "var(--s-4)" }}>
+          {/* 描边白底 —— 页头的「刷新」是全页唯一的蓝底主按钮,它在这个子
+              tab 上同屏可见,这里再来一枚就是一屏两主。 */}
           <button
-            className="ds-btn ds-btn--primary"
+            className="ds-btn"
             onClick={() => void save()}
             disabled={saving}
           >

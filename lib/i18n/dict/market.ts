@@ -145,6 +145,10 @@ export const DICT_MARKET: Record<string, string> = {
   "24h 量": "24h volume",
   聪明钱这一侧: "Smart money is on this side",
   窗口留存敞口: "Retained exposure in window",
+  // 24h 量那格的副行按存在与否拼接,分隔符「 · 」由代码补 —— 旧键
+  // 「流动性 ${v} · 」把分隔符焊死在译文里,volume24hr 为空时会拖出一条尾巴。
+  "流动性 ${v}": "Liquidity ${v}",
+  "在 Polymarket 打开这个市场": "Open this market on Polymarket",
 
   // -------- 共识 / 分歧判定条
   "{n} 个白名单钱包买入 {o}": "{n} whitelist wallets bought {o}",
@@ -182,4 +186,10 @@ export const DICT_MARKET: Record<string, string> = {
   "🐣 同批新钱包": "🐣 Fresh-wallet cohort",
   "曲线为第一结果一侧 · 另一侧按 1−p 映射（标记带 ↔）":
     "Curve shows the first outcome's side · the other side maps via 1−p (markers carry ↔)",
+
+  // -------- 复盘图的色样图例(替掉旧的「标记色：💰大单 …」那句)。
+  // 「聪明钱」「共识」「同批新钱包」三个键已在 alerts / consensus 分片里,
+  // 跨分片同键异值会红,故这里只补本页缺的「大单」与图例小标。
+  大单: "Large trade",
+  标记色: "Marker colors",
 };

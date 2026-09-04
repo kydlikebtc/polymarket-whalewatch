@@ -53,6 +53,10 @@ export const DICT_HOME: Record<string, string> = {
   // KPI 分格卡副行 / 卡内标题条（Etherscan 风改版）
   "显示前 {n} 条": "Showing the first {n}",
   已全部显示: "All rows shown",
+  // 笔数 KPI 副行 —— 值是服务端口径，副行是客户端筛选后的口径，副行自报主语
+  "符合筛选 {m} 笔 · 显示前 {n} 条":
+    "{m} match the filters · showing the first {n}",
+  "符合筛选 {m} 笔 · 已全部显示": "{m} match the filters · all of them shown",
   "单笔 ≥ {amt}": "Per fill ≥ {amt}",
   "买 / 卖 · 买方占 {pct}%": "Buy / sell · buy side {pct}%",
   "共 {n} 笔符合筛选": "{n} fills match the filters",
@@ -86,6 +90,8 @@ export const DICT_HOME: Record<string, string> = {
   "市场 / 结果": "Market / outcome",
   点击按金额排序: "Click to sort by amount",
   钱包: "Wallet",
+  "该笔成交的方向：BUY = 买入该结果的份额，SELL = 卖出该结果的份额":
+    "Side of the fill: BUY = bought shares of this outcome, SELL = sold shares of this outcome",
   "已结算市场胜率 · 已实现盈亏（🏆 = 聪明钱白名单）":
     "Settled-market win rate · realized PnL (🏆 = smart-money whitelist)",
   战绩: "Record",

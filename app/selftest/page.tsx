@@ -134,28 +134,29 @@ export default function SelfTestPage() {
           borderBottom: "1px solid var(--ww-border)",
         }}
       >
+        {/* 让 input 自己承担外框、圆角与聚焦反馈,按钮绝对定位压在框内右侧
+            (四边各让 4px、圆角 6)—— 与 app/market/page.tsx 的 48px 搜索框
+            同一个做法。反面教材是「外层 div 画边框 + 内层 input border:0」:
+            那样 .ds-input:focus 的 border-color 完全失效,而 --ring-focus
+            (0 0 0 3px)会按 input 自己的直角画一圈浅蓝,把外框左侧的 8px
+            圆角填平并溢出去。现在焦点环框住整只 44px 框,形状与设计稿一致。 */}
         <div
           style={{
+            position: "relative",
             display: "flex",
-            alignItems: "stretch",
-            height: 44,
+            alignItems: "center",
             maxWidth: 660,
-            background: "var(--ww-surface)",
-            border: "1px solid var(--ww-border)",
-            borderRadius: "var(--r-btn)",
-            // 不裁剪:输入框自身的聚焦光环(--ring-focus)要能露出来。
           }}
         >
           <input
             className="ds-input ds-input--mono"
             style={{
-              flex: "1 1 auto",
+              width: "100%",
               minWidth: 0,
-              height: "100%",
-              border: 0,
-              borderRadius: 0,
-              padding: "0 14px",
-              background: "transparent",
+              height: 44,
+              // 右侧留出按钮的位置:中文「领取判决书」约 102px、
+              // 英文「Get the verdict」约 137px,取 148 留余量。
+              padding: "0 148px 0 14px",
             }}
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -169,11 +170,12 @@ export default function SelfTestPage() {
             className="ds-btn ds-btn--primary"
             disabled={loading}
             style={{
-              flex: "0 0 auto",
-              // 44 外框 − 2 边框 − 上下各 4 外边距 = 34:钮在框内留一圈白边,
-              // 写死高度是因为 .ds-btn 自带 height:32,拉伸(stretch)对它无效。
-              margin: 4,
-              height: 34,
+              position: "absolute",
+              right: 4,
+              top: 4,
+              bottom: 4,
+              // .ds-btn 自带 height:32,这里由 top/bottom 撑成 36。
+              height: "auto",
               padding: "0 16px",
               borderRadius: "var(--r-sm)",
               fontSize: "var(--t-md)",

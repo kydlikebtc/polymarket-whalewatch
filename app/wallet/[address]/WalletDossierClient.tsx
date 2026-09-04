@@ -140,17 +140,25 @@ function fmtUsd(usd: number): string {
   return usd.toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
-// 表内时间走设计稿口径 `06-28 14:02`（月-日 时:分）—— 年份与秒对一行成交
-// 没有信息量，挤在表格里只会把「市场名」的宽度吃掉。完整时间戳仍在
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+// 表内时间走设计稿口径 `06-28 14:02`（月-日 时:分，24 小时制）—— 年份与秒对
+// 一行成交没有信息量，挤在表格里只会把「市场名」的宽度吃掉。完整时间戳仍在
 // title 里悬停可得（下面的 fmtDateTimeFull），信息一点不丢。
-function fmtDateTime(sec: number, locale: string): string {
-  return new Date(sec * 1000).toLocaleString(locale, {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+// 分隔符必须手拼：toLocaleString 的日期分隔符随 locale 变（zh-CN 出
+// `06/28 22:02`、en-US 还多一个逗号），拿不到设计稿的短横线。
+function fmtDateTime(sec: number): string {
+  const d = new Date(sec * 1000);
+  return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+// 页头「分析窗口」是页面级口径，不是表格里的一行 —— 钱包首笔成交可能在几年
+// 前，年份丢了读者就分不出这个窗口是一个月还是十三个月。14px 描述行没有宽度
+// 压力，年份写在正文里，不靠悬停找回。
+function fmtDateTimeWithYear(sec: number): string {
+  return `${new Date(sec * 1000).getFullYear()}-${fmtDateTime(sec)}`;
 }
 
 function fmtDateTimeFull(sec: number, locale: string): string {
@@ -163,17 +171,19 @@ function Dash() {
   return <span className="faint">—</span>;
 }
 
-// 结果名的灰底名称标签(Etherscan name tag,设计稿里的 `NO` / `UNDER`)。
-// 结果名永不截断 —— 定高 20px 的 .ds-tag--sm 是 nowrap 的,这里放开高度让
-// 长结果名换行(最多两行,line-height 1.35),几何上与 20px 标签基本同高。
+// 结果名的灰底名称标签(Etherscan name tag,设计稿里的 `NO` / `UNDER`)——
+// 名称标签走标准 .ds-tag（22px / 12px，§3 把 11px 留给徽章内、12px 给名称
+// 标签），与同页告警类型标签同号。
+// 结果名永不截断 —— 定高的 .ds-tag 是 nowrap 的,这里放开高度让长结果名
+// 换行(最多两行,line-height 1.35),几何上与 22px 标签基本同高。
 function OutcomeTag({ children }: { children: ReactNode }) {
   return (
     <span
-      className="ds-tag ds-tag--sm"
+      className="ds-tag"
       style={{
         height: "auto",
-        minHeight: "var(--h-tag-s)",
-        padding: "2px 6px",
+        minHeight: "var(--h-tag)",
+        padding: "2px var(--s-2)",
         whiteSpace: "normal",
         overflowWrap: "anywhere",
         lineHeight: "var(--lh-snug)",
@@ -691,8 +701,8 @@ export default function WalletPage() {
             >
               {t("分析窗口：近 {n} 笔成交（{from} → {to}）", {
                 n: p.tradeCount,
-                from: fmtDateTime(p.firstTs, dtLocale),
-                to: fmtDateTime(p.lastTs, dtLocale),
+                from: fmtDateTimeWithYear(p.firstTs),
+                to: fmtDateTimeWithYear(p.lastTs),
               })}
             </p>
           ) : null}
@@ -798,6 +808,10 @@ export default function WalletPage() {
                 className="ds-tabrow"
                 style={{ borderBottom: 0, flexWrap: "wrap" }}
               >
+                {/* globals 的 .ds-tabrow 只给 > button 上色,<a> 匹配不上,会
+                    掉回全局链接蓝 + hover 下划线 —— 而蓝在 tab 行里是「当前
+                    选中」的语义,一排全蓝等于宣称 8 个分区同时选中。这些是锚点
+                    跳转,没有当前项,所以逐个补上未选中态的字色与去下划线。 */}
                 {sections.map((s) => (
                   <a
                     key={s.id}
@@ -806,6 +820,8 @@ export default function WalletPage() {
                       padding: "6px var(--s-3)",
                       borderRadius: "var(--r-btn)",
                       whiteSpace: "nowrap",
+                      color: "var(--ww-text)",
+                      textDecoration: "none",
                     }}
                   >
                     {s.label}
@@ -1184,7 +1200,7 @@ export default function WalletPage() {
                             data-label={t("时间")}
                             title={fmtDateTimeFull(h.createdAt, dtLocale)}
                           >
-                            {fmtDateTime(h.createdAt, dtLocale)}
+                            {fmtDateTime(h.createdAt)}
                           </td>
                         </tr>
                       ))}
@@ -1233,26 +1249,25 @@ export default function WalletPage() {
                   <div className="metric-grid">
                     <div>
                       <div className="metric__label">{t("判定")}</div>
-                      <div
-                        className="metric__value"
-                        style={{ marginTop: "var(--s-1)" }}
-                      >
-                        <Tag
-                          variant={
-                            impact.verdict === "followed"
-                              ? "up"
-                              : impact.verdict === "faded"
-                                ? "warn"
-                                : "default"
-                          }
-                        >
-                          {impact.verdict === "followed"
-                            ? t("被市场跟随")
-                            : impact.verdict === "faded"
-                              ? t("被市场回吐")
-                              : t("反应不一")}
-                        </Tag>
-                      </div>
+                      {/* 徽章只给方向性判定:绿 = 被跟随、琥珀 = 被回吐。
+                          「反应不一」是中性判定,退回普通文字 —— 灰底是名称
+                          标签,五类语义里没有「中性状态徽章」这一档。 */}
+                      {impact.verdict === "followed" ||
+                      impact.verdict === "faded" ? (
+                        <div className="metric__value">
+                          <Tag
+                            variant={
+                              impact.verdict === "followed" ? "up" : "warn"
+                            }
+                          >
+                            {impact.verdict === "followed"
+                              ? t("被市场跟随")
+                              : t("被市场回吐")}
+                          </Tag>
+                        </div>
+                      ) : (
+                        <div className="metric__value">{t("反应不一")}</div>
+                      )}
                     </div>
                     <div>
                       <div className="metric__label">{t("初动留存率")}</div>
@@ -1362,7 +1377,7 @@ export default function WalletPage() {
                           data-label={t("时间")}
                           title={fmtDateTimeFull(r.timestamp, dtLocale)}
                         >
-                          {fmtDateTime(r.timestamp, dtLocale)}
+                          {fmtDateTime(r.timestamp)}
                         </td>
                         <td className="cell-wrap" style={{ maxWidth: 360 }}>
                           {r.eventSlug ? (

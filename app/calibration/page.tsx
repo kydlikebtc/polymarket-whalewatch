@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLang } from "../i18n";
 import { catLabel } from "../../lib/categoryLabel";
 import type { CalibrationBand, CalibrationReport } from "../../lib/calibration";
-import { StatCard, Tag } from "../ui";
+import { Segmented, StatCard, Tag } from "../ui";
 
 // /calibration 市场校准研究:这不是我们的战绩页 —— 样本是「alert 时点的市场
 // 隐含概率 vs 最终结算」,回答的是 Polymarket 价格本身准不准。选择偏差声明
@@ -142,21 +142,19 @@ export default function CalibrationPage() {
 
       {report && report.totalN > 0 && (
         <>
-          {/* 筛选条 —— 一排 32px 描边钮,当前项蓝描边 */}
-          <div className="filter-bar" role="group" aria-label={t("分组")}>
-            {options.map((o) => (
-              <button
-                key={o.value}
-                type="button"
-                className={
-                  group === o.value ? "ds-btn ds-btn--active" : "ds-btn"
-                }
-                aria-pressed={group === o.value}
-                onClick={() => setGroup(o.value)}
-              >
-                {o.label}
-              </button>
-            ))}
+          {/* 筛选条 —— 分组是严格互斥单选(group 是单个值,点谁就覆盖谁),
+              所以控件必须是 Segmented。.ds-btn--active 那一族是「任选子集」
+              的 on 态(globals.css 与设计系统 controls.html 都点名区分),
+              用它渲染互斥选择会让人以为可以多选。全站另外 20 处互斥选择器
+              也都是 Segmented,这里不该独一份。 */}
+          <div className="filter-bar">
+            <Segmented
+              options={options}
+              value={group}
+              onChange={(v) => setGroup(v)}
+              ariaLabel={t("分组")}
+              className="ds-segmented--wrap"
+            />
             <span className="filter-bar__right ds-hint">
               {t("偏差 = 实际发生率 − 隐含均值")}
             </span>

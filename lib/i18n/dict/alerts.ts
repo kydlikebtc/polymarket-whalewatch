@@ -18,6 +18,9 @@ export const DICT_ALERTS: Record<string, string> = {
     "📣 Polled every 5s · paused in background tabs",
   "命中告警条件的大额成交逐条出现在下方，最新一条在最上面。条件（金额 / 方向 / 赔率 / 地址年龄 / 冷却 / 聪明钱）统一在运营页配置。":
     "Large fills that match the alert conditions appear below one by one, newest first. The conditions (amount / side / odds / wallet age / cooldown / smart money) are configured on the ops page.",
+  // 时区声明（设计系统 §1：时区在页头注明一次）
+  "本页时间按浏览器本地时区显示（顶栏的「实时」时钟走 UTC）。":
+    "Times on this page follow your browser's local time zone (the “Live” clock in the top bar runs on UTC).",
 
   // 口径条（琥珀，放在数据前面）—— 只放统计声明；降级态的读法在表下方的
   // 琥珀说明条里（设计系统 §1.2：「—」的成因写在表下方）。
@@ -25,9 +28,9 @@ export const DICT_ALERTS: Record<string, string> = {
   "验证列的 10m / 1h / 24h 是信号发出后的公开市场价变化，按方向着色（±0.5¢ 内记平推），不等于你的实际成交。同一市场的多条告警共享一次结算，因此 95% 区间与「样本不足」都按市场数计算，不按行数。":
     "The 10m / 1h / 24h figures in the Validation column are public market-price moves after the signal, colored by direction (moves within ±0.5¢ count as a push); they are not your actual fills. Alerts on one market share its single settlement, so both the 95% interval and the small-sample flag are computed on the market count, not the row count.",
 
-  // 卡底琥珀说明条 —— 降级态的读法
-  "验证列「…」表示这一笔还在补算：新命中立即取，未取到的每分钟重试一批（一次最多 100 条）。「—」是「判不了」不是零 —— 结果列的「—」表示该笔没带结果名，钱包列的「—」表示没带钱包地址。":
-    "In the Validation column, an ellipsis means the row is still being computed: a fresh hit is fetched at once, and rows still missing their marks are retried once a minute (up to 100 per batch). A dash means not determinable, not zero — under Outcome it means the alert carried no outcome name, under Wallet no wallet address.",
+  // 卡底琥珀说明条 —— 降级态的读法（三处「—」逐处列全，见设计系统 §1.2）
+  "⚠️ 表里的三处「—」各有各的含义，不能都读成 0：结果列的「—」表示该笔没带结果名；钱包列的「—」表示没带钱包地址；验证列的「—」表示这一笔已结算但记平局（50/50 结算或结算价≈成交价），不计入胜率。另有一个非「—」的降级态：验证列的「…」表示这一笔还在补算 —— 新命中立即取，未取到的每分钟重试一批（一次最多 100 条）。":
+    "⚠️ The three dashes in this table mean three different things, and none of them means 0: under Outcome, the alert carried no outcome name; under Wallet, it carried no wallet address; under Validation, the market settled as a push (a 50/50 resolution, or a settlement price ≈ the fill price) and is left out of the win rate. One more degraded state is not a dash: an ellipsis under Validation means the row is still being computed — a fresh hit is fetched at once, and rows still missing their marks are retried once a minute (up to 100 per batch).",
 
   // KPI 3 格
   命中条数: "Alerts matched",
@@ -131,7 +134,9 @@ export const DICT_ALERTS: Record<string, string> = {
   钱包: "Wallet",
   验证: "Validation",
   时间: "Time",
-  "信号后 1h/24h 价格变化（按方向着色）与结算结果":
-    "1h/24h price move after the signal (colored by direction) and the resolution result",
+  // 表头 (?) 的口径 —— 与验证列实际渲染的三个 horizon 对齐（10m 是
+  // price_10m 上线后补的一列，旧文案只写了 1h/24h）。
+  "信号后 10m / 1h / 24h 价格变化（按方向着色）与结算结果":
+    "10m / 1h / 24h price move after the signal (colored by direction) and the resolution result",
   " · 结算价 {res} vs 成交价 {fill}": " · resolved {res} vs fill {fill}",
 };

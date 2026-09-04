@@ -66,15 +66,32 @@ function SurvivorRows({ t }: { t: WfTierReport }) {
               <td className="cell-wrap" data-label="存活变体">
                 {v.label}
               </td>
+              {/* 这四处 `—` 是防御性兜底:本表只列存活变体,而 survives =
+                  passClustered && passRand,两者都要求 pooled/loBonf/randP 非
+                  空(lib/walkforward.ts),各折也已按 evaluable 过滤过。真跑出来
+                  是空的话它就是「判不了」,所以用 faint 与真读数分家,不与正文
+                  同色。 */}
               <td className="cell-wrap" data-label="OOS 超额">
-                {v.pooled
-                  ? `${pts(v.pooled.point)}（n=${v.pooled.n} 市场=${v.pooled.markets}）`
-                  : "—"}
+                {v.pooled ? (
+                  `${pts(v.pooled.point)}（n=${v.pooled.n} 市场=${v.pooled.markets}）`
+                ) : (
+                  <span className="faint">—</span>
+                )}
               </td>
               <td data-label="Bonferroni 下界">
-                {v.loBonf != null ? pts(v.loBonf) : "—"}
+                {v.loBonf != null ? (
+                  pts(v.loBonf)
+                ) : (
+                  <span className="faint">—</span>
+                )}
               </td>
-              <td data-label="随机化 p">{v.randP?.toFixed(4) ?? "—"}</td>
+              <td data-label="随机化 p">
+                {v.randP != null ? (
+                  v.randP.toFixed(4)
+                ) : (
+                  <span className="faint">—</span>
+                )}
+              </td>
               <td className="cell-wrap muted" data-label="各折 OOS">
                 {v.folds
                   .filter((f) => f.evaluable)
@@ -220,10 +237,11 @@ export default function WalkforwardSection({ token }: { token: string }) {
           title="🧪 阈值重推(walk-forward)"
           hint="对厚档做收紧/平移方向的网格×子集选择,三道显著性闸(聚类 CI + Bonferroni + 方向随机化)。报告只给建议 —— 绝不自动改任何存量档参数。完整方法论与读法见下方使用说明。"
         />
-        {/* 本屏唯一的主按钮 —— 其余一律描边白底。 */}
+        {/* 全屏一律描边白底 —— 唯一的蓝底主按钮是页头的「刷新」,它在这个
+            分区上同屏可见(此前这里数漏了那一枚)。 */}
         <div className="filter-bar">
           <button
-            className="ds-btn ds-btn--primary"
+            className="ds-btn"
             disabled={running}
             onClick={() => void startRun()}
           >

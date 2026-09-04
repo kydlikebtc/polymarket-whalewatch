@@ -21,6 +21,7 @@ import {
 } from "../../lib/followAnalysis";
 import { catLabel, subLabel } from "../../lib/categoryLabel";
 import { useLang } from "../i18n";
+import { Icon } from "../ui";
 import {
   buildEdgeMatrix,
   diagnoseSegments,
@@ -112,18 +113,13 @@ function fineLabelT(
 /* ------------------------------------------------------------ primitives */
 
 // 有口径的读数/列头后面跟一个 (?) —— 口径写在它的 title 里(这套皮的标志性
-// 细节:每一个有口径的列头都带一个)。走 .tip-pop:触屏点一下同样能读到,
-// 不是鼠标专属功能。
+// 细节:每一个有口径的列头都带一个)。触屏可达不自己实现:.tip-pop 的点按
+// 弹层要靠 onClick 手动 focus + onBlur 收起(iOS Safari 点 tabindex=-1 的
+// span 不给焦点,触屏又从不显示原生 title),那套 props 只在 app/ui.tsx 里,
+// 直接复用它导出的 Icon(接受显式 title);这里只管 (?) 的排版。
 function HelpMark({ tip }: { tip: string }) {
   return (
     <span
-      className="tip-pop"
-      title={tip}
-      aria-label={tip}
-      // 与全站 tip-pop 同一契约(app/ui.tsx tipPopProps):-1 不进 Tab 序,
-      // 点一下聚焦弹出、失焦收起,不给读者凭空多出 8 个 tab 站点。
-      tabIndex={-1}
-      data-tip={tip}
       style={{
         flex: "0 0 auto",
         fontSize: 11,
@@ -131,7 +127,7 @@ function HelpMark({ tip }: { tip: string }) {
         color: "var(--ww-text-faint)",
       }}
     >
-      (?)
+      <Icon s="(?)" title={tip} />
     </span>
   );
 }
@@ -151,7 +147,10 @@ function Block({
   children: ReactNode;
 }) {
   return (
-    <section className="ds-card" style={{ overflow: "hidden" }}>
+    // 不裁 overflow(与 ① 卡同一处理):格内的 (?) 点开是绝对定位的弹出层,
+    // 卡一裁就只剩鼠标悬停能读到口径。卡底说明条自带圆角补上被 overflow
+    // 顺带做掉的那件事 —— 它是唯一有底色、会压到圆角上的子元素。
+    <section className="ds-card">
       {/* 卡内标题条:14 / 600(.card-bar 本身不带字重,与全站其它卡一样
           由调用方给) */}
       <div className="card-bar" style={{ fontWeight: 600 }}>
@@ -168,7 +167,14 @@ function Block({
         {hint}
       </div>
       <div style={{ padding: "14px var(--s-4)" }}>{children}</div>
-      {note != null ? <div className="note-strip">{note}</div> : null}
+      {note != null ? (
+        <div
+          className="note-strip"
+          style={{ borderRadius: "0 0 var(--r-md) var(--r-md)" }}
+        >
+          {note}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -251,7 +257,8 @@ function StackBar({
 /* ----------------------------------------------------- odds calibration */
 
 // 赔率带校准行:每桶两根条 —— 实际胜率(brand)对照隐含胜率(灰,= 均入场
-// 价,市场定价的概率)。edge 胶囊放右侧;n<阈值整行弱化(诚实降权,不隐藏)。
+// 价,市场定价的概率)。edge 胶囊放右侧;n<阈值挂琥珀「样本不足」徽章
+// (诚实降权,不隐藏、也不整行淡显 —— 淡显会把徽章一起淡掉)。
 function OddsRow({ b }: { b: OddsBucket }) {
   const { t } = useLang();
   const lowSample = b.n > 0 && b.n < BUCKET_LOW_SAMPLE_N;
@@ -264,8 +271,9 @@ function OddsRow({ b }: { b: OddsBucket }) {
       "minmax(64px, 96px) 1fr minmax(52px, 76px) minmax(56px, 84px)",
     gap: "var(--s-2)",
     alignItems: "center",
-    // 淡显 = 「这一格还判不了」,与矩阵格子同一个 0.42(样本不足的统一读法)。
-    opacity: b.n === 0 || lowSample ? 0.42 : 1,
+    // 行不做任何行级强调:样本不足由琥珀徽章标出、零仓由「·」占位标出。
+    // (整行淡显会把用来分轻重的徽章一起淡掉,反倒最弱 —— 矩阵那种 0.42
+    // 只落在没有徽章的单元格上。)
   };
   return (
     <div style={rowStyle}>
@@ -331,7 +339,11 @@ function OddsRow({ b }: { b: OddsBucket }) {
         </div>
       )}
       <div>
-        {b.edge == null ? (
+        {b.n === 0 ? (
+          // 零仓 = 零值占位「·」(与矩阵格同一符号),与「判不了」的「—」
+          // 严格分家:这一档从没下过注,不是「全平局算不出 edge」。
+          <span style={{ color: "var(--ww-text-empty)" }}>·</span>
+        ) : b.edge == null ? (
           <span className="muted">—</span>
         ) : (
           <span
@@ -346,7 +358,8 @@ function OddsRow({ b }: { b: OddsBucket }) {
       </div>
       <div style={{ fontSize: "var(--t-md)", textAlign: "right" }}>
         {b.n === 0 ? (
-          <span className="muted">—</span>
+          // 同上:零仓的落袋是「没有这笔」,不是「判不了」。
+          <span style={{ color: "var(--ww-text-empty)" }}>·</span>
         ) : (
           <span className={pnlTextClass(b.realized)}>
             {fmtSignedUsd(b.realized)}
@@ -709,8 +722,8 @@ function CategoryRows({ c, maxN }: { c: CategoryGroup; maxN: number }) {
           gridTemplateColumns: "minmax(76px, 110px) 1fr minmax(150px, 250px)",
           gap: "var(--s-3)",
           alignItems: "center",
-          // 样本不足统一淡显到 0.42(与矩阵格子同一读法)。
-          opacity: lowSample ? 0.42 : 1,
+          // 样本不足只由右侧的琥珀徽章标出,不再整行淡显 —— 行级强调会把
+          // 徽章一起淡掉(与 TrackStatTable / 赔率带行同一口径)。
         }}
       >
         <span
@@ -940,8 +953,12 @@ export function EdgeMatrixTable({
         </tbody>
       </table>
       {/* 降级态说明放在表下方的琥珀条里 —— 三个符号各有各的含义,不能
-          都读成 0。 */}
-      <div className="note-strip note-strip--warn">
+          都读成 0。sticky:8 列赛道会把表撑到横向滚动,不粘住的话这条会
+          整条滑出视区、琥珀底色在容器宽度处断掉(说明必须与表同屏可读)。 */}
+      <div
+        className="note-strip note-strip--warn"
+        style={{ position: "sticky", left: 0 }}
+      >
         {t(
           "⚠️ 「·」= 该策略在该赛道零仓,与 edge 为 0 严格分家;「—」= 该格全是平局,没有实际胜率可比,是判不了不是零;淡显的格子(<{n} 仓)也不是「没 edge」,是这一格还判不了 —— 矩阵是用来选下一档做什么的,不是给现有档打分的。",
           { n: BUCKET_LOW_SAMPLE_N },
@@ -1056,6 +1073,18 @@ function TrackStatTable({ rows }: { rows: DeepAnalysisRow[] }) {
           })}
         </tbody>
       </table>
+      {/* 降级态说明:同一份矩阵数据的两种形态,读法必须同样写全 ——
+          转置表里 edge/胜率同样会画「—」,不给条就只有矩阵那一形态
+          有降级态读法。sticky 同 EdgeMatrixTable:滚动时不滑出视区。 */}
+      <div
+        className="note-strip note-strip--warn"
+        style={{ position: "sticky", left: 0 }}
+      >
+        {t(
+          "⚠️ 「—」= 该赛道全是平局,没有实际胜率可比,edge 也就无从算起 —— 是判不了,不是零;标了「样本不足」的行(<{n} 仓)也不是「没 edge」,是这一行还判不了。",
+          { n: BUCKET_LOW_SAMPLE_N },
+        )}
+      </div>
     </div>
   );
 }
@@ -1707,6 +1736,12 @@ export function DeepAnalysisPanel({
         hint={t(
           "入场价本身就是市场定价的获胜概率(隐含胜率)。每档赔率带对比「实际胜率(蓝)vs 隐含胜率(灰)」:实际持续高于隐含(edge>0)才是可复制的优势;只在某一档赔率带赚钱,也说明策略的钱从哪来",
         )}
+        // 降级态读法写全:这张卡里「·」「—」「样本不足」三种成因各不相同,
+        // 少列一种读者就会把某一种当成 0(灰条 = 口径说明,与帧 24 同处理)。
+        note={t(
+          "「·」= 该档赔率带零仓,这个价位区间从没下过注,不是 edge 为 0;「—」= 该档有仓但全是平局,没有实际胜率可比,是判不了不是零;琥珀「样本不足」= 该档 <{n} 仓,读数只够看方向。",
+          { n: BUCKET_LOW_SAMPLE_N },
+        )}
       >
         <div style={{ display: "grid", gap: "var(--s-3)" }}>
           <div
@@ -1917,7 +1952,7 @@ export function DeepAnalysisPanel({
       <Block
         label={t("缺陷诊断 — 亏在哪类下注")}
         hint={t(
-          "把已结算仓按赛道/持有时长(快慢市场)/赔率带三个维度切段,列出「段内 ≥{n} 仓且累计亏损」的特征段(最亏在前,至多 5 段)—— 定向优化的靶点。⚠️ 各段互有重叠(一仓可同时属「足球」与「>7 天」),「剔除后」数字不可相加",
+          "把已结算仓按赛道/持有时长(快慢市场)/赔率带三个维度切段,列出「段内 ≥{n} 仓且累计亏损」的特征段(最亏在前,至多 5 段)—— 定向优化的靶点。各段互有重叠(一仓可同时属「足球」与「>7 天」),「剔除后」数字不可相加",
           { n: BUCKET_LOW_SAMPLE_N },
         )}
       >
@@ -1992,22 +2027,30 @@ export function DeepAnalysisPanel({
                 </tr>
               </thead>
               <tbody>
+                {/* 每格都带 data-label:窄屏下 thead 被视觉隐藏,列名靠
+                    td::before 的 attr(data-label) 还原 —— 缺了就是四行
+                    没有标签的裸数字(与本文件另两张表同一处理)。 */}
                 {exitCounterfactual.rules.map((r) => (
                   <tr key={r.rule}>
-                    <td style={{ whiteSpace: "nowrap" }}>{r.label}</td>
-                    <td className="is-right num">
+                    <td data-label="规则" style={{ whiteSpace: "nowrap" }}>
+                      {r.label}
+                    </td>
+                    <td data-label="触发" className="is-right num">
                       {r.triggered}
                       <span className="muted">
                         /{exitCounterfactual.covered}
                       </span>
                     </td>
-                    <td className="is-right num">{fmtSignedUsd(r.simTotal)}</td>
+                    <td data-label="假想合计" className="is-right num">
+                      {fmtSignedUsd(r.simTotal)}
+                    </td>
                     <td
+                      data-label="Δ vs 实际"
                       className={`is-right num ${r.delta > 0 ? "up" : r.delta < 0 ? "down" : "muted"}`}
                     >
                       {fmtSignedUsd(r.delta)}
                     </td>
-                    <td className="is-right num">
+                    <td data-label="触发仓均Δ" className="is-right num">
                       {r.avgDeltaTriggered == null ? (
                         <span className="muted">—</span>
                       ) : (

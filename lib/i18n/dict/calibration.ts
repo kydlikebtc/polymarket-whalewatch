@@ -9,7 +9,6 @@ export const DICT_CALIBRATION: Record<string, string> = {
     "No settled observations yet — settlement backfill is accumulating.",
   总体: "Overall",
   分组: "Group",
-  "{n} 条观察 · {m} 个去重市场": "{n} observations · {m} distinct markets",
   观察数: "Obs",
   市场数: "Markets",
   隐含均值: "Implied mean",
