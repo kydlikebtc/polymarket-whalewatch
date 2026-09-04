@@ -23,7 +23,10 @@ permissions:
 
 jobs:
   test:
-    name: typecheck + unit tests
+    # Renamed from "typecheck + unit tests" when the build step landed. Safe to
+    # rename because main carries no branch protection, so no required status
+    # check is pinned to the old string — recheck that before renaming again.
+    name: typecheck + unit tests + build
     runs-on: ubuntu-latest
 
     steps:
@@ -70,3 +73,39 @@ jobs:
       # suite passes against a bare checkout with no .env file present.
       - name: Unit tests
         run: npm test
+
+      # `next build`, and specifically the **webpack** one. Not redundant with
+      # Typecheck above, for a reason worth spelling out because it is easy to
+      # "simplify" this step away:
+      #
+      # Next validates every route/page against its own export whitelist
+      # (GET/POST/runtime/dynamic/…) through assertion files it GENERATES into
+      # .next/types at build time. tsconfig.json does include .next/types/**,
+      # so `tsc --noEmit` checks them — but only the ones already sitting on
+      # disk. .next/ is gitignored, CI checks out bare, and Typecheck runs
+      # first, so on a CI run there are no assertion files to check and the
+      # Typecheck step is green no matter what a route.ts exports. An extra
+      # export — e.g. a test-only cache reset hook — therefore reached main
+      # with both CI steps passing, and broke only at build time.
+      #
+      # Why `build:webpack` and not `build`: on Next 16 the default builder is
+      # Turbopack, and the Turbopack path does not emit the per-route assertion
+      # files (measured: 3 files under .next/types vs 63 for webpack). The same
+      # illegal route export exits 0 under Turbopack and 1 under webpack — so
+      # `npm run build` here would be a gate that catches nothing. The webpack
+      # path is already load-bearing for this project (next.config keeps a
+      # webpack fallback for git-worktree runs, where Turbopack panics on the
+      # symlinked node_modules), so keeping it green costs no extra upkeep.
+      #
+      # Cost: ~10s on a warm laptop, budget under a minute on ubuntu-latest —
+      # it reuses this job's `npm ci`, so the marginal spend is the build alone.
+      # Needs no env: every route is force-dynamic, nothing is prerendered, and
+      # the build opens no database (verified on a bare checkout with no .env
+      # and no data.sqlite present).
+      #
+      # NOTE: Turbopack — what Dockerfile's `npm run build` actually ships — is
+      # deliberately NOT built here. The deploy already exercises it, and paying
+      # for a second full build to learn the same thing a few minutes earlier is
+      # not worth the CI minutes.
+      - name: Build (webpack — validates route export shape)
+        run: npm run build:webpack
