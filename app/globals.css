@@ -1,99 +1,220 @@
 /* =====================================================================
-   MM Manage — Design System v3  ·  tokens + component layer
-   Token values & component rules are a faithful port of the reference
-   implementation (MM Manage - Design System v3.html). App-specific layout
-   pieces (topbar, table, KPI, callout, age tones) extend that base.
-   Light canvas / near-black topbar · one electric-blue accent ·
-   mono tabular numbers · hairline-bordered cards (no shadow on static).
+   WhaleWatch — 设计系统 · Etherscan 风
+   值取自 design-system-etherscan/（tokens/ + components/core/ + guidelines/），
+   源头是《WhaleWatch 全站设计稿 · Etherscan 风》25 幅。
+
+   与旧的「终端风」互斥：白底分格卡、蓝链接、描边徽章、emoji 承担语义、
+   数字与正文同字体同字号常规字重。全站唯一深色面是代码面板。
+
+   ── 改皮的切口 ──────────────────────────────────────────────────────
+   全部页面消费的是本文件的类名（ds-* 一族、kpi、topbar…）与 var(--…) 令牌
+   （tsx 内联样式里 600+ 处）。所以换皮只重指向「令牌值 + 组件层规则」，
+   旧令牌名一个不删、全部保留为别名 —— 页面 JSX 与业务逻辑零改动即换肤。
+   新代码请直接用 ww-* 语义令牌；n-* 与 brand-* 一族是兼容层。
+
+   注意：本文件的注释里不要写出 `*` 紧挨 `/` 的组合（例如把类名族写成
+   「ds-* / .kpi」时中间必须留空格）—— 那会提前闭合注释块，把紧随其后的
+   整张令牌表打成无效 CSS，表现为全站变量集体为空、样式看似「没加载」。
    ===================================================================== */
-
 :root {
-  /* ---- Neutral scale (cool, slightly blue-leaning · hue 250) ---- */
-  --n-0: oklch(100% 0 0); /* pure white — card surface */
-  --n-25: oklch(99% 0.003 250); /* canvas / page bg */
-  --n-50: oklch(97.5% 0.005 250); /* raised surface, inset rows */
-  --n-100: oklch(95% 0.006 250); /* hover bg */
-  --n-150: oklch(92% 0.008 250); /* divider / card hairline */
-  --n-200: oklch(88% 0.009 250); /* input border */
-  --n-300: oklch(78% 0.011 250); /* stronger border */
-  --n-400: oklch(65% 0.013 250); /* placeholder */
-  --n-500: oklch(54% 0.015 250); /* tertiary / muted */
-  --n-600: oklch(44% 0.017 250); /* secondary text */
-  --n-700: oklch(34% 0.018 250); /* body text */
-  --n-800: oklch(24% 0.018 250); /* strong text */
-  --n-900: oklch(16% 0.016 250); /* emphasis, primary btn fill */
-  --n-950: oklch(11% 0.014 250); /* near-black */
-  --n-1000: oklch(7% 0.01 250); /* topbar / dark surfaces */
+  /* ---------------------------------------------------------------
+     1 · Etherscan 风原生令牌（--ww-*）—— 颜色是点值，不做色阶推导
+     --------------------------------------------------------------- */
 
-  /* ---- Brand — electric blue (single accent · hue 245) ---- */
-  --brand-50: oklch(97% 0.025 245);
-  --brand-100: oklch(94% 0.05 245);
-  --brand-200: oklch(88% 0.09 245);
-  --brand-400: oklch(70% 0.17 245);
-  --brand-500: oklch(60% 0.22 245); /* primary action, active */
-  --brand-600: oklch(53% 0.23 245); /* hover */
-  --brand-700: oklch(45% 0.21 245); /* active / on-tint text */
+  /* 文字 */
+  --ww-text: #081d35; /* 主文字、标题、表格单元格、KPI 值 */
+  --ww-text-muted: #6c757d; /* 次要文字、12px 大写小标、说明、副行 */
+  --ww-text-faint: #adb5bd; /* 弱图标、(?) 提示、±0.5¢ 死区、样本不足 */
+  --ww-text-empty: #dee2e6; /* 矩阵零值占位「·」—— 与 0 严格分家 */
+  --ww-text-on-dark: rgba(255, 255, 255, 0.86);
 
-  /* ---- Semantic — PnL & status (financial meaning only) ---- */
-  --up-50: oklch(96% 0.04 155);
-  --up-500: oklch(64% 0.17 155); /* solid green fill */
-  --up-700: oklch(48% 0.16 155); /* green text on light */
-  --down-50: oklch(96% 0.035 25);
-  --down-500: oklch(62% 0.21 25); /* solid red fill */
-  --down-700: oklch(48% 0.2 25); /* red text on light */
-  --warn-50: oklch(97% 0.05 85);
-  --warn-500: oklch(72% 0.16 85); /* amber fill */
-  --warn-700: oklch(40% 0.13 85); /* amber text on light (per .ds-tag--warn) */
+  /* 交互 */
+  --ww-link: #0784c3; /* 链接、主按钮底、当前选中、KPI 关键值 */
+  --ww-link-border: rgba(7, 132, 195, 0.4);
+  --ww-link-bg: rgba(7, 132, 195, 0.06);
+  --ww-link-bg-active: rgba(7, 132, 195, 0.1); /* 选中 tab / 分段项底 */
 
-  /* ---- Typography ---- */
-  --font-ui:
-    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  --font-mono:
-    "JetBrains Mono", "SF Mono", ui-monospace, SFMono-Regular, Menlo,
-    "Liberation Mono", monospace;
+  /* 面与线 */
+  --ww-surface: #fff; /* 卡片、顶栏、页面底 */
+  --ww-surface-muted: #f8f9fa; /* 标签底、空态底、说明条底、禁用钮底 */
+  --ww-surface-sunken: #f1f3f5; /* 链尾框 / 行内代码底 */
+  --ww-border: #e9ecef; /* 卡片 / 行 / 控件边框 —— 全站唯一实线边框色 */
+  --ww-border-dashed: #ced4da; /* 空档卡虚线边、中性比例条 */
+  --ww-gridline: #eef0f2; /* 图表竖网格线 */
 
-  --t-xs: 11px;
-  --t-sm: 12px;
-  --t-base: 13px; /* default — dense UI, table cells */
-  --t-md: 14px;
-  --t-lg: 16px;
-  --t-xl: 20px;
-  --t-2xl: 28px;
-  --t-3xl: 40px;
+  /* 绿 · 通过 / 正常 / 命中 / 买 / 涨 */
+  --ww-up: #00a186;
+  --ww-up-border: rgba(0, 161, 134, 0.45);
+  --ww-up-bg: rgba(0, 161, 134, 0.1);
+  --ww-up-wash: rgba(0, 161, 134, 0.06);
+
+  /* 红 · 反向 / 停跳 / 卖 / 跌 */
+  --ww-down: #dc3545;
+  --ww-down-border: rgba(220, 53, 69, 0.45);
+  --ww-down-bg: rgba(220, 53, 69, 0.1);
+
+  /* 琥珀 · 需留神的口径 / 样本不足 / 机器人 */
+  --ww-warn: #b47d00;
+  --ww-warn-border: rgba(255, 193, 7, 0.6);
+  --ww-warn-bg: rgba(255, 193, 7, 0.12);
+  --ww-warn-wash: rgba(255, 193, 7, 0.08); /* 口径提示条底 */
+  --ww-warn-wash-2: rgba(255, 193, 7, 0.06); /* KPI 末段换底 */
+  --ww-warn-frame: rgba(255, 193, 7, 0.35); /* 独立口径框边 */
+
+  /* 品牌深蓝 —— 页面 chrome 不用，保留给页脚 / 营销页 */
+  --ww-navy: #21325b;
+
+  /* 代码面板（全站唯一深色面） */
+  --ww-code-bg: #081d35;
+  --ww-code-str: #8ce99a;
+  --ww-code-num: #ffd43b;
+  --ww-code-comment: rgba(255, 255, 255, 0.45);
+  --ww-code-line: rgba(255, 255, 255, 0.12);
+  --ww-code-tab: rgba(255, 255, 255, 0.12);
+  --ww-code-tab-idle: rgba(255, 255, 255, 0.62);
+
+  /* 弹窗 */
+  --ww-scrim: rgba(8, 29, 53, 0.45);
+
+  /* 字体 —— 全局单一系统字体，不加载 webfont。
+     数字不用等宽：KPI 值 / 表格 / 金额 / 时间与正文同字体同字号常规字重。
+     JetBrains Mono 只出现在代码面板与行内 code。 */
+  --ww-font:
+    "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Noto Sans SC",
+    sans-serif;
+  --ww-font-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* 深度 —— 招牌是那层又散又淡的卡片阴影 */
+  --shadow-card: 0 8px 19px rgba(189, 197, 209, 0.2);
+  --shadow-seg-active: 0 1px 2px rgba(8, 29, 53, 0.08);
+  --shadow-card-leading: 0 8px 19px rgba(7, 132, 195, 0.16);
+  --shadow-modal: 0 24px 64px rgba(8, 29, 53, 0.28);
+  --ring-focus: 0 0 0 3px var(--ww-link-bg);
+  --rail-active: inset 2px 0 0 var(--ww-link);
+
+  --content-max: 1120px;
+  --gutter: 20px;
+
+  /* ---------------------------------------------------------------
+     2 · 兼容层 —— 旧令牌名保留，值重指向上面的 Etherscan 点值。
+     页面内联样式（600+ 处 var(--n-*)/var(--brand-*)/…）不改一行即换肤。
+     新代码不要再用这一族。
+     --------------------------------------------------------------- */
+
+  /* 中性阶：五档灰塌缩到 Etherscan 的「白 / 浅底 / 沉底 / 线 / 三档字」 */
+  --n-0: var(--ww-surface); /* 卡面 */
+  --n-25: var(--ww-surface); /* 页底 —— 这套皮页底也是纯白 */
+  --n-50: var(--ww-surface-muted); /* 浅底、hover、表头底 */
+  --n-100: var(--ww-surface-sunken); /* 沉底、行内代码、进度槽 */
+  --n-150: var(--ww-border); /* 卡片发丝线 */
+  --n-200: var(--ww-border); /* 控件边框 */
+  --n-300: var(--ww-border-dashed); /* 强边框 / 虚线 */
+  --n-400: var(--ww-text-faint); /* placeholder */
+  --n-500: var(--ww-text-muted); /* 三级字 */
+  --n-600: var(--ww-text-muted); /* 二级字 */
+  --n-700: var(--ww-text); /* 正文 */
+  --n-800: var(--ww-text); /* 强调正文 */
+  --n-900: var(--ww-text); /* 标题 */
+  --n-950: var(--ww-text);
+  --n-1000: var(--ww-code-bg); /* 唯一深色面（代码块） */
+
+  /* 品牌：单一蓝 #0784c3；深浅只体现在底色透明度上 */
+  --brand-50: var(--ww-link-bg);
+  --brand-100: var(--ww-link-bg-active);
+  --brand-200: var(--ww-link-border);
+  --brand-400: var(--ww-link);
+  --brand-500: var(--ww-link);
+  --brand-600: var(--ww-link);
+  --brand-700: var(--ww-link);
+
+  /* 语义三色 */
+  --up-50: var(--ww-up-bg);
+  --up-500: var(--ww-up);
+  --up-700: var(--ww-up);
+  --down-50: var(--ww-down-bg);
+  --down-500: var(--ww-down);
+  --down-700: var(--ww-down);
+  --warn-50: var(--ww-warn-bg);
+  --warn-500: var(--ww-warn-border);
+  --warn-600: var(--ww-warn);
+  --warn-700: var(--ww-warn);
+
+  /* 页面里出现过但从未定义的几个名字（此前静默回退到继承色）——
+     一并补上，免得它们在新皮下继续是无声的坏引用。 */
+  --up: var(--ww-up);
+  --down: var(--ww-down);
+  --warn: var(--ww-warn);
+  --ok-500: var(--ww-up);
+  --primary: var(--ww-link);
+  --line: var(--ww-border);
+  --radius: 12px;
+
+  /* ---- 字体族别名 ---- */
+  --font-ui: var(--ww-font);
+  --font-mono: var(--ww-font-mono);
+
+  /* ---- 字阶 ---- */
+  --t-xs: 11px; /* 徽章内 */
+  --t-sm: 12px; /* 大写小标、副行、名称标签 */
+  --t-base: 13px; /* 次要文字、按钮、说明条、图例 */
+  --t-md: 14px; /* 表格单元格 / 表头 / 筛选钮 / 卡内标题条 */
+  --t-lg: 16px; /* 卡片标题 */
+  --t-xl: 20px; /* 区块标题 */
+  --t-2xl: 24px; /* 页标题 */
+  --t-3xl: 34px;
 
   --lh-tight: 1.2;
-  --lh-snug: 1.35;
+  --lh-snug: 1.35; /* 换行的市场名 */
   --lh-normal: 1.5;
+  --lh-note: 1.6;
 
-  /* ---- Spacing (4px base) ---- */
+  /* ---- 间距（与设计稿的 2 4 5 6 8 10 12 14 16 18 20 24 28 40 阶对齐）---- */
   --s-1: 4px;
   --s-2: 8px;
   --s-3: 12px;
   --s-4: 16px;
   --s-5: 20px;
   --s-6: 24px;
+  --s-7: 28px;
   --s-8: 32px;
   --s-10: 40px;
   --s-12: 48px;
 
-  /* ---- Radius ---- */
-  --r-sm: 6px; /* buttons, inputs, tags, chips */
-  --r-md: 10px; /* cards */
-  --r-lg: 14px; /* large panels, modals */
-  --r-pill: 999px; /* dots, avatars */
+  /* ---- 圆角 ---- */
+  --r-sm: 6px; /* 徽章、名称标签、小钮 */
+  --r-btn: 8px; /* 按钮、输入、分段项、图表区 */
+  --r-md: 12px; /* 卡片 */
+  --r-lg: 12px; /* 面板、弹窗 */
+  --r-pill: 99px;
 
-  /* ---- Elevation (one model; static cards use border) ---- */
-  --shadow-sm: 0 1px 0 rgba(15, 20, 30, 0.04), 0 0 0 1px rgba(15, 20, 30, 0.06);
-  --shadow-md:
-    0 4px 16px -4px rgba(15, 20, 30, 0.08), 0 0 0 1px rgba(15, 20, 30, 0.06);
-  --shadow-pop:
-    0 12px 32px -8px rgba(15, 20, 30, 0.18), 0 0 0 1px rgba(15, 20, 30, 0.08);
+  /* ---- 控件高度（硬约束，出自设计稿）---- */
+  --h-mini: 18px;
+  --h-tag-s: 20px;
+  --h-tag: 22px;
+  --h-btn-s: 30px;
+  --h-btn: 32px;
+  --h-nav: 64px;
 
-  /* ---- Motion ---- */
+  /* ---- 深度别名 ---- */
+  --shadow-sm: var(--shadow-seg-active);
+  --shadow-md: var(--shadow-card);
+  --shadow-pop: var(--shadow-modal);
+
+  /* ---- 动效 ---- */
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --d-fast: 120ms;
   --d-base: 180ms;
+}
+
+@keyframes ww-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 /* =====================================================================
@@ -111,165 +232,231 @@ html {
 
 body {
   margin: 0;
-  background: var(--n-25);
-  color: var(--n-800);
-  font-family: var(--font-ui);
-  font-size: var(--t-base);
+  background: var(--ww-surface);
+  color: var(--ww-text);
+  font-family: var(--ww-font);
+  font-size: 15px; /* 正文 15 —— 表格自己降到 14 */
   line-height: var(--lh-normal);
-  font-feature-settings: "cv11", "ss01", "ss03";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
 }
 
 a {
-  color: var(--brand-600);
+  color: var(--ww-link);
   text-decoration: none;
 }
 a:hover {
-  color: var(--brand-700);
+  color: var(--ww-link);
   text-decoration: underline;
 }
 
 h1,
 h2,
 h3 {
-  color: var(--n-900);
+  color: var(--ww-text);
   letter-spacing: -0.01em;
   margin: 0;
 }
 
-/* =====================================================================
-   Number helpers — every value that can change uses mono + tabular.
-   ===================================================================== */
-.mono {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings:
-    "tnum" 1,
-    "zero" 1;
-}
-.num {
-  font-variant-numeric: tabular-nums;
-}
-.up {
-  color: var(--up-700);
-}
-.down {
-  color: var(--down-700);
-}
-.muted {
-  color: var(--n-500);
+p {
+  text-wrap: pretty;
 }
 
 /* =====================================================================
-   Eyebrow / label
+   数字 —— 这套皮的分水岭：数字不用等宽。
+   .mono 是全站几百处「这是个数字/地址」的标记，语义保留（调用方不必改），
+   但视觉解绑等宽字：与正文同字体、同字号、常规字重。等宽只剩代码面板。
+   ===================================================================== */
+.mono {
+  font-family: inherit;
+  font-variant-numeric: normal;
+  font-feature-settings: normal;
+}
+.num {
+  font-variant-numeric: normal;
+}
+.up {
+  color: var(--ww-up);
+}
+.down {
+  color: var(--ww-down);
+}
+.muted {
+  color: var(--ww-text-muted);
+}
+/* 「判不了」的破折号与零值占位 —— 与 0 严格分家 */
+.faint {
+  color: var(--ww-text-faint);
+}
+
+/* =====================================================================
+   12px 大写小标 —— 层级来自它和 1px 分格线，不来自字号跳档
    ===================================================================== */
 .ds-label {
-  font-size: var(--t-xs);
-  font-weight: 500;
+  font-size: var(--t-sm);
+  font-weight: 400;
   line-height: var(--lh-snug);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--n-500);
+  letter-spacing: 0.02em;
+  color: var(--ww-text-muted);
 }
 
 /* =====================================================================
    Card
    ===================================================================== */
 .ds-card {
-  background: var(--n-0);
-  border: 1px solid var(--n-150);
+  background: var(--ww-surface);
+  border: 1px solid var(--ww-border);
   border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
 }
 
 /* =====================================================================
-   Topbar + nav (near-black · app extension)
+   顶栏 —— 64px 白底。字标 22/700，导航 15，当前项蓝 + 500。
+   （旧皮是近黑顶栏；这套皮没有深色面，代码面板除外。）
    ===================================================================== */
 .topbar {
-  height: 52px;
-  background: var(--n-1000);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  height: var(--h-nav);
+  background: var(--ww-surface);
+  border-bottom: 1px solid var(--ww-border);
   position: sticky;
   top: 0;
   z-index: 30;
 }
 .topbar__inner {
-  max-width: 1180px;
+  max-width: var(--content-max);
   margin: 0 auto;
   height: 100%;
-  padding: 0 var(--s-5);
+  padding: 0 var(--gutter);
   display: flex;
   align-items: center;
-  gap: var(--s-5);
+  gap: var(--s-3);
 }
 .topbar__brand {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: var(--s-2);
-  font-size: var(--t-md);
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.95);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ww-text);
   white-space: nowrap;
-  flex-shrink: 0; /* the nav scrolls; the brand never crumples */
+  flex-shrink: 0; /* 导航可挤，字标不折 */
+}
+.topbar__whale {
+  font-size: 24px;
+  line-height: 1;
 }
 
-/* 375px-class phones: tighten the gutters so brand + nav still fit. */
+/* 375px 级手机：收紧边距，字标 + 导航仍要塞得下 */
 @media (max-width: 600px) {
   .topbar__inner {
     padding: 0 var(--s-3);
-    gap: var(--s-3);
+    gap: var(--s-2);
+  }
+  .topbar__brand {
+    font-size: 18px;
   }
 }
+
 .topbar__nav {
   display: flex;
   align-items: center;
-  gap: var(--s-1);
-  /* Narrow viewports: the nav row scrolls in place instead of overflowing
-     into a page-level horizontal scroll. min-width:0 lets the flex item
-     actually shrink below its content (flex min-width defaults to auto). */
+  gap: 2px;
   min-width: 0;
-  /* 分组下拉后项目数远少于视口宽度,不再需要横向滚动;而 overflow:auto 会把
-     绝对定位的下拉面板裁成一条缝,必须是 visible。 */
+  /* 绝对定位的下拉面板不能被裁 */
   overflow-x: visible;
 }
 .nav-link {
   display: inline-flex;
   align-items: center;
+  gap: var(--s-1);
   /* 顶栏里既有 <a> 也有 <button>(分组按钮、语言切换)。button 默认用系统
      UI 字体且不继承,不写这条就会与相邻链接字体不一致。 */
   font-family: inherit;
   height: 32px;
   padding: 0 var(--s-3);
-  border-radius: var(--r-sm);
-  font-size: var(--t-md);
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.6);
+  border-radius: var(--r-btn);
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--ww-text);
   text-decoration: none;
-  white-space: nowrap; /* "24h 扫描" must not wrap inside the scroll row */
+  white-space: nowrap;
   transition:
     background var(--d-fast) var(--ease),
     color var(--d-fast) var(--ease);
 }
 .nav-link:hover {
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--ww-link);
+  background: var(--ww-surface-muted);
   text-decoration: none;
 }
-/* 顶栏收紧:页面增到 9 个后原间距会让末尾项溢出到 overflow-x 滚动区
-   (用户报「信号战绩 tab 不显示」)。根治靠分组下拉(见下方 .nav-group),
-   这里的收紧是给窄屏留的余量。中英文都收;英文标签更宽,再多收一档。 */
-.topbar__inner {
-  gap: var(--s-3);
-}
-.topbar__nav {
-  gap: 0;
-}
-.nav-link {
+html[lang="en"] .nav-link {
   padding: 0 var(--s-2);
 }
-html[lang="en"] .nav-link {
-  padding: 0 6px;
+
+/* 顶栏右侧：分隔竖线 · 实时时钟 · 32px 描边次级钮 */
+.topbar__sep {
+  width: 1px;
+  height: 20px;
+  background: var(--ww-border);
+  margin: 0 var(--s-2);
+  flex: 0 0 auto;
+}
+.topbar__clock {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding-right: var(--s-3);
+  font-size: var(--t-base);
+  color: var(--ww-text-muted);
+  white-space: nowrap;
+  /* 时钟只在客户端挂载后出现，宽度不定，窄屏直接让位 */
+  flex: 0 0 auto;
+}
+.topbar__clock-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--ww-up);
+  animation: ww-pulse 2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .topbar__clock-dot {
+    animation: none;
+  }
+}
+@media (max-width: 900px) {
+  .topbar__clock,
+  .topbar__sep {
+    display: none;
+  }
+}
+/* 顶栏次级钮（TG 频道 / 语言）—— 32px 描边白底 */
+.nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-family: inherit;
+  height: var(--h-btn);
+  padding: 0 var(--s-3);
+  border: 1px solid var(--ww-border);
+  border-radius: var(--r-btn);
+  background: var(--ww-surface);
+  font-size: var(--t-base);
+  color: var(--ww-text);
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: none;
+  flex: 0 0 auto;
+  transition:
+    border-color var(--d-fast) var(--ease),
+    color var(--d-fast) var(--ease);
+}
+.nav-btn:hover {
+  border-color: var(--ww-link-border);
+  color: var(--ww-link);
+  text-decoration: none;
 }
 
 /* ---- 顶栏分组下拉 ---- */
@@ -281,47 +468,40 @@ html[lang="en"] .nav-link {
   background: none;
   border: none;
   cursor: pointer;
-  /* 只继承字体族(button 默认是系统 UI 字体,与顶栏其余项不一致)。
-     字号/字重必须留给 .nav-link —— 简写 `font: inherit` 会把它们一起
-     重置掉,分组按钮就会比旁边的链接小一号(用户实测「字体都不一样大」)。*/
+  /* 只继承字体族。简写 `font: inherit` 会把字号/字重一起重置掉。 */
   font-family: inherit;
-  gap: 4px;
+  gap: var(--s-1);
 }
-/* 实心三角(border 画法)而非字符 ▾ —— 后者在 11px 下笔画细到几乎看不见,
-   用户实测「下拉很不明显」。border 画法粗细与颜色完全可控,且不受字体
-   渲染差异影响;currentColor 让它跟随按钮的 hover/激活态一起变亮。 */
+/* chevron：12px 实心三角，muted 色，与设计稿的 lucide chevron 同位同色 */
 .nav-group__caret {
   width: 0;
   height: 0;
   border-left: 4px solid transparent;
   border-right: 4px solid transparent;
-  border-top: 5px solid currentColor;
-  opacity: 0.75;
+  border-top: 5px solid var(--ww-text-muted);
   transform: translateY(1px);
   transition: transform var(--d-fast) var(--ease);
 }
-/* 展开时箭头翻转:折叠/展开两态在视觉上必须能一眼区分。 */
 .nav-group__btn[aria-expanded="true"] .nav-group__caret {
   transform: translateY(-1px) rotate(180deg);
 }
 .nav-group__btn[aria-expanded="true"] {
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--ww-link);
+  background: var(--ww-surface-muted);
 }
 .nav-group__menu {
   position: absolute;
-  top: calc(100% - 4px);
+  top: calc(100% - 2px);
   left: 0;
-  min-width: 160px;
+  min-width: 168px;
   padding: var(--s-1);
   display: flex;
   flex-direction: column;
   gap: 2px;
-  background: var(--n-1000);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--ww-surface);
+  border: 1px solid var(--ww-border);
   border-radius: var(--r-md);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  /* 顶栏 z-index 是 30,菜单要盖在页面内容之上。 */
+  box-shadow: var(--shadow-card);
   z-index: 40;
 }
 .nav-group__item {
@@ -329,37 +509,42 @@ html[lang="en"] .nav-link {
   padding: 6px var(--s-2);
   border-radius: var(--r-sm);
   font-size: var(--t-md);
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--ww-text);
   text-decoration: none;
   white-space: nowrap;
 }
 .nav-group__item:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  background: var(--ww-surface-muted);
+  color: var(--ww-link);
   text-decoration: none;
 }
 .nav-group__item[data-active="true"] {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.12);
+  color: var(--ww-link);
+  background: var(--ww-link-bg-active);
 }
 .nav-link[data-active="true"] {
-  color: rgba(255, 255, 255, 0.98);
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--ww-link);
+  font-weight: 500;
+}
+.nav-link[data-active="true"]:hover {
+  background: var(--ww-link-bg);
 }
 
 /* =====================================================================
-   Buttons
+   Buttons —— 主按钮蓝底白字，其余一律 1px 描边白底。没有第三种按钮。
    ===================================================================== */
 .ds-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--s-2);
-  height: 32px;
+  gap: var(--s-1);
+  height: var(--h-btn);
   padding: 0 var(--s-3);
-  border-radius: var(--r-sm);
-  border: 1px solid transparent;
-  font: 500 var(--t-base) / 1 var(--font-ui);
+  border-radius: var(--r-btn);
+  border: 1px solid var(--ww-border);
+  background: var(--ww-surface);
+  color: var(--ww-text);
+  font: 400 var(--t-base) / 1.5 var(--ww-font);
   cursor: pointer;
   white-space: nowrap;
   transition:
@@ -367,64 +552,75 @@ html[lang="en"] .nav-link {
     border-color var(--d-fast) var(--ease),
     color var(--d-fast) var(--ease);
 }
+.ds-btn:hover:not(:disabled) {
+  border-color: var(--ww-link-border);
+  color: var(--ww-link);
+}
 .ds-btn:disabled {
-  opacity: 0.55;
+  background: var(--ww-surface-muted);
+  color: var(--ww-text-muted);
+  border-color: var(--ww-border);
   cursor: not-allowed;
 }
-.ds-btn--primary {
-  background: var(--n-900);
-  color: var(--n-0);
+.ds-btn:focus-visible {
+  outline: none;
+  border-color: var(--ww-link);
+  box-shadow: var(--ring-focus);
 }
-.ds-btn--primary:hover:not(:disabled) {
-  background: var(--n-1000);
-}
+/* 主按钮：每屏至多一个 */
+.ds-btn--primary,
 .ds-btn--brand {
-  background: var(--brand-500);
-  color: var(--n-0);
+  background: var(--ww-link);
+  border-color: var(--ww-link);
+  color: #fff;
 }
+.ds-btn--primary:hover:not(:disabled),
 .ds-btn--brand:hover:not(:disabled) {
-  background: var(--brand-600);
+  background: #0670a6;
+  border-color: #0670a6;
+  color: #fff;
 }
+/* 次级 = 默认描边白底（保留类名，样式与基类同源） */
 .ds-btn--ghost {
-  background: transparent;
-  border-color: var(--n-200);
-  color: var(--n-800);
-}
-.ds-btn--ghost:hover:not(:disabled) {
-  background: var(--n-50);
-  border-color: var(--n-300);
+  background: var(--ww-surface);
+  border-color: var(--ww-border);
+  color: var(--ww-text);
 }
 .ds-btn--subtle {
-  background: var(--n-100);
-  color: var(--n-800);
+  background: var(--ww-surface-muted);
+  border-color: var(--ww-border);
+  color: var(--ww-text);
 }
 .ds-btn--subtle:hover:not(:disabled) {
-  background: var(--n-150);
+  background: var(--ww-surface-sunken);
+  color: var(--ww-text);
 }
-/* "此项已选中" 的强调态(不是 --subtle 的近义词):用于筛选类切换按钮的
-   on 状态(例如 /follow 的信号族开关),必须比 --ghost(off 状态)在视觉上
-   更突出。故意不复用/加粗 --subtle —— 那个类在别处(如清除筛选按钮)只是
-   普通次级按钮样式,不带任何"选中"含义,改它会连带影响那些无关场景。
-   brand-500 边框 + brand-50 底色 + brand-700 文字,与 .ds-tag--brand、
-   「本窗口领先」徽标同一套"品牌色=被强调"视觉语言;brand-500 在文件顶部
-   token 注释里本就标注为 "primary action, active"。 */
+/* 「此项已选中」：筛选类开关的 on 态 —— 蓝描边 + 6% 蓝底 + 蓝字。
+   这是 FilterButton 的 active 语义（任选子集），不是主按钮。 */
 .ds-btn--active {
-  background: var(--brand-50);
-  border-color: var(--brand-500);
-  color: var(--brand-700);
+  background: var(--ww-link-bg);
+  border-color: var(--ww-link-border);
+  color: var(--ww-link);
 }
 .ds-btn--active:hover:not(:disabled) {
-  background: var(--brand-100);
-  border-color: var(--brand-600);
+  background: var(--ww-link-bg-active);
+  border-color: var(--ww-link);
+  color: var(--ww-link);
 }
 .ds-btn--danger {
-  background: var(--down-500);
-  color: var(--n-0);
+  background: var(--ww-down);
+  border-color: var(--ww-down);
+  color: #fff;
+}
+.ds-btn--danger:hover:not(:disabled) {
+  background: #c22b3b;
+  border-color: #c22b3b;
+  color: #fff;
 }
 .ds-btn--sm {
-  height: 26px;
+  height: var(--h-btn-s);
   padding: 0 var(--s-2);
-  font-size: var(--t-sm);
+  font-size: var(--t-base);
 }
 .ds-btn--lg {
   height: 40px;
@@ -433,26 +629,27 @@ html[lang="en"] .nav-link {
 }
 
 /* =====================================================================
-   Segmented control — primary toggle/tab pattern.
-   --n-100 track; active item (aria-pressed) gets white fill + shadow-sm.
+   Segmented —— 互斥切换。3px 内边距，选中项白底 + 蓝字 + 一层极浅阴影。
+   （任选子集的信号族开关必须用 .ds-btn--active 那一族，不能用这个。）
    ===================================================================== */
 .ds-segmented {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   padding: 3px;
-  border-radius: var(--r-sm);
-  background: var(--n-100);
+  border: 1px solid var(--ww-border);
+  border-radius: var(--r-btn);
+  background: var(--ww-surface-muted);
 }
 .ds-segmented > button {
   appearance: none;
   border: 0;
   background: transparent;
-  height: 26px;
-  padding: 4px 12px;
-  border-radius: 4px;
-  font: 500 var(--t-sm) / 1 var(--font-ui);
-  color: var(--n-600);
+  height: 24px;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-sm);
+  font: 400 var(--t-md) / 1.5 var(--ww-font);
+  color: var(--ww-text);
   cursor: pointer;
   white-space: nowrap;
   transition:
@@ -461,100 +658,151 @@ html[lang="en"] .nav-link {
     box-shadow var(--d-fast) var(--ease);
 }
 .ds-segmented > button:hover:not([aria-pressed="true"]) {
-  color: var(--n-800);
+  color: var(--ww-link);
 }
 .ds-segmented > button[aria-pressed="true"] {
-  background: var(--n-0);
-  color: var(--n-900);
-  box-shadow: var(--shadow-sm);
+  background: var(--ww-surface);
+  color: var(--ww-link);
+  font-weight: 500;
+  box-shadow: var(--shadow-seg-active);
 }
-
-/* Opt-in modifier: wrap onto multiple rows on desktop instead of overflowing
-   the page. The base .ds-segmented above stays a plain non-wrapping
-   inline-flex — every other call site (2-5 short options) always fits one
-   row, so wrapping unconditionally would be dead weight there and risks
-   subtly changing their layout. Only an instance with many/long options
-   (e.g. /follow's per-strategy filter, up to 13 pills) needs this; opt in
-   via <Segmented className="ds-segmented--wrap" ...> rather than editing the
-   shared base rule. Same values as the ≤640px mobile rule further down —
-   that one's already proven not to break anything, this just makes it
-   available above the breakpoint too. */
 .ds-segmented--wrap {
   flex-wrap: wrap;
   max-width: 100%;
+}
+
+/* TabRow —— 同一对象的多个侧面。蓝色浅底胶囊，无外框。 */
+.ds-tabrow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--ww-border);
+  font-size: var(--t-md);
+  flex-wrap: wrap;
+}
+.ds-tabrow > button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 6px var(--s-3);
+  border-radius: var(--r-btn);
+  font: 400 var(--t-md) / 1.5 var(--ww-font);
+  color: var(--ww-text);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ds-tabrow > button[aria-pressed="true"] {
+  background: var(--ww-link-bg-active);
+  color: var(--ww-link);
+  font-weight: 500;
 }
 
 /* =====================================================================
    Inputs
    ===================================================================== */
 .ds-input {
-  height: 32px;
+  height: var(--h-btn);
   padding: 0 var(--s-3);
-  border-radius: var(--r-sm);
-  border: 1px solid var(--n-200);
-  background: var(--n-0);
-  color: var(--n-800);
-  font: 400 var(--t-base) / 1 var(--font-ui);
+  border-radius: var(--r-btn);
+  border: 1px solid var(--ww-border);
+  background: var(--ww-surface);
+  color: var(--ww-text);
+  font: 400 15px / 1.5 var(--ww-font);
   transition:
     border-color var(--d-fast) var(--ease),
     box-shadow var(--d-fast) var(--ease);
 }
 .ds-input::placeholder {
-  color: var(--n-400);
+  color: var(--ww-text-faint);
 }
 .ds-input:focus {
   outline: none;
-  border-color: var(--brand-500);
-  box-shadow: 0 0 0 3px var(--brand-100);
+  border-color: var(--ww-link);
+  box-shadow: var(--ring-focus);
 }
+/* 输入框里的地址/数字同样不用等宽 —— 类名保留给调用方，视觉与正文同源 */
 .ds-input--mono {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
+  font-family: inherit;
+  font-variant-numeric: normal;
 }
 
 /* =====================================================================
-   Tags / pills
+   徽章与名称标签 —— 五类语义固定（readme §2.1），不要新增第六类：
+     绿描边 = 通过 / 正常 / 命中 / 买 / 浮盈
+     红描边 = 反向 / 停跳 / 卖 / 未中
+     琥珀描边 = 需留神的口径 / 样本不足 / 机器人
+     蓝描边 = 可点 / 当前选中 / 对外发布
+     灰底描边 = 名称标签（Etherscan name tag）—— 不表示状态
    ===================================================================== */
 .ds-tag {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 20px;
-  padding: 0 8px;
+  gap: var(--s-1);
+  height: var(--h-tag);
+  padding: 0 var(--s-2);
+  border: 1px solid var(--ww-border);
   border-radius: var(--r-sm);
-  font: 500 var(--t-xs) / 1 var(--font-ui);
-  letter-spacing: 0.02em;
-  background: var(--n-100);
-  color: var(--n-700);
+  background: var(--ww-surface-muted);
+  color: var(--ww-text);
+  font: 400 var(--t-sm) / 1 var(--ww-font);
+  letter-spacing: normal;
   white-space: nowrap;
 }
 .ds-tag--brand {
-  background: var(--brand-50);
-  color: var(--brand-700);
+  border-color: var(--ww-link-border);
+  background: var(--ww-link-bg);
+  color: var(--ww-link);
+  font-weight: 500;
 }
 .ds-tag--up {
-  background: var(--up-50);
-  color: var(--up-700);
+  border-color: var(--ww-up-border);
+  background: var(--ww-up-bg);
+  color: var(--ww-up);
+  font-weight: 500;
 }
 .ds-tag--down {
-  background: var(--down-50);
-  color: var(--down-700);
+  border-color: var(--ww-down-border);
+  background: var(--ww-down-bg);
+  color: var(--ww-down);
+  font-weight: 500;
 }
 .ds-tag--warn {
-  background: var(--warn-50);
-  color: var(--warn-700);
+  border-color: var(--ww-warn-border);
+  background: var(--ww-warn-bg);
+  color: var(--ww-warn);
+  font-weight: 500;
+}
+/* 表内小标签 20px / 迷你标签 18px */
+.ds-tag--sm {
+  height: var(--h-tag-s);
+  padding: 0 6px;
+  font-size: var(--t-xs);
+}
+.ds-tag--xs {
+  height: var(--h-mini);
+  padding: 0 5px;
+  font-size: 10px;
+}
+/* 方向徽章固定 56px 宽 —— BUY / SELL 在表格里对齐成一列 */
+.ds-tag--dir {
+  width: 56px;
+  justify-content: center;
+  padding: 0;
+  font-size: var(--t-xs);
+  font-weight: 500;
 }
 
 /* status dot */
 .ds-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: var(--r-pill);
   display: inline-block;
 }
 
 /* =====================================================================
-   Field row — eyebrow label + control(s) (app extension)
+   Field row — 小标 + 控件
    ===================================================================== */
 .ds-field {
   display: flex;
@@ -563,95 +811,136 @@ html[lang="en"] .nav-link {
   gap: var(--s-2);
 }
 .ds-field__label {
-  font-size: var(--t-xs);
-  font-weight: 500;
+  font-size: var(--t-sm);
+  font-weight: 400;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--n-500);
+  letter-spacing: 0.02em;
+  color: var(--ww-text-muted);
   min-width: 56px;
 }
 .ds-hint {
-  font-size: var(--t-sm);
-  color: var(--n-500);
+  font-size: var(--t-base);
+  color: var(--ww-text-muted);
 }
 
 /* =====================================================================
-   KPI strip (app extension)
+   KPI 分格卡 —— 一张白卡内 N 等分，格间 1px 竖线（取代旧皮的独立小卡）。
+   实现要点：gap:1px + 容器底色为边框色 —— 换行时横线自动补齐，
+   不用靠 :first-child 猜哪一格在行首。
    ===================================================================== */
 .kpi {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: var(--s-3);
+  gap: 1px;
+  background: var(--ww-border);
+  border: 1px solid var(--ww-border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
 }
 .kpi-card {
-  padding: var(--s-4);
-  background: var(--n-0);
-  border: 1px solid var(--n-150);
-  border-radius: var(--r-md);
+  padding: 18px var(--gutter);
+  background: var(--ww-surface);
+  border: 0;
+  border-radius: 0;
+  min-width: 0;
 }
 .kpi-value {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings:
-    "tnum" 1,
-    "zero" 1;
-  font-size: 22px;
-  font-weight: 600;
+  font-family: inherit;
+  font-variant-numeric: normal;
+  font-size: 18px;
+  font-weight: 400;
   line-height: var(--lh-tight);
-  color: var(--n-900);
-  margin-top: var(--s-2);
+  color: var(--ww-text);
+  margin-top: var(--s-1);
+  overflow-wrap: anywhere;
 }
 .kpi-sub {
-  font-size: var(--t-sm);
-  color: var(--n-500);
+  font-size: var(--t-base);
+  color: var(--ww-text-muted);
   margin-top: var(--s-1);
+  line-height: var(--lh-snug);
+}
+
+/* Metric 网格（战绩全景）—— 扁平等权，十五格同字号：
+   这里没有主次，谁重要取决于读者在问什么。 */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: var(--s-4) var(--s-5);
+  padding: var(--s-4);
+}
+.metric__label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--t-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--ww-text-muted);
+}
+.metric__value {
+  margin-top: var(--s-1);
+  font-size: 15px;
+  color: var(--ww-text);
+}
+.metric__sub {
+  margin-top: 2px;
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  color: var(--ww-text-muted);
+  overflow-wrap: anywhere;
 }
 
 /* =====================================================================
-   Table (app extension)
+   Table —— 白卡分格。行没有任何行级强调：没有左边线、没有字号跳档、
+   没有整行调暗。区块浏览器里每一行平等，轻重靠徽章颜色。
    ===================================================================== */
 .ds-table-wrap {
   overflow-x: auto;
-  background: var(--n-0);
-  border: 1px solid var(--n-150);
+  background: var(--ww-surface);
+  border: 1px solid var(--ww-border);
   border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
 }
 .ds-table {
   border-collapse: collapse;
   width: 100%;
-  font-size: var(--t-base);
+  font-size: var(--t-md);
 }
+/* 表头：14px / 600 / 与正文同色 / 白底 / 永不折行。
+   （旧皮是 11px 大写灰字灰底 —— 那是终端风的元件。） */
 .ds-table th {
   position: sticky;
   top: 0;
   z-index: 1;
   text-align: left;
-  padding: var(--s-2) var(--s-3);
-  background: var(--n-50);
-  color: var(--n-500);
-  font-size: var(--t-xs);
+  padding: var(--s-3) var(--s-4);
+  background: var(--ww-surface);
+  color: var(--ww-text);
+  font-size: var(--t-md);
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  text-transform: none;
+  letter-spacing: normal;
   white-space: nowrap;
-  border-bottom: 1px solid var(--n-150);
+  border-bottom: 1px solid var(--ww-border);
 }
 .ds-table th.is-sortable {
   cursor: pointer;
   user-select: none;
 }
 .ds-table th.is-sortable:hover {
-  color: var(--n-700);
+  color: var(--ww-link);
 }
 .ds-table td {
-  padding: var(--s-3);
-  border-bottom: 1px solid var(--n-150);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--ww-border);
   white-space: nowrap;
-  color: var(--n-700);
+  color: var(--ww-text);
   vertical-align: top;
 }
 .ds-table tbody tr:hover {
-  background: var(--n-50);
+  background: var(--ww-surface-muted);
 }
 .ds-table tbody tr:last-child td {
   border-bottom: none;
@@ -659,85 +948,90 @@ html[lang="en"] .nav-link {
 .is-right {
   text-align: right;
 }
-/* `.is-right` (0,1,0) alone loses to `.ds-table th { text-align:left }` (0,1,1),
-   which left the HEADER of a right-aligned column stuck at the left while its
-   cells sat right — a visible header/content misalignment. This higher-
-   specificity rule makes a right-aligned column's header line up with its
-   cells, across every table. */
+/* `.is-right` (0,1,0) 单独顶不过 `.ds-table th{text-align:left}` (0,1,1)，
+   右对齐列的表头会歪。提高特异性让表头与单元格对齐。 */
 .ds-table th.is-right,
 .ds-table--compact th.is-right {
   text-align: right;
 }
 
-/* compact nested table (e.g. expandable detail rows) — non-sticky, denser */
+/* 市场名 / 结果名 / 门槛说明永不截断 —— 换行，最多两行。
+   截断规则见 readme §1.1：只有地址和哈希做首尾省略。 */
+.cell-wrap,
+.ds-table td.cell-wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: var(--lh-snug);
+}
+
+/* 嵌套的紧凑表（展开明细行） */
 .ds-table--compact {
   border-collapse: collapse;
   width: 100%;
 }
 .ds-table--compact th {
-  padding: var(--s-1) var(--s-3);
+  padding: var(--s-2) var(--s-4);
   text-align: left;
-  font-size: var(--t-xs);
+  font-size: var(--t-base);
   font-weight: 600;
-  color: var(--n-500);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--ww-text);
+  text-transform: none;
+  letter-spacing: normal;
   white-space: nowrap;
-  border-bottom: 1px solid var(--n-150);
+  border-bottom: 1px solid var(--ww-border);
 }
 .ds-table--compact td {
-  padding: var(--s-1) var(--s-3);
-  font-size: var(--t-sm);
-  color: var(--n-600);
+  padding: var(--s-2) var(--s-4);
+  font-size: var(--t-base);
+  color: var(--ww-text);
   white-space: nowrap;
-  border-bottom: 1px solid var(--n-150);
+  border-bottom: 1px solid var(--ww-border);
 }
 
 /* =====================================================================
-   Callouts (app extension)
+   说明条 / 口径条 —— 统计声明放在数据「前面」，不放脚注。
+   灰 = 口径 / 设计说明；琥珀 = 读前必看；红 = 出错。
    ===================================================================== */
 .ds-callout {
   padding: var(--s-3) var(--s-4);
   border-radius: var(--r-md);
   font-size: var(--t-base);
-  border: 1px solid var(--n-150);
-  background: var(--n-0);
-  color: var(--n-700);
+  line-height: var(--lh-note);
+  border: 1px solid var(--ww-border);
+  background: var(--ww-surface-muted);
+  color: var(--ww-text-muted);
 }
 .ds-callout--error {
-  border-color: var(--down-500);
-  background: var(--down-50);
-  color: var(--down-700);
+  border-color: var(--ww-down-border);
+  background: var(--ww-down-bg);
+  color: var(--ww-text);
 }
 .ds-callout--warn {
-  border-color: var(--warn-500);
-  background: var(--warn-50);
-  color: var(--warn-700);
+  border-color: var(--ww-warn-frame);
+  background: var(--ww-warn-wash);
+  color: var(--ww-text);
 }
 
-/* empty state */
+/* 空态 —— 灰底居中两行，必须给内容和出路，绝不返回 null */
 .ds-empty {
-  padding: var(--s-12) var(--s-5);
+  padding: 28px var(--s-4);
   text-align: center;
-  color: var(--n-500);
-  border: 1px dashed var(--n-200);
+  color: var(--ww-text-muted);
+  border: 1px solid var(--ww-border);
   border-radius: var(--r-md);
-  background: var(--n-0);
+  background: var(--ww-surface-muted);
+  font-size: var(--t-md);
 }
 
 /* page shell */
 .ds-main {
-  max-width: 1180px;
+  max-width: var(--content-max);
   margin: 0 auto;
-  padding: var(--s-6) var(--s-5) var(--s-12);
+  padding: var(--s-6) var(--gutter) var(--s-12);
 }
 
 /* =====================================================================
-   Tap popover — touch-reachable glossary tips (app extension)
-   Desktop hover keeps the native `title` tooltip untouched; a tap/click
-   focuses the element (tabindex=-1: click-focusable, never a tab stop)
-   and :focus paints the SAME text — data-tip mirrors title — as a small
-   dark popover. Tapping the symbol again or anywhere else dismisses it.
+   Tap popover —— 触屏可达的口径提示（桌面 hover 仍走原生 title）
    ===================================================================== */
 .tip-pop {
   position: relative;
@@ -756,48 +1050,44 @@ html[lang="en"] .nav-link {
   max-width: min(320px, 78vw);
   padding: var(--s-2) var(--s-3);
   border-radius: var(--r-sm);
-  background: var(--n-900);
-  color: var(--n-0);
-  font: 400 var(--t-sm) / var(--lh-snug) var(--font-ui);
+  background: var(--ww-code-bg);
+  color: var(--ww-text-on-dark);
+  font: 400 var(--t-sm) / var(--lh-snug) var(--ww-font);
   letter-spacing: normal;
   text-transform: none;
-  white-space: pre-line; /* stats-badge tips carry a \n caveat line */
-  box-shadow: var(--shadow-pop);
+  white-space: pre-line;
+  box-shadow: var(--shadow-modal);
 }
 
-/* address-age tones (financial-freshness signal) */
+/* 地址年龄色阶 —— 新钱包是最强内幕信号之一，颜色是金融含义不是装饰。
+   常规字重（这套皮不靠加粗做层级）。 */
 .age-new {
-  color: var(--down-700);
-  font-weight: 600;
+  color: var(--ww-down);
 }
 .age-young {
-  color: var(--warn-700);
-  font-weight: 600;
+  color: var(--ww-warn);
 }
 .age-normal {
-  color: var(--n-600);
-  font-weight: 500;
+  color: var(--ww-text);
 }
 .age-old,
 .age-unknown {
-  color: var(--n-400);
-  font-weight: 500;
+  color: var(--ww-text-muted);
 }
 
 /* ------------------------------------------------------------ CopyButton */
-/* Deliberately quiet: no border, no fill — a faint glyph that only asserts
-   itself when the row is hovered (or right after a successful copy). */
+/* 刻意安静：无边框无底色，只在行悬停（或复制成功后）才显形。 */
 .copy-btn {
   border: none;
   background: none;
   padding: 0 3px;
-  margin-left: 4px;
-  font-size: 11px;
+  margin-left: var(--s-1);
+  font-size: 13px;
   line-height: 1;
-  color: var(--n-400);
+  color: var(--ww-text-muted);
   cursor: pointer;
   vertical-align: middle;
-  opacity: 0.25;
+  opacity: 0.35;
   transition:
     opacity 0.12s ease,
     color 0.12s ease;
@@ -808,28 +1098,24 @@ tr:hover .copy-btn,
 }
 .copy-btn:hover {
   opacity: 1;
-  color: var(--n-800);
+  color: var(--ww-link);
 }
 .copy-btn.is-copied {
   opacity: 1;
-  color: var(--up-500);
+  color: var(--ww-up);
 }
 
 /* =====================================================================
-   Mobile (≤640px) — NO horizontal scroll anywhere.
-   Wide data tables reflow into stacked, labeled cards: the header is
-   hidden, each row becomes a bordered card, each cell a `label → value`
-   line (label pulled from the cell's data-label). Values wrap instead of
-   forcing table width, so the page never scrolls sideways.
+   Mobile (≤640px) —— 全站不出现横向滚动。
+   宽数据表回流成堆叠卡：表头隐藏（保留给读屏），每行变一张描边卡，
+   每格是一行 `label → value`。设计稿只出了桌面，移动沿用本节规则。
    ===================================================================== */
 @media (max-width: 640px) {
   .ds-main {
     padding: var(--s-4) var(--s-3) var(--s-10);
   }
 
-  /* Top nav: wrap every tab onto its own row(s) UNDER the brand instead of
-     hiding the overflow behind a sideways scroll — all tabs stay visible. The
-     bar grows taller as needed (height auto) and keeps its sticky behaviour. */
+  /* 顶栏：导航整体换行到字标下方，全部 tab 可见，不做横向滚动。 */
   .topbar {
     height: auto;
   }
@@ -837,7 +1123,7 @@ tr:hover .copy-btn,
     flex-wrap: wrap;
     padding: var(--s-2) var(--s-3);
     gap: var(--s-1) var(--s-2);
-    min-height: 52px;
+    min-height: 56px;
   }
   .topbar__nav {
     width: 100%;
@@ -845,42 +1131,41 @@ tr:hover .copy-btn,
     flex-wrap: wrap;
     gap: var(--s-1);
   }
+  .nav-link {
+    height: 30px;
+    padding: 0 var(--s-2);
+    font-size: var(--t-md);
+  }
 
-  /* KPI strip: fixed 2-up. minmax(0,1fr) lets a long $ figure shrink the
-     track instead of forcing the grid (and the page) wider than the screen. */
+  /* KPI 分格卡：固定 2 列。minmax(0,1fr) 让长金额压缩轨道而不是撑破页面。 */
   .kpi {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: var(--s-2);
   }
   .kpi-card {
     padding: var(--s-3);
-    min-width: 0;
   }
   .kpi-value {
-    font-size: 18px;
-    overflow-wrap: anywhere;
+    font-size: 16px;
   }
 
-  /* Filter pills (segmented toggles) wrap to more rows instead of overflowing
-     the row into a page-level horizontal scroll. */
   .ds-segmented {
     flex-wrap: wrap;
     max-width: 100%;
   }
 
-  /* The wrapper stops being a horizontal scroller; the card borders below
-     replace its frame. */
+  /* 包裹层不再是横向滚动容器；下面每行的卡片边框接替它的框。 */
   .ds-table-wrap {
     overflow-x: visible;
     border: none;
     background: transparent;
     border-radius: 0;
+    box-shadow: none;
   }
   .ds-table,
   .ds-table--compact {
-    font-size: var(--t-sm);
+    font-size: var(--t-base);
   }
-  /* Keep the header for screen readers, remove it visually. */
+  /* 表头保留给读屏，视觉上移除。 */
   .ds-table thead,
   .ds-table--compact thead {
     position: absolute;
@@ -896,15 +1181,15 @@ tr:hover .copy-btn,
   .ds-table tbody tr,
   .ds-table--compact tbody tr {
     display: block;
-    background: var(--n-0);
-    border: 1px solid var(--n-150);
+    background: var(--ww-surface);
+    border: 1px solid var(--ww-border);
     border-radius: var(--r-md);
     padding: var(--s-2) var(--s-3);
     margin-bottom: var(--s-2);
   }
   .ds-table tbody tr:hover,
   .ds-table--compact tbody tr:hover {
-    background: var(--n-0);
+    background: var(--ww-surface);
   }
   .ds-table tbody tr:last-child,
   .ds-table--compact tbody tr:last-child {
@@ -919,25 +1204,23 @@ tr:hover .copy-btn,
     max-width: none !important;
     padding: 3px 0;
     border-bottom: none;
-    white-space: normal; /* values wrap instead of forcing table width */
-    overflow-wrap: anywhere; /* long slugs / addresses never overflow */
+    white-space: normal;
+    overflow-wrap: anywhere;
     text-align: right;
   }
-  /* Per-cell label on the left of each value line. */
   .ds-table td::before,
   .ds-table--compact td::before {
     content: attr(data-label);
     flex: 0 0 auto;
     text-align: left;
-    color: var(--n-500);
-    font-size: var(--t-xs);
-    font-weight: 600;
+    color: var(--ww-text-muted);
+    font-size: var(--t-sm);
+    font-weight: 400;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.02em;
     white-space: nowrap;
   }
-  /* Un-labeled cells (e.g. the market-title cell) become the full-width card
-     header — no label gutter, left-aligned. */
+  /* 无 label 的格（市场名）铺满整行做卡头，左对齐无标签槽。 */
   .ds-table td:not([data-label])::before,
   .ds-table--compact td:not([data-label])::before {
     content: none;
@@ -947,14 +1230,9 @@ tr:hover .copy-btn,
     display: block;
     text-align: left;
   }
-  /* The row-expander arrow cell is redundant on mobile — the whole card is
-     tappable — so hide it. */
   .ds-table td.col-expand {
     display: none;
   }
-  /* Cells with a full-width visual (e.g. the disagreement balance bar) stack
-     the label ABOVE the content — a side-by-side flex would squash the bar to
-     zero width. */
   .ds-table td.col-block {
     display: block;
     text-align: left;
@@ -964,21 +1242,18 @@ tr:hover .copy-btn,
     margin-bottom: var(--s-1);
   }
 
-  /* Touch has no hover: keep the ⧉ / ↗ glyphs legible. */
+  /* 触屏没有 hover：让 ⧉ / ↗ 保持可见。 */
   .copy-btn {
-    opacity: 0.65;
+    opacity: 0.7;
   }
 
-  /* Filter control rows: labels sit above the controls, controls wrap. */
   .ds-field {
     align-items: flex-start;
   }
 }
 
 /* =====================================================================
-   Route-transition skeleton (app/loading.tsx)
-   路由切换时的骨架屏。存在本身比样式更重要:没有 loading 边界,Next 的
-   客户端导航会阻塞在旧页面直到新 payload 就绪(表现为「点了没反应」)。
+   路由切换骨架屏（app/loading.tsx）
    ===================================================================== */
 @keyframes skeleton-pulse {
   0%,
@@ -990,7 +1265,7 @@ tr:hover .copy-btn,
   }
 }
 .skeleton {
-  background: var(--n-100);
+  background: var(--ww-surface-muted);
   border-radius: var(--r-sm);
   animation: skeleton-pulse 1.2s var(--ease) infinite;
 }
@@ -1018,7 +1293,6 @@ tr:hover .copy-btn,
   height: 320px;
   border-radius: var(--r-md);
 }
-/* 尊重系统的「减少动态效果」设置。 */
 @media (prefers-reduced-motion: reduce) {
   .skeleton {
     animation: none;
@@ -1026,11 +1300,149 @@ tr:hover .copy-btn,
 }
 
 /* =====================================================================
-   接入文档排版（/api-docs · app extension）
+   页头区 —— 12px 小标（常带 emoji 前缀）+ 24/600 标题 + 14px 描述。
+   每页一致；页型（列表 / 漏斗 / 流 / 结算 / 档案 / 状态）都从它套出来。
+   ===================================================================== */
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-6);
+  padding-bottom: var(--s-5);
+  margin-bottom: var(--s-5);
+  border-bottom: 1px solid var(--ww-border);
+  flex-wrap: wrap;
+}
+.page-head__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: var(--t-sm);
+  letter-spacing: 0.02em;
+  color: var(--ww-text-muted);
+}
+.page-head__title {
+  margin: 6px 0 0;
+  font-size: var(--t-2xl);
+  font-weight: 600;
+  line-height: var(--lh-tight);
+  letter-spacing: -0.01em;
+  color: var(--ww-text);
+}
+.page-head__desc {
+  margin: var(--s-2) 0 0;
+  max-width: 700px;
+  font-size: var(--t-md);
+  line-height: 1.55;
+  color: var(--ww-text-muted);
+}
+.page-head__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+/* 筛选条 —— 一排 32px 描边钮，当前项蓝描边；右侧对齐主按钮。
+   不是卡：设计稿里筛选直接躺在页面底上，加卡会多一层框把它和主表卡并列成
+   「两块内容」，而它其实是主表卡的参数。 */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-bottom: var(--s-4);
+}
+.filter-bar__right {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+/* 一行筛选：左侧 12px 小标 + 右侧控件。多行筛选用它做行，不用 .ds-field
+   那种固定 56px 标签槽（标签长度差异大时会参差）。 */
+.filter-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.filter-row__label {
+  font-size: var(--t-sm);
+  letter-spacing: 0.02em;
+  color: var(--ww-text-muted);
+  white-space: nowrap;
+}
+
+/* 卡内标题条 —— 表卡顶部那一行「共 N 笔符合筛选（显示前 300 条）」 */
+.card-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--ww-border);
+  font-size: var(--t-md);
+  color: var(--ww-text);
+}
+
+/* 卡底说明条 —— 灰 = 口径说明；琥珀 = 需留神的口径 */
+.note-strip {
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--ww-border);
+  background: var(--ww-surface-muted);
+  font-size: var(--t-base);
+  line-height: var(--lh-note);
+  color: var(--ww-text-muted);
+}
+.note-strip--warn {
+  background: var(--ww-warn-wash);
+  color: var(--ww-text);
+}
+
+/* 比例条 / 进度条 —— 高 6，圆角 99 */
+.split-bar {
+  display: flex;
+  height: 6px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: var(--ww-border);
+}
+
+/* 开关 —— 32×18 胶囊 */
+.ds-toggle {
+  position: relative;
+  display: inline-block;
+  width: 32px;
+  height: 18px;
+  border-radius: var(--r-pill);
+  background: var(--ww-border-dashed);
+  flex: 0 0 auto;
+}
+.ds-toggle[data-on="true"] {
+  background: var(--ww-link);
+}
+.ds-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-pill);
+  background: #fff;
+  transition: left var(--d-fast) var(--ease);
+}
+.ds-toggle[data-on="true"]::after {
+  left: 16px;
+}
+
+/* =====================================================================
+   接入文档排版（/api-docs）
    docs/api-access.md 经 lib/markdownDoc.ts 解析后在这里成形。全站表格是
-   密集数据表（.ds-table td 用 nowrap 防止数字列换行），而文档表格装的是
-   成句的说明文字 —— 同一套类会把「说明」列拉成一条横向滚动的长龙，所以
-   .doc-prose 内对表格单元格显式解除 nowrap。
+   密集数据表（td 用 nowrap 防数字列换行），而文档表格装的是成句说明文字，
+   同一套类会把「说明」列拉成一条横向滚动的长龙 —— .doc-prose 内解除 nowrap。
    ===================================================================== */
 .doc-layout {
   display: grid;
@@ -1051,26 +1463,27 @@ tr:hover .copy-btn,
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--s-1);
+  gap: 2px;
 }
 .doc-toc a {
   display: block;
-  padding: var(--s-1) var(--s-2);
+  padding: 6px var(--s-2);
   border-radius: var(--r-sm);
-  color: var(--n-600);
-  font-size: var(--t-sm);
+  color: var(--ww-text);
+  font-size: var(--t-base);
   line-height: var(--lh-snug);
   text-decoration: none;
 }
 .doc-toc a:hover {
-  background: var(--n-100);
-  color: var(--n-900);
+  background: var(--ww-surface-muted);
+  color: var(--ww-link);
+  text-decoration: none;
 }
 
 .doc-prose {
   padding: var(--s-6);
-  color: var(--n-700);
-  font-size: var(--t-md);
+  color: var(--ww-text);
+  font-size: 15px;
   line-height: 1.75;
   min-width: 0;
 }
@@ -1079,31 +1492,34 @@ tr:hover .copy-btn,
 }
 .doc-prose h1 {
   font-size: var(--t-2xl);
+  font-weight: 600;
   line-height: var(--lh-tight);
-  color: var(--n-900);
+  color: var(--ww-text);
   margin: 0 0 var(--s-4);
 }
 .doc-prose h2 {
   font-size: var(--t-xl);
+  font-weight: 600;
   line-height: var(--lh-snug);
-  color: var(--n-900);
+  color: var(--ww-text);
   margin: var(--s-10) 0 var(--s-3);
   padding-bottom: var(--s-2);
-  border-bottom: 1px solid var(--n-150);
-  /* 锚点跳转时不被 52px 顶栏盖住标题。 */
-  scroll-margin-top: 68px;
+  border-bottom: 1px solid var(--ww-border);
+  scroll-margin-top: 80px;
 }
 .doc-prose h3 {
   font-size: var(--t-lg);
-  color: var(--n-900);
+  font-weight: 600;
+  color: var(--ww-text);
   margin: var(--s-6) 0 var(--s-2);
-  scroll-margin-top: 68px;
+  scroll-margin-top: 80px;
 }
 .doc-prose h4 {
   font-size: var(--t-md);
-  color: var(--n-800);
+  font-weight: 600;
+  color: var(--ww-text);
   margin: var(--s-5) 0 var(--s-2);
-  scroll-margin-top: 68px;
+  scroll-margin-top: 80px;
 }
 .doc-prose p {
   margin: 0 0 var(--s-3);
@@ -1117,38 +1533,38 @@ tr:hover .copy-btn,
   margin-bottom: var(--s-1);
 }
 .doc-prose strong {
-  color: var(--n-900);
+  color: var(--ww-text);
   font-weight: 600;
 }
 .doc-prose a {
-  color: var(--brand-600);
+  color: var(--ww-link);
 }
 .doc-prose hr {
   border: 0;
-  border-top: 1px solid var(--n-150);
+  border-top: 1px solid var(--ww-border);
   margin: var(--s-8) 0;
 }
 
-/* 行内代码：与全站 .mono 同族，加浅底以便在长句中一眼可辨。 */
+/* 行内代码 —— 浅底，与全站唯一深色面（代码块）分工 */
 .doc-code {
-  font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-family: var(--ww-font-mono);
+  font-size: 0.88em;
   padding: 1px 5px;
   border-radius: var(--r-sm);
-  background: var(--n-100);
-  color: var(--n-900);
+  background: var(--ww-surface-sunken);
+  color: var(--ww-text);
   word-break: break-word;
 }
-/* 代码块：深底，与页面白卡拉开层次；长行横向滚动而不撑破布局。 */
+/* 代码块 —— 全站唯一深色面 */
 .doc-pre {
   margin: 0 0 var(--s-4);
   padding: var(--s-4);
   border-radius: var(--r-md);
-  background: var(--n-1000);
-  color: var(--n-100);
-  font-family: var(--font-mono);
+  background: var(--ww-code-bg);
+  color: var(--ww-text-on-dark);
+  font-family: var(--ww-font-mono);
   font-size: var(--t-sm);
-  line-height: var(--lh-normal);
+  line-height: 1.75;
   overflow-x: auto;
   white-space: pre;
 }
@@ -1156,15 +1572,14 @@ tr:hover .copy-btn,
   display: block;
   margin-bottom: var(--s-2);
   font-size: var(--t-xs);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
-  color: var(--n-500);
+  color: var(--ww-code-comment);
 }
 
 .doc-prose .ds-table-wrap {
   margin: 0 0 var(--s-4);
 }
-/* 说明文字要能换行 —— 见本节顶部注释。 */
 .doc-prose .ds-table td {
   white-space: normal;
   line-height: var(--lh-normal);
@@ -1175,10 +1590,10 @@ tr:hover .copy-btn,
 .doc-prose blockquote {
   margin: 0 0 var(--s-4);
   padding: var(--s-3) var(--s-4);
-  border-left: 3px solid var(--brand-400);
-  border-radius: 0 var(--r-sm) var(--r-sm) 0;
-  background: var(--brand-50);
-  color: var(--n-700);
+  border: 1px solid var(--ww-warn-frame);
+  border-radius: var(--r-md);
+  background: var(--ww-warn-wash);
+  color: var(--ww-text);
 }
 
 @media (max-width: 900px) {
@@ -1195,7 +1610,7 @@ tr:hover .copy-btn,
 }
 
 /* =====================================================================
-   公开状态页（/status · app extension）
+   公开状态页（/status）
    整体横幅 + 状态药丸。刻意只用 up/down/muted 三态：状态页的全部价值在于
    「一眼看懂」，多一档颜色就多一次「这个黄的到底算不算事」的犹豫。
    ===================================================================== */
@@ -1205,28 +1620,29 @@ tr:hover .copy-btn,
   gap: var(--s-4);
   padding: var(--s-5);
   border-radius: var(--r-md);
-  border: 1px solid var(--n-150);
-  background: var(--n-0);
+  border: 1px solid var(--ww-border);
+  background: var(--ww-surface);
+  box-shadow: var(--shadow-card);
   margin-bottom: var(--s-5);
 }
 .status-banner--up {
-  border-color: var(--up-500);
-  background: var(--up-50);
+  border-color: var(--ww-up-border);
+  background: var(--ww-up-wash);
 }
 .status-banner--down {
-  border-color: var(--down-500);
-  background: var(--down-50);
+  border-color: var(--ww-down-border);
+  background: var(--ww-down-bg);
 }
 .status-banner__title {
   font-size: var(--t-xl);
   font-weight: 600;
   line-height: var(--lh-snug);
-  color: var(--n-900);
+  color: var(--ww-text);
 }
 .status-banner__sub {
   margin-top: var(--s-1);
-  font-size: var(--t-sm);
-  color: var(--n-600);
+  font-size: var(--t-base);
+  color: var(--ww-text-muted);
   min-height: 1em;
 }
 .status-orb {
@@ -1234,33 +1650,38 @@ tr:hover .copy-btn,
   width: 14px;
   height: 14px;
   border-radius: var(--r-pill);
-  background: var(--n-300);
+  background: var(--ww-border-dashed);
 }
 .status-orb--up {
-  background: var(--up-500);
-  box-shadow: 0 0 0 4px color-mix(in oklch, var(--up-500) 22%, transparent);
+  background: var(--ww-up);
+  box-shadow: 0 0 0 4px var(--ww-up-bg);
 }
 .status-orb--down {
-  background: var(--down-500);
-  box-shadow: 0 0 0 4px color-mix(in oklch, var(--down-500) 22%, transparent);
+  background: var(--ww-down);
+  box-shadow: 0 0 0 4px var(--ww-down-bg);
 }
 
 .status-pill {
-  display: inline-block;
-  padding: 2px var(--s-2);
-  border-radius: var(--r-pill);
-  font-size: var(--t-xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  height: var(--h-tag);
+  padding: 0 var(--s-2);
+  border: 1px solid var(--ww-border);
+  border-radius: var(--r-sm);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  letter-spacing: normal;
   white-space: nowrap;
 }
 .status-pill--up {
-  background: var(--up-50);
-  color: var(--up-700);
+  border-color: var(--ww-up-border);
+  background: var(--ww-up-bg);
+  color: var(--ww-up);
 }
 .status-pill--down {
-  background: var(--down-50);
-  color: var(--down-700);
+  border-color: var(--ww-down-border);
+  background: var(--ww-down-bg);
+  color: var(--ww-down);
 }
 
 /* 组件行的说明文字要能换行（.ds-table td 默认 nowrap 是给数字列的）。 */
@@ -1269,13 +1690,13 @@ tr:hover .copy-btn,
 }
 
 /* ---- 数据连续性（30 天起算时钟，/status） ----
-   条带的每一格背后都是 cycle_metrics 的原始行——配色只区分「计入/不计入/
-   未知」三种叙事：绿=覆盖、红=断档、灰系=不计入（起点日/起点前）、
-   虚线=今天（未结束，不参与判定）。 */
+   条带每一格背后都是 cycle_metrics 的原始行。配色只区分三种叙事：
+   绿=覆盖、红=断档、灰系=不计入（起点日/起点前）、虚线=今天（未结束）。 */
 .cont-card {
-  border: 1px solid var(--n-150);
-  background: var(--n-0);
+  border: 1px solid var(--ww-border);
+  background: var(--ww-surface);
   border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
   padding: var(--s-5);
   margin-bottom: var(--s-5);
 }
@@ -1289,7 +1710,7 @@ tr:hover .copy-btn,
 .cont-title {
   font-size: var(--t-lg);
   font-weight: 600;
-  color: var(--n-900);
+  color: var(--ww-text);
 }
 .cont-streak {
   display: flex;
@@ -1300,11 +1721,11 @@ tr:hover .copy-btn,
 .cont-streak__num {
   font-size: var(--t-2xl);
   font-weight: 600;
-  color: var(--n-900);
+  color: var(--ww-text);
 }
 .cont-streak__unit {
-  font-size: var(--t-sm);
-  color: var(--n-600);
+  font-size: var(--t-base);
+  color: var(--ww-text-muted);
 }
 .cont-gate {
   display: flex;
@@ -1317,13 +1738,13 @@ tr:hover .copy-btn,
   flex: 1 1 120px;
   height: 6px;
   border-radius: var(--r-pill);
-  background: var(--n-100);
+  background: var(--ww-border);
   overflow: hidden;
 }
 .cont-progress__fill {
   height: 100%;
   border-radius: var(--r-pill);
-  background: var(--up-500);
+  background: var(--ww-up);
 }
 .cont-strip {
   display: flex;
@@ -1336,31 +1757,31 @@ tr:hover .copy-btn,
   width: 8px;
   height: 22px;
   border-radius: 2px;
-  background: var(--n-150);
+  background: var(--ww-border);
 }
 .cont-cell--covered {
-  background: var(--up-500);
+  background: var(--ww-up);
 }
 .cont-cell--gap {
-  background: var(--down-500);
+  background: var(--ww-down);
 }
 .cont-cell--partial {
-  background: var(--n-300);
+  background: var(--ww-border-dashed);
 }
 .cont-cell--pre {
-  background: var(--n-100);
+  background: var(--ww-surface-sunken);
 }
 .cont-cell--pending {
-  background: var(--n-0);
-  border: 1px dashed var(--n-400);
+  background: var(--ww-surface);
+  border: 1px dashed var(--ww-border-dashed);
 }
 .cont-legend {
   display: flex;
   gap: var(--s-4);
   flex-wrap: wrap;
   margin-bottom: var(--s-2);
-  font-size: var(--t-xs);
-  color: var(--n-600);
+  font-size: var(--t-sm);
+  color: var(--ww-text-muted);
 }
 .cont-legend > span {
   display: inline-flex;
@@ -1371,7 +1792,7 @@ tr:hover .copy-btn,
   height: 10px;
 }
 
-/* 市场脉搏（/pulse）——异常分构成 chips：每个分量一条微型条+数值，
+/* 市场脉搏（/pulse）—— 异常分构成 chips：每个分量一条微型条 + 数值，
    「总分必须能看到组成」的最小可视化。 */
 .pulse-comps {
   display: inline-flex;
@@ -1382,8 +1803,8 @@ tr:hover .copy-btn,
   display: inline-flex;
   align-items: center;
   gap: var(--s-1);
-  font-size: var(--t-xs);
-  color: var(--n-600);
+  font-size: var(--t-sm);
+  color: var(--ww-text-muted);
   white-space: nowrap;
 }
 .pulse-comp__bar {
@@ -1391,13 +1812,13 @@ tr:hover .copy-btn,
   width: 34px;
   height: 5px;
   border-radius: var(--r-pill);
-  background: var(--n-100);
+  background: var(--ww-border);
   overflow: hidden;
 }
 .pulse-comp__bar > span {
   display: block;
   height: 100%;
-  background: var(--acc-500, var(--up-500));
+  background: var(--acc-500, var(--ww-link));
   border-radius: var(--r-pill);
 }
 
@@ -1410,8 +1831,9 @@ tr:hover .copy-btn,
 }
 .embed-snippet code {
   flex: 1;
-  font-size: var(--t-xs);
-  background: var(--n-100);
+  font-family: var(--ww-font-mono);
+  font-size: var(--t-sm);
+  background: var(--ww-surface-sunken);
   padding: var(--s-2);
   border-radius: var(--r-sm);
   word-break: break-all;

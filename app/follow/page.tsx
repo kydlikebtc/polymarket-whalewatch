@@ -2709,13 +2709,6 @@ function StrategyDetailDialog({
       onClose={onClose}
       title={t("{name} · 策略详情", { name: t(s.name) })}
       width={DETAIL_DIALOG_WIDTH}
-      // 内边距实测(2026-08,getBoundingClientRect 量弹窗边缘与各内容块
-      // 边缘的实际间距):默认 16px 逐元素都不溢出,但比这个弹窗自己内部的
-      // 节奏更窄——区块间 gap 是 24px,背板到弹窗的外间距也是 24px,两侧
-      // 16px 夹在两个 24px 中间,视觉上比上下/外部更紧。改宽到 24px 与这两
-      // 处对齐;垂直方向(标题行、内容区上下)维持默认 16px 不变——反馈明确
-      // 说的是"两边",不连带动没人抱怨的垂直节奏。
-      padding="var(--s-4, 16px) var(--s-6, 24px)"
     >
       {/* 完整参数提示(paramsHint 全量版本,一字不改):卡片紧凑化那轮把
           12 档统一的三项(单价/偏离护栏/退出规则)从卡上拿掉了,不是丢掉——
@@ -4084,7 +4077,6 @@ export default function FollowPage() {
             name: filterName ? t(filterName) : t("全部策略"),
           })}
           width={DETAIL_DIALOG_WIDTH}
-          padding="var(--s-4, 16px) var(--s-6, 24px)"
         >
           {/* 全部策略聚合时声明重复下注口径:各档持仓大面积重叠(见
                   CROSS_TIER_CAVEAT),聚合样本把同一信号在多档下的仓各算

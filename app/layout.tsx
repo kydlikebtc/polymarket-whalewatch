@@ -73,8 +73,10 @@ export default async function RootLayout({
   return (
     <html lang={lang === "en" ? "en" : "zh-CN"}>
       <head>
-        {/* Fonts via <link> (not next/font) so the build never blocks on a
-            network fetch and degrades gracefully to system fonts offline. */}
+        {/* 界面字体是系统字体(Helvetica Neue / PingFang SC / Noto Sans SC),
+            不下载 —— Etherscan 风的正文与数字同族同字号,没有 webfont 依赖。
+            只留 JetBrains Mono:全站唯一的等宽用处是代码面板与行内 code。
+            仍走 <link> 而非 next/font,构建不因网络阻塞,离线优雅降级。 */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="icon" href="/favicon.ico" />
         <link
@@ -83,7 +85,7 @@ export default async function RootLayout({
           crossOrigin="anonymous"
         />
         <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap"
           rel="stylesheet"
         />
         <script type="application/ld+json">{JSON_LD}</script>
