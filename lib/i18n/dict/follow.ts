@@ -364,15 +364,11 @@ export const DICT_FOLLOW: Record<string, string> = {
     "Families run in decreasing information strength · multi-select to overlay",
   按策略筛选: "Filter by strategy",
   "{n} 档": "{n} tiers",
-  "胜率 · Wilson 95%CI": "Win rate · Wilson 95% CI",
   "盈利仓 ÷(盈利+亏损)仓 · Wilson 95% 置信区间与已结算样本量。50% / 8 仓 和 58% / 24 仓不该长得一样重,区间宽度就是这份轻重;平局不计入分母":
     "Winning positions ÷ (winning + losing) positions · Wilson 95% confidence interval plus the settled sample size. 50% over 8 positions and 58% over 24 should not carry the same weight — the interval width is that weight; pushes are excluded from the denominator",
   "样本不足 · {n} 仓": "Small sample · {n} settled",
   // 「{n} 仓」由 deep 分片持有("{n} pos"),跨分片同键必须同值 —— 这里
   // 不重复建键,列表视图胜率格直接复用它。
-  "尚无已结算仓位 —— 战绩读数要等第一笔平仓":
-    "No settled positions yet — the record columns wait for the first close",
-  "尚无仓位 —— 等待信号命中": "No positions yet — waiting for a signal to hit",
   "备付现金 · 无杠杆": "Cash on hand · no leverage",
   "容量(+1¢) ~${a} · n={n}": "Depth(+1¢) ~${a} · n={n}",
   "序贯监控这档策略是否在失效:已结算仓折成市场级观察点,前段做基线,后段跑单侧 CUSUM 盯下行漂移。哨兵只亮牌,不自动停用任何档":
@@ -404,4 +400,11 @@ export const DICT_FOLLOW: Record<string, string> = {
     "· suggested ${v} · Polymarket has no leverage",
   "· 倒序 · 纸面模拟,无真实成交":
     "· newest first · paper simulation, no real fills",
+  // 列表视图恢复单行密度后的文案（见 app/follow/page.tsx StrategyListRow）
+  等待命中: "Awaiting a hit",
+  等待结算: "Awaiting settlement",
+  "盈利仓 ÷(盈利+亏损)仓;平局不计入分母":
+    "Winning positions ÷ (winning + losing); ties are excluded from the denominator",
+  "盈利仓 ÷(盈利+亏损)仓,括号内为已结算样本量(样本不足前面加 ⚠);平局不计入分母。Wilson 95% 置信区间在「详情」里 —— 区间文本挤不进表格一行":
+    "Winning positions ÷ (winning + losing); the number in parentheses is the settled sample size (prefixed with ⚠ when the sample is small). Ties are excluded from the denominator. The Wilson 95% interval lives in Details — the interval text does not fit on one table row",
 };
