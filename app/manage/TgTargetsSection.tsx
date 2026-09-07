@@ -1,5 +1,7 @@
 "use client";
 
+import type { TgKinds } from "../../lib/tgTargets";
+
 import { useCallback, useEffect, useState } from "react";
 import { Tag } from "../ui";
 import { SectionHead } from "./bits";
@@ -13,13 +15,6 @@ import { clipError, sectionView } from "./sectionGate";
 // 独立开关」—— 没有「使用中」,只有暂停。
 //
 // bot token 只进不出:新增时填一次写库,此后列表只显示尾部指纹(…AAA)。
-
-interface TgKinds {
-  large: boolean;
-  consensus: boolean;
-  strategy: boolean;
-  ops: boolean;
-}
 
 interface TargetRow {
   id: number;
@@ -48,12 +43,19 @@ interface Payload {
   envConfigured: boolean;
 }
 
-// 与 lib/tgTargets.TG_KINDS 同源语义;客户端组件不能 import 碰 DB 的模块,
-// 故就近镜像一份最小集。
+// 展示名镜像 lib/tgTargets.TG_KINDS(那边的标签带编号分组,给的是数据层视角;
+// 这里要短)。**类型不再镜像** —— `import type` 在编译期就被抹掉,不会把碰
+// DB 的模块拖进客户端 bundle,而各写一份 interface 正是漂移的来源:`cohort`
+// 2026-08-28 上线后一直没进这张表,运营页上勾不到,于是那个能力实际不可达。
+// kindsParity.test.ts 现在钉着这份清单 ⊇ DEFAULT_TG_KINDS。
 const KINDS: { kind: keyof TgKinds; label: string; hint: string }[] = [
   { kind: "large", label: "🐳 大额成交", hint: "量最大的一类" },
   { kind: "consensus", label: "🔥 聪明钱共识", hint: "稀有且独家" },
+  { kind: "cohort", label: "🐣 同批新钱包", hint: "灵敏度随年龄缓存增长；默认关" },
   { kind: "strategy", label: "📡 策略信号", hint: "可配延迟做分层" },
+  { kind: "pulse", label: "📊 市场脉搏日榜", hint: "每日一条汇总，不是信号；默认关" },
+  { kind: "scorecard", label: "📋 每日战报", hint: "昨日结算的告警，赢输都列；默认关" },
+  { kind: "weekly", label: "📊 周报成绩单", hint: "每周一一条纸面战绩；默认关" },
   { kind: "ops", label: "🩺 运维通知", hint: "自检/断更/熔断，建议只发给自己" },
 ];
 

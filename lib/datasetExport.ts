@@ -24,6 +24,10 @@ const HEADER = [
   "exit_price",
   "realized_pnl",
   "settled_at_utc",
+  // 2026-09-07 追加,**刻意加在末尾**(按位置解析的消费方不受影响)。
+  // 存证链以 strategy_signals.id 为 preimage 输入,缺这一列时那句
+  // 「按 id 升序复算即可验证」谁也执行不了 —— 见 lib/digestVerify。
+  "signal_id",
 ].join(",");
 
 /** RFC 4180 转义:含 , " 换行 的字段加引号,引号翻倍。 */
@@ -37,6 +41,7 @@ const iso = (sec: number | null): string =>
   sec == null ? "" : new Date(sec * 1000).toISOString();
 
 interface Row {
+  id: number;
   emitted_at: number;
   formation_ts: number | null;
   name: string | null;
@@ -61,7 +66,7 @@ export function buildRecordCsv(
 ): string {
   const rows = db
     .prepare(
-      `SELECT s.emitted_at, s.formation_ts, st.name, s.condition_id, s.outcome,
+      `SELECT s.id, s.emitted_at, s.formation_ts, st.name, s.condition_id, s.outcome,
               s.title, s.entry_price, s.settled, s.won, s.exit_price,
               s.realized_pnl, s.settled_ts
        FROM strategy_signals s
@@ -76,7 +81,7 @@ export function buildRecordCsv(
   const lines = [
     DATASET_LICENSE_LINE,
     `# generated: ${iso(nowSec)} — rows: ${rows.length} (published signals only; unsettled rows included with empty won)`,
-    "# integrity: per-day sha256 digest chain via /api/record — this CSV is a convenience export, not the tamper-evidence carrier",
+    "# integrity: per-day sha256 digest chain via /api/record (field digests[]); recompute with scripts/verify-digest.ts or the verify button on /record",
     HEADER,
   ];
   for (const r of rows) {
@@ -95,6 +100,7 @@ export function buildRecordCsv(
         csvField(r.exit_price),
         csvField(r.realized_pnl),
         iso(r.settled_ts),
+        String(r.id),
       ].join(","),
     );
   }

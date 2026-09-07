@@ -38,6 +38,7 @@ function feed(strategies: RecordFeedStrategy[]): RecordFeed {
     updatedAt: 1_787_800_000,
     strategies,
     digest: { day: "2026-08-26", tail: "abcdef0123456789" },
+    digests: [],
   };
 }
 

@@ -104,12 +104,16 @@ describe("resolveTargets · env 向后兼容", () => {
     const alert = t.find((x) => x.chatId === "@public")!;
     const vip = t.find((x) => x.chatId === "@vip")!;
     // 告警频道收大单/共识/运维,外加延迟版策略信号(现网的公开延迟通道)。
-    // cohort 不进 env 回退 —— 新能力默认关的纪律贯穿零配置路径。
+    // cohort 与内容引擎三类(pulse/scorecard/weekly)不进 env 回退 ——
+    // 新能力默认关的纪律贯穿零配置路径,显式建目标才开。
     expect(alert.kinds).toEqual({
       large: true,
       consensus: true,
       cohort: false,
       strategy: true,
+      pulse: false,
+      scorecard: false,
+      weekly: false,
       ops: true,
     });
     expect(alert.delayMin).toBe(15);
