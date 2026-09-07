@@ -1,4 +1,5 @@
-node_modules/
+# no trailing slash: "node_modules/" only matches a directory, so a node_modules symlink slipped past it (committed in afd8ada)
+node_modules
 .env
 .env.local
 *.sqlite*
