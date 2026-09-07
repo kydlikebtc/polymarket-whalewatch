@@ -12,7 +12,7 @@
 | `/api/signals`                  | `GET`  | API key       | 30s  | 主 feed：信号（事件）+ 视图                |
 | `/api/signals/list`             | `GET`  | API key       | 30s  | 名录：这把 key 实际收得到哪些信号（§4.1）  |
 | `/api/market-card/{cid}`        | `GET`  | API key       | 30s  | 单市场深度卡（`realtime` + `market` 范围） |
-| `/api/record`                   | `GET`  | 无（公开）    | 60s  | 已公开发布信号的战绩与存证链               |
+| `/api/record`                   | `GET`  | 无（公开）    | 60s  | 已公开发布信号的战绩与逐日存证链（§13）    |
 | `/api/health`                   | `GET`  | 无（公开）    | 无   | 引擎存活探针（200 / 503）                  |
 | `/api/continuity`               | `GET`  | 无（公开）    | 无   | 数据连续性 · 30 天起算时钟（§13）          |
 | `/api/dataset/record.csv`       | `GET`  | 无（公开）    | 300s | 已发布信号全量台账 CSV 数据集（§13）       |
@@ -807,11 +807,42 @@ interface RecordFeed {
     }[]; // 最多 10 条
   }[];
   digest: { day: string | null; tail: string | null }; // 存证链尾
+  digests: {
+    // 逐日存证行，最近 30 天，按 day 倒序（2026-09-07 追加，additive）。
+    day: string; // 该批信号所属的 UTC 日
+    digest: string; // 该日链式 sha256
+    prev: string; // 该日复算的起点（= 表里上一条的 digest；首条为 "genesis"）
+    count: number; // 进入该日摘要的已发布信号条数
+    paramsDigest: string | null; // 规则集指纹，见下
+    createdAt: number;
+  }[];
 }
 ```
 
 `digest` 为每 UTC 日的链式 sha256 摘要链尾，可复算验证「先发布后结算、
 未删改」。限流：每 IP 60 次/分钟，超限 `429`。
+
+**怎么复算（2026-09-07 起真的可以执行了）。** 逐条 preimage 是
+`前值|id|档名|市场|方向|发布时刻|入场价`（无入场价写字面量 `null`），按
+`id` 升序链式 sha256，起点取该日的 `prev`。所需的 `id` 由
+`/api/dataset/record.csv` 的 `signal_id` 列提供——那一列同批追加，**此前
+公开导出里根本没有 id，于是那句「可复算验证」谁也执行不了**。
+
+现成两条路：`npx tsx scripts/verify-digest.ts <baseUrl>`，或 `/record` 页
+「自己验一遍存证链」折叠块（浏览器 WebCrypto，服务端零参与——由被验证方跑的
+验证器证明不了任何事）。
+
+**摘要在 06:00 UTC 结算**，不是零点：投递有延迟档，23:50 发出的信号可能在
+次日 00:20 才 `sent`。过了 entry 补发窗口（6h）昨日成员集结构上冻结，复算
+才是确定的。因此 `count` 与导出行数不一致时，**方向有意义**：导出行数少于
+`count` = 有行被删（要报的那个方向）；多于 `count` = 摘要算完后才投递成功
+（2026-09-07 之前的历史遗留，之后不该再出现）。
+
+`paramsDigest` 是**规则集指纹**：全部档位参数 + 事件线阈值档 + 每一个进过
+`config_history` 的运营设置，规范化后取 sha256。它**刻意不链式**——同一套
+规则每天必须给出同一个值，读者才看得出「这天规则动过」。它能证明的只有
+「参数在哪一天变过」；参数**是什么**不公开（阈值是一套知道了就能规避的规则集，
+与可验证的战绩是两回事），完成核对需运营者出示原值。`null` = 该日无记录。
 
 ### `GET /api/health`
 
@@ -855,11 +886,15 @@ interface ContinuityReport {
 投递的信号；未结算行也导出，`won` 留空——分母诚实）。逐行字段：
 `emitted_at_utc, formation_at_utc, strategy_code, strategy_name, condition_id,
 outcome, title, entry_price, settled, won, exit_price, realized_pnl,
-settled_at_utc`。头三行是 `#` 注释（license / 生成时刻与行数 / 完整性说明），
-pandas 用 `pd.read_csv(url, comment="#")` 读。
+settled_at_utc, signal_id`。头三行是 `#` 注释（license / 生成时刻与行数 /
+完整性说明），pandas 用 `pd.read_csv(url, comment="#")` 读。
+
+`signal_id` 于 2026-09-07 **追加在末尾**（按位置解析的消费方不受影响）：
+存证链以它为 preimage 输入，缺这一列时链无法复算。
 
 许可 **CC BY 4.0**，署名 whalewatch.wired.fund。防篡改校验走 `/api/record` 的
-逐日 sha256 存证链——CSV 是便利导出，不是存证载体。限流：每 IP 6 次/分钟。
+逐日 sha256 存证链（`digests[]`，复算方法见 §13 那一节）——CSV 是便利导出，
+不是存证载体。限流：每 IP 6 次/分钟。
 
 ### `GET /embed/record` · `GET /embed/status`
 
@@ -1104,6 +1139,8 @@ Polymarket 自己的持仓接口返回空，而按买卖推算出来的敞口是
 
 | 日期       | 变更                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-09-07 | `GET /api/record` 追加 `digests[]`（§13）：逐日存证行（day/digest/prev/count/paramsDigest），最近 30 天。additive、零上游。配合同批给 `/api/dataset/record.csv` 末尾追加的 `signal_id` 列，「按 id 升序复算 sha256 即可验证」这句承诺**第一次可被执行**——此前公开导出里没有 id，历史摘要也只存在于 TG 频道消息里。同批把摘要结算时刻从 UTC 零点推迟到 **06:00**（过 entry 补发窗口，昨日成员集结构上冻结，复算才确定）。老消费方零影响 |
+| 2026-09-07 | `GET /api/dataset/record.csv` 末尾追加 `signal_id` 列（§13）：additive，列序不变，按列名解析的消费方零影响 |
 | 2026-09-04 | `GET /api/record` 的 `strategies[]` 追加 `realizedPnl`（§13）：该档 30d 窗内**已发布且已结算**信号的纸面盈亏合计（美元）。additive、零上游（与 `record` 同一条 SQL、同一批行取出）。⚠️ 口径咬死 `record`：同样只含有入场价的行（无价=无基准=不可评级，两边账都不进），所以它与 `record.wins/settled` 永远同分母。`null` = **判不了不是 0**——行集合为空，或其中任一行缺 `realized_pnl`；少一行的和是错的和，不是部分的和。老消费方零影响 |
 | 2026-09-04 | 文档编排：§5 / §10 / §14 的小节标题改为带端点写法（`GET /api/signals` / `POST <你的端点>` / `GET /api/market-card/{cid}`）——`/api-docs` 左栏「端点」索引只认标题里的端点写法，改后它自动收全主 feed、webhook 与市场深度卡，清单仍只有本文件这一份。端点总览表同步补上 `GET /api/pulse`（300s）与 `GET /api/calibration`（600s）两行。**端点、字段、语义零变更。**                                                                                                                                                                                                                                                         |
 | 2026-08-31 | `GET /api/signals` 的 `strategies` 追加 `events[]`（§8.4）：买入+兑现**动作流**，逐条 = §10 `SignalEventV1`（服务端同一构造器产出——拉/推同构、同 `(id,event)` 幂等键），`entry` 按 `emittedAt`、`settle` 按 `settledTs` 各 48h 窗、无静默截断。此前只轮询的消费方拿不到与买入对等的兑现动作（`active[]` 结算后行消失、`settled[]` 是 3d/20 条战绩视图）。`GET /api/signals/list` 的 `strategy[]` 同步追加 `events: ["entry","settle"]` 声明事件种类。并立前向兼容纪律（§10）：`event` 值域为**开放集**（将来可能加卖出等动作），消费方须跳过未知值、不得用封闭枚举拒收，新值上线前先进名录。全部 additive，老消费方零影响 |

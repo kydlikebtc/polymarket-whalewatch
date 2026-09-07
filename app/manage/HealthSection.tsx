@@ -36,6 +36,14 @@ const CH_LABEL: Record<string, string> = {
   tg_public: "公开频道(延迟)",
 };
 
+// 速率:低于 10 给一位小数(0.3 次/分与 0 次/分是两种状态),高于 10 取整。
+const upstreamRate = (n: number): string =>
+  n >= 10 ? Math.round(n).toLocaleString("en-US") : n.toFixed(1);
+
+// 均耗:没有调用就没有均值 —— 「—」不是 0ms。
+const avgMs = (c: { calls: number; ms: number }): string =>
+  c.calls > 0 ? `${Math.round(c.ms / c.calls)}ms` : "—";
+
 export default function HealthSection({
   health,
   ops,
@@ -308,6 +316,54 @@ export default function HealthSection({
                   —
                 </div>
                 <div className="kpi-sub">尚未生成</div>
+              </>
+            )}
+          </StatCard>
+          {/* 上游预算:全站最稀缺资源的第一块仪表(限流层保护的单位就是它)。
+              「—」= 引擎没落过计量行,与 0 次调用不是一回事。 */}
+          <StatCard label="上游调用 · 近 1 小时" icon="📡">
+            {ops.upstream.latestBucket == null ? (
+              <>
+                <div
+                  className="kpi-value"
+                  style={{ color: "var(--ww-text-faint)" }}
+                >
+                  —
+                </div>
+                <div className="kpi-sub">尚无计量行(引擎未落盘)</div>
+              </>
+            ) : (
+              <>
+                {/* 429 有值就染红:被限流意味着已经在花别人的配额。 */}
+                <div
+                  className="kpi-value"
+                  style={
+                    ops.upstream.window.rateLimited > 0
+                      ? { color: "var(--ww-down)" }
+                      : undefined
+                  }
+                >
+                  {upstreamRate(ops.upstream.callsPerMin)}
+                  <span className="muted" style={{ fontSize: "0.72em" }}>
+                    {" 次/分"}
+                  </span>
+                </div>
+                <div className="kpi-sub">
+                  {`合计 ${ops.upstream.window.calls.toLocaleString("en-US")} · 429 ${ops.upstream.window.rateLimited} · 重试 ${ops.upstream.window.transient} · 出错 ${ops.upstream.window.errors}`}
+                </div>
+                <div className="kpi-sub">
+                  {`近 24h ${ops.upstream.day.calls.toLocaleString("en-US")} 次 · 均耗 ${avgMs(ops.upstream.day)}`}
+                </div>
+                {ops.upstream.topLabels.length > 0 && (
+                  <div
+                    className="kpi-sub"
+                    style={{ overflowWrap: "anywhere", lineHeight: 1.7 }}
+                  >
+                    {ops.upstream.topLabels
+                      .map((l) => `${l.label} ${l.calls}`)
+                      .join(" · ")}
+                  </div>
+                )}
               </>
             )}
           </StatCard>

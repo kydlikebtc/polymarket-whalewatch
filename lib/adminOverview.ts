@@ -6,6 +6,7 @@ import { strategyCode } from "./strategyCodes";
 import { sourceOf } from "./strategyFeed";
 import { countStraySettlements, strategyRecord30d } from "./strategySignals";
 import { getTelegramHealth, type TelegramHealth } from "./telegramHealth";
+import { readUpstreamStats, type UpstreamStats } from "./upstreamMeter";
 
 // /manage 运营页的数据层(admin 视角,与 /record 的公开口径刻意分开):
 // 全部 13 档都在列 —— 「放开哪几档」这个决策恰恰要看未放开档的台账表现。
@@ -343,6 +344,14 @@ export interface AdminSignalOverview {
     channels: ChannelBacklog[];
     /** 结算对账读数,见 SettlementReconcile。 */
     settlementReconcile: SettlementReconcile;
+    /**
+     * 上游调用计量(近 60 分钟窗口 + 近 24h 合计,见 lib/upstreamMeter)。
+     *
+     * 全站最稀缺的资源是上游请求预算 —— 限流层保护的单位就是它。此前它是
+     * 唯一没有仪表的关键资源:「一次钱包画像 ≈42 次调用」是估算,「这条要不要
+     * 带闸上线」的每次裁决都引用那个估算。
+     */
+    upstream: UpstreamStats;
   };
 }
 
@@ -543,6 +552,7 @@ export function buildAdminSignalOverview(
       activeKeys,
       channels,
       settlementReconcile,
+      upstream: readUpstreamStats(db, { nowSec }),
     },
   };
 }

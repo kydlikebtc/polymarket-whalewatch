@@ -52,6 +52,7 @@ consumer per token, so run one or the other.
      ║  outcome-backfill 10m ── delivery 30s║        │   /wallet, /positions)     │
      ║  x-broadcast 60s ── bot 2s           ║        │  in-memory filtering,      │
      ║  evidence-backfill 6h ── health 60s  ║        │  short promise caches      │
+     ║  market-daily 30m                    ║        │                            │
      ╚════════╤═════════════════════════════╝        └─────────┬──────────────────┘
               │ writes                                         │ reads (caches, records)
               ▼                                                ▼
@@ -77,10 +78,10 @@ consumer per token, so run one or the other.
 
 ## Subsystems
 
-`lib/` holds 90 non-test TypeScript modules at the top level plus 15 in `lib/i18n/`. The 90 top-level
+`lib/` holds 133 non-test TypeScript modules at the top level plus 15 in `lib/i18n/`. The top-level
 modules group into eleven functional clusters (A–K); `lib/i18n/` is described separately as L.
 Nearly every module has a pure-function core with I/O injected, which is why
-the suite runs 1346 tests across 105 files in about two seconds with no network and no fixtures server.
+the suite runs 2114 tests across 163 files in about three seconds with no network and no fixtures server.
 
 ### A. Upstream clients
 
@@ -243,7 +244,7 @@ posts with the settled result — wins and losses both.
 
 `beat(db, loop)` is called after a cycle _completes_, not when it is scheduled, and rolls counters by UTC
 day. `evaluateHealth` marks a loop stale past its own threshold (alert 300s, consensus 1200s,
-outcome_backfill 2100s, delivery 600s, everything else 3600s) and — importantly — also fails when an
+outcome_backfill 2100s, delivery 600s, market_daily 10800s, everything else 3600s) and — importantly — also fails when an
 expected loop has _never_ beaten and the process has been up longer than that loop's threshold. That third
 condition is the one that catches the worst failure mode: a loop that throws on every single pass writes
 no heartbeat row at all, so "the rows we have are fresh" would otherwise rate a total outage as healthy.
@@ -259,7 +260,7 @@ cron, no sidecar — deploying the image is enough to have backups.
 `db.ts` · `config.ts` · `mapLimit.ts` · `promiseCache.ts` · `scanFloor.ts` · `categoryLabel.ts` ·
 `markdownDoc.ts` · `seo.ts`
 
-`db.ts` is the only place that creates tables or runs migrations (31 `CREATE TABLE` statements plus
+`db.ts` is the only place that creates tables or runs migrations (38 `CREATE TABLE` statements plus
 version-gated `ALTER`/re-seed steps keyed off `config` markers). `config.ts` parses env with zod and
 _warns and defaults_ on bad values instead of throwing — with a floor of 1000ms on `POLL_INTERVAL_MS`,
 because a `NaN` there turns a 4-second poll into a ~1ms busy loop against the trade API.
@@ -279,7 +280,7 @@ point.
 
 ## Worker loops
 
-All eight loops in `worker/embeddedEngine.ts` self-schedule with `setTimeout` (not `setInterval`), so a
+All nine loops in `worker/embeddedEngine.ts` self-schedule with `setTimeout` (not `setInterval`), so a
 slow cycle delays the next one instead of stacking. First runs are staggered to avoid a startup thundering
 herd against the shared upstream budget.
 
@@ -291,7 +292,8 @@ herd against the shared upstream budget.
 | `outcome backfill`  | 90s       | 10 min                                        | Rotate through non-terminal alerts filling 1h/24h follow-through and settlement. Same carrier also runs the exit-counterfactual backfill (≤5 upstream calls per cycle) and the daily SQLite snapshot.                                                                                                              | `outcome_backfill` |
 | `bot`               | 10s       | 2s gap (20s long-poll)                        | Telegram `getUpdates`; replies to a pasted link/slug/conditionId with a market card. Only starts when Telegram creds are present. Single-consumer per bot token.                                                                                                                                                   | none               |
 | `x broadcast`       | 45s       | 60s (pregame every 10 min, weekly on Mondays) | Consume `alerts` as a post queue; re-resolve X credentials each cycle. Only starts when `X_API_KEY` + `X_API_SECRET` are set.                                                                                                                                                                                      | `x_broadcast`      |
-| `signal delivery`   | 45s       | 30s                                           | Rebuild the channel list each pass (Telegram targets flagged for strategy signals + active webhook endpoints), fan out `strategy_signals`, run the daily digest. Freezes delivery while any loop is stale — silence beats misleading output — but beats unconditionally so a frozen cycle is not misread as death. | `delivery`         |
+| `market daily`      | 150s      | 30 min                                        | Poll "has yesterday been aggregated yet"; at most one deep 24h fetch per UTC day builds `market_daily`, the sole base for /pulse, the conviction index and the daily pulse posts. Beats only on a cycle that did not throw, so repeated aggregation failure turns the loop red instead of failing silently.        | `market_daily`     |
+| `signal delivery`   | 45s       | 30s                                           | Rebuild the channel list each pass (Telegram targets flagged for strategy signals + active webhook endpoints), fan out `strategy_signals`, run the daily digest and the Telegram content posts (pulse / scorecard / weekly). Freezes delivery while any loop is stale — silence beats misleading output — but beats unconditionally so a frozen cycle is not misread as death. | `delivery`         |
 | `health ping`       | 120s      | 60s                                           | Dead-man's switch. Evaluates health locally and pings the external URL **only when everything is fresh**, so a silently hung loop and a dead process trip the same external alarm. Only starts when `HEALTHCHECK_PING_URL` is set.                                                                                 | none               |
 
 On startup the engine resumes from `MAX(seen_trades.ts)` clamped to at most 30 minutes back
@@ -300,7 +302,7 @@ a cold database starts at "now" rather than firing a storm of historical alerts.
 
 ## Data model
 
-SQLite in WAL mode, one file (`DASH_DB`, default `data.sqlite`), 31 tables, all created and migrated in
+SQLite in WAL mode, one file (`DASH_DB`, default `data.sqlite`), 38 tables, all created and migrated in
 `lib/db.ts`. The README's older claim that the database "holds only rebuildable caches — delete it and the
 system rebuilds itself" **was true early on and is not true now**. The honest split:
 
@@ -454,6 +456,12 @@ consumer of `alerts` and its failures are logged and dropped, never propagated t
 Delivery freezes itself when health is degraded. Telegram permanent errors are classified so one bad
 message cannot block a queue. The intent throughout is that a partial failure degrades to silence with a
 visible red indicator, never to wrong output presented as right.
+
+One loop registration lesson is baked into a test rather than a paragraph: `app/loopRegistry.test.ts`
+scans the engine source for `beat(db, "…")` and fails the build when a beating loop is missing from either
+`app/loopMeta.ts` (display name) or `LOOP_STALE_AFTER_SEC` (stale threshold, unless explicitly listed as
+untracked). Both registries had already drifted twice — `delivery` once showed as a raw key, and
+`market_daily` ran for a month with no heartbeat at all, so its total failure would have read as healthy.
 
 **Known gaps, stated plainly.** `/status` shows per-loop heartbeats but no uptime timeline, because
 `heartbeats` is keyed by loop and stores same-day counters only — there is no cross-day time series, and

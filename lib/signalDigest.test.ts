@@ -3,7 +3,9 @@ import { openDb } from "./db";
 import { recordStrategySignal } from "./strategySignals";
 import {
   computeDigestChain,
+  DIGEST_POST_UTC_HOUR,
   DIGEST_PREV_KEY,
+  listDigestDays,
   maybeDailySignalDigest,
 } from "./signalDigest";
 
@@ -13,6 +15,8 @@ import {
 
 const DAY2 = 200 * 86_400; // UTC day boundary(第 200 天 00:00)
 const YESTERDAY_NOON = DAY2 - 43_200;
+/** 过了成员集冻结闸(DIGEST_POST_UTC_HOUR)之后的一个时刻。 */
+const AFTER_GATE = DIGEST_POST_UTC_HOUR * 3600 + 100;
 
 const idOf = (db: ReturnType<typeof openDb>, name: string): number =>
   (
@@ -82,6 +86,26 @@ describe("computeDigestChain", () => {
   });
 });
 
+describe("成员集冻结闸(DIGEST_POST_UTC_HOUR)", () => {
+  it("闸门取自 ENTRY_MAX_AGE_SEC,不是写死的数字", () => {
+    // 6h:过了这个点,昨日 entry 只会 skipped_stale,成员集不可能再变 ——
+    // 复算方拿公开导出算出的行集合才等于摘要当时看到的那一批。
+    expect(DIGEST_POST_UTC_HOUR).toBe(6);
+  });
+
+  it("零点刚过不发,也不消耗当日 —— 是晚发不是不发", async () => {
+    const db = openDb(":memory:");
+    seedDelivered(db, { cid: "c1", emittedAt: YESTERDAY_NOON });
+    const send = vi.fn(async () => {});
+    expect(await maybeDailySignalDigest(db, send, DAY2 + 100)).toBeNull();
+    expect(send).not.toHaveBeenCalled();
+    // 同一天晚些时候(过闸)照常发出。
+    const r = await maybeDailySignalDigest(db, send, DAY2 + AFTER_GATE);
+    expect(r?.sent).toBe(true);
+    db.close();
+  });
+});
+
 describe("maybeDailySignalDigest", () => {
   it("昨日有已发布信号 → 推一条含摘要前缀的消息,day-gate 当日只跑一次,prev 滚动", async () => {
     const db = openDb(":memory:");
@@ -97,7 +121,7 @@ describe("maybeDailySignalDigest", () => {
     const send = vi.fn(async (html: string) => {
       sent.push(html);
     });
-    const r1 = await maybeDailySignalDigest(db, send, DAY2 + 100);
+    const r1 = await maybeDailySignalDigest(db, send, DAY2 + AFTER_GATE);
     expect(r1?.sent).toBe(true);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain("信号存证");
@@ -110,19 +134,37 @@ describe("maybeDailySignalDigest", () => {
     expect(prev).toMatch(/^[0-9a-f]{64}$/);
     expect(sent[0]).toContain(prev!.slice(0, 16));
     // 同日第二次:no-op。
-    const r2 = await maybeDailySignalDigest(db, send, DAY2 + 200);
+    const r2 = await maybeDailySignalDigest(db, send, DAY2 + AFTER_GATE + 100);
     expect(r2).toBeNull();
     expect(sent).toHaveLength(1);
     db.close();
   });
 
-  it("昨日无已发布信号 → 不发消息但消耗当日(昨日是已封闭事实)", async () => {
+  it("逐日存证行落库:day/prev/count/参数指纹都在,链尾与行一致", async () => {
+    const db = openDb(":memory:");
+    seedDelivered(db, { cid: "c1", emittedAt: YESTERDAY_NOON });
+    const r = await maybeDailySignalDigest(db, async () => {}, DAY2 + AFTER_GATE);
+    const days = listDigestDays(db);
+    expect(days).toHaveLength(1);
+    expect(days[0].day).toBe(new Date((DAY2 - 43_200) * 1000).toISOString().slice(0, 10));
+    expect(days[0].count).toBe(1);
+    expect(days[0].prev).toBe("genesis");
+    expect(days[0].digest).toBe(r?.digest);
+    expect(days[0].paramsDigest).toMatch(/^[0-9a-f]{64}$/);
+    db.close();
+  });
+
+  it("昨日无已发布信号且参数没变 → 不发消息,但仍落存证行并消耗当日", async () => {
     const db = openDb(":memory:");
     const send = vi.fn(async () => {});
-    const r = await maybeDailySignalDigest(db, send, DAY2 + 100);
-    expect(r).toBeNull();
+    // 第一天:0 信号、参数首次记录 → 不发(paramsChanged 为 null 不算变)。
+    const r = await maybeDailySignalDigest(db, send, DAY2 + AFTER_GATE);
+    expect(r?.sent).toBe(false);
+    expect(r?.count).toBe(0);
     expect(send).not.toHaveBeenCalled();
-    const again = await maybeDailySignalDigest(db, send, DAY2 + 200);
+    // 存证行照落 —— 复算方需要每一天的锚点,包括空的那些。
+    expect(listDigestDays(db)).toHaveLength(1);
+    const again = await maybeDailySignalDigest(db, send, DAY2 + AFTER_GATE + 100);
     expect(again).toBeNull();
     db.close();
   });
@@ -130,8 +172,9 @@ describe("maybeDailySignalDigest", () => {
   it("无 send(公开频道未配置)→ 完全 no-op 且不消耗当日", async () => {
     const db = openDb(":memory:");
     seedDelivered(db, { cid: "c1", emittedAt: YESTERDAY_NOON });
-    const r = await maybeDailySignalDigest(db, undefined, DAY2 + 100);
+    const r = await maybeDailySignalDigest(db, undefined, DAY2 + AFTER_GATE);
     expect(r).toBeNull();
+    expect(listDigestDays(db)).toHaveLength(0);
     // 配好凭证后当日仍可补发。
     const sent: string[] = [];
     const r2 = await maybeDailySignalDigest(
@@ -139,9 +182,70 @@ describe("maybeDailySignalDigest", () => {
       async (h) => {
         sent.push(h);
       },
-      DAY2 + 200,
+      DAY2 + AFTER_GATE + 100,
     );
     expect(r2?.sent).toBe(true);
+    db.close();
+  });
+});
+
+describe("参数指纹(#13)", () => {
+  it("规则没动 → 两天同一个指纹(不加链的全部理由)", async () => {
+    const db = openDb(":memory:");
+    seedDelivered(db, { cid: "c1", emittedAt: YESTERDAY_NOON });
+    const d1 = await maybeDailySignalDigest(db, async () => {}, DAY2 + AFTER_GATE);
+    seedDelivered(db, { cid: "c2", emittedAt: YESTERDAY_NOON + 86_400 });
+    const d2 = await maybeDailySignalDigest(
+      db,
+      async () => {},
+      DAY2 + 86_400 + AFTER_GATE,
+    );
+    expect(d1?.paramsDigest).toBe(d2?.paramsDigest);
+    expect(d1?.paramsChanged).toBeNull(); // 首次记录
+    expect(d2?.paramsChanged).toBe(false);
+    db.close();
+  });
+
+  it("改了投递开关 → 指纹变,且哪怕当天 0 信号也要发消息", async () => {
+    const db = openDb(":memory:");
+    const sent: string[] = [];
+    const send = async (h: string) => {
+      sent.push(h);
+    };
+    await maybeDailySignalDigest(db, send, DAY2 + AFTER_GATE);
+    expect(sent).toHaveLength(0); // 第一天:0 信号、参数首记 → 静默
+    // 运营者当天把一档放开对外投递 —— 这正是「阈值被悄悄挪过」要防的那类改动。
+    db.prepare(
+      "UPDATE follow_strategies SET push_enabled = 1 WHERE name = '巨鲸'",
+    ).run();
+    const d2 = await maybeDailySignalDigest(
+      db,
+      send,
+      DAY2 + 86_400 + AFTER_GATE,
+    );
+    expect(d2?.paramsChanged).toBe(true);
+    // 「今天没信号」可以沉默;「规则改了」不行 —— 沉默掉它等于没做这条。
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("参数指纹");
+    expect(sent[0]).toContain("不同");
+    db.close();
+  });
+
+  it("改了告警阈值(config_history 那套)同样进指纹", async () => {
+    const db = openDb(":memory:");
+    await maybeDailySignalDigest(db, async () => {}, DAY2 + AFTER_GATE);
+    db.prepare(
+      "INSERT INTO config_history (key, value, changed_at) VALUES ('alert_conditions', '{\"minUsd\":99999}', ?)",
+    ).run(DAY2 + 3600);
+    db.prepare(
+      "INSERT OR REPLACE INTO config (key, value) VALUES ('alert_conditions', '{\"minUsd\":99999}')",
+    ).run();
+    const d2 = await maybeDailySignalDigest(
+      db,
+      async () => {},
+      DAY2 + 86_400 + AFTER_GATE,
+    );
+    expect(d2?.paramsChanged).toBe(true);
     db.close();
   });
 });

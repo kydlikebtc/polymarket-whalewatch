@@ -14,13 +14,27 @@
 //   strategy 策略档位信号(signalDelivery;delayMin 就是免费/付费分层的杠杆)
 //   ops      运维通知:日报自检 / 断更报警 / webhook 熔断 / 每日存证 digest
 //
+// 2026-09-07 追加三类**内容引擎产物**(lib/tgContent):日榜 / 每日战报 / 周报。
+// 它们此前只有 X 一个出口,而 08-31 的实测把那条管道的触达打到了 0.17% ——
+// 每帖 8.3 次浏览、0 点赞。TG 是本项目唯一自己说了算的分发管道,把最值得读的
+// 三样东西挡在外面纯属错配。三类都是**每日/每周一条的汇总**,不是事件流,
+// 所以在下面的清单里自成一组。
+//
 // 凭据纪律:bot_token 进库(与 x_accounts 的 access token 同等对待),但
 // **永不出现在任何读取结构里** —— listTargets 的返回类型压根没有这个字段,
 // 让「不小心渲染到前端」在类型层就不可能。
 import type { DB } from "./db";
 import { sendMessage, type TgCreds } from "./telegram";
 
-export type TgKind = "large" | "consensus" | "cohort" | "strategy" | "ops";
+export type TgKind =
+  | "large"
+  | "consensus"
+  | "cohort"
+  | "strategy"
+  | "pulse"
+  | "scorecard"
+  | "weekly"
+  | "ops";
 
 export type TgKinds = Record<TgKind, boolean>;
 
@@ -31,6 +45,11 @@ export const DEFAULT_TG_KINDS: TgKinds = {
   // 灵敏度未知,运营者在投递目标里显式打开才推。
   cohort: false,
   strategy: false,
+  // 内容引擎三类(2026-09-07)沿用同一条纪律:新能力一律默认关,运营者在
+  // 投递目标里显式勾选才推。
+  pulse: false,
+  scorecard: false,
+  weekly: false,
   ops: false,
 };
 
@@ -54,6 +73,21 @@ export const TG_KINDS: { kind: TgKind; label: string; hint: string }[] = [
     kind: "strategy",
     label: "② 📡 策略信号(事件)",
     hint: "策略档位的进出场信号。可配延迟做免费/付费分层",
+  },
+  {
+    kind: "pulse",
+    label: "③ 📊 市场脉搏日榜(汇总)",
+    hint: "每日一条:异常市场前 5 + 小单vs鲸鱼分歧。市场汇总,不是信号;默认关",
+  },
+  {
+    kind: "scorecard",
+    label: "③ 📋 每日战报(汇总)",
+    hint: "每日一条:昨日结算的大额/共识告警,赢输都列。口径是告警台账;默认关",
+  },
+  {
+    kind: "weekly",
+    label: "③ 📊 周报成绩单(汇总)",
+    hint: "每周一一条:近 7 天各档纸面战绩。默认关",
   },
   {
     kind: "ops",
@@ -298,12 +332,16 @@ export function resolveTargets(db: DB, env: TgEnvFallback): ResolvedTarget[] {
       chatId: env.alertChatId.trim(),
       // 现网语义:告警频道收大单/共识/运维,外加延迟版的策略信号
       // (tg_public —— 免费层靠延迟而非阉割字段)。
-      // cohort 不进 env 回退:默认关的纪律贯穿到零配置路径,显式建目标才开。
+      // cohort 与内容引擎三类不进 env 回退:默认关的纪律贯穿到零配置路径,
+      // 显式建目标才开。
       kinds: {
         large: true,
         consensus: true,
         cohort: false,
         strategy: true,
+        pulse: false,
+        scorecard: false,
+        weekly: false,
         ops: true,
       },
       delayMin: env.publicDelayMin,
@@ -324,6 +362,9 @@ export function resolveTargets(db: DB, env: TgEnvFallback): ResolvedTarget[] {
         consensus: false,
         cohort: false,
         strategy: true,
+        pulse: false,
+        scorecard: false,
+        weekly: false,
         ops: false,
       },
       delayMin: 0,

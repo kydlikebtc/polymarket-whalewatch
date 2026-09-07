@@ -46,6 +46,8 @@ import {
   markEngineStart,
   maybeDailySelfCheck,
 } from "../lib/heartbeat";
+import { maybeFlushUpstreamMeter } from "../lib/upstreamMeter";
+import { runTgContentCycle } from "../lib/tgContent";
 import { createBackupState, maybeDailyBackup } from "../lib/dbBackup";
 import { evaluateHealth } from "../lib/health";
 import { runDeliveryCycle, type DeliveryChannel } from "../lib/signalDelivery";
@@ -183,6 +185,11 @@ export function startAlertEngine(): void {
   const sendConsensus = kindSender("consensus");
   // 同批出生(2026-08-28):默认关,运营者在投递目标勾选后下一轮生效。
   const sendCohort = kindSender("cohort");
+  // 内容引擎三类(2026-09-07):日榜 / 每日战报 / 周报。此前只有 X 一个出口,
+  // 而那条管道实测触达 0.17% —— 最值得读的内容进的是最差的渠道。全部默认关。
+  const sendPulseContent = kindSender("pulse");
+  const sendScorecardContent = kindSender("scorecard");
+  const sendWeeklyContent = kindSender("weekly");
   // 运维通知(日报自检 / 断更 / 熔断通报 / 存证摘要 / 启动 ping)。
   const sendOps = kindSender("ops");
   // Backfill window: resume from the last seen trade (bounded by the cap) so a
@@ -329,6 +336,10 @@ export function startAlertEngine(): void {
       // self-check digest — cheap config read per tick, same pattern as
       // maybeDailySeed above.
       beat(db, "alert");
+      // 上游计量落盘搭最快的循环(内部节流 30s,自己吞异常)。挂在这里而不是
+      // 单开循环:计量的对象就是这条循环打出去的绝大多数请求,它活着计量才
+      // 有意义;它死了 /api/health 早就红了。
+      maybeFlushUpstreamMeter(db);
       maybeDailySelfCheck(db, sendOps, undefined, {
         publicUrl: cfg.publicUrl,
       }).catch((e) => console.error("[heartbeat] self-check push failed", e));
@@ -551,8 +562,14 @@ export function startAlertEngine(): void {
   // --- Market-daily aggregation (内容引擎共享底座) ------------------------
   // UTC 午夜后把昨天的 24h 窗口一次性聚合进 market_daily(/pulse 的数据层)。
   // 30min 轮询只是「查一下昨天做了没」,真正的抓取每天至多一次;抓取失败不写
-  // 日标记、下一轮重试(lib/marketDaily.ts 的裁决)。刻意不 beat 心跳:日节拍
-  // 配 1h 默认停跳阈值必然假警报,新鲜度由 /api/pulse 的 latestDay 自述。
+  // 日标记、下一轮重试(lib/marketDaily.ts 的裁决)。
+  //
+  // 心跳(2026-09-07 补):此前这里刻意不 beat,理由写的是「日节拍配 1h 默认
+  // 阈值必然假警报」—— 那个理由把 beat 读成了「聚合跑了一次」,而 beat 的
+  // 定义是「一轮跑完了」。轮次就是这 30 分钟一次的检查,按它配阈值(3h =
+  // 连挂 6 轮,见 lib/health)完全成立,而代价是此前这是全engine唯一一个
+  // **静默失效面**:它挂了 /api/health 照样 200,/pulse 只会安静地停在旧的
+  // 一天。beat 只在 cycle 未抛时打 —— 连续抓取失败必须能把这条循环判红。
   const MARKET_DAILY_INTERVAL_MS = 30 * 60_000;
   async function marketDailyLoop() {
     try {
@@ -564,6 +581,7 @@ export function startAlertEngine(): void {
             maxPages: 20,
           }),
       });
+      beat(db, "market_daily");
     } catch (e) {
       console.error("[engine] market-daily aggregation failed", e);
     }
@@ -901,12 +919,31 @@ export function startAlertEngine(): void {
             .then((d) => {
               if (d?.sent) {
                 console.log(
-                  `[digest] 存证 ${d.day} · ${d.count} 条 · ${d.digest.slice(0, 16)}…`,
+                  `[digest] 存证 ${d.day} · ${d.count} 条 · ${d.digest.slice(0, 16)}…` +
+                    (d.paramsChanged === true ? " · ⚠️ 参数指纹变了" : ""),
                 );
               }
             })
             .catch((e) => console.error("[digest] 存证推送失败", e));
         }
+        // 内容引擎产物发 TG(日榜/战报/周报)。搭投递载波的理由与存证 digest
+        // 逐字相同:同一条 30s 循环、同一套 claim-first 日门、同样 fire-and-
+        // forget。**放在 channels 判空之外**——内容三类走的是自己的 kind
+        // sender,与「有没有策略投递通道」无关;放里面等于让一个不相干的
+        // 条件把它们关掉(存证 digest 至今就吃着这个亏)。
+        runTgContentCycle({
+          db,
+          senders: {
+            pulse: sendPulseContent,
+            scorecard: sendScorecardContent,
+            weekly: sendWeeklyContent,
+          },
+          publicUrl: cfg.publicUrl,
+        })
+          .then((n) => {
+            if (n > 0) console.log(`[tgContent] 发出 ${n} 条内容帖`);
+          })
+          .catch((e) => console.error("[tgContent] 循环异常", e));
         // bus 类型的 webhook 分流(独立于 TG/策略通道,勾了类型才投;
         // 冻结纪律同上,内部自吞失败,永不抛)。
         const busR = await runBusWebhookCycle(db, {
