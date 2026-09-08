@@ -13,7 +13,7 @@ import type { LoopHealth } from "./heartbeat";
 
 export const LOOP_STALE_AFTER_SEC: Record<string, number> = {
   alert: 5 * 60, // 4s cadence
-  consensus: 20 * 60, // 5min cadence, one deep-window sweep can run long
+  consensus: 20 * 60, // 90s cadence(2026-09-08 起);阈值保留 5 分钟时代的 20min —— keeper 陈旧限度 300s 内还会用旧缓冲撑着,超限才停跳,阈值要给这段留余量
   outcome_backfill: 35 * 60, // 10min cadence
   delivery: 10 * 60, // 30s cadence(对外信号投递,批次 1)
 };

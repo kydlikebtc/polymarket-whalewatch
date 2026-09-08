@@ -1,6 +1,11 @@
 import { parseConfig } from "../lib/config";
 import { openDb, type DB } from "../lib/db";
-import { getLargeTrades, getTradesWindowDeep } from "../lib/polymarket";
+import {
+  getLargeTrades,
+  getTradesSince,
+  getTradesWindowDeep,
+} from "../lib/polymarket";
+import { createWindowKeeper } from "../lib/windowKeeper";
 import { maybePruneSeen, seenKeySet } from "../lib/seen";
 import { prunePersistedWindows } from "../lib/marketWindowStore";
 import { runCohortCycle } from "../lib/cohortBirth";
@@ -137,7 +142,7 @@ export function computeMinTimestamp(
  *   edits take effect on the next poll.
  */
 /**
- * follow 轮的 engine 级摘要行。全零轮静默(null)—— 5 分钟一轮,无事不刷屏。
+ * follow 轮的 engine 级摘要行。全零轮静默(null)—— 90s 一轮,无事不刷屏。
  * 但 sigReconciled>0 的「纯对账轮」不再静默:结算回填被吞(SQLITE_BUSY/磁盘)
  * 后由对账补齐,这个计数持续非零是回填路径在坏的唯一信号,此前只藏在
  * `[follow] cycle done` 里靠 grep 才看得到。运营页同一读数见
@@ -341,23 +346,46 @@ export function startAlertEngine(): void {
   loop();
 
   // --- Smart-money consensus loop ---------------------------------------
-  // Every 5 minutes: pull a 6h window at a $2k floor and alert when >=2
-  // whitelist wallets have each net-bought >=$5k of the SAME outcome. Runs on
-  // its own cadence because the window fetch (up to 20 pages) is far heavier
-  // than the 4s tick; state-table dedup means only formations/escalations push.
-  const CONSENSUS_INTERVAL_MS = 5 * 60_000;
+  // Every 90s: serve a 6h window at a $2k floor and alert when >=2 whitelist
+  // wallets have each net-bought >=$5k of the SAME outcome. 2026-09-08 起节奏
+  // 从 5 分钟提到 90s:窗口不再每轮全量重拉(实测 ~1030 行、98.6% 与上轮重复,
+  // 正是把节奏钉在 5 分钟的成本结构),改由 windowKeeper 常驻维护 —— 每轮只抓
+  // 水位线之后的增量,种子/自愈/回滚走同一个 getTradesWindowDeep。分析窗口
+  // 仍是完整 6h(信号定义,共识的腿跨小时累积,不可缩)。设计与量测:
+  // docs/plans/2026-09-08-incremental-window-design.md。
+  // state-table dedup means only formations/escalations push.
+  const CONSENSUS_INTERVAL_MS = 90_000;
   const CONSENSUS_WINDOW_SEC = 6 * 3600;
   const CONSENSUS_FLOOR_USD = 2000;
 
+  const windowKeeper = createWindowKeeper({
+    windowSec: CONSENSUS_WINDOW_SEC,
+    fullSweep: (sinceSec) =>
+      getTradesWindowDeep({ minUsd: CONSENSUS_FLOOR_USD, sinceSec }),
+    fetchSince: (sinceSec) => getTradesSince(CONSENSUS_FLOOR_USD, sinceSec),
+    // 运行时回滚开关:config 表 follow_window_mode='full' → 每轮全量重扫
+    // (老抓取路径,节奏不变),改完下一轮生效,无需重启 —— 与后台其它开关
+    // 同一套「每轮重读 config」的习惯。任何非 'full' 值都走增量(默认)。
+    getMode: () => {
+      try {
+        const row = db
+          .prepare("SELECT value FROM config WHERE key = 'follow_window_mode'")
+          .get() as { value: string | null } | undefined;
+        return row?.value === "full" ? "full" : "incremental";
+      } catch {
+        return "incremental";
+      }
+    },
+  });
+
   async function consensusLoop() {
     try {
-      // ONE deep window fetch per cycle, shared by consensus detection and
-      // the firehose discovery pass — the discovery channels ride the fetch
-      // the consensus loop was already paying for.
-      const win = await getTradesWindowDeep({
-        minUsd: CONSENSUS_FLOOR_USD,
-        sinceSec: Math.floor(Date.now() / 1000) - CONSENSUS_WINDOW_SEC,
-      });
+      // ONE window per cycle, shared by consensus detection and the firehose
+      // discovery pass — the discovery channels ride the window the consensus
+      // loop was already maintaining. keeper.tick() 的返回形状与旧的
+      // getTradesWindowDeep 逐字段一致;拿不出可用窗口时抛错,走本 catch 跳过
+      // beat(安静和死了不长得一样 —— 上游停摆不能被旧缓冲掩盖)。
+      const win = await windowKeeper.tick();
       const smart = getAllSmartTags(db);
       const fired = await runConsensusCycle({
         db,

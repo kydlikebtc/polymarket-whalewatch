@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 517 commits, 2026-06-23 → 2026-08-31. Test suite at the end of that range: 2020 tests across
-157 files (`npm test`).
+Scope: 548 commits, 2026-06-23 → 2026-09-08. Test suite at the end of that range: 2065 tests across
+159 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -36,6 +36,40 @@ Scope: 517 commits, 2026-06-23 → 2026-08-31. Test suite at the end of that ran
 | 2026-07-02 | `cf13665` | Gamma `/markets` silently returns nothing for settled markets unless `closed=true` is passed, so settlement backfill never fired in production — unit tests mocked the call and hid it.                                                                                                                                                                                                                                                                                                                                |
 
 ## Batches
+
+### 2026-09-08 — Signal latency: the 5-minute consensus cadence becomes 90 seconds
+
+Downstream consumers gate freshness on the webhook payload's `signal.formationTs`, and the measured
+formation→emitted gap was a median **329s** (18 samples on 2026-09-07, max 790s — right under the
+900s freshSec bound, which rules out queue backlog: fixed-period scanning has a ceiling, backlogs
+don't). Delivery itself was healthy (6–38s measured); nearly the whole gap was the polling period.
+The period in turn was pinned by cost structure: every cycle re-fetched the entire 6h window from
+the data-api (~1030 rows measured at the $2k floor, **98.6% identical to the previous cycle's
+fetch**) and discarded it at cycle end — nothing was ever retained.
+
+- New `lib/windowKeeper.ts`: a resident 6h buffer. Each 90s tick fetches only past the watermark
+  (`getTradesSince`, whose explicit `connected` tri-state is the first gate on netting integrity —
+  a disconnected prefix may hide a gap underneath, and one missing SELL silently inflates a
+  wallet's net buy into a fake consensus). Disconnect → discard and full-resweep the same tick;
+  hourly timed resweep bounds the damage from late-indexed upstream rows; a 30k-row cap (whole
+  seconds only — evicting half a second corrupts the netting at the boundary) puts the worst-case
+  memory at ~40 MB by design instead of by market regime; staleness past 300s with no data throws,
+  so the heartbeat still goes quiet when the upstream dies. Return shape is byte-compatible with
+  `getTradesWindowDeep` — all four window consumers unchanged.
+- The **analysis** window stays 6h: consensus legs accumulate over hours, so shrinking the window
+  the detectors see would redefine the signal, not optimize it (a 30-minute variant was evaluated
+  and rejected on these grounds). Only the **fetch** window shrank. Design and measurements:
+  `docs/plans/2026-09-08-incremental-window-design.md`.
+- Expected: median formation→emitted ~329s → **~55–75s**; steady-state transfer ~1030 rows/5min →
+  ~50–100 rows per 90s tick, decoupled from window density on hot days.
+- Rollback: config `follow_window_mode = 'full'` reverts the fetch path (full sweep every cycle,
+  cadence unchanged) on the next tick, no restart.
+- Disclosed side effects: tighter-freshness tiers (首发共识, freshSec=300) now catch formations the
+  5-minute cadence structurally missed; entries land earlier so the 10¢ chase guard passes more
+  often — signal volume rises across tiers and the paper track record has a regime break at the
+  switch. `cycle_metrics` grows 288 → 1440 rows/day (no retention yet, ~40 MB/year).
+- Housekeeping: removed a tracked `node_modules` symlink that pointed at an absolute path on
+  another contributor's machine.
 
 ### 2026-08-31 — X broadcast: measured the live account, then cut the volume it was drowning in
 
