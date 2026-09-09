@@ -1,6 +1,7 @@
 import { it, expect, vi } from "vitest";
 import {
   getLargeTrades,
+  getTradesSince,
   getTradesWindow,
   getTradesWindowDeep,
 } from "./polymarket";
@@ -646,4 +647,105 @@ it("getTradesWindowDeep throws only when BOTH sides fail (keeps the getTradesWin
   } finally {
     vi.useRealTimers();
   }
+});
+
+// ---- getTradesSince(增量抓取,windowKeeper 的伴侣)----------------------
+// connected 的三种判定是净买账完整性的第一道闸,逐一钉死。
+
+it("getTradesSince — 翻到比 sinceSec 老的行即 connected,老行不进结果", async () => {
+  const rows = [
+    trade({ timestamp: 1700000300, transactionHash: "0xn1" }),
+    trade({ timestamp: 1700000200, transactionHash: "0xn2" }),
+    trade({ timestamp: 1700000050, transactionHash: "0xold" }), // < sinceSec
+  ];
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue({ ok: true, json: async () => rows });
+  vi.stubGlobal("fetch", fetchMock);
+  const r = await getTradesSince(2000, 1700000100);
+  expect(r.connected).toBe(true);
+  expect(r.trades.map((t) => t.transactionHash)).toEqual(["0xn1", "0xn2"]);
+  const url = fetchMock.mock.calls[0][0] as string;
+  expect(url).toContain("filterAmount=2000");
+  expect(url).not.toContain("offset="); // 首页无 offset
+});
+
+it("getTradesSince — 短原始页(feed 到底)同样 connected", async () => {
+  const rows = [trade({ timestamp: 1700000300, transactionHash: "0xn1" })];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ ok: true, json: async () => rows }),
+  );
+  const r = await getTradesSince(2000, 1700000100, { pageLimit: 100 });
+  expect(r.connected).toBe(true);
+  expect(r.trades).toHaveLength(1);
+});
+
+it("getTradesSince — 页预算耗尽仍未见边界:connected=false(前缀不可信)", async () => {
+  // 每页都塞满且全部比 sinceSec 新 → 永远翻不到边界,2 页预算用完即断。
+  const page = (n: number) =>
+    Array.from({ length: 2 }, (_, i) =>
+      trade({ timestamp: 1700001000 - n * 2 - i, transactionHash: `0x${n}-${i}` }),
+    );
+  let call = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation(async () => ({
+      ok: true,
+      json: async () => page(call++),
+    })),
+  );
+  const r = await getTradesSince(2000, 1700000100, {
+    pageLimit: 2,
+    maxPages: 2,
+  });
+  expect(r.connected).toBe(false);
+  expect(r.trades).toHaveLength(4);
+});
+
+it("getTradesSince — 翻页途中失败:connected=false;首页失败:抛错", async () => {
+  const full = Array.from({ length: 2 }, (_, i) =>
+    trade({ timestamp: 1700000900 - i, transactionHash: `0xp${i}` }),
+  );
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => full })
+    .mockResolvedValueOnce({ ok: false, status: 404 });
+  vi.stubGlobal("fetch", fetchMock);
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const r = await getTradesSince(2000, 1700000100, {
+    pageLimit: 2,
+    maxPages: 3,
+  });
+  expect(r.connected).toBe(false);
+  warnSpy.mockRestore();
+
+  // 首页失败没有可挽救的前缀 —— 照抛。
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ ok: false, status: 404 }),
+  );
+  await expect(getTradesSince(2000, 1700000100)).rejects.toThrow(
+    "getTradesSince 404",
+  );
+});
+
+it("getTradesSince — 页内乱序留痕:计数 warn,不改变 connected 语义(评审 4.3)", async () => {
+  // newest-first 违例:第二行比第一行更新(乱序),第三行老于边界(止页)。
+  const rows = [
+    trade({ timestamp: 1700000200, transactionHash: "0xa" }),
+    trade({ timestamp: 1700000300, transactionHash: "0xdisorder" }), // 违例
+    trade({ timestamp: 1700000050, transactionHash: "0xold" }),
+  ];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ ok: true, json: async () => rows }),
+  );
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const r = await getTradesSince(2000, 1700000100);
+  expect(r.connected).toBe(true); // 语义不变,只留痕
+  expect(warnSpy).toHaveBeenCalledWith(
+    expect.stringContaining("ordering violated 1 time(s)"),
+  );
+  warnSpy.mockRestore();
 });

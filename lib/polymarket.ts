@@ -251,6 +251,14 @@ export interface DeepWindowResult {
   // Start of the COMPLETE merged window. Equals the requested sinceSec when
   // the full window was covered; later (more recent) when depth ran out.
   effectiveSinceSec: number;
+  /**
+   * true = 一侧整体失败,rows 只含幸存侧(评审修复,2026-09-09)。这与普通
+   * 截断有本质区别:截断窗口是「完整但更短」(净买账在其内诚实),单侧失败
+   * 的窗口**任何区间**都缺一整侧,净买账不成立 —— windowKeeper 据此拒绝把
+   * 它当健康种子(否则时间推进会把 truncated 洗白,SELL 盲窗上照常开仓)。
+   * additive 可选字段:老消费方(runConsensusCycle 直接吃 truncated)不受影响。
+   */
+  sideFailed?: boolean;
 }
 
 /**
@@ -344,5 +352,97 @@ export async function getTradesWindowDeep({
     trades,
     truncated: sideFailed || effectiveSinceSec > sinceSec,
     effectiveSinceSec,
+    sideFailed,
   };
+}
+
+/** getTradesSince 的返回:connected 是唯一的可用性判据,见函数头注释。 */
+export interface TradesSinceResult {
+  trades: Trade[];
+  /**
+   * true = 抓到的行与 `sinceSec` 之间**没有缺口**:要么翻到了一行比 sinceSec
+   * 更老的成交(边界可见),要么 feed 在此之前就真实到底(短原始页)。
+   * false = 页预算 / offset 上限 / 翻页途中失败先到 —— 已取回的只是前缀,
+   * 它和调用方水位线之间可能有洞,**绝不能合并进净买账**(漏一笔 SELL 就是
+   * 虚增净买),调用方必须整体丢弃并退回全量扫。
+   */
+  connected: boolean;
+}
+
+// 增量页刻意小于窗口扫的 250(WINDOW_PAGE_LIMIT):稳态下两轮之间的新增行是
+// 个位数到几十,首页几乎永远就是整轮的全部流量;页越小,上游按 filterAmount
+// 扫历史填页的成本越低(与 WINDOW_PAGE_LIMIT 500→250 的同一条经验)。
+const SINCE_PAGE_LIMIT = 100;
+// 突发预算:8 页 × 100 行 = 每轮 800 行的吸收能力(实测稳态 ~3 行/分钟,这是
+// 200 倍余量);再多说明市场在极端爆发,退回全量扫是更诚实的选择。
+const SINCE_MAX_PAGES = 8;
+
+/**
+ * 增量抓取(windowKeeper 的唯一伴侣):从最新往回翻,只翻到 `sinceSec`
+ * (调用方的水位线 − 安全边距)为止。与 getTradesWindow 的三处刻意不同:
+ *   - **connected 是显式返回值**而非日志:窗口扫的截断只是"窗口更短",
+ *     增量抓的不衔接却是"数据有洞"——语义天差地别,必须让调用方能区分;
+ *   - 无缩页重试:浅页便宜,fetchTrades 自带 4 次退避已够,失败就让调用方
+ *     退回全量扫,不在这里叠第二层复杂度;
+ *   - 首页失败照抛(无可挽救的前缀),翻页途中失败返回 connected=false。
+ */
+export async function getTradesSince(
+  minUsd: number,
+  sinceSec: number,
+  opts: { pageLimit?: number; maxPages?: number } = {},
+): Promise<TradesSinceResult> {
+  const pageLimit = opts.pageLimit ?? SINCE_PAGE_LIMIT;
+  const maxPages = opts.maxPages ?? SINCE_MAX_PAGES;
+  const out: Trade[] = [];
+  let offset = 0;
+  // 乱序观测(评审 4.3):止页规则依赖 feed 严格 newest-first,而同域
+  // /activity 有排序偶发失效并被 CDN 按 URL 缓存的前科。一条乱序旧行会让
+  // 本轮提前止页、把夹在中间的真新行留成洞 —— 单次由调用方的安全边距在
+  // 下一轮自愈,这里只计数留痕,攒一周数据再决定要不要更硬的防御。
+  let disorder = 0;
+  let prevTs = Infinity;
+  const noteDisorder = () => {
+    if (disorder > 0) {
+      console.warn(
+        `[getTradesSince] feed ordering violated ${disorder} time(s) this fetch (newest-first expected) — premature stop possible, margin/resweep will heal`,
+      );
+    }
+  };
+  for (let pages = 0; pages < maxPages; pages++) {
+    if (offset > MAX_TRADES_OFFSET) return { trades: out, connected: false };
+    const url =
+      `${DATA_API}/trades?filterType=CASH&filterAmount=${minUsd}&takerOnly=true&limit=${pageLimit}` +
+      (offset > 0 ? `&offset=${offset}` : "");
+    const res = await fetchTrades(url);
+    if (!res.ok) {
+      if (offset === 0) throw new Error(`getTradesSince ${res.status}`);
+      console.warn(
+        `[getTradesSince] page failed (${res.status}) at offset=${offset} — returning disconnected prefix`,
+      );
+      noteDisorder();
+      return { trades: out, connected: false };
+    }
+    const raw = await res.json();
+    // 翻页判定用原始页长(坏行仍占页位),与 getTradesWindow 同一条纪律。
+    const rawCount = Array.isArray(raw) ? raw.length : 0;
+    const rows = parseTradeRows(raw, "getTradesSince");
+    for (const t of rows) {
+      if (t.timestamp > prevTs) disorder++;
+      prevTs = t.timestamp;
+      // newest-first:第一行older-than-boundary即证明边界可见,无缺口。
+      if (t.timestamp < sinceSec) {
+        noteDisorder();
+        return { trades: out, connected: true };
+      }
+      out.push(t);
+    }
+    // 短原始页 = feed 真实到底:比 sinceSec 老的成交不存在,同样无缺口。
+    if (rawCount < pageLimit) {
+      noteDisorder();
+      return { trades: out, connected: true };
+    }
+    offset += rawCount;
+  }
+  noteDisorder();
+  return { trades: out, connected: false };
 }

@@ -97,4 +97,15 @@ export const DICT_STATUS: Record<string, string> = {
   对外信号投递: "Outbound signal delivery",
   "每 30 秒": "every 30s",
   "频道与 webhook 收不到新信号": "Channels and webhooks receive no new signals",
+  // 2026-09-09 补齐:cadence 经 t(meta.cadence) 动态传参渲染,字面量守卫
+  // 扫不到 —— coverage.test.ts 已加 LOOP_META 专项守卫,漏词条会红。
+  "每 90 秒": "every 90s",
+  "每日市场聚合": "Daily market aggregation",
+  "𝕏 自动播报": "𝕏 auto-broadcast",
+  "每 30 分钟": "every 30min",
+  "每 60 秒": "every 60s",
+  "市场脉搏五榜与确信指数停更,日榜/分歧帖跟着静默":
+    "The five pulse boards and the conviction index stop updating; daily boards and disagreement posts go silent with them",
+  "X 上停止自动发帖(Telegram 与站内不受影响)":
+    "Automatic posting on X stops (Telegram and the site are unaffected)",
 };

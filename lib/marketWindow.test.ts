@@ -6,6 +6,7 @@ import {
   windowStats,
   NoBudgetError,
   WINDOW_LRU_MAX,
+  REFRESH_MARGIN_SEC,
   __resetWindows,
 } from "./marketWindow";
 import type { Trade } from "./types";
@@ -97,7 +98,7 @@ describe("getMarketWindow", () => {
     expect(n).toBe(1);
   });
 
-  it("TTL 过后是增量续抓:sinceSec = 上次见到的最新成交时刻", async () => {
+  it("TTL 过后是增量续抓:sinceSec = 锚点 − 安全边距", async () => {
     __resetWindows();
     const calls: number[] = [];
     const fetchWindow = async (_cid: string, o: { sinceSec: number }) => {
@@ -114,8 +115,60 @@ describe("getMarketWindow", () => {
       takeToken: () => true,
       fetchWindow,
     });
-    // 第二次的下界是第一次抓到的最新成交 —— 这就是「只续新的」。
-    expect(calls[1]).toBe(NOW - 10);
+    // 第二次的下界是第一次抓到的最新成交回退边距 —— 「只续新的」,但给
+    // 上游迟到入索引/乱序留出自愈段;紧贴锚点的话迟到行会被永久漏掉。
+    expect(calls[1]).toBe(NOW - 10 - REFRESH_MARGIN_SEC);
+  });
+
+  it("迟到入索引的成交在边距内被吸收,重叠行不重复", async () => {
+    __resetWindows();
+    let round = 0;
+    const fetchWindow = async () => {
+      round++;
+      if (round === 1)
+        return { trades: [trade(NOW - 10, "0xa")], truncated: false };
+      // 第二轮:上游补进了一笔迟到的成交(时间在锚点之前、边距之内),
+      // 并把锚点那笔重复吐回 —— 续抓重叠的常态。
+      return {
+        trades: [trade(NOW - 10, "0xa"), trade(NOW - 300, "0xlate")],
+        truncated: false,
+      };
+    };
+    await getMarketWindow("0xc1", {
+      nowSec: NOW,
+      takeToken: () => true,
+      fetchWindow,
+    });
+    const r = await getMarketWindow("0xc1", {
+      nowSec: NOW + 60,
+      takeToken: () => true,
+      fetchWindow,
+    });
+    expect(r.trades.map((t) => t.timestamp)).toEqual([NOW - 10, NOW - 300]);
+    expect(
+      r.trades.filter((t) => t.transactionHash === "0xa"),
+    ).toHaveLength(1);
+  });
+
+  it("边距不越过窗口下界 —— 锚点贴近 24h 边缘时按 cutoff 抓", async () => {
+    __resetWindows();
+    const calls: number[] = [];
+    const old = NOW - 24 * 3600 + 120; // 距下界 120s,小于边距
+    const fetchWindow = async (_cid: string, o: { sinceSec: number }) => {
+      calls.push(o.sinceSec);
+      return { trades: [trade(old, "0xa")], truncated: false };
+    };
+    await getMarketWindow("0xc1", {
+      nowSec: NOW,
+      takeToken: () => true,
+      fetchWindow,
+    });
+    await getMarketWindow("0xc1", {
+      nowSec: NOW + 60,
+      takeToken: () => true,
+      fetchWindow,
+    });
+    expect(calls[1]).toBe(NOW + 60 - 24 * 3600);
   });
 
   it("没有令牌但有陈旧窗口 —— 降级返回,不发上游请求", async () => {
@@ -303,7 +356,7 @@ describe("getMarketWindow", () => {
     // 访问就是一次自伤式的上游冲击,恰好在服务刚起来、最该表现稳的时候。
     expect(windowStats().cold).toBe(0);
     expect(windowStats().warm).toBe(1);
-    expect(calls[0]).toBe(NOW - 10);
+    expect(calls[0]).toBe(NOW - 10 - REFRESH_MARGIN_SEC);
     db.close();
   });
 

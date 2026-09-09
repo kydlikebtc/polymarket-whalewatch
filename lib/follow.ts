@@ -948,7 +948,7 @@ export async function runFollowCycle(
   // markout 惰性回填:量化「形成 → 我们跟进」的延迟成本(formation+Δ 时刻的市价,
   // 与 formation_price 相减即 Δ 期 markout,由展示层计算)。open+settled 都要 ——
   // 已结算仓的形成后漂移同样是归因样本。每轮每列最多 MARKOUT_BATCH 仓防请求风暴
-  // (5min 轮询下积压会摊到后续轮);单仓失败跳过,列仍为 null,下轮自然重试。
+  // (逐轮轮询下积压会摊到后续轮);单仓失败跳过,列仍为 null,下轮自然重试。
   // 到期判定留 300s 缓冲:价格历史点位是 ~10min 蜡烛,刚过 Δ 的点可能还没落。
   // 红线:formation_price/markout 只用于归因展示,绝不参与 realized_pnl。
   const MARKOUT_GRACE_SEC = 300;

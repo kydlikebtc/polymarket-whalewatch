@@ -167,8 +167,8 @@ export const DICT_DISCOVERY: Record<string, string> = {
   最近证据: "Latest evidence",
   状态: "Status",
   点击展开证据明细: "Click to expand the evidence detail",
-  "暂无候选 —— 证据由共识循环（每 5 分钟）与每日已结算市场扫描持续积累":
-    "No candidates yet — evidence accrues from the consensus loop (every 5 minutes) and the daily settled-market sweep",
+  "暂无候选 —— 证据由共识循环（每 90 秒）与每日已结算市场扫描持续积累":
+    "No candidates yet — evidence accrues from the consensus loop (every 90 seconds) and the daily settled-market sweep",
   "无匹配 —— 试试清除搜索或标签筛选":
     "No matches — try clearing the search or tag filters",
   "仅加载复发广度前 {n} 名（30 天窗口内共 {m} 个候选钱包）":

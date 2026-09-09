@@ -41,7 +41,7 @@ export interface DailyDensity {
   rawGroups: number;
   contestedDropped: number;
   fired: number;
-  // fired per $1M of AVERAGE window volume. The 6h window rolls every 5min,
+  // fired per $1M of AVERAGE window volume. The 6h window rolls every cycle (90s),
   // so summing per-cycle volume would double-count massively; the day's mean
   // window volume is the honest heat proxy, and fired ÷ that mean is
   // comparable across days — a falling perM under stable heat means the

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AdminSignalOverview } from "../../lib/adminOverview";
 import { Tag } from "../ui";
 import AlertRulesSection from "./AlertRulesSection";
+import EngineSection from "./EngineSection";
 import EventsSection from "./EventsSection";
 import ViewsSection from "./ViewsSection";
 import HealthSection, { type HealthReport } from "./HealthSection";
@@ -549,7 +550,13 @@ export default function ManagePage() {
       )}
       {tab === "wf" && <WalkforwardSection token={token} />}
       {tab === "health" && (
-        <HealthSection health={health} ops={overview?.ops ?? null} />
+        <>
+          <HealthSection health={health} ops={overview?.ops ?? null} />
+          {/* 引擎运行时开关与健康度同住:consensus 循环的心跳表就在上面,
+              「它怎么了」与「把它切回老路径」该是同一屏的事。读数在前、
+              旋钮在后 —— 开关是低频动作,诊断才是这个 tab 的日常。 */}
+          <EngineSection token={token} />
+        </>
       )}
 
       {exits}
