@@ -60,8 +60,12 @@ fetch**) and discarded it at cycle end — nothing was ever retained.
   the detectors see would redefine the signal, not optimize it (a 30-minute variant was evaluated
   and rejected on these grounds). Only the **fetch** window shrank. Design and measurements:
   `docs/plans/2026-09-08-incremental-window-design.md`.
-- Expected: median formation→emitted ~329s → **~55–75s**; steady-state transfer ~1030 rows/5min →
-  ~50–100 rows per 90s tick, decoupled from window density on hot days.
+- Expected: median formation→emitted ~329s → **~110–130s** (p90 ~200s). The floor is upstream
+  indexing delay, measured 2026-09-09 by probing the feed's newest-row age: 23–116s, median ~71s —
+  a ~23s pipeline plus ~90s batched ingestion. The cadence change removes the polling wait
+  (~150s → ~45s) and the old in-cycle overhead; the indexing floor stays and also closes the old
+  baseline's arithmetic (~150 phase + ~70 index + ~60–100 in-cycle ≈ 329 ✓). Steady-state transfer
+  ~1030 rows/5min → ~50–100 rows per 90s tick, decoupled from window density on hot days.
 - Rollback: config `follow_window_mode = 'full'` reverts the fetch path (full sweep every cycle,
   cadence unchanged) on the next tick, no restart.
 - Disclosed side effects: tighter-freshness tiers (首发共识, freshSec=300) now catch formations the
