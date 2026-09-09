@@ -1,5 +1,6 @@
 import { parseConfig } from "../lib/config";
 import { openDb, type DB } from "../lib/db";
+import { getConsensusWindowMode } from "../lib/engineSettings";
 import {
   getLargeTrades,
   getTradesSince,
@@ -378,14 +379,14 @@ export function startAlertEngine(): void {
     // (老抓取路径,节奏不变),改完下一轮生效,无需重启 —— 与后台其它开关
     // 同一套「每轮重读 config」的习惯。任何非 'full' 值都走增量(默认)。
     // 命名对齐循环归属(评审 follow-up #4):它管的是共识循环的窗口,喂四个
-    // 消费者,不只 follow;/manage 入口留独立批次,过渡期回滚命令见设计文档。
+    // 消费者,不只 follow。读写共用 lib/engineSettings(/manage「引擎设置」
+    // 经 /api/admin/engine 写,这里读)—— 键名与判读语义只有一份,守卫见
+    // app/manage/engineParity.test.ts。
     getMode: () => {
       try {
-        const row = db
-          .prepare("SELECT value FROM config WHERE key = 'consensus_window_mode'")
-          .get() as { value: string | null } | undefined;
-        return row?.value === "full" ? "full" : "incremental";
+        return getConsensusWindowMode(db);
       } catch {
+        // 开关读取失败不改变行为:默认增量(windowKeeper 侧同一条纪律)。
         return "incremental";
       }
     },

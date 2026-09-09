@@ -89,11 +89,18 @@ config 表 `consensus_window_mode` = `'full'` → 每轮全量重扫(老抓取�
 (命名按评审 follow-up #4 从 follow_window_mode 改来:它管的是共识循环的
 窗口,喂四个消费者,不只 follow。)
 
-/manage 入口留独立批次;过渡期生产容器一键回滚(在宿主机执行):
+**正门是 /manage**(2026-09-09 上线):「04 🩺 健康度」tab 的「⚙️ 引擎设置」
+区块显示当前模式与最近变更,一键切换,写入经 config_history 留痕;读
+(worker/embeddedEngine getMode)写(/api/admin/engine)共用
+lib/engineSettings,键名与判读语义只有一份,可达性由
+app/manage/engineParity.test.ts 钉死。
+
+Web 层自身不可用时的兜底(在宿主机执行,效果等同):
 
     docker exec polymarket-whalewatch node -e "require('better-sqlite3')('/app/data/data.sqlite').prepare(\"INSERT OR REPLACE INTO config (key, value) VALUES ('consensus_window_mode','full')\").run()"
 
-恢复增量:把 'full' 换成其它任意值,或删除该行。
+恢复增量:/manage 切回(写规范值 'incremental'),或把 'full' 换成其它任意值
+/删除该行。
 
 ## 行为变化(提频的副作用,需知会下游)
 

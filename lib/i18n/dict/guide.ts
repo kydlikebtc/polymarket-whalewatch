@@ -298,14 +298,16 @@ export const DICT_GUIDE: Record<string, string> = {
   // -------- 运营管理
   "站长驾驶舱——信号线、投递通道、密钥与阈值重推，全在令牌门后。":
     "The operator's cockpit — signal lines, delivery channels, keys and threshold re-derivation, all behind the token gate.",
-  "信号线与管线总览、路由矩阵、告警规则、Telegram 目标、𝕏 账号、API key 与 webhook 管理、市场深度卡预算、walk-forward 阈值重推（🧪）。":
-    "Signal-line and pipeline overviews, the routing matrix, alert rules, Telegram targets, 𝕏 accounts, API-key and webhook management, market-depth-card budget, and walk-forward threshold re-derivation (🧪).",
+  "信号线与管线总览、路由矩阵、告警规则、Telegram 目标、𝕏 账号、API key 与 webhook 管理、市场深度卡预算、walk-forward 阈值重推（🧪）、引擎设置（健康度 tab 内）。":
+    "Signal-line and pipeline overviews, the routing matrix, alert rules, Telegram targets, 𝕏 accounts, API-key and webhook management, market-depth-card budget, walk-forward threshold re-derivation (🧪), and engine settings (inside the health tab).",
   "整页在管理令牌门后（页面结构本身就是运营情报）；唯一例外是引擎健康度——它公开在 /status。":
     "The whole page sits behind the admin-token gate (the page structure itself is operational intelligence); the one exception is engine health — public on /status.",
   "输入 ADMIN_TOKEN 解锁（只存本浏览器）；顶部状态条异常项可一键跳到对应区块。":
     "Unlock with the ADMIN_TOKEN (stored only in this browser); anomalies on the status strip jump straight to their section.",
   "walk-forward 重推只出建议、永不自动改参是硬纪律——生产参数每次变更都走配置历史，可审计可回滚。":
     "Walk-forward re-derivation only recommends and never auto-applies — a hard discipline; every production-parameter change goes through the auditable, revertible config history.",
+  "「引擎设置」的共识窗口模式是增量维护机制的事故回滚开关：切到全量重扫即整体绕开它，下一轮（≤90s）生效、无需重启；节奏与信号定义不变，切换经配置历史留痕。":
+    "The consensus window mode in Engine settings is the incident-rollback switch for the incremental maintenance machinery: flipping to full resweep bypasses it wholesale, effective next tick (≤90s) with no restart; cadence and signal definitions are untouched, and every flip is recorded in config history.",
   "「Workers Builds」类外部集成红灯与本站引擎健康无关——引擎状态只看 /status。":
     'Red lights from external integrations like "Workers Builds" have nothing to do with engine health — for the engine, /status is the only reference.',
 

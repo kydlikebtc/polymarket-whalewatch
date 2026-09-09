@@ -320,7 +320,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
     href: "/manage",
     tagline: "站长驾驶舱——信号线、投递通道、密钥与阈值重推，全在令牌门后。",
     what: [
-      "信号线与管线总览、路由矩阵、告警规则、Telegram 目标、𝕏 账号、API key 与 webhook 管理、市场深度卡预算、walk-forward 阈值重推（🧪）。",
+      "信号线与管线总览、路由矩阵、告警规则、Telegram 目标、𝕏 账号、API key 与 webhook 管理、市场深度卡预算、walk-forward 阈值重推（🧪）、引擎设置（健康度 tab 内）。",
       "整页在管理令牌门后（页面结构本身就是运营情报）；唯一例外是引擎健康度——它公开在 /status。",
     ],
     how: [
@@ -328,6 +328,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
     ],
     read: [
       "walk-forward 重推只出建议、永不自动改参是硬纪律——生产参数每次变更都走配置历史，可审计可回滚。",
+      "「引擎设置」的共识窗口模式是增量维护机制的事故回滚开关：切到全量重扫即整体绕开它，下一轮（≤90s）生效、无需重启；节奏与信号定义不变，切换经配置历史留痕。",
       "「Workers Builds」类外部集成红灯与本站引擎健康无关——引擎状态只看 /status。",
     ],
   },

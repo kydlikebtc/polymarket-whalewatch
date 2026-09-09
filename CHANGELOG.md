@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 2026-06-23 → 2026-09-09. Test suite at the end of that range: 2137 tests across
-164 files (`npm test`).
+Scope: 2026-06-23 → 2026-09-09. Test suite at the end of that range: 2155 tests across
+167 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -68,6 +68,13 @@ fetch**) and discarded it at cycle end — nothing was ever retained.
   ~1030 rows/5min → ~50–100 rows per 90s tick, decoupled from window density on hot days.
 - Rollback: config `consensus_window_mode = 'full'` reverts the fetch path (full sweep every cycle,
   cadence unchanged) on the next tick, no restart.
+- Ops entry (2026-09-09): the switch is now on `/manage` — an Engine-settings block in the health
+  tab (`/api/admin/engine`, behind ADMIN_TOKEN) shows the current mode with its recent
+  `config_history` trail and flips it in one click, replacing the shell-into-the-container SQLite
+  one-liner (kept in the design doc as the fallback for when the web tier itself is down). Reader
+  (engine `getMode`) and writer share one `lib/engineSettings` — the key name and its
+  only-exact-`'full'`-is-full reading exist once — and a kindsParity-style reachability test pins
+  the block mounted, the route present, and the mode list unduplicated.
 - Disclosed side effects: tighter-freshness tiers (首发共识, freshSec=300) now catch formations the
   5-minute cadence structurally missed; entries land earlier so the 10¢ chase guard passes more
   often — signal volume rises across tiers and the paper track record has a regime break at the
