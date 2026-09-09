@@ -99,6 +99,13 @@ export function createWindowKeeper(deps: WindowKeeperDeps): WindowKeeper {
   const buffer = new Map<string, Trade>();
   let seeded = false;
   let needResweep = false;
+  /**
+   * true = 当前缓冲来自单侧失败的降级扫描(评审修复,2026-09-09):rows 只含
+   * 幸存侧,任何区间的净买账都不成立 —— 它连「完整但更短」都不是,所以
+   * truncated 必须由本标志强制置位,不能交给 coverageStartSec 的时间自愈
+   * (evict 推进覆盖起点会把它洗白成 false,SELL 盲窗上照常开仓)。
+   */
+  let sideFailedBuffer = false;
   /** 完整覆盖的诚实起点(≙ getTradesWindowDeep 的 effectiveSinceSec)。 */
   let coverageStartSec = 0;
   /** 缓冲中最新一行的 ts;增量抓取的停步基准。 */
@@ -106,8 +113,28 @@ export function createWindowKeeper(deps: WindowKeeperDeps): WindowKeeper {
   let lastGoodFetchSec = 0;
   let lastResweepSec = 0;
 
-  async function resweep(now: number, sinceReq: number): Promise<void> {
+  /** 返回 false = 扫描单侧失败且已有完整缓冲可保,本轮拒绝换入(未动缓冲)。 */
+  async function resweep(now: number, sinceReq: number): Promise<boolean> {
     const r = await fullSweep(sinceReq);
+    if (r.sideFailed) {
+      if (seeded && !sideFailedBuffer) {
+        // 手里有完整缓冲:拒绝换入残窗 —— 陈旧完整 > 新鲜残缺。下轮重试;
+        // 期间不记 lastGoodFetch,陈旧超限即抛错,上游单侧长瘫对心跳可见。
+        needResweep = true;
+        console.warn(
+          "[windowKeeper] resweep came back side-failed — keeping the existing complete buffer, retrying next tick",
+        );
+        return false;
+      }
+      // 冷启无可保之物:接受降级窗口,但 sideFailedBuffer 强制 truncated
+      // (开仓关死、共识推送带覆盖率标注),且每轮重试全量直到拿到干净双侧
+      // —— 暴露面等价旧设计「每轮独立重拉」时的单侧失败轮,绝不更差。
+      sideFailedBuffer = true;
+      needResweep = true;
+    } else {
+      sideFailedBuffer = false;
+      needResweep = false;
+    }
     buffer.clear();
     for (const t of r.trades) buffer.set(dedupKey(t), t);
     coverageStartSec = r.effectiveSinceSec;
@@ -115,12 +142,13 @@ export function createWindowKeeper(deps: WindowKeeperDeps): WindowKeeper {
     watermarkTs = r.trades.length > 0 ? r.trades[0].timestamp : now;
     lastGoodFetchSec = now;
     lastResweepSec = now;
-    needResweep = false;
     seeded = true;
     console.log(
       `[windowKeeper] full resweep: ${buffer.size} rows · coverage from ${coverageStartSec}` +
-        ` (requested ${sinceReq}) · truncated=${r.truncated}`,
+        ` (requested ${sinceReq}) · truncated=${r.truncated}` +
+        (r.sideFailed ? " · SIDE-FAILED(降级窗口,truncated 强制置位)" : ""),
     );
+    return true;
   }
 
   function merge(rows: Trade[], sinceReq: number): void {
@@ -183,8 +211,13 @@ export function createWindowKeeper(deps: WindowKeeperDeps): WindowKeeper {
 
     if (resweepDue) {
       try {
-        await resweep(now, sinceReq);
-        fetchOk = true;
+        if (await resweep(now, sinceReq)) {
+          fetchOk = true;
+        } else {
+          lastErr = new Error(
+            "windowKeeper: side-failed sweep refused (keeping complete buffer)",
+          );
+        }
       } catch (e) {
         lastErr = e;
         needResweep = true;
@@ -209,8 +242,13 @@ export function createWindowKeeper(deps: WindowKeeperDeps): WindowKeeper {
             `[windowKeeper] incremental fetch disconnected (boundary=${boundary}, ${r.trades.length} row(s) discarded) — falling back to full resweep`,
           );
           try {
-            await resweep(now, sinceReq);
-            fetchOk = true;
+            if (await resweep(now, sinceReq)) {
+              fetchOk = true;
+            } else {
+              lastErr = new Error(
+                "windowKeeper: side-failed sweep refused (keeping complete buffer)",
+              );
+            }
           } catch (e) {
             lastErr = e;
             needResweep = true;
@@ -244,8 +282,9 @@ export function createWindowKeeper(deps: WindowKeeperDeps): WindowKeeper {
     return {
       trades,
       // 陈旧限度内的旧缓冲不算 truncated:它是完整的,只是旧 —— 旧设计里
-      // 数据本来就可能有一整轮的岁数,消费方对此已有语义。
-      truncated: coverageStartSec > sinceReq,
+      // 数据本来就可能有一整轮的岁数,消费方对此已有语义。降级缓冲(单侧
+      // 失败)则强制 truncated:它不适用覆盖起点的时间自愈,见 sideFailedBuffer。
+      truncated: coverageStartSec > sinceReq || sideFailedBuffer,
       effectiveSinceSec: coverageStartSec,
     };
   }

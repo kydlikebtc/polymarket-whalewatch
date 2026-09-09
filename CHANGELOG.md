@@ -11,7 +11,7 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 2026-06-23 → 2026-09-09. Test suite at the end of that range: 2132 tests across
+Scope: 2026-06-23 → 2026-09-09. Test suite at the end of that range: 2135 tests across
 164 files (`npm test`).
 
 ## Corrections that changed reported numbers
@@ -71,9 +71,16 @@ fetch**) and discarded it at cycle end — nothing was ever retained.
 - Disclosed side effects: tighter-freshness tiers (首发共识, freshSec=300) now catch formations the
   5-minute cadence structurally missed; entries land earlier so the 10¢ chase guard passes more
   often — signal volume rises across tiers and the paper track record has a regime break at the
-  switch. `cycle_metrics` grows 288 → 1440 rows/day (no retention yet, ~40 MB/year).
+  switch. `cycle_metrics` grows 288 → 960 rows/day (86400 / 90; no retention yet, ~30 MB/year).
 - Housekeeping: removed a tracked `node_modules` symlink that pointed at an absolute path on
   another contributor's machine.
+- Review fix (2026-09-09): a side-failed deep sweep (one side's fetch failed outright — the
+  survivor-only rows are NOT a complete-but-shorter window, every interval is missing a whole
+  side) could be laundered into `truncated=false` by the buffer's time-based coverage healing,
+  leaving up to an hour of SELL-blind netting. `DeepWindowResult` now carries an additive
+  `sideFailed` flag; the keeper refuses to swap a degraded sweep over an existing complete
+  buffer (stale-complete beats fresh-broken), accepts it cold-start only with `truncated`
+  forced and a full retry every tick, and never lets time heal it.
 - Same-class fix in the market-depth card's window cache (`lib/marketWindow.ts`): its warm
   refresh anchored at `prev.newestTs` with **no margin**, so a late-indexed trade landing before
   the anchor was lost permanently (that layer has no periodic resweep to heal it). Warm refresh

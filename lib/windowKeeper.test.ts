@@ -27,12 +27,18 @@ const T0 = 1_700_000_000;
 
 function sweepResult(
   trades: Trade[],
-  opts: { truncated?: boolean; effectiveSinceSec?: number; sinceSec?: number } = {},
+  opts: {
+    truncated?: boolean;
+    effectiveSinceSec?: number;
+    sinceSec?: number;
+    sideFailed?: boolean;
+  } = {},
 ): DeepWindowResult {
   return {
     trades: [...trades].sort((a, b) => b.timestamp - a.timestamp),
     truncated: opts.truncated ?? false,
     effectiveSinceSec: opts.effectiveSinceSec ?? opts.sinceSec ?? T0 - WINDOW,
+    sideFailed: opts.sideFailed ?? false,
   };
 }
 
@@ -289,5 +295,76 @@ describe("windowKeeper — 行数上限", () => {
     expect(console.warn).toHaveBeenCalledWith(
       expect.stringContaining("buffer cap"),
     );
+  });
+});
+
+describe("windowKeeper — 单侧失败的降级扫描(评审修复 2026-09-09)", () => {
+  it("单侧失败的种子不会被时间洗白:truncated 保持 true 且每轮重试全量", async () => {
+    let now = T0;
+    // 复现评审剧本:BUY-only + truncated + effectiveSinceSec = sinceReq + 30。
+    // 修复前:90s 后 evict 把覆盖起点推到新 sinceReq,truncated 翻成 false,
+    // 缓冲里却没有任何 SELL —— 净买账在盲窗上虚增。
+    const buyOnly = sweepResult([trade({ timestamp: T0 - 50 })], {
+      truncated: true,
+      effectiveSinceSec: T0 - WINDOW + 30,
+      sideFailed: true,
+    });
+    const fullSweep = vi.fn().mockResolvedValue(buyOnly);
+    const fetchSince = vi.fn();
+    const keeper = createWindowKeeper({
+      fullSweep,
+      fetchSince,
+      windowSec: WINDOW,
+      nowSec: () => now,
+    });
+    const w1 = await keeper.tick();
+    expect(w1.truncated).toBe(true);
+    now = T0 + 90;
+    const w2 = await keeper.tick();
+    expect(w2.truncated).toBe(true); // 洗白点:时间自愈不适用于降级缓冲
+    expect(fullSweep).toHaveBeenCalledTimes(2); // 降级态每轮重试,不等 1 小时
+    expect(fetchSince).not.toHaveBeenCalled(); // 残窗上绝不叠增量
+    // 只有干净的双侧扫描才能解除降级。
+    fullSweep.mockResolvedValue(
+      sweepResult([trade({ timestamp: T0 + 100 })]),
+    );
+    now = T0 + 180;
+    const w3 = await keeper.tick();
+    expect(w3.truncated).toBe(false);
+  });
+
+  it("已有完整缓冲时拒绝换入单侧残窗:旧数据保留、陈旧超限后抛错", async () => {
+    let now = T0;
+    const fullSweep = vi
+      .fn()
+      .mockResolvedValueOnce(
+        sweepResult([trade({ timestamp: T0 - 10, transactionHash: "0xgood" })]),
+      )
+      .mockResolvedValue(
+        sweepResult(
+          [trade({ timestamp: T0 + 50, transactionHash: "0xhalf" })],
+          { truncated: true, effectiveSinceSec: T0 - 100, sideFailed: true },
+        ),
+      );
+    const fetchSince = vi
+      .fn()
+      .mockResolvedValue({ trades: [], connected: true });
+    const keeper = createWindowKeeper({
+      fullSweep,
+      fetchSince,
+      windowSec: WINDOW,
+      resweepIntervalSec: 100,
+      staleLimitSec: 300,
+      nowSec: () => now,
+    });
+    await keeper.tick(); // 干净种子
+    now = T0 + 120; // 定时重扫 → 单侧失败 → 拒绝换入
+    const w2 = await keeper.tick();
+    // 残窗一行都没进来:陈旧完整 > 新鲜残缺。
+    expect(w2.trades.map((t) => t.transactionHash)).toEqual(["0xgood"]);
+    expect(w2.truncated).toBe(false); // 旧缓冲仍是完整的,只是旧
+    // 上游单侧长瘫:超过陈旧限度后不再假装有窗口 —— 停跳对心跳可见。
+    now = T0 + 301;
+    await expect(keeper.tick()).rejects.toThrow("side-failed");
   });
 });

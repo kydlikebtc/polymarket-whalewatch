@@ -251,6 +251,14 @@ export interface DeepWindowResult {
   // Start of the COMPLETE merged window. Equals the requested sinceSec when
   // the full window was covered; later (more recent) when depth ran out.
   effectiveSinceSec: number;
+  /**
+   * true = 一侧整体失败,rows 只含幸存侧(评审修复,2026-09-09)。这与普通
+   * 截断有本质区别:截断窗口是「完整但更短」(净买账在其内诚实),单侧失败
+   * 的窗口**任何区间**都缺一整侧,净买账不成立 —— windowKeeper 据此拒绝把
+   * 它当健康种子(否则时间推进会把 truncated 洗白,SELL 盲窗上照常开仓)。
+   * additive 可选字段:老消费方(runConsensusCycle 直接吃 truncated)不受影响。
+   */
+  sideFailed?: boolean;
 }
 
 /**
@@ -344,6 +352,7 @@ export async function getTradesWindowDeep({
     trades,
     truncated: sideFailed || effectiveSinceSec > sinceSec,
     effectiveSinceSec,
+    sideFailed,
   };
 }
 

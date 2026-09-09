@@ -60,3 +60,24 @@ describe("i18n coverage", () => {
     expect(missing).toEqual([]);
   });
 });
+
+// LOOP_META 专项守卫(评审 2026-09-09 问题 3):/status 与 /manage 用
+// t(meta.label) / t(meta.cadence) / t(meta.impact) **动态传参**渲染循环表,
+// 上面的字面量扫描抓不到 —— 改 loopMeta 忘补词条时,英文界面会静默回退中文
+// (core.ts 的 dict[zh] ?? zh),测试却仍是绿的。这里把 LOOP_META 三列逐值
+// 对照合并字典,补上这个盲区。
+import { LOOP_META } from "../../app/loopMeta";
+
+describe("i18n coverage — LOOP_META 动态传参", () => {
+  it("循环表的 label/cadence/impact 全部有译文", () => {
+    const missing: string[] = [];
+    for (const [loop, m] of Object.entries(LOOP_META)) {
+      for (const v of [m.label, m.cadence, m.impact]) {
+        if (/[一-鿿]/.test(v) && !(v in DICT)) {
+          missing.push(`${loop}: ${JSON.stringify(v)}`);
+        }
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+});
