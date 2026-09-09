@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { RecordFeed, RecordFeedStrategy } from "../../lib/recordFeed";
 import { formatRecordLine } from "../../lib/signalRecord";
 import { CopyButton, StatCard, Tag } from "../ui";
+import VerifyBlock from "./VerifyBlock";
 
 // 对外信号批次 3:公开信号战绩页。
 // 口径与 /follow 的区别是本页的存在理由:这里只统计**公开发出过**的信号
@@ -450,11 +451,15 @@ export default function RecordPage() {
               这里只留一句读者据以判断可信度的:改一条,摘要必变。 */}
           <div className="note-strip">
             {
-              "每 UTC 日向公开 TG 频道发布昨日已发布信号的摘要 —— 事后删改任何一条,摘要必变。"
+              "每 UTC 日向公开 TG 频道发布昨日已发布信号的摘要 —— 事后删改任何一条,摘要必变。摘要在 06:00 UTC 结算,此时昨日的投递补发窗口已关闭,成员集不会再变。"
             }
           </div>
         </div>
       )}
+
+      {/* 复算入口紧跟存证卡:一句「可以验证」的旁边就该是那个按钮,
+          否则它仍然只是一句话。 */}
+      <VerifyBlock digests={feed?.digests ?? []} />
 
       <div
         className="ds-card"

@@ -1,5 +1,10 @@
 import type { DB } from "./db";
-import { DIGEST_DAY_KEY, DIGEST_PREV_KEY } from "./signalDigest";
+import {
+  DIGEST_DAY_KEY,
+  DIGEST_PREV_KEY,
+  listDigestDays,
+  type DigestDay,
+} from "./signalDigest";
 import { gradeRows, type SignalRecord } from "./signalRecord";
 import { strategyCode } from "./strategyCodes";
 import { sourceOf } from "./strategyFeed";
@@ -53,6 +58,17 @@ export interface RecordFeed {
   strategies: RecordFeedStrategy[];
   /** 存证链状态:最近一次 digest 的日期与链尾哈希(供第三方对账起点)。 */
   digest: { day: string | null; tail: string | null };
+  /**
+   * 逐日存证行(2026-09-07 追加,最多 30 天)。
+   *
+   * 只有链尾时,「按 id 升序复算即可验证」这句话执行不了 —— 复算要对照的是
+   * **每一天**的摘要,而历史摘要此前只存在于 TG 频道消息里。有了这一段,
+   * 配上带 signal_id 的公开 CSV,验证才真的只差一条命令(scripts/verify-digest)
+   * 或 /record 上那个按钮。
+   *
+   * 空数组 = 本部署还没产出过存证行(表是 2026-09-07 才建的,向前积累)。
+   */
+  digests: DigestDay[];
 }
 
 const RECORD_DAYS = 30;
@@ -61,6 +77,8 @@ const SETTLED_RECENT_LIMIT = 10;
 /** 存在任一 sent entry 投递的信号(公开账的准入判据)。 */
 const PUSHED_EXISTS = `EXISTS (SELECT 1 FROM signal_deliveries d
    WHERE d.signal_id = s.id AND d.event = 'entry' AND d.status = 'sent')`;
+
+const DIGEST_DAYS = 30;
 
 export function buildRecordFeed(
   db: DB,
@@ -165,5 +183,6 @@ export function buildRecordFeed(
     updatedAt: nowSec,
     strategies: out,
     digest: { day: cfg(DIGEST_DAY_KEY), tail: cfg(DIGEST_PREV_KEY) },
+    digests: listDigestDays(db, DIGEST_DAYS),
   };
 }

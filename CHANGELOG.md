@@ -11,8 +11,8 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 548 commits, 2026-06-23 → 2026-09-08. Test suite at the end of that range: 2065 tests across
-159 files (`npm test`).
+Scope: 2026-06-23 → 2026-09-08. Test suite at the end of that range: 2129 tests across
+164 files (`npm test`).
 
 ## Corrections that changed reported numbers
 
@@ -70,6 +70,71 @@ fetch**) and discarded it at cycle end — nothing was ever retained.
   switch. `cycle_metrics` grows 288 → 1440 rows/day (no retention yet, ~40 MB/year).
 - Housekeeping: removed a tracked `node_modules` symlink that pointed at an absolute path on
   another contributor's machine.
+
+### 2026-09-07 — Four debts paid: the meter, the heartbeat, the verifier, and the channel that was never used
+
+Not features — four things the project had already promised, or already depended on, without the tooling
+to back them up. Picked out of a fresh audit of the code against the deployment
+(`docs/plans/2026-09-07-iteration-brainstorm-round4.md`).
+
+- **The scarcest resource finally has a gauge** (`lib/upstreamMeter.ts`). Rate limiting has always been
+  denominated in *upstream requests* rather than HTTP requests — `guardExpensive` charges batch size
+  because one wallet-stats lookup costs ~42 calls. That "~42" had been an estimate since July, and every
+  "should this ship with a budget gate" decision cited it. `fetchWithRetry` now records every **attempt**
+  (retries included — they are what actually spends the budget) into an in-memory counter keyed by minute
+  bucket and the `label` the function already took; the alert loop flushes it every 30s with an additive
+  upsert, so two processes writing one bucket still sum correctly. 24h retention, hourly prune, bounded
+  in-memory map that refuses to grow (the rate limiter's `MAX_BUCKETS` discipline). `/manage` health gains
+  calls/min, 429 share, retries, errors, 24h total and the top five labels. Stated limitation: only the
+  engine flushes, so a standalone `npm run worker` deployment does not meter its separate Next process.
+- **`market_daily` was the one loop that could die silently.** It is the sole base for `/pulse`, the
+  conviction index and the daily pulse posts, and it shipped in August with a comment explaining why it
+  deliberately did *not* beat: "a daily cadence against a 1h default threshold would false-alarm". That
+  reasoning read `beat()` as "the aggregation ran" when it means "a cycle completed" — and cycles are the
+  30-minute polls. It now beats on any cycle that did not throw, with a 3h threshold (six missed polls),
+  so repeated aggregation failure turns `/api/health` red instead of leaving `/pulse` quietly frozen on an
+  old day. `x_broadcast` also gained a display name; it had been beating without one, which is exactly the
+  bug `app/loopMeta.ts` was created to prevent. Both registries are now locked by
+  `app/loopRegistry.test.ts`, which scans the engine for `beat(db, "…")` and fails when a loop is missing
+  from either table.
+- **The digest chain became verifiable by someone other than us.** Every daily digest message ended with
+  "recompute sha256 over each signal in id order to verify" — and no one could: the public CSV had **no
+  `signal_id` column**, and historical digests existed only as Telegram messages. Three changes close it:
+  `signal_digests` persists one row per day, `/api/record` serves the last 30 as `digests[]`, and the CSV
+  gains `signal_id` (appended last, so positional consumers are untouched). The chain's preimage moved to
+  a zero-import module (`lib/digestPreimage.ts`) so the same function drives generation, the CLI
+  (`scripts/verify-digest.ts`) and a browser recompute on `/record` — a verifier run by the party being
+  verified proves nothing, so that button does its WebCrypto work client-side. Verification distinguishes
+  the directions that matter: fewer rows in the export than the digest counted means rows were **removed**;
+  more means a signal was delivered after the digest ran. That benign case is now structurally impossible
+  going forward, because the digest settles at **06:00 UTC** instead of midnight — past `ENTRY_MAX_AGE_SEC`,
+  yesterday's membership can no longer change.
+- **The rule set is now committed to daily** (`lib/paramsDigest.ts`). The chain covered published signals
+  but never the parameters that produced them, so "the thresholds were not quietly moved" rested on
+  trusting the operator. The daily message now carries a fingerprint over every strategy's parameters,
+  every event-line threshold, and the current value of every key that has ever hit `config_history` — that
+  last rule is self-maintaining, since journaling to `config_history` is precisely what makes a setting
+  operator-editable. The fingerprint is deliberately **not** chained: the whole point is that an unchanged
+  rule set yields the same value two days running, which is what makes "the rules changed on this day"
+  visible. Values stay private (thresholds are a rule set that can be evaded once known — the reason
+  `GET /api/alert-config` sits behind `ADMIN_TOKEN`), so this is a commitment, not a disclosure, and the
+  copy says so. A day with zero signals but a changed fingerprint now breaks its silence.
+- **The best content was only ever posted to the worst channel** (`lib/tgContent.ts`). The daily pulse
+  board, the daily scorecard and the weekly report card went to X only — the account measured on 2026-08-31
+  at 8.3 views per post and 0 likes, a 0.17% reach. Telegram has no character limit, no algorithmic gate,
+  allows links, and costs nothing. Three new delivery kinds (`pulse`, `scorecard`, `weekly`, all default
+  off) ride the delivery loop with the same claim-first day gate as the existing digest. Differences from
+  the X versions are deliberate: pulse and divergence are one message rather than two (no 280-char
+  constraint, and message count is the reader's cost), every row links out, and the daily scorecard counts
+  the **alert ledger** rather than posts published to X — copying that denominator would leave the
+  Telegram card permanently silent on deployments where X is off. Both denominators are honest and the
+  message states which one it uses.
+- Found in passing and fixed: the `cohort` delivery kind shipped on 2026-08-28 but was never added to the
+  `/manage` checkbox list, so for ten days an implemented, tested, deployed capability could not be turned
+  on. The manage page now imports the `TgKinds` type instead of mirroring it, and
+  `app/manage/kindsParity.test.ts` fails the build if a kind is missing from the operator UI.
+
+56 tests added (2058 → 2114 across 163 files).
 
 ### 2026-08-31 — X broadcast: measured the live account, then cut the volume it was drowning in
 

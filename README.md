@@ -138,12 +138,13 @@ Requirements: **Node 22** (what the Docker image builds and ships on; `package.j
 npm install
 
 npm run dev            # dashboard + embedded engine → http://localhost:3000
-npm run test           # 1346 tests across 105 files, no network, ~2s
+npm run test           # 2114 tests across 163 files, no network, ~3s
 npm run typecheck      # tsc --noEmit
 npm run worker         # optional: run the engine as a standalone process instead
 
-npx tsx scripts/dry-run.ts     # zero-credential live smoke test of the whole pipeline
-npx tsx scripts/edge-audit.ts  # re-run the three-layer edge audit against your own db
+npx tsx scripts/dry-run.ts       # zero-credential live smoke test of the whole pipeline
+npx tsx scripts/edge-audit.ts    # re-run the three-layer edge audit against your own db
+npx tsx scripts/verify-digest.ts # recompute the public digest chain — works against ANY deployment
 ```
 
 ### Enable Telegram alerts
@@ -197,19 +198,19 @@ Full subsystem walkthrough, data-flow diagram, request paths and design constrai
 ## 🗂️ Repository layout
 
 ```
-lib/            90 modules — upstream clients, alert engine, smart-money scoring,
+lib/           133 modules — upstream clients, alert engine, smart-money scoring,
                 consensus/disagreement, strategy simulation, validation stats,
                 signal bus & delivery, Telegram/X publishing, ops health
   i18n/         bilingual dictionaries + two test gates (coverage, term conflicts)
-worker/         the engine — 8 loops, embedded in Next or standalone
+worker/         the engine — 9 loops, embedded in Next or standalone
 app/            Next.js dashboard: 14 pages, 27 API route handlers
-scripts/        dry-run · edge-audit · watch · test-telegram · issue-key
+scripts/        dry-run · edge-audit · verify-digest · watch · test-telegram · issue-key
 docs/           API contracts, 24 design documents, screenshots  → docs/README.md
 ```
 
-Stack: TypeScript · Next.js 16 · React 19 · better-sqlite3 · zod · vitest. 1346 tests across 105 files, no network and no fixture server — nearly every module is a pure core with I/O injected.
+Stack: TypeScript · Next.js 16 · React 19 · better-sqlite3 · zod · vitest. 2114 tests across 163 files, no network and no fixture server — nearly every module is a pure core with I/O injected.
 
-State lives in one SQLite file (31 tables). Most of it is **rebuildable cache** — delete it and prices, ages and market metadata refill themselves. Some of it is **not**: the alert ledger, published-signal records, issued API keys (stored only as sha256), authorized X tokens and delivery targets are gone for good. Back it up; the engine already snapshots daily, but only off-host copies survive losing the host.
+State lives in one SQLite file (38 tables). Most of it is **rebuildable cache** — delete it and prices, ages and market metadata refill themselves. Some of it is **not**: the alert ledger, published-signal records, issued API keys (stored only as sha256), authorized X tokens and delivery targets are gone for good. Back it up; the engine already snapshots daily, but only off-host copies survive losing the host.
 
 ---
 
@@ -239,6 +240,8 @@ State lives in one SQLite file (31 tables). Most of it is **rebuildable cache** 
 - [x] Tier-one quintet (zero new upstream, KB-scale storage): per-signal book capacity (+1¢/+3¢ in-band depth medians on /follow), per-category conviction index on /pulse, per-tier CUSUM decay sentinel, walk-forward monthly due + structural report diff on /manage, and a cohort-birth detector (fresh wallets born together buying together) riding the consensus window
 - [x] Tier-two octet: ghost-move + wash boards on /pulse (`market_daily` gains matched-volume and max-fill columns), per-wallet price-impact persistence (10-minute mark + dossier verdicts), smart-money exit tab on /consensus, pool-only behavioral fingerprints with similar-wallet lookup, hall-of-fame + fade list on /discovery (per-wallet CRVE with multiplicity disclosure), and a click-to-load market replay (curve × alerts × settlement)
 - [x] Smart-money self-test (`/selftest`): any visitor wallet judged against the exact admission gate ("below bar" and "unjudgeable" strictly separate), pool percentiles, a click-to-load dossier block, and a zero-upstream shareable embed card — shipped behind a 24h verdict cache and the dossier's rate-limit budget
+- [x] Verifiable digest chain: per-day rows on `/api/record`, a `signal_id` column in the public CSV, a rule-set fingerprint, and a one-click recompute on `/record` (the "recompute it yourself" line was previously impossible to act on — the export had no ids)
+- [x] Content engine reaches Telegram: daily pulse board, daily scorecard and the weekly report card as opt-in delivery kinds, alongside the upstream-call meter and a heartbeat for the market-daily loop
 - [ ] Accumulation → Telegram alerts (stateful, tier-crossing dedup)
 - [ ] Event-level accumulation across correlated sub-markets
 

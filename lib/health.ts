@@ -16,6 +16,14 @@ export const LOOP_STALE_AFTER_SEC: Record<string, number> = {
   consensus: 20 * 60, // 90s cadence(2026-09-08 起);阈值保留 5 分钟时代的 20min —— keeper 陈旧限度 300s 内还会用旧缓冲撑着,超限才停跳,阈值要给这段留余量
   outcome_backfill: 35 * 60, // 10min cadence
   delivery: 10 * 60, // 30s cadence(对外信号投递,批次 1)
+  // 30min cadence,阈值取 6 轮(2026-09-07)。这个循环此前**刻意不打心跳**,
+  // 理由是「日节拍配 1h 默认阈值必然假警报」—— 那句话对的是「每天只跑一次
+  // 聚合」,错在把 beat 的语义读成了聚合而不是轮次:轮次是 30 分钟一次的
+  // 「昨天做了没」,其中 29 轮是纯 config 点查,只有跨零点那轮真抓数据。
+  // 于是心跳按 30 分钟节拍成立,而抓取失败(上游深窗口连续超时)会让接下来
+  // 每一轮都失败 —— 连挂 6 轮 = 3 小时没聚合成功,那是真故障不是节拍。
+  // 空窗代价具体:/pulse 五榜、确信指数、X/TG 日榜与分歧帖全部停更。
+  market_daily: 3 * 3600,
 };
 export const DEFAULT_STALE_AFTER_SEC = 60 * 60;
 

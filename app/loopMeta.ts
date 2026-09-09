@@ -35,6 +35,20 @@ export const LOOP_META: Record<string, LoopMeta> = {
     cadence: "每 30 秒",
     impact: "频道与 webhook 收不到新信号",
   },
+  market_daily: {
+    label: "每日市场聚合",
+    cadence: "每 30 分钟",
+    impact: "市场脉搏五榜与确信指数停更,日榜/分歧帖跟着静默",
+  },
+  // 𝕏 播报只在配了 X 凭证的部署里启动,因此**不在** lib/health 的
+  // LOOP_STALE_AFTER_SEC 里(没配就永远不该判它缺席)。但它一旦跑起来就会
+  // 打心跳,于是会出现在 /status 与 /manage 的循环表里 —— 没有这一条,
+  // 那两处会把它显示成裸 key「x_broadcast」,正是本模块存在的理由。
+  x_broadcast: {
+    label: "𝕏 自动播报",
+    cadence: "每 60 秒",
+    impact: "X 上停止自动发帖(Telegram 与站内不受影响)",
+  },
 };
 
 /** 未登记的循环回退成 key 本身 —— 宁可难看,不可漏显示一个真在跑的循环。 */
