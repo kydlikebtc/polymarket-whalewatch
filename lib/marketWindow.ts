@@ -46,6 +46,16 @@ export function mergeWindow(
 
 /** 窗口新鲜期。也是卡片的年龄上限 —— 两者是同一个数。 */
 export const WINDOW_TTL_SEC = 30;
+/**
+ * 续抓安全边距:热续下界从锚点回退这么多秒,重叠由 mergeWindow 的 dedupKey
+ * 吸收,所以重叠免费。与 lib/windowKeeper 的 WINDOW_MARGIN_SEC 同理由、同数值
+ * (外部评审 2026-09-09 §4.6),防的是两件事:
+ * ① 上游迟到入索引的成交 —— 紧贴 newestTs 续抓,迟到落在锚点之前的行会被
+ *   **永久**漏掉(本层没有定时重扫兜底,漏了就是漏了);
+ * ② feed 偶发乱序造成的提前止页 —— 边距让下一轮重新覆盖被跳过的段,单次自愈。
+ * 成本:热续多抓 10 分钟的重叠行,单市场 $500+ 的量级下仍恒在 1 页之内。
+ */
+export const REFRESH_MARGIN_SEC = 600;
 /** 工作集上限(市场数)。单市场 24h/$500 约 ~200KB,200 个约 40MB。 */
 export const WINDOW_LRU_MAX = 200;
 
@@ -213,10 +223,13 @@ export async function getMarketWindow(
   }
 
   const started = (async () => {
-    // 冷启抓整窗;热续只抓 newestTs 之后 —— fetchMarketWindow 会在
-    // `oldest < sinceSec` 时停止翻页,于是第 0 页就止,恒 1 个请求。
+    // 冷启抓整窗;热续抓锚点回退安全边距之后(不越过窗口下界)——
+    // fetchMarketWindow 会在 `oldest < sinceSec` 时停止翻页,于是第 0 页就止,
+    // 恒 1 个请求。边距的理由见 REFRESH_MARGIN_SEC。
     const cutoff = nowSec - CARD_WINDOW_SEC;
-    const sinceSec = prev ? prev.newestTs : cutoff;
+    const sinceSec = prev
+      ? Math.max(prev.newestTs - REFRESH_MARGIN_SEC, cutoff)
+      : cutoff;
     if (prev) stats.warm++;
     else stats.cold++;
     const got = await fetchWindow(conditionId, { sinceSec });
