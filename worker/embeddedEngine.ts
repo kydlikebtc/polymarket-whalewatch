@@ -374,13 +374,15 @@ export function startAlertEngine(): void {
     fullSweep: (sinceSec) =>
       getTradesWindowDeep({ minUsd: CONSENSUS_FLOOR_USD, sinceSec }),
     fetchSince: (sinceSec) => getTradesSince(CONSENSUS_FLOOR_USD, sinceSec),
-    // 运行时回滚开关:config 表 follow_window_mode='full' → 每轮全量重扫
+    // 运行时回滚开关:config 表 consensus_window_mode='full' → 每轮全量重扫
     // (老抓取路径,节奏不变),改完下一轮生效,无需重启 —— 与后台其它开关
     // 同一套「每轮重读 config」的习惯。任何非 'full' 值都走增量(默认)。
+    // 命名对齐循环归属(评审 follow-up #4):它管的是共识循环的窗口,喂四个
+    // 消费者,不只 follow;/manage 入口留独立批次,过渡期回滚命令见设计文档。
     getMode: () => {
       try {
         const row = db
-          .prepare("SELECT value FROM config WHERE key = 'follow_window_mode'")
+          .prepare("SELECT value FROM config WHERE key = 'consensus_window_mode'")
           .get() as { value: string | null } | undefined;
         return row?.value === "full" ? "full" : "incremental";
       } catch {

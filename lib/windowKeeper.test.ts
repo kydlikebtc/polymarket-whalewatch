@@ -333,7 +333,7 @@ describe("windowKeeper — 单侧失败的降级扫描(评审修复 2026-09-09)"
     expect(w3.truncated).toBe(false);
   });
 
-  it("已有完整缓冲时拒绝换入单侧残窗:旧数据保留、陈旧超限后抛错", async () => {
+  it("已有完整缓冲时拒绝换入单侧残窗,并顺带增量保鲜(循环不停跳)", async () => {
     let now = T0;
     const fullSweep = vi
       .fn()
@@ -346,9 +346,14 @@ describe("windowKeeper — 单侧失败的降级扫描(评审修复 2026-09-09)"
           { truncated: true, effectiveSinceSec: T0 - 100, sideFailed: true },
         ),
       );
-    const fetchSince = vi
-      .fn()
-      .mockResolvedValue({ trades: [], connected: true });
+    // 增量不分侧,单侧冷缓存瘫痪时它照常工作 —— 持续送入新行(含 SELL)。
+    let seq = 0;
+    const fetchSince = vi.fn().mockImplementation(async () => ({
+      trades: [
+        trade({ timestamp: now - 5, transactionHash: `0xinc${seq++}` }),
+      ],
+      connected: true,
+    }));
     const keeper = createWindowKeeper({
       fullSweep,
       fetchSince,
@@ -358,13 +363,69 @@ describe("windowKeeper — 单侧失败的降级扫描(评审修复 2026-09-09)"
       nowSec: () => now,
     });
     await keeper.tick(); // 干净种子
-    now = T0 + 120; // 定时重扫 → 单侧失败 → 拒绝换入
+    now = T0 + 120; // 定时重扫 → 单侧失败 → 拒绝换入 + 增量保鲜
     const w2 = await keeper.tick();
-    // 残窗一行都没进来:陈旧完整 > 新鲜残缺。
-    expect(w2.trades.map((t) => t.transactionHash)).toEqual(["0xgood"]);
-    expect(w2.truncated).toBe(false); // 旧缓冲仍是完整的,只是旧
-    // 上游单侧长瘫:超过陈旧限度后不再假装有窗口 —— 停跳对心跳可见。
+    const hashes = w2.trades.map((t) => t.transactionHash);
+    expect(hashes).toContain("0xgood"); // 旧完整数据保留
+    expect(hashes).not.toContain("0xhalf"); // 残窗一行都没进来
+    expect(hashes.some((h) => h.startsWith("0xinc"))).toBe(true); // 增量进来了
+    expect(w2.truncated).toBe(false);
+    // 单侧长瘫远超陈旧限度:增量在保鲜,循环不停跳,且每轮仍在重试全量。
+    now = T0 + 400;
+    const w3 = await keeper.tick();
+    expect(w3.truncated).toBe(false);
+    expect(fullSweep.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("单侧长瘫且增量也不可用:陈旧超限后抛错(停跳可见)", async () => {
+    let now = T0;
+    const fullSweep = vi
+      .fn()
+      .mockResolvedValueOnce(sweepResult([trade({ timestamp: T0 - 10 })]))
+      .mockResolvedValue(
+        sweepResult([trade({ timestamp: T0 + 50 })], {
+          truncated: true,
+          effectiveSinceSec: T0 - 100,
+          sideFailed: true,
+        }),
+      );
+    const fetchSince = vi
+      .fn()
+      .mockRejectedValue(new Error("incremental down too"));
+    const keeper = createWindowKeeper({
+      fullSweep,
+      fetchSince,
+      windowSec: WINDOW,
+      resweepIntervalSec: 100,
+      staleLimitSec: 300,
+      nowSec: () => now,
+    });
+    await keeper.tick();
+    now = T0 + 120;
+    const w2 = await keeper.tick(); // 拒绝换入 + 增量失败:限度内仍供旧缓冲
+    expect(w2.trades).toHaveLength(1);
     now = T0 + 301;
-    await expect(keeper.tick()).rejects.toThrow("side-failed");
+    await expect(keeper.tick()).rejects.toThrow("incremental down too");
+  });
+
+  it("增量抛错置 needResweep:下轮先试全量路径而非干等定时重扫", async () => {
+    let now = T0;
+    const fullSweep = vi
+      .fn()
+      .mockResolvedValue(sweepResult([trade({ timestamp: T0 - 10 })]));
+    const fetchSince = vi.fn().mockRejectedValue(new Error("cdn bad url"));
+    const keeper = createWindowKeeper({
+      fullSweep,
+      fetchSince,
+      windowSec: WINDOW,
+      nowSec: () => now,
+    });
+    await keeper.tick(); // 种子
+    now = T0 + 90;
+    await keeper.tick(); // 增量抛错 → needResweep 置位
+    expect(fullSweep).toHaveBeenCalledTimes(1);
+    now = T0 + 180;
+    await keeper.tick(); // 定时重扫(3600s)远未到点,但 needResweep 生效
+    expect(fullSweep).toHaveBeenCalledTimes(2);
   });
 });

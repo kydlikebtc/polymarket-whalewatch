@@ -83,9 +83,17 @@ created_at 写的是成交自身时间戳(alertEngine.ts recordAlert),恒等于�
 
 ## 回滚
 
-config 表 `follow_window_mode` = `'full'` → 每轮全量重扫(老抓取路径),下一轮
-生效无需重启;删除该行或任何其它值 = 增量(默认)。节奏不随开关回退 —— 90s
-全量在实测密度下可承受(~5 页/轮),开关隔离的是增量机制自身的风险。
+config 表 `consensus_window_mode` = `'full'` → 每轮全量重扫(老抓取路径),
+下一轮生效无需重启;删除该行或任何其它值 = 增量(默认)。节奏不随开关回退 ——
+90s 全量在实测密度下可承受(~5 页/轮),开关隔离的是增量机制自身的风险。
+(命名按评审 follow-up #4 从 follow_window_mode 改来:它管的是共识循环的
+窗口,喂四个消费者,不只 follow。)
+
+/manage 入口留独立批次;过渡期生产容器一键回滚(在宿主机执行):
+
+    docker exec polymarket-whalewatch node -e "require('better-sqlite3')('/app/data/data.sqlite').prepare(\"INSERT OR REPLACE INTO config (key, value) VALUES ('consensus_window_mode','full')\").run()"
+
+恢复增量:把 'full' 换成其它任意值,或删除该行。
 
 ## 行为变化(提频的副作用,需知会下游)
 

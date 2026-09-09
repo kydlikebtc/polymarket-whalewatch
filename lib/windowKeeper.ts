@@ -203,6 +203,29 @@ export function createWindowKeeper(deps: WindowKeeperDeps): WindowKeeper {
     let fetchOk = false;
     let lastErr: unknown = null;
 
+    // 增量一试:衔接成功即合并并推进新鲜度;不衔接返回 false(前缀已弃)。
+    // 抛错交调用方 —— 两个调用点的后续处置不同(评审 follow-up #1/#2)。
+    const tryIncremental = async (): Promise<boolean> => {
+      // 边界钳到覆盖起点之内:种子刚截断过时,水位线−边距可能落在覆盖区
+      // 之外,往外抓回来的行接不进完整账。
+      const boundary = Math.max(
+        watermarkTs - marginSec,
+        coverageStartSec,
+        sinceReq,
+      );
+      const r = await fetchSince(boundary);
+      if (!r.connected) {
+        // 不衔接 = 前缀底下可能有洞,整体丢弃。
+        console.warn(
+          `[windowKeeper] incremental fetch disconnected (boundary=${boundary}, ${r.trades.length} row(s) discarded)`,
+        );
+        return false;
+      }
+      merge(r.trades, sinceReq);
+      lastGoodFetchSec = now;
+      return true;
+    };
+
     const resweepDue =
       !seeded ||
       needResweep ||
@@ -210,14 +233,10 @@ export function createWindowKeeper(deps: WindowKeeperDeps): WindowKeeper {
       now - lastResweepSec >= resweepIntervalSec;
 
     if (resweepDue) {
+      let refused = false;
       try {
-        if (await resweep(now, sinceReq)) {
-          fetchOk = true;
-        } else {
-          lastErr = new Error(
-            "windowKeeper: side-failed sweep refused (keeping complete buffer)",
-          );
-        }
+        if (await resweep(now, sinceReq)) fetchOk = true;
+        else refused = true;
       } catch (e) {
         lastErr = e;
         needResweep = true;
@@ -226,21 +245,34 @@ export function createWindowKeeper(deps: WindowKeeperDeps): WindowKeeper {
           e,
         );
       }
-    } else {
-      // 边界钳到覆盖起点之内:种子刚截断过时,水位线−边距可能落在覆盖区
-      // 之外,往外抓回来的行接不进完整账。
-      const boundary = Math.max(watermarkTs - marginSec, coverageStartSec, sinceReq);
-      try {
-        const r = await fetchSince(boundary);
-        if (r.connected) {
-          merge(r.trades, sinceReq);
-          fetchOk = true;
-          lastGoodFetchSec = now;
-        } else {
-          // 不衔接 = 前缀底下可能有洞,整体丢弃,当轮退回全量重扫。
+      if (refused) {
+        // 评审 follow-up #1:拒绝换入残窗的那一轮顺带走增量 —— 增量是不分侧
+        // 的单次查询,不受稀疏侧冷缓存影响,SELL 行照样进来:完整缓冲持续
+        // 保鲜、陈旧钟不空转,单侧长瘫从「整条循环停跳」降级为「仅重扫自愈
+        // 通道暂停」。needResweep 已在拒绝分支置位,下轮仍重试全量;增量若
+        // 也不可用则不再当轮二次重扫(刚扫过),按陈旧纪律统一处置。
+        try {
+          if (await tryIncremental()) {
+            fetchOk = true;
+          } else {
+            lastErr = new Error(
+              "windowKeeper: side-failed sweep refused and incremental disconnected",
+            );
+          }
+        } catch (e) {
+          lastErr = e;
           console.warn(
-            `[windowKeeper] incremental fetch disconnected (boundary=${boundary}, ${r.trades.length} row(s) discarded) — falling back to full resweep`,
+            "[windowKeeper] incremental after refused sweep failed (serving buffered window):",
+            e,
           );
+        }
+      }
+    } else {
+      try {
+        if (await tryIncremental()) {
+          fetchOk = true;
+        } else {
+          needResweep = true;
           try {
             if (await resweep(now, sinceReq)) {
               fetchOk = true;
@@ -255,10 +287,14 @@ export function createWindowKeeper(deps: WindowKeeperDeps): WindowKeeper {
           }
         }
       } catch (e) {
-        // 瞬态失败:不动缓冲,下轮重试。陈旧账单在下方统一结。
+        // 评审 follow-up #2:增量抛错(典型:首页非 ok。增量 URL 形状与全量
+        // 不同 —— limit=100/不分侧 vs limit=250/分侧 —— 上游 CDN 按 URL 缓存
+        // 坏响应时可能只坏这一个)→ 置 needResweep,下轮先试带拆侧+缩页重试
+        // 的全量路径,而不是干等每小时定时重扫。
         lastErr = e;
+        needResweep = true;
         console.warn(
-          "[windowKeeper] incremental fetch failed (serving buffered window; retry next tick):",
+          "[windowKeeper] incremental fetch failed (serving buffered window; full resweep next tick):",
           e,
         );
       }

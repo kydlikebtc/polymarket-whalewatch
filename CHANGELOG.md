@@ -11,7 +11,7 @@ Corrections matter more here than in most repositories, because this one publish
 rates, P&L, edge — and several of those numbers were wrong before they were right. The table below
 indexes every fix that changed a published figure.
 
-Scope: 2026-06-23 → 2026-09-09. Test suite at the end of that range: 2135 tests across
+Scope: 2026-06-23 → 2026-09-09. Test suite at the end of that range: 2137 tests across
 164 files (`npm test`).
 
 ## Corrections that changed reported numbers
@@ -66,14 +66,12 @@ fetch**) and discarded it at cycle end — nothing was ever retained.
   (~150s → ~45s) and the old in-cycle overhead; the indexing floor stays and also closes the old
   baseline's arithmetic (~150 phase + ~70 index + ~60–100 in-cycle ≈ 329 ✓). Steady-state transfer
   ~1030 rows/5min → ~50–100 rows per 90s tick, decoupled from window density on hot days.
-- Rollback: config `follow_window_mode = 'full'` reverts the fetch path (full sweep every cycle,
+- Rollback: config `consensus_window_mode = 'full'` reverts the fetch path (full sweep every cycle,
   cadence unchanged) on the next tick, no restart.
 - Disclosed side effects: tighter-freshness tiers (首发共识, freshSec=300) now catch formations the
   5-minute cadence structurally missed; entries land earlier so the 10¢ chase guard passes more
   often — signal volume rises across tiers and the paper track record has a regime break at the
   switch. `cycle_metrics` grows 288 → 960 rows/day (86400 / 90; no retention yet, ~30 MB/year).
-- Housekeeping: removed a tracked `node_modules` symlink that pointed at an absolute path on
-  another contributor's machine.
 - Review fix (2026-09-09): a side-failed deep sweep (one side's fetch failed outright — the
   survivor-only rows are NOT a complete-but-shorter window, every interval is missing a whole
   side) could be laundered into `truncated=false` by the buffer's time-based coverage healing,
