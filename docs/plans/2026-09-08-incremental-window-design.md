@@ -34,7 +34,7 @@
 
 1. **种子**:首轮 getTradesWindowDeep 全量扫(现成代码),记 coverageStartSec
    = effectiveSinceSec(种子截断如实继承,随时间下界推进自愈);
-2. **每轮(90s)**:getTradesSince 从最新往回翻,翻到 `水位线 − 180s 边距`
+2. **每轮(90s)**:getTradesSince 从最新往回翻,翻到 `水位线 − 600s 边距`
    即停;connected=true 才合并(去重吸收边距重叠),否则整体丢弃退回全量扫;
 3. **淘汰**:滚出 6h 的行出账;行数上限 30k(≈40 MB 最坏)整秒切齐淘汰最旧,
    coverageStartSec 如实上移;
@@ -63,15 +63,18 @@ SELL 即虚增净买,可能造出假共识与错误 formationTs,且静默。所�
 | --- | --- | --- |
 | 周期 | 90s(原 300s) | embeddedEngine CONSENSUS_INTERVAL_MS |
 | 分析窗口 | 6h 不变 | CONSENSUS_WINDOW_SEC |
-| 安全边距 | 180s | windowKeeper WINDOW_MARGIN_SEC |
+| 安全边距 | 600s(评审修正,原 180s) | windowKeeper WINDOW_MARGIN_SEC |
 | 增量页 | 100 行 × 最多 8 页 | polymarket SINCE_PAGE_LIMIT / SINCE_MAX_PAGES |
 | 行数上限 | 30_000(≈40 MB) | windowKeeper MAX_BUFFER_ROWS |
 | 定时重扫 | 3600s | windowKeeper RESWEEP_INTERVAL_SEC |
 | 陈旧限度 | 300s | windowKeeper STALE_LIMIT_SEC |
 
-预期:formation→emitted 中位 ~329s → ~55–75s(90s 周期均匀等待均值 ~45s +
-轮内垫时);稳态传输 ~1030 行/5min → ~50–100 行/90s 轮;热点日抓取成本与
-密度解耦(单轮新增 <800 行内恒 1–8 页)。
+预期:formation→emitted 的**轮询等待项**从均值 ~150s 压到 ~45s + 轮内垫时;
+新的延迟地板由上游索引延迟决定,**该项从未单独实测**(评审 4.5)——在生产库
+用 4s 大单循环的告警时间戳可测:`alerts.created_at − payload.timestamp` 的
+中位数几乎就是纯索引延迟,实测后再回填对外承诺的目标值。稳态传输
+~1030 行/5min → ~50–100 行/90s 轮;热点日抓取成本与密度解耦(单轮新增
+<800 行内恒 1–8 页)。
 
 ## 回滚
 
@@ -88,6 +91,32 @@ config 表 `follow_window_mode` = `'full'` → 每轮全量重扫(老抓取路�
 - 共识 TG 升级推送可能更碎(5 分钟内 3→5 人原来合并一条,现在可能 3→4、4→5
   两条);
 - cycle_metrics 写入 288 → 1440 行/天(无保留清理,~40 MB/年,暂可接受)。
+
+## 评审修正(2026-09-09,plan-eng-review)
+
+外部工程评审(对照 001995d)六条发现的处置:
+
+1. **洞语义(评审 4.1)**:实现本就与建议一致 —— 不衔接的前缀整体丢弃、
+   同轮同步全量重扫,`needResweep` 保证断点未愈合前绝不叠增量;交出的窗口
+   只有「完整 / 完整但更短 / 陈旧但完整(≤300s)」三种,truncated 恒为
+   「完整但更短」,与全量路径同语义,共识告警在其上照跑是安全的。
+2. **迟到索引(4.2,采纳)**:边距 180s→600s,静默窗口压到「迟到 >10 分钟
+   才踩」;成本常态 ~36 行重叠。每小时重扫暂不加密,待索引延迟实测。
+3. **乱序(4.3,采纳)**:乱序旧行会造成提前止页 + connected=true 的中部洞
+   —— 这是增量路径唯一残余的静默洞,由 600s 边距下一轮自愈、每小时重扫兜
+   底重复踩坑(CDN 缓存坏页前科);getTradesSince 已加页内乱序计数 warn,
+   先观测一周再定是否上更硬防御。
+4. **重建语义(4.4)**:定时/疑点重扫是**替换**(buffer.clear + 以重扫自身
+   effectiveSinceSec 为准)。热点日重扫会把覆盖缩回 offset 上限内 —— 刻意
+   取舍:完整性优先于覆盖,经 effectiveSinceSec 如实上报。
+5. **不复用 mergeWindow(4.6)**:lib/marketWindow.ts 的 mergeWindow 只是
+   「去重+截止+排序」的数组合并,无水位线/connected 判定/完整性簿记/行数
+   上限 —— windowKeeper 的正确性核心恰是它缺的部分,且其续抓自身无安全
+   边距(独立修补项)。为 18 行合并逻辑迁移完整性不变量,churn 大于收益。
+6. **部署与预算耦合(4.7)**:双进程部署(Next 内嵌 + 独立 worker)时两个
+   引擎各自内存缓冲、各自冷启,alerts/consensus_state 的 claim 锁语义不变。
+   重试预算:getTradesSince 刻意无缩页(最坏一页 4×12s),不衔接叠同轮全量
+   重扫可让单轮超 90s —— 循环是完成后再排下一轮,只错后不重叠。
 
 ## 测试
 

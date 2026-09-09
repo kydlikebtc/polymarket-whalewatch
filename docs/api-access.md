@@ -870,7 +870,7 @@ interface ContinuityReport {
   days: {
     day: string; // UTC yyyy-mm-dd
     status: "covered" | "gap" | "partial" | "pre" | "pending";
-    cycles: number; // 当日落库轮次（满覆盖 ≈ 288）
+    cycles: number; // 当日落库轮次（满覆盖 ≈ 960，2026-09-08 提频前 ≈ 288）
     maxGapSec: number; // 触碰本日的最长断档；0 = 无
   }[]; // 旧 → 新共 61 条，最后一条恒为今天（pending）
   streakDays: number; // 截至昨天的连续覆盖日数 = 时钟读数

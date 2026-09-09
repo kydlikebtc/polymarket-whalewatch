@@ -1203,7 +1203,7 @@ export default function DiscoveryPage() {
                     <div className="ds-empty">
                       {rows.length === 0
                         ? t(
-                            "暂无候选 —— 证据由共识循环（每 5 分钟）与每日已结算市场扫描持续积累",
+                            "暂无候选 —— 证据由共识循环（每 90 秒）与每日已结算市场扫描持续积累",
                           )
                         : t("无匹配 —— 试试清除搜索或标签筛选")}
                       {(activeTags.size > 0 || q) && (

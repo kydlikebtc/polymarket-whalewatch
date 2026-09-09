@@ -729,3 +729,23 @@ it("getTradesSince — 翻页途中失败:connected=false;首页失败:抛错", 
     "getTradesSince 404",
   );
 });
+
+it("getTradesSince — 页内乱序留痕:计数 warn,不改变 connected 语义(评审 4.3)", async () => {
+  // newest-first 违例:第二行比第一行更新(乱序),第三行老于边界(止页)。
+  const rows = [
+    trade({ timestamp: 1700000200, transactionHash: "0xa" }),
+    trade({ timestamp: 1700000300, transactionHash: "0xdisorder" }), // 违例
+    trade({ timestamp: 1700000050, transactionHash: "0xold" }),
+  ];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ ok: true, json: async () => rows }),
+  );
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const r = await getTradesSince(2000, 1700000100);
+  expect(r.connected).toBe(true); // 语义不变,只留痕
+  expect(warnSpy).toHaveBeenCalledWith(
+    expect.stringContaining("ordering violated 1 time(s)"),
+  );
+  warnSpy.mockRestore();
+});

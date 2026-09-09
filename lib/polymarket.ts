@@ -386,6 +386,19 @@ export async function getTradesSince(
   const maxPages = opts.maxPages ?? SINCE_MAX_PAGES;
   const out: Trade[] = [];
   let offset = 0;
+  // 乱序观测(评审 4.3):止页规则依赖 feed 严格 newest-first,而同域
+  // /activity 有排序偶发失效并被 CDN 按 URL 缓存的前科。一条乱序旧行会让
+  // 本轮提前止页、把夹在中间的真新行留成洞 —— 单次由调用方的安全边距在
+  // 下一轮自愈,这里只计数留痕,攒一周数据再决定要不要更硬的防御。
+  let disorder = 0;
+  let prevTs = Infinity;
+  const noteDisorder = () => {
+    if (disorder > 0) {
+      console.warn(
+        `[getTradesSince] feed ordering violated ${disorder} time(s) this fetch (newest-first expected) — premature stop possible, margin/resweep will heal`,
+      );
+    }
+  };
   for (let pages = 0; pages < maxPages; pages++) {
     if (offset > MAX_TRADES_OFFSET) return { trades: out, connected: false };
     const url =
@@ -397,6 +410,7 @@ export async function getTradesSince(
       console.warn(
         `[getTradesSince] page failed (${res.status}) at offset=${offset} — returning disconnected prefix`,
       );
+      noteDisorder();
       return { trades: out, connected: false };
     }
     const raw = await res.json();
@@ -404,13 +418,22 @@ export async function getTradesSince(
     const rawCount = Array.isArray(raw) ? raw.length : 0;
     const rows = parseTradeRows(raw, "getTradesSince");
     for (const t of rows) {
+      if (t.timestamp > prevTs) disorder++;
+      prevTs = t.timestamp;
       // newest-first:第一行older-than-boundary即证明边界可见,无缺口。
-      if (t.timestamp < sinceSec) return { trades: out, connected: true };
+      if (t.timestamp < sinceSec) {
+        noteDisorder();
+        return { trades: out, connected: true };
+      }
       out.push(t);
     }
     // 短原始页 = feed 真实到底:比 sinceSec 老的成交不存在,同样无缺口。
-    if (rawCount < pageLimit) return { trades: out, connected: true };
+    if (rawCount < pageLimit) {
+      noteDisorder();
+      return { trades: out, connected: true };
+    }
     offset += rawCount;
   }
+  noteDisorder();
   return { trades: out, connected: false };
 }

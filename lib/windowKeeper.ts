@@ -35,8 +35,16 @@ import type { DeepWindowResult, TradesSinceResult } from "./polymarket";
 // firehose/跟单/cohort)零感知。getMode() 返回 "full" 时每轮全量重扫 ——
 // config 表运行时回滚开关,不必重启。
 
-/** 安全边距:增量抓取回退到水位线之前这么多秒,重叠部分由 dedupKey 吸收。 */
-export const WINDOW_MARGIN_SEC = 180;
+/**
+ * 安全边距:增量抓取回退到水位线之前这么多秒,重叠部分由 dedupKey 吸收。
+ * 600s(评审修正,2026-09-09,原 180s):这条边距防的是两件事 ——
+ * ① 上游迟到入索引的成交(迟到超边距的 SELL 要等定时重扫才补上,期间净买
+ *   账不完整且静默,600s 把这个窗口压到「迟到 >10 分钟才踩」);
+ * ② feed 偶发乱序(同域 /activity 有排序失效被 CDN 缓存的前科)造成的单轮
+ *   提前止页 —— 边距让下一轮重新覆盖被跳过的段,单次乱序自愈。
+ * 成本几乎为零:常态重叠 ~36 行、热点日 ~180 行,仍在 1–2 页之内。
+ */
+export const WINDOW_MARGIN_SEC = 600;
 /** 缓冲行数上限(≈40 MB 最坏);常态实测 ~1k 行。 */
 export const MAX_BUFFER_ROWS = 30_000;
 /** 定时全量重扫间隔(迟到数据的有界自愈)。 */

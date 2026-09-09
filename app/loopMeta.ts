@@ -22,7 +22,7 @@ export const LOOP_META: Record<string, LoopMeta> = {
   },
   consensus: {
     label: "聪明钱共识 + 策略跟单",
-    cadence: "每 5 分钟",
+    cadence: "每 90 秒",
     impact: "共识信号与策略买入停止产生",
   },
   outcome_backfill: {
